@@ -814,6 +814,31 @@ class TestGlobalResults:
         assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{SHAPING_VIEW_NAME}" in stmt
         assert "input_location IN" not in stmt
 
+    def test_global_query_pushes_catalog_gate_into_sql(self, client, sql_mock):
+        sql_dispatch(sql_mock)
+        client.get("/api/v1/dq-results/global")
+        stmt = sql_mock.query_dicts.call_args_list[0][0][0]
+        assert (
+            "(startswith(input_location, 'dev.') OR startswith(input_location, '`dev`.') OR "
+            "startswith(input_location, 'main.') OR startswith(input_location, '`main`.'))"
+        ) in stmt
+
+    def test_global_outcome_facet_keeps_only_matching_checks(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+                check_row("c2", errors=0, total=100, fqn="main.sales.orders"),
+            ],
+        )
+        failed = client.get("/api/v1/dq-results/global", params={"outcome": ["failed"]}).json()
+        assert [g["label"] for g in failed["by_rule"]] == ["c1"]
+        passed = client.get("/api/v1/dq-results/global", params={"outcome": ["passed"]}).json()
+        assert [g["label"] for g in passed["by_rule"]] == ["c2"]
+        # Unknown outcome values are ignored rather than emptying the scope.
+        bogus = client.get("/api/v1/dq-results/global", params={"outcome": ["bogus"]}).json()
+        assert {g["label"] for g in bogus["by_rule"]} == {"c1", "c2"}
+
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
         assert client.get("/api/v1/dq-results/global").status_code == 500
@@ -1901,3 +1926,13 @@ class TestRefreshScores:
         score_cache_mock.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
         resp = client.post("/api/v1/dq-results/refresh-scores", json={"table_fqns": [FQN]})
         assert resp.status_code == 500
+
+
+def test_catalog_gate_matches_quoted_dotted_catalogs_and_escapes_strictly():
+    from databricks_labs_dqx_app.backend.routes.v1.dq_results import _catalog_gate_predicates
+
+    [pred] = _catalog_gate_predicates(frozenset({"my.catalog", "o'k\\"}))
+    assert "startswith(input_location, '`my.catalog`.')" in pred
+    assert "startswith(input_location, 'o''k\\\\.')" in pred
+    assert _catalog_gate_predicates(frozenset()) == ["false"]
+    assert _catalog_gate_predicates(None) == []

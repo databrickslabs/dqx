@@ -797,6 +797,8 @@ class SchedulerService:
         schedule_name = f"product:{product_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -1022,6 +1024,8 @@ class SchedulerService:
         schedule_name = f"table:{binding_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -1662,7 +1666,7 @@ class SchedulerService:
     # Tracker (dq_schedule_runs)
     # ------------------------------------------------------------------
 
-    def _get_tracker(self, name: str) -> dict[str, str] | None:
+    def _get_tracker(self, name: str) -> dict[str, Any] | None:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
         validate_schedule_name(name)
@@ -1670,7 +1674,7 @@ class SchedulerService:
         ts = self._oltp_sql.ts_text
         sql = (
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "
-            f"last_run_id, status "
+            f"last_run_id, status, paused "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._oltp_sql.query(sql)
@@ -1683,12 +1687,13 @@ class SchedulerService:
             "next_run_at": row[2],
             "last_run_id": row[3],
             "status": row[4],
+            "paused": len(row) > 5 and row[5] in (True, "true", "t", 1),
         }
 
     def _realign_next_run(
         self,
         schedule_name: str,
-        tracker: dict[str, str],
+        tracker: dict[str, Any],
         next_run: Any,
         cron_expr: str,
         tz_name: str | None,
@@ -1725,20 +1730,26 @@ class SchedulerService:
         missed-window contract already allows, and that firing re-anchors
         ``last_run_at`` to now, so this cannot become a retry loop.
 
-        Two cases deliberately keep the stored value: a cron that no longer
-        parses, and a ``failed`` status. Both mean ``next_run_at`` may be a
-        :data:`_FAILURE_BACKOFF` stamp rather than a real occurrence, and
-        replacing a backoff with "next occurrence after the failed run" is
-        exactly the tight retry loop the backoff exists to prevent. A cron
-        edited during a backoff window takes effect when it expires.
+        One case deliberately keeps the stored value: a cron that no longer
+        parses. Its ``next_run_at`` is a :data:`_FAILURE_BACKOFF` stamp rather
+        than a real occurrence, and the ``_compute_next_cron_run`` call below
+        raises for it — the ``except`` returns the stored stamp untouched, so a
+        malformed cron can never have its backoff replaced by "next occurrence
+        after the failed run" (the tight retry loop the backoff exists to
+        prevent).
+
+        A ``failed`` status does NOT skip realignment. When a firing fails under
+        a VALID cron, :meth:`_finish_schedule_firing` advances ``next_run_at``
+        to a real cron occurrence (not a backoff) and stamps ``failed``; if the
+        cron is then edited, that occurrence must realign like any other —
+        otherwise a single failed run freezes the schedule on its old cadence
+        and silently ignores every later edit. This cannot loop: the
+        re-derived occurrence is anchored on ``last_run_at`` and firing it
+        re-anchors ``last_run_at`` to now.
 
         Returns the ``next_run_at`` the caller should evaluate — the stored one
         or, when realigned, the new occurrence.
         """
-        status = tracker.get("status")
-        if status == "failed":
-            return next_run
-
         stored_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
         if stored_dt is None or stored_dt <= now:
             return next_run
@@ -1768,6 +1779,7 @@ class SchedulerService:
         )
         # Only the occurrence moves: last_run_at / last_run_id / status carry
         # over so the Schedules UI keeps showing the previous run's outcome.
+        status = tracker.get("status")
         self._upsert_tracker(
             schedule_name,
             last_dt,

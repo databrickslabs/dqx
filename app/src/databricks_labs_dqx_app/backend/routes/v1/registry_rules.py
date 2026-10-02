@@ -10,7 +10,7 @@ route below blocks (409) deleting a rule that's still applied anywhere.
 from typing import Annotated
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
@@ -56,6 +56,14 @@ from databricks_labs_dqx_app.backend.services.registry_service import (
     DuplicateRegistryRuleError,
     RegistryService,
 )
+from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
+    generalize,
+    generic_name,
+    has_generalized_slots,
+    shape_key,
+    slot_renames_between,
+)
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
@@ -81,6 +89,18 @@ def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
     return definitions if isinstance(definitions, list) else []
 
 
+def _mark_owner_unverified(out: OwnedObject) -> None:
+    if isinstance(out, RegistryRuleOut):
+        out.owner_unverified = True
+
+
+def _fill_owner_display_names(
+    outs: list[RegistryRuleOut], svc: RegistryService, background_tasks: BackgroundTasks
+) -> None:
+    """Cache-only owner-name fill; owners confirmed to match no principal are flagged ``owner_unverified``."""
+    svc.fill_owner_display_names(outs, defer=background_tasks.add_task, mark_unverified=_mark_owner_unverified)
+
+
 # ------------------------------------------------------------------
 # List / Get
 # ------------------------------------------------------------------
@@ -94,6 +114,7 @@ def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
 )
 def list_registry_rules(
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    background_tasks: BackgroundTasks,
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     dimension: Annotated[str | None, Query(description="Filter by the 'dimension' tag")] = None,
     severity: Annotated[str | None, Query(description="Filter by the 'severity' tag")] = None,
@@ -103,7 +124,9 @@ def list_registry_rules(
     """List Rules Registry entries, optionally filtered."""
     try:
         rules = svc.list_rules(status=status, dimension=dimension, severity=severity, owner=owner, tag=tag)
-        return [RegistryRuleOut.from_domain(r) for r in rules]
+        outs = [RegistryRuleOut.from_domain(r) for r in rules]
+        _fill_owner_display_names(outs, svc, background_tasks)
+        return outs
     except Exception as e:
         logger.error(f"Failed to list registry rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list registry rules: {e}")
@@ -118,6 +141,7 @@ def list_registry_rules(
 def get_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
+    background_tasks: BackgroundTasks,
 ) -> RegistryRuleDetailOut:
     """Get a single registry rule with its slots/params and current published snapshot."""
     try:
@@ -125,8 +149,10 @@ def get_registry_rule(
         if result is None:
             raise HTTPException(status_code=404, detail=f"Registry rule not found: {rule_id}")
         rule, version = result
+        out = RegistryRuleOut.from_domain(rule)
+        _fill_owner_display_names([out], svc, background_tasks)
         return RegistryRuleDetailOut(
-            rule=RegistryRuleOut.from_domain(rule),
+            rule=out,
             current_version=RegistryRuleVersionOut.from_domain(version) if version else None,
         )
     except HTTPException:
@@ -208,6 +234,43 @@ def create_registry_rule(
         raise HTTPException(status_code=500, detail=f"Failed to create registry rule: {e}")
 
 
+_ACTIVE_STATUS_RANK = {"approved": 0, "pending_approval": 1, "draft": 2}
+
+
+def _has_neutral_slots(rule: RegistryRule | RegistryRuleOut) -> bool:
+    # A generalized import rule is reusable across re-imports only if its slots are
+    # still in the canonical generalized form. Delegated to generic_rule_shape so the
+    # recognizer stays in lock-step with the names generalize() assigns (``column``
+    # for one slot, ``column_1``…``column_N`` for N slots — any N).
+    return has_generalized_slots(rule.definition)
+
+
+def _active_rules_by_shape(svc: RegistryService) -> dict[str, RegistryRuleOut]:
+    """Best active rule per shape: approved first, then neutral slot names, then curated.
+
+    Earlier per-column imports (``source == "import"`` with column-named slots,
+    e.g. ``customer_id is not null``) are not offered for reuse — another
+    column should get the generic rule, not a copy named after a different column.
+    """
+    ranked = sorted(
+        (
+            r
+            for r in svc.list_rules()
+            if r.status in _ACTIVE_STATUS_RANK and (r.source != "import" or _has_neutral_slots(r))
+        ),
+        key=lambda r: (
+            _ACTIVE_STATUS_RANK[r.status],
+            0 if _has_neutral_slots(r) else 1,
+            0 if r.is_builtin or r.source == "marketplace" else 2 if r.source == "import" else 1,
+            str((r.user_metadata or {}).get("name") or r.rule_id).lower(),
+        ),
+    )
+    best: dict[str, RegistryRuleOut] = {}
+    for rule in ranked:
+        best.setdefault(shape_key(rule.mode, rule.definition, rule.polarity), RegistryRuleOut.from_domain(rule))
+    return best
+
+
 @router.post(
     "/batch-import",
     response_model=BatchImportRegistryRulesOut,
@@ -254,37 +317,57 @@ def batch_import_registry_rules(
     failed: list[BatchImportRegistryRulesFailure] = []
     submitted = 0
     submit_failed = 0
-    # Fingerprints already materialized in THIS batch (created OR reused), so a
-    # contract that lists the same rule twice collapses to one — matches the
-    # cross-import dedup below (skip_duplicates only).
-    seen_in_batch: dict[str, CreateRegistryRuleOut] = {}
+    # Rules already materialized in THIS batch (created OR reused), keyed by
+    # shape, so a contract that lists the same generic check on several
+    # columns collapses to one rule (skip_duplicates only).
+    seen_in_batch: dict[str, RegistryRuleOut] = {}
+    existing_by_shape = _active_rules_by_shape(svc) if body.skip_duplicates else {}
 
     for index, rule_in in enumerate(body.rules):
         try:
-            fingerprint: str | None = None
+            key: str | None = None
             if body.skip_duplicates:
-                fingerprint = svc.compute_definition_fingerprint(rule_in.mode, rule_in.definition, rule_in.polarity)
-                # Intra-batch duplicate → reuse the earlier result, no DB work.
-                in_batch = seen_in_batch.get(fingerprint)
-                if in_batch is not None:
-                    reused.append(in_batch)
+                key = shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)
+                match = seen_in_batch.get(key) or existing_by_shape.get(key)
+                if match is None:
+                    exact = svc.get_active_rule_by_fingerprint(
+                        svc.compute_definition_fingerprint(rule_in.mode, rule_in.definition, rule_in.polarity)
+                    )
+                    if exact is not None and (
+                        not body.generalize_slots or exact.source != "import" or _has_neutral_slots(exact)
+                    ):
+                        match = RegistryRuleOut.from_domain(exact)
+                if match is not None:
+                    renames = slot_renames_between(rule_in.definition, match.definition)
+                    reused.append(
+                        CreateRegistryRuleOut(
+                            rule=match,
+                            input_index=index,
+                            slot_renames={k: v for k, v in renames.items() if k != v},
+                        )
+                    )
+                    seen_in_batch[key] = match
                     continue
-                # Cross-import duplicate → reuse the existing active rule rather
-                # than minting another copy (keeps re-imports idempotent).
-                existing = svc.get_active_rule_by_fingerprint(fingerprint)
-                if existing is not None:
-                    existing_out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(existing), dedup_warning=None)
-                    reused.append(existing_out)
-                    seen_in_batch[fingerprint] = existing_out
-                    continue
+
+            definition = rule_in.definition
+            user_metadata = rule_in.user_metadata
+            renames: dict[str, str] = {}
+            if body.generalize_slots:
+                definition, renames = generalize(rule_in.mode, rule_in.definition)
+                if renames:
+                    user_metadata = dict(user_metadata or {})
+                    user_metadata.pop("description", None)
+                    name = generic_name(rule_in.mode, definition)
+                    if name:
+                        user_metadata["name"] = name
 
             rule, warning = svc.create_rule(
                 mode=rule_in.mode,
-                definition=rule_in.definition,
+                definition=definition,
                 user_email=user_email,
                 polarity=rule_in.polarity,
                 author_kind=rule_in.author_kind,
-                user_metadata=canonicalize_reserved_label_values(rule_in.user_metadata, label_definitions),
+                user_metadata=canonicalize_reserved_label_values(user_metadata, label_definitions),
                 owner=rule_in.owner,
                 owner_display_name=rule_in.owner_display_name,
                 source=body.source,
@@ -293,10 +376,17 @@ def batch_import_registry_rules(
                 # than failing the whole row on fingerprint collision.
                 allow_duplicate=True,
             )
-            out = CreateRegistryRuleOut(rule=RegistryRuleOut.from_domain(rule), dedup_warning=warning)
-            created.append(out)
-            if fingerprint is not None:
-                seen_in_batch[fingerprint] = out
+            rule_out = RegistryRuleOut.from_domain(rule)
+            created.append(
+                CreateRegistryRuleOut(
+                    rule=rule_out,
+                    dedup_warning=warning,
+                    input_index=index,
+                    slot_renames={k: v for k, v in renames.items() if k != v},
+                )
+            )
+            if key is not None:
+                seen_in_batch[key] = rule_out
 
             if body.auto_approve:
                 # Publish outright: submit to leave draft, then approve to
@@ -500,7 +590,14 @@ def _activate_pending_applications(
         return
     for p in staged:
         try:
-            apply_rules.apply_rule(p.binding_id, rule_id, p.column_mapping, p.created_by or approver)
+            apply_rules.apply_rule(
+                p.binding_id,
+                rule_id,
+                p.column_mapping,
+                p.created_by or approver,
+                row_filter=p.row_filter,
+                pass_threshold=p.pass_threshold,
+            )
             if p.id:
                 pending.delete(p.id)
         except Exception:

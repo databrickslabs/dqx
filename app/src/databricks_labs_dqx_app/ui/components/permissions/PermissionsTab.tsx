@@ -57,6 +57,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { OwnerGrantDialog } from "@/components/permissions/OwnerGrantDialog";
 import { findAllPrivilegesGrantByName } from "@/components/permissions/permissions-utils";
 import {
+  AlertTriangle,
   Loader2,
   Pencil,
   Plus,
@@ -126,6 +127,8 @@ interface Props {
    * `owner_display_name` column.
    */
   ownerDisplayName?: string;
+  /** True when the owner matched no Databricks principal (e.g. a mistyped imported email). */
+  ownerUnverified?: boolean;
   /**
    * Called with the owner's identity (email / username — the `secondary`
    * field from the SCIM principal search result).  Callers store this as the
@@ -455,6 +458,7 @@ export function PermissionsTab({
   showOwner = false,
   owner = "",
   ownerDisplayName,
+  ownerUnverified = false,
   onOwnerChange,
   onOwnerDisplayNameChange,
   canEditOwner = false,
@@ -701,6 +705,16 @@ export function PermissionsTab({
             <p className="text-sm">{ownerDisplayName || owner}</p>
           ) : (
             <p className="text-sm text-muted-foreground italic">{t("permissions.ownerNone")}</p>
+          )}
+          {owner && ownerUnverified && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {canEditOwner && onOwnerChange
+                  ? t("permissions.ownerNotFoundEditable")
+                  : t("permissions.ownerNotFound")}
+              </span>
+            </p>
           )}
         </section>
       )}

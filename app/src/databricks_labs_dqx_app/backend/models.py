@@ -486,6 +486,13 @@ class RegistryRuleOut(BaseModel):
         default=None,
         description="Human-readable display name for the owner; falls back to the owner email when null.",
     )
+    owner_unverified: bool = Field(
+        default=False,
+        description=(
+            "True when the owner matched no Databricks user, group, or service principal (e.g. a "
+            "mistyped imported email). Transient; set on the list / detail read paths only."
+        ),
+    )
     is_builtin: bool = False
     source: str | None = None
     pending_rationale: str | None = Field(
@@ -580,6 +587,16 @@ class CreateRegistryRuleOut(BaseModel):
     dedup_warning: str | None = Field(
         default=None, description="Non-blocking warning when a published rule shares this fingerprint"
     )
+    input_index: int | None = Field(
+        default=None, description="Batch import only: index of the input rule this result is for"
+    )
+    slot_renames: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Batch import only: input slot name -> slot name on the returned rule, when they differ "
+            "(the input was matched to, or created as, a generic rule with different slot names)."
+        ),
+    )
 
 
 # Upper bound on a single batch import. The endpoint runs a SYNCHRONOUS
@@ -626,6 +643,14 @@ class BatchImportRegistryRulesIn(BaseModel):
             "'marketplace' so its rules are distinguishable from file imports."
         ),
     )
+    generalize_slots: bool = Field(
+        default=False,
+        description=(
+            "When true, rules whose slots are named after concrete columns (data contracts) are "
+            "created as generic rules: slots renamed to 'column'/'column_N', a generic name, and "
+            "no column-specific description. See ``slot_renames`` on each result."
+        ),
+    )
 
 
 class BatchImportRegistryRulesFailure(BaseModel):
@@ -665,6 +690,17 @@ class RecordPendingApplicationIn(BaseModel):
         default_factory=list,
         description="One slot-name -> column-name mapping group per materialized check; may be "
         "empty for whole-table rules (no slots).",
+    )
+    row_filter: str | None = Field(
+        default=None,
+        description="Per-rule SQL WHERE predicate carried to the application on approval; "
+        "None/blank = every row. Validated for SQL safety when the rule is approved and applied.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Per-rule minimum % of rows that must pass, carried to the application on approval.",
     )
 
 
@@ -711,6 +747,8 @@ class PendingApplicationOut(BaseModel):
     rule_name: str | None = None
     rule_status: str | None = None
     column_mapping: list[ColumnMappingGroup] = Field(default_factory=list)
+    row_filter: str | None = None
+    pass_threshold: int | None = None
     created_by: str | None = None
     created_at: str | None = None
 
@@ -895,6 +933,12 @@ class AppliedRuleOut(BaseModel):
             rule_dimension=enriched.rule_dimension,
             rule_severity=enriched.rule_severity,
         )
+
+
+class ImplementedRuleOut(AppliedRuleOut):
+    """One concrete registry-rule application, enriched with its monitored table's FQN."""
+
+    table_fqn: str
 
 
 class ApplyRuleIn(BaseModel):
@@ -2621,6 +2665,33 @@ class ManageHolderOut(BaseModel):
     type: str = Field(description="Best-effort classification: 'user' or 'group'")
 
 
+class ScheduleOverviewOut(BaseModel):
+    """One normalized schedule definition with its scheduler runtime state."""
+
+    source_type: Literal["table", "collection", "scope"]
+    source_id: str
+    name: str
+    target: str
+    cron: str | None = None
+    timezone: str | None = None
+    frequency: str | None = None
+    schedule_kind: RegistryScheduleKind | None = None
+    sample_size: int | None = None
+    enabled: bool = True
+    paused: bool = False
+    owner: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_run_id: str | None = None
+    run_status: str | None = None
+
+
+class SchedulePauseIn(BaseModel):
+    paused: bool
+
+
 class SchedulePreflightIn(BaseModel):
     """Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled."""
 
@@ -2634,11 +2705,17 @@ class SchedulePreflightTableOut(BaseModel):
     service principals (they own the table/schema/catalog or hold MANAGE,
     directly or via a group). When ``False`` the schedule save is hard-blocked
     and ``manage_holders`` names who to ask instead.
+
+    ``access_unverified`` is ``True`` when the SQL warehouse gave no answer
+    (e.g. still starting) and the caller lacks MANAGE, so grantability is
+    unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
+    the user to retry.
     """
 
     fqn: str
     can_manage: bool
     manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+    access_unverified: bool = False
 
 
 class SchedulePreflightOut(BaseModel):

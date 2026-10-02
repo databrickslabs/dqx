@@ -27,6 +27,9 @@ task converts these to *RuleDefinition* objects.
 """
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+from databricks_labs_dqx_app.backend.registry_models import ScheduleKind
 
 SOURCE_CATALOG_ENV_DEFAULT = "dqx"
 SOURCE_SCHEMA = "dqx_studio_demo"
@@ -170,6 +173,26 @@ class DataProductSpec:
     name: str
     description: str
     members: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ScheduleSpec:
+    """A demo run schedule on a monitored table or a data product (collection).
+
+    Args:
+        target_kind: ``table`` (a :class:`BindingSpec` table) or ``collection``
+            (a :class:`DataProductSpec`).
+        target: the bound table name, or the data product name.
+        cron: standard 5-field cron the in-app scheduler evaluates.
+        timezone: IANA timezone the cron is evaluated in.
+        kind: what each run does (profile, DQ, or both).
+    """
+
+    target_kind: Literal["table", "collection"]
+    target: str
+    cron: str
+    timezone: str
+    kind: ScheduleKind = "dq_only"
 
 
 @dataclass(frozen=True)
@@ -650,6 +673,24 @@ DATA_PRODUCTS: tuple[DataProductSpec, ...] = (
         description="Order, product and shipment data for the fulfilment flow.",
         members=("orders", "products", "shipments"),
     ),
+)
+
+
+# --------------------------------------------------------------------------- #
+# Schedules — seeded PAUSED so the demo shows realistic cadences on the
+# Schedules page without ever firing a run. Crons use the shapes the Schedule
+# tab's simple picker round-trips (daily / weekly on Monday).
+# --------------------------------------------------------------------------- #
+SCHEDULES: tuple[ScheduleSpec, ...] = (
+    ScheduleSpec(target_kind="table", target="orders", cron="0 6 * * *", timezone="UTC"),
+    ScheduleSpec(
+        target_kind="collection",
+        target="Customer 360",
+        cron="0 7 * * MON",
+        timezone="Europe/London",
+        kind="profiling_and_dq",
+    ),
+    ScheduleSpec(target_kind="collection", target="Fulfillment", cron="30 5 * * *", timezone="America/New_York"),
 )
 
 

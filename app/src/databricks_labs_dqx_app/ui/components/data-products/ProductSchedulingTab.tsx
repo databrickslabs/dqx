@@ -16,10 +16,9 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
 import { ScheduleEditor } from "@/components/common/ScheduleEditor";
 import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
-import { preflightScheduleGrants } from "@/lib/api";
+import { useScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
 
 interface Props {
@@ -47,16 +46,10 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
     [members],
   );
 
-  const preflightQuery = useQuery({
-    queryKey: ["scheduleGrantPreflight", "collection", memberFqns],
-    queryFn: async () => (await preflightScheduleGrants({ table_fqns: memberFqns })).data,
-    // Gated on scheduling intent too — for a large collection this is per-member
-    // ownership reads plus paginated grants.get_effective on every tab open.
-    enabled: canEdit && memberFqns.length > 0 && scheduleCron !== null,
-    staleTime: 60_000,
-  });
-  const blockedTables = (preflightQuery.data?.tables ?? []).filter((tbl) => !tbl.can_manage);
-  const cannotManage = blockedTables.length > 0;
+  // Gated on scheduling intent too — for a large collection this is per-member
+  // ownership reads plus paginated grants.get_effective on every tab open.
+  const preflight = useScheduleGrantPreflight(memberFqns, canEdit && scheduleCron !== null);
+  const cannotManage = preflight.hasGrantIssue;
   // Only block when a schedule is actually set/being set — clearing it (null
   // cron) needs no grant, matching the backend gate. Unrelated edits (name,
   // members) stay saveable.
@@ -66,9 +59,9 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
   // channel the header Save reads — either one being false disables the save.
   const [cronValid, setCronValid] = useState(true);
   useEffect(() => {
-    const preflightPending = scheduleCron !== null && preflightQuery.isFetching;
+    const preflightPending = scheduleCron !== null && preflight.isFetching;
     setScheduleCronInvalid(!cronValid || blockForSchedule || preflightPending);
-  }, [cronValid, blockForSchedule, scheduleCron, preflightQuery.isFetching, setScheduleCronInvalid]);
+  }, [cronValid, blockForSchedule, scheduleCron, preflight.isFetching, setScheduleCronInvalid]);
 
   return (
     <ScheduleEditor
@@ -83,7 +76,7 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
       onRemove={() => setSchedule(null)}
       onValidityChange={setCronValid}
       // Gated on blockForSchedule, not cannotManage: see MonitoredTableSchedulingTab.
-      banner={blockForSchedule ? <ScheduleGrantWarning entity="collection" blockedTables={blockedTables} /> : undefined}
+      banner={blockForSchedule ? <ScheduleGrantWarning entity="collection" preflight={preflight} /> : undefined}
       footerNote={t("dataProducts.scheduleFooterNote")}
       emptyText={t("dataProducts.scheduleEmptyText")}
     />

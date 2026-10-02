@@ -77,3 +77,32 @@ class TestSaveRejectsReservedTablePrefix:
     def test_allows_name_containing_table_not_as_prefix(self, schedule_config_service, sql_executor_mock):
         schedule_config_service.save("my-table:x", {"k": "v"}, "alice@example.com")
         sql_executor_mock.upsert_with_audit.assert_called_once()
+
+
+def test_list_trackers_normalizes_runtime_rows(schedule_config_service, sql_executor_mock):
+    sql_executor_mock.query.return_value = [
+        ("table:b1", "2026-09-20T08:00:00Z", "2026-09-21T08:00:00Z", "run-1", "success", True),
+    ]
+    trackers = schedule_config_service.list_trackers()
+    tracker = trackers["table:b1"]
+    assert tracker.last_run_id == "run-1"
+    assert tracker.next_run_at == "2026-09-21T08:00:00Z"
+    assert tracker.status == "success"
+    assert tracker.paused is True
+
+
+def test_set_tracker_paused_preserves_schedule_configuration(schedule_config_service, sql_executor_mock):
+    schedule_config_service.set_tracker_paused("table:b1", True)
+    sql_executor_mock.upsert.assert_called_once()
+    _, kwargs = sql_executor_mock.upsert.call_args
+    assert kwargs["key_cols"] == {"schedule_name": "table:b1"}
+    assert kwargs["value_cols"]["paused"] is True
+    assert "status" not in kwargs["value_cols"]
+
+
+def test_resuming_keeps_the_last_run_outcome(schedule_config_service, sql_executor_mock):
+    schedule_config_service.set_tracker_paused("table:b1", False)
+    _, kwargs = sql_executor_mock.upsert.call_args
+    assert kwargs["value_cols"]["paused"] is False
+    assert "status" not in kwargs["value_cols"]
+    assert "next_run_at" not in kwargs["value_cols"]

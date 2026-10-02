@@ -265,6 +265,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   table: "resultsUi.chipTable",
   catalog: "resultsUi.chipCatalog",
   schema: "resultsUi.chipSchema",
+  outcome: "resultsUi.chipOutcome",
 };
 
 export interface MultiTableResultsSectionProps {
@@ -437,7 +438,8 @@ export function MultiTableResultsSection({
     filters.column.length > 0 ||
     filters.table.length > 0 ||
     filters.catalog.length > 0 ||
-    filters.schema.length > 0;
+    filters.schema.length > 0 ||
+    filters.outcome.length > 0;
 
   // The score label's "against N tables" count reflects the CURRENT scope:
   // when any facet is active it counts the tables actually in the filtered
@@ -631,10 +633,11 @@ export function MultiTableResultsSection({
     if (facet === "table") return friendlyTableName(value);
     // Schema chips show the bare schema name (the catalog has its own chip).
     if (facet === "schema") return friendlySchemaName(value);
+    if (facet === "outcome") return value === "failed" ? t("resultsUi.outcomeFailed") : t("resultsUi.outcomePassed");
     return value;
   };
   const chips = (
-    ["dimension", "severity", "rule", "column", "table", "catalog", "schema"] as const
+    ["dimension", "severity", "rule", "column", "table", "catalog", "schema", "outcome"] as const
   ).flatMap((facet) =>
     filters[facet].map((value) => ({
       key: `${facet}:${value}`,
@@ -912,6 +915,18 @@ export function MultiTableResultsSection({
               searchPlaceholder={t("resultsUi.filterSearchRules")}
               emptyText={t("resultsUi.filterNoRules")}
               ariaLabel={t("resultsUi.filterAllRules")}
+            />
+            <ResultsFacetFilter
+              allLabel={t("resultsUi.filterAllOutcomes")}
+              options={[
+                { value: "failed", label: t("resultsUi.outcomeFailed") },
+                { value: "passed", label: t("resultsUi.outcomePassed") },
+              ]}
+              selected={filters.outcome}
+              onChange={(v) => onFacetFilterChange("outcome", v)}
+              searchPlaceholder={t("resultsUi.filterSearchOutcomes")}
+              emptyText={t("resultsUi.filterNoOutcomes")}
+              ariaLabel={t("resultsUi.filterAllOutcomes")}
             />
           </div>
         </FadeIn>

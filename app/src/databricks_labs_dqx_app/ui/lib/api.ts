@@ -520,6 +520,8 @@ export interface BatchImportRegistryRulesIn {
   skip_duplicates?: boolean;
   /** Provenance recorded on each created rule (the RuleSourceBadge value). Defaults to 'import' for YAML/contract imports; the Marketplace sends 'marketplace' so its rules are distinguishable from file imports. */
   source?: string;
+  /** When true, rules whose slots are named after concrete columns (data contracts) are created as generic rules: slots renamed to 'column'/'column_N', a generic name, and no column-specific description. See ``slot_renames`` on each result. */
+  generalize_slots?: boolean;
 }
 
 /**
@@ -1013,12 +1015,26 @@ export interface CreateRegistryRuleIn {
 export type CreateRegistryRuleOutDedupWarning = string | null;
 
 /**
+ * Batch import only: index of the input rule this result is for
+ */
+export type CreateRegistryRuleOutInputIndex = number | null;
+
+/**
+ * Batch import only: input slot name -> slot name on the returned rule, when they differ (the input was matched to, or created as, a generic rule with different slot names).
+ */
+export type CreateRegistryRuleOutSlotRenames = {[key: string]: string};
+
+/**
  * Response for a successful create — includes a non-blocking dedup warning, if any.
  */
 export interface CreateRegistryRuleOut {
   rule: RegistryRuleOut;
   /** Non-blocking warning when a published rule shares this fingerprint */
   dedup_warning?: CreateRegistryRuleOutDedupWarning;
+  /** Batch import only: index of the input rule this result is for */
+  input_index?: CreateRegistryRuleOutInputIndex;
+  /** Batch import only: input slot name -> slot name on the returned rule, when they differ (the input was matched to, or created as, a generic rule with different slot names). */
+  slot_renames?: CreateRegistryRuleOutSlotRenames;
 }
 
 export interface CreateRoleMappingIn {
@@ -1972,6 +1988,75 @@ export interface HomeStatsOut {
   score_delta?: HomeStatsOutScoreDelta;
 }
 
+export type ImplementedRuleOutId = string | null;
+
+export type ImplementedRuleOutPinnedVersion = number | null;
+
+export type ImplementedRuleOutSeverityOverride = string | null;
+
+/**
+ * Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row.
+ */
+export type ImplementedRuleOutRowFilter = string | null;
+
+/**
+ * Per-rule minimum % of rows that must pass; None = no per-rule threshold.
+ */
+export type ImplementedRuleOutPassThreshold = number | null;
+
+/**
+ * Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata.
+ */
+export type ImplementedRuleOutColumnPassThresholds = {[key: string]: number};
+
+export type ImplementedRuleOutColumnMappingItem = {[key: string]: string};
+
+export type ImplementedRuleOutUserMetadata = { [key: string]: unknown };
+
+export type ImplementedRuleOutMappingHash = string | null;
+
+export type ImplementedRuleOutCreatedBy = string | null;
+
+export type ImplementedRuleOutCreatedAt = string | null;
+
+export type ImplementedRuleOutRuleName = string | null;
+
+export type ImplementedRuleOutRuleDimension = string | null;
+
+export type ImplementedRuleOutRuleSeverity = string | null;
+
+export type ImplementedRuleOutRulePassThreshold = number | null;
+
+export type ImplementedRuleOutRuleSource = string | null;
+
+/**
+ * One concrete registry-rule application, enriched with its monitored table's FQN.
+ */
+export interface ImplementedRuleOut {
+  id?: ImplementedRuleOutId;
+  binding_id: string;
+  rule_id: string;
+  pinned_version?: ImplementedRuleOutPinnedVersion;
+  severity_override?: ImplementedRuleOutSeverityOverride;
+  /** Per-rule SQL WHERE predicate scoping which rows this rule's check validates; None/blank = every row. */
+  row_filter?: ImplementedRuleOutRowFilter;
+  /** Per-rule minimum % of rows that must pass; None = no per-rule threshold. */
+  pass_threshold?: ImplementedRuleOutPassThreshold;
+  /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
+  column_pass_thresholds?: ImplementedRuleOutColumnPassThresholds;
+  column_mapping?: ImplementedRuleOutColumnMappingItem[];
+  user_metadata?: ImplementedRuleOutUserMetadata;
+  mapping_hash?: ImplementedRuleOutMappingHash;
+  created_by?: ImplementedRuleOutCreatedBy;
+  created_at?: ImplementedRuleOutCreatedAt;
+  rule_name?: ImplementedRuleOutRuleName;
+  rule_dimension?: ImplementedRuleOutRuleDimension;
+  rule_severity?: ImplementedRuleOutRuleSeverity;
+  rule_pass_threshold?: ImplementedRuleOutRulePassThreshold;
+  rule_source?: ImplementedRuleOutRuleSource;
+  table_fqn: string;
+}
+
 export type InputConfigSchema = string | null;
 
 export type InputConfigOptions = {[key: string]: string};
@@ -2629,6 +2714,10 @@ export type PendingApplicationOutRuleStatus = string | null;
 
 export type PendingApplicationOutColumnMappingItem = {[key: string]: string};
 
+export type PendingApplicationOutRowFilter = string | null;
+
+export type PendingApplicationOutPassThreshold = number | null;
+
 export type PendingApplicationOutCreatedBy = string | null;
 
 export type PendingApplicationOutCreatedAt = string | null;
@@ -2650,6 +2739,8 @@ export interface PendingApplicationOut {
   rule_name?: PendingApplicationOutRuleName;
   rule_status?: PendingApplicationOutRuleStatus;
   column_mapping?: PendingApplicationOutColumnMappingItem[];
+  row_filter?: PendingApplicationOutRowFilter;
+  pass_threshold?: PendingApplicationOutPassThreshold;
   created_by?: PendingApplicationOutCreatedBy;
   created_at?: PendingApplicationOutCreatedAt;
 }
@@ -2974,6 +3065,16 @@ export interface QuarantineRecordOut {
 export type RecordPendingApplicationInColumnMappingItem = {[key: string]: string};
 
 /**
+ * Per-rule SQL WHERE predicate carried to the application on approval; None/blank = every row. Validated for SQL safety when the rule is approved and applied.
+ */
+export type RecordPendingApplicationInRowFilter = string | null;
+
+/**
+ * Per-rule minimum % of rows that must pass, carried to the application on approval.
+ */
+export type RecordPendingApplicationInPassThreshold = number | null;
+
+/**
  * One staged (binding, rule, mapping) application awaiting the rule's approval.
  */
 export interface RecordPendingApplicationIn {
@@ -2983,6 +3084,10 @@ export interface RecordPendingApplicationIn {
   rule_id: string;
   /** One slot-name -> column-name mapping group per materialized check; may be empty for whole-table rules (no slots). */
   column_mapping?: RecordPendingApplicationInColumnMappingItem[];
+  /** Per-rule SQL WHERE predicate carried to the application on approval; None/blank = every row. Validated for SQL safety when the rule is approved and applied. */
+  row_filter?: RecordPendingApplicationInRowFilter;
+  /** Per-rule minimum % of rows that must pass, carried to the application on approval. */
+  pass_threshold?: RecordPendingApplicationInPassThreshold;
 }
 
 /**
@@ -3127,6 +3232,8 @@ export interface RegistryRuleOut {
   owner?: RegistryRuleOutOwner;
   /** Human-readable display name for the owner; falls back to the owner email when null. */
   owner_display_name?: RegistryRuleOutOwnerDisplayName;
+  /** True when the owner matched no Databricks user, group, or service principal (e.g. a mistyped imported email). Transient; set on the list / detail read paths only. */
+  owner_unverified?: boolean;
   is_builtin?: boolean;
   source?: RegistryRuleOutSource;
   /** Author's change rationale while status is pending_approval. */
@@ -4128,6 +4235,68 @@ export interface ScheduleConfigOut {
   updated_at?: ScheduleConfigOutUpdatedAt;
 }
 
+export type ScheduleOverviewOutSourceType = typeof ScheduleOverviewOutSourceType[keyof typeof ScheduleOverviewOutSourceType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ScheduleOverviewOutSourceType = {
+  table: 'table',
+  collection: 'collection',
+  scope: 'scope',
+} as const;
+
+export type ScheduleOverviewOutCron = string | null;
+
+export type ScheduleOverviewOutTimezone = string | null;
+
+export type ScheduleOverviewOutFrequency = string | null;
+
+export type ScheduleOverviewOutScheduleKind = 'profiling_only' | 'dq_only' | 'profiling_and_dq' | null;
+
+export type ScheduleOverviewOutSampleSize = number | null;
+
+export type ScheduleOverviewOutOwner = string | null;
+
+export type ScheduleOverviewOutUpdatedBy = string | null;
+
+export type ScheduleOverviewOutUpdatedAt = string | null;
+
+export type ScheduleOverviewOutLastRunAt = string | null;
+
+export type ScheduleOverviewOutNextRunAt = string | null;
+
+export type ScheduleOverviewOutLastRunId = string | null;
+
+export type ScheduleOverviewOutRunStatus = string | null;
+
+/**
+ * One normalized schedule definition with its scheduler runtime state.
+ */
+export interface ScheduleOverviewOut {
+  source_type: ScheduleOverviewOutSourceType;
+  source_id: string;
+  name: string;
+  target: string;
+  cron?: ScheduleOverviewOutCron;
+  timezone?: ScheduleOverviewOutTimezone;
+  frequency?: ScheduleOverviewOutFrequency;
+  schedule_kind?: ScheduleOverviewOutScheduleKind;
+  sample_size?: ScheduleOverviewOutSampleSize;
+  enabled?: boolean;
+  paused?: boolean;
+  owner?: ScheduleOverviewOutOwner;
+  updated_by?: ScheduleOverviewOutUpdatedBy;
+  updated_at?: ScheduleOverviewOutUpdatedAt;
+  last_run_at?: ScheduleOverviewOutLastRunAt;
+  next_run_at?: ScheduleOverviewOutNextRunAt;
+  last_run_id?: ScheduleOverviewOutLastRunId;
+  run_status?: ScheduleOverviewOutRunStatus;
+}
+
+export interface SchedulePauseIn {
+  paused: boolean;
+}
+
 /**
  * Body of ``POST /schedule-grants/preflight`` — the table(s) about to be scheduled.
  */
@@ -4150,11 +4319,17 @@ export interface SchedulePreflightOut {
 service principals (they own the table/schema/catalog or hold MANAGE,
 directly or via a group). When ``False`` the schedule save is hard-blocked
 and ``manage_holders`` names who to ask instead.
+
+``access_unverified`` is ``True`` when the SQL warehouse gave no answer
+(e.g. still starting) and the caller lacks MANAGE, so grantability is
+unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
+the user to retry.
  */
 export interface SchedulePreflightTableOut {
   fqn: string;
   can_manage: boolean;
   manage_holders?: ManageHolderOut[];
+  access_unverified?: boolean;
 }
 
 export type SchemaOutComment = string | null;
@@ -5041,6 +5216,8 @@ export interface WorkspaceHostOut {
   job_id?: string;
 }
 
+export type SetSchedulePaused200 = {[key: string]: boolean};
+
 export type DeleteSchedule200 = {[key: string]: string};
 
 export type DeleteRoleMapping200 = {[key: string]: string};
@@ -5155,6 +5332,17 @@ schema?: string | null;
 name?: string | null;
 };
 
+export type ListImplementedRulesParams = {
+/**
+ * Only this monitored table's rule applications
+ */
+binding_id?: string | null;
+/**
+ * Only this registry rule's applications
+ */
+rule_id?: string | null;
+};
+
 export type DeleteMonitoredTable200 = {[key: string]: string};
 
 export type RemoveAppliedRule200 = {[key: string]: string};
@@ -5267,6 +5455,7 @@ column?: string[] | null;
 table?: string[] | null;
 catalog?: string[] | null;
 schema?: string[] | null;
+outcome?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -9932,6 +10121,218 @@ export const useSaveSchedule = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getSaveScheduleMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List table, collection, and named-scope schedules in one normalized view.
+ * @summary List Schedule Overview
+ */
+export const listScheduleOverview = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScheduleOverviewOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/schedules/overview`,options
+    );
+  }
+
+
+
+
+export const getListScheduleOverviewQueryKey = () => {
+    return [
+    `/api/v1/schedules/overview`
+    ] as const;
+    }
+
+    
+export const getListScheduleOverviewQueryOptions = <TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScheduleOverviewQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScheduleOverview>>> = ({ signal }) => listScheduleOverview({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListScheduleOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof listScheduleOverview>>>
+export type ListScheduleOverviewQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListScheduleOverview<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listScheduleOverview>>,
+          TError,
+          Awaited<ReturnType<typeof listScheduleOverview>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListScheduleOverview<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listScheduleOverview>>,
+          TError,
+          Awaited<ReturnType<typeof listScheduleOverview>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListScheduleOverview<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Schedule Overview
+ */
+
+export function useListScheduleOverview<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListScheduleOverviewQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListScheduleOverviewSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScheduleOverviewQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScheduleOverview>>> = ({ signal }) => listScheduleOverview({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListScheduleOverviewSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listScheduleOverview>>>
+export type ListScheduleOverviewSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListScheduleOverviewSuspense<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListScheduleOverviewSuspense<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListScheduleOverviewSuspense<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Schedule Overview
+ */
+
+export function useListScheduleOverviewSuspense<TData = Awaited<ReturnType<typeof listScheduleOverview>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listScheduleOverview>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListScheduleOverviewSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Pause or resume a table or collection schedule without deleting its configuration.
+ * @summary Set Schedule Paused
+ */
+export const setSchedulePaused = (
+    sourceType: 'table' | 'collection',
+    sourceId: string,
+    schedulePauseIn: SchedulePauseIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetSchedulePaused200>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/schedules/overview/${sourceType}/${sourceId}/paused`,
+      schedulePauseIn,options
+    );
+  }
+
+
+
+export const getSetSchedulePausedMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSchedulePaused>>, TError,{sourceType: 'table' | 'collection';sourceId: string;data: SchedulePauseIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setSchedulePaused>>, TError,{sourceType: 'table' | 'collection';sourceId: string;data: SchedulePauseIn}, TContext> => {
+
+const mutationKey = ['setSchedulePaused'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setSchedulePaused>>, {sourceType: 'table' | 'collection';sourceId: string;data: SchedulePauseIn}> = (props) => {
+          const {sourceType,sourceId,data} = props ?? {};
+
+          return  setSchedulePaused(sourceType,sourceId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetSchedulePausedMutationResult = NonNullable<Awaited<ReturnType<typeof setSchedulePaused>>>
+    export type SetSchedulePausedMutationBody = SchedulePauseIn
+    export type SetSchedulePausedMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Schedule Paused
+ */
+export const useSetSchedulePaused = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSchedulePaused>>, TError,{sourceType: 'table' | 'collection';sourceId: string;data: SchedulePauseIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setSchedulePaused>>,
+        TError,
+        {sourceType: 'table' | 'collection';sourceId: string;data: SchedulePauseIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetSchedulePausedMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -15445,6 +15846,162 @@ export const useRegisterMonitoredTable = <TError = AxiosError<HTTPValidationErro
     }
     
 /**
+ * List rule applications, enriched with each monitored table's FQN and the rule's tags.
+
+Scoped reads power the lazy row expansions on the overviews: *binding_id*
+lists one table's applied rules (Tables overview), *rule_id* lists the
+tables one rule is applied to (Rules overview). With neither, every
+application is listed. Each scope is a single filtered query plus one
+batched table-FQN lookup and one batched rule lookup. Applications whose
+binding no longer resolves to a monitored table are skipped.
+ * @summary List Implemented Rules
+ */
+export const listImplementedRules = (
+    params?: ListImplementedRulesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ImplementedRuleOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/implemented-rules`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListImplementedRulesQueryKey = (params?: ListImplementedRulesParams,) => {
+    return [
+    `/api/v1/monitored-tables/implemented-rules`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListImplementedRulesQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListImplementedRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listImplementedRules>>>
+export type ListImplementedRulesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListImplementedRulesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listImplementedRules>>,
+          TError,
+          Awaited<ReturnType<typeof listImplementedRules>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listImplementedRules>>,
+          TError,
+          Awaited<ReturnType<typeof listImplementedRules>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Implemented Rules
+ */
+
+export function useListImplementedRules<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListImplementedRulesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListImplementedRulesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListImplementedRulesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listImplementedRules>>> = ({ signal }) => listImplementedRules(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListImplementedRulesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listImplementedRules>>>
+export type ListImplementedRulesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params: undefined |  ListImplementedRulesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Implemented Rules
+ */
+
+export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeof listImplementedRules>>, TError = AxiosError<HTTPValidationError>>(
+ params?: ListImplementedRulesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listImplementedRules>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListImplementedRulesSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
 When tag-auto-apply is on, first runs a selective apply-on-tag rescan for
@@ -15673,10 +16230,14 @@ Already-monitored tables and syntactically invalid FQNs are reported
 back in the summary rather than failing the whole batch — see
 :meth:`MonitoredTableService.bulk_register`.
 
+Every syntactically valid FQN is first verified in Unity Catalog with the
+caller's OBO identity. If any table does not exist or is not accessible,
+the whole import is rejected (422, listing the tables) before any binding
+is written — otherwise the caller would be left with bindings that can
+never be profiled or run.
+
 Unlike single register, bulk register does **not** resolve each table's
-Unity Catalog owner: that would be one ``tables.get`` round-trip per table
-(N calls, plus rate-limit exposure) on a path meant for onboarding many
-tables quickly. When no owner is pinned, every binding defaults to the
+Unity Catalog owner. When no owner is pinned, every binding defaults to the
 creator; a per-table owner can be assigned afterwards from the table's
 Permissions tab.
  * @summary Bulk Register Monitored Tables
@@ -21471,6 +22032,7 @@ Draft runs are excluded unless *include_drafts*. *table* (P7.2) is
 the By-table cross-filter: a repeatable list of member FQNs, applied
 app-side like the other four facets (the rows it filters are already
 catalog-gated, so an inaccessible value simply matches nothing).
+*outcome* keeps only ``passed`` or ``failed`` checks.
 
 Concurrent member runs of one run set are consolidated onto their
 RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
@@ -24379,7 +24941,8 @@ export function useGetDataProductSuspense<TData = Awaited<ReturnType<typeof getD
 
 
 /**
- * Apply a partial update. Any successful update flips the space back to ``draft``.
+ * Apply a partial update. A definition edit flips the space back to ``draft``;
+a schedule-only update keeps its current status (see ``DataProductService.update``).
 
 Requires ``MODIFY`` on the table space (direct/inherited/owner) unless the
 caller is an admin/approver.
