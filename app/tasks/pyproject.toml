@@ -9,7 +9,6 @@ dependencies = [
     # declared here (unpinned) so the entry point resolves at build/lint time.
     "databricks-labs-dqx",
     "databricks-sdk~=0.120",
-    "psycopg[binary]>=3.2",
 ]
 
 [project.scripts]
