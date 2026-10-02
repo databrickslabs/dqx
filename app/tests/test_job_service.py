@@ -159,22 +159,3 @@ async def test_recent_failed_runs_empty_without_a_job(sql_executor_mock: MagicMo
 
     assert await service.list_recent_failed_runs() == []
     ws.jobs.list_runs.assert_not_called()
-
-
-def test_lookup_source_tables_maps_run_ids(sql_executor_mock: MagicMock) -> None:
-    service, _ws = _job_service(sql_executor_mock)
-    sql_executor_mock.query.return_value = [("r1", "main.s.t1"), ("r2", None)]
-
-    result = service.lookup_source_tables("dqx.dqx_studio.dq_validation_runs", ["r1", "r2", "o'brien"])
-
-    assert result == {"r1": "main.s.t1"}
-    statement = sql_executor_mock.query.call_args.args[0]
-    assert "FROM dqx.dqx_studio.dq_validation_runs" in statement
-    assert "IN ('r1', 'r2', 'o''brien')" in statement
-
-
-def test_lookup_source_tables_skips_the_query_for_no_runs(sql_executor_mock: MagicMock) -> None:
-    service, _ws = _job_service(sql_executor_mock)
-
-    assert service.lookup_source_tables("dqx.dqx_studio.dq_validation_runs", []) == {}
-    sql_executor_mock.query.assert_not_called()

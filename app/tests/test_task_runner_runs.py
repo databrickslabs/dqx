@@ -63,6 +63,13 @@ class TestParseTaskRunnerRun:
 
         assert run is not None and run.source_table_fqn is None
 
+    def test_staged_config_stub_still_names_its_table_and_preview_flag(self):
+        run = parse_task_runner_run(
+            make_run(config={"__manifest__": True, "source_table_fqn": "main.sales.big", "skip_history": True})
+        )
+
+        assert run is not None and run.source_table_fqn == "main.sales.big" and run.is_preview
+
     def test_unparseable_config_has_no_source_table(self):
         run = parse_task_runner_run(make_run(config="not json"))
 
