@@ -861,7 +861,7 @@ export function MultiTableResultsSection({
           )}
           {runPickerSlot}
         </div>
-        <div className="sm:pr-2">{scoreBox}</div>
+        <div>{scoreBox}</div>
       </FadeIn>
 
       {/* Item 35: top-level facet dropdowns just below the overall score card
