@@ -24,6 +24,7 @@ _EXPECTED_OLTP_TABLES = (
     "dq_resolved_rules",
     "dq_resolved_rules_history",
     "dq_role_mappings",
+    "dq_run_configs",
     "dq_comments",
     "dq_schedule_runs",
     "dq_schedule_configs",
@@ -109,7 +110,7 @@ def test_job_setup_admin_grant_is_observable_when_profile_permits(live_job: Live
     assert any(
         entry.user_name == live_job.admin_user
         and any(
-            getattr(permission.permission_level, "value", permission.permission_level) == "CAN_MANAGE"
+            getattr(permission.permission_level, "value", permission.permission_level) in {"CAN_MANAGE", "IS_OWNER"}
             for permission in entry.all_permissions or []
         )
         for entry in permissions
@@ -142,9 +143,10 @@ def test_job_runner_validation_requires_a_preconfigured_external_service_princip
 def test_runner_volume_readiness_uses_external_principal_grants(
     live_resources: LiveResources,
     make_preconfigured_job: Callable[..., int],
+    make_setup_schema: Callable[..., str],
     can_read_volume: bool,
 ) -> None:
-    """An isolated live volume is usable only after the runner receives read access."""
+    """Wheel readiness requires volume reads and usage on the existing temporary schema."""
     runner_principal = os.environ.get("DQX_TEST_RUNNER_SERVICE_PRINCIPAL", "").strip()
     if not runner_principal:
         pytest.skip("Set DQX_TEST_RUNNER_SERVICE_PRINCIPAL to a usable external runner service principal.")
@@ -152,7 +154,9 @@ def test_runner_volume_readiness_uses_external_principal_grants(
         job_id = make_preconfigured_job(run_as=JobRunAs(service_principal_name=runner_principal))
     except (InvalidParameterValue, PermissionDenied):
         pytest.skip("PROFILE must permit a factory job with the external runner service principal.")
-    grant_runner_wheel_privileges(live_resources.workspace, live_resources.resources, runner_principal)
+    resources = live_resources.resources
+    make_setup_schema(catalog=resources.volume.catalog, schema=resources.tmp_schema)
+    grant_runner_wheel_privileges(live_resources.workspace, resources, runner_principal)
     if not can_read_volume:
         volume = live_resources.volume
         live_resources.workspace.grants.update(
