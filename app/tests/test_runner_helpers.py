@@ -657,6 +657,17 @@ class TestResolveRunConfig:
         assert '"sch"."dq_run_configs"' in table
         assert "run1" in table
 
+    def test_manifest_jdbc_read_bounds_socket(self, runner_module):
+        # The manifest read is a single-row lookup, so it carries a bounded
+        # socketTimeout: pgjdbc defaults it to 0 (infinite) and there is no
+        # job-level timeout backstop, so without it a stalled Lakebase endpoint
+        # would hang the run and the retry loop could never fire.
+        ws = MagicMock(name="ws")
+        spark = _FakeSpark(read_results=[[{"config": json.dumps({"checks": []})}]])
+        runner_module._resolve_run_config(spark, ws, {"__manifest__": True}, _conn(runner_module), "run1")
+        props = spark.read.calls[0]["properties"]
+        assert props["socketTimeout"] == "60"
+
     def test_legacy_volume_stub_reads_from_file(self, runner_module):
         ws = MagicMock(name="ws")
         spark = _FakeSpark()

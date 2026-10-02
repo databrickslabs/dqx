@@ -328,6 +328,17 @@ def _lakebase_jdbc(ws: WorkspaceClient, conn: _LakebaseConn) -> tuple[str, dict[
         "password": credential.token,
         "driver": "org.postgresql.Driver",
         "sslmode": "require",
+        # Bound the read phase (seconds). pgjdbc defaults socketTimeout=0
+        # (infinite) and there is no job-level timeout backstop, so a Lakebase
+        # endpoint that accepts the socket but then stalls would otherwise hang
+        # the run indefinitely — and the retry/backoff loop in
+        # _read_manifest_config can't interrupt a single stalled .collect().
+        # This connection only ever runs the single-row manifest-config lookup
+        # (never a long analytical query — DQ reads go through Spark, not here),
+        # so a tight bound is safe and simply lets a stalled attempt fail fast
+        # and be retried. The connect phase keeps pgjdbc's bounded 10s default,
+        # which the retry loop covers across a Lakebase cold-start resume.
+        "socketTimeout": "60",
     }
     return url, properties
 
