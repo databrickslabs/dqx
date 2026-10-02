@@ -1,4 +1,3 @@
-import asyncio
 import json
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -241,7 +240,6 @@ _VALIDATION_TASK_TYPES = frozenset({"dryrun", "scheduled"})
 async def list_recent_validation_failures(
     job_svc: Annotated[JobService, Depends(get_job_service)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> list[RunFailureOut]:
     """Return recently-failed validation runs, bounded to the most recent *N*.
 
@@ -253,16 +251,11 @@ async def list_recent_validation_failures(
     """
     try:
         failed = [run for run in await job_svc.list_recent_failed_runs() if run.task_type in _VALIDATION_TASK_TYPES]
-        # Oversized configs are staged out of the job parameters, so only the
-        # run table can name their source table — a rare, failure-only lookup.
-        staged = [run.app_run_id for run in failed if not run.source_table_fqn]
-        staged_tables = (
-            await asyncio.to_thread(job_svc.lookup_source_tables, sql.fqn(_DRYRUN_TABLE), staged) if staged else {}
-        )
 
         results: list[RunFailureOut] = []
         for run in failed:
-            fqn = run.source_table_fqn or staged_tables.get(run.app_run_id) or ""
+            # A run with no table cannot pass the catalog filter, so it is skipped.
+            fqn = run.source_table_fqn or ""
             if not fqn or (not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs):
                 continue
             results.append(

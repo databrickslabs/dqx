@@ -79,7 +79,7 @@ class JobService:
             config=config,
             job_parameters_without_config=base_params,
         )
-        staged = config_json == build_manifest_config_payload()
+        staged = config_json == build_manifest_config_payload(config)
 
         try:
             run = self._ws.jobs.run_now(
@@ -124,20 +124,6 @@ class JobService:
             return []
         runs = await cached_recent_completed_runs(self._ws, self._job_id)
         return [run for run in runs if run.is_failed and not run.is_preview]
-
-    def lookup_source_tables(self, table: str, run_ids: list[str]) -> dict[str, str]:
-        """Map *run_ids* to their ``source_table_fqn`` from the run table *table*.
-
-        Only needed for runs whose config was staged out of the job parameters
-        (oversized configs), so the Jobs API alone cannot name their table.
-        """
-        if not run_ids:
-            return {}
-        in_list = ", ".join(f"'{escape_sql_string(run_id)}'" for run_id in run_ids)
-        rows = self._sql.query(
-            f"SELECT DISTINCT run_id, source_table_fqn FROM {table} WHERE run_id IN ({in_list})"  # noqa: S608
-        )
-        return {row[0]: row[1] for row in rows if row and row[0] and len(row) > 1 and row[1]}
 
     def get_run_creator(self, job_run_id: int) -> str | None:
         """Return the requesting end-user for a job run, or None if unavailable.

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Annotated
 from uuid import uuid4
@@ -262,19 +261,13 @@ async def list_recent_profile_failures(
     """
     try:
         failed = [run for run in await job_svc.list_recent_failed_runs() if run.task_type == "profile"]
-        # Oversized configs are staged out of the job parameters, so only the
-        # run table can name their source table — a rare, failure-only lookup.
-        staged = [run.app_run_id for run in failed if not run.source_table_fqn]
-        staged_tables = (
-            await asyncio.to_thread(job_svc.lookup_source_tables, _run_table_fqn(), staged) if staged else {}
-        )
 
         results: list[RunFailureOut] = []
         for run in failed:
             results.append(
                 RunFailureOut(
                     run_id=run.app_run_id,
-                    source_table_fqn=run.source_table_fqn or staged_tables.get(run.app_run_id) or "",
+                    source_table_fqn=run.source_table_fqn or "",
                     status="FAILED",
                     created_at=run.created_at,
                 )
