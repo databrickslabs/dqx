@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -227,6 +228,8 @@ async def list_validation_runs(
 
 
 _RECENT_FAILURES_LIMIT = 50
+# Task-runner ``task_type`` values that write ``dq_validation_runs`` rows.
+_VALIDATION_TASK_TYPES = frozenset({"dryrun", "scheduled"})
 
 
 @router.get(
@@ -235,46 +238,35 @@ _RECENT_FAILURES_LIMIT = 50
     operation_id="listRecentValidationFailures",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-def list_recent_validation_failures(
+async def list_recent_validation_failures(
     job_svc: Annotated[JobService, Depends(get_job_service)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> list[RunFailureOut]:
     """Return recently-failed validation runs, bounded to the most recent *N*.
 
     Intended for the app-wide toast watcher: returns FAILED runs only with
-    minimal fields (run_id, source_table_fqn, status, created_at). The
-    endpoint is cheap by construction — no error_message, no counts, no
-    review-status join. The full run history is still available via
-    ``GET /dryrun/runs`` for the Runs History page.
+    minimal fields (run_id, source_table_fqn, status, created_at). Every open
+    tab polls this, so it reads the task-runner job runs from the Jobs API
+    instead of ``dq_validation_runs`` and never keeps the SQL warehouse awake.
+    The full run history is still available via ``GET /dryrun/runs``.
     """
     try:
-        table = sql.fqn(_DRYRUN_TABLE)
-        rows = job_svc.list_dryrun_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
-
-        # Reconcile stale RUNNING placeholders so the failure list stays
-        # accurate even when the task runner crashed before writing a result.
-        # Best-effort — never let it break the listing.
-        try:
-            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
-        except Exception as exc:
-            logger.warning("Failed to reconcile RUNNING validation runs (recent-failures): %s", exc)
+        failed = [run for run in await job_svc.list_recent_failed_runs() if run.task_type in _VALIDATION_TASK_TYPES]
+        # Oversized configs are staged out of the job parameters, so only the
+        # run table can name their source table — a rare, failure-only lookup.
+        staged = [run.app_run_id for run in failed if not run.source_table_fqn]
+        staged_tables = (
+            await asyncio.to_thread(job_svc.lookup_source_tables, sql.fqn(_DRYRUN_TABLE), staged) if staged else {}
+        )
 
         results: list[RunFailureOut] = []
-        for row in rows:
-            if row.get("status") != "FAILED":
-                continue
-            fqn = row.get("source_table_fqn") or ""
-            if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+        for run in failed:
+            fqn = run.source_table_fqn or staged_tables.get(run.app_run_id) or ""
+            if not fqn or (not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs):
                 continue
             results.append(
-                RunFailureOut(
-                    run_id=row.get("run_id") or "",
-                    source_table_fqn=fqn,
-                    status="FAILED",
-                    created_at=row.get("created_at"),
-                )
+                RunFailureOut(run_id=run.app_run_id, source_table_fqn=fqn, status="FAILED", created_at=run.created_at)
             )
             if len(results) >= _RECENT_FAILURES_LIMIT:
                 break

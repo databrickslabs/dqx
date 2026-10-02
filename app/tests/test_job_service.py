@@ -123,3 +123,67 @@ def test_workspace_host_uses_resolved_setup_job_id() -> None:
         setup_runtime.job_id = previous_job_id
 
     assert response.job_id == "42"
+
+
+def _job_service(sql: MagicMock, job_id: str = "7") -> tuple[JobService, MagicMock]:
+    from databricks.sdk import WorkspaceClient
+
+    ws = create_autospec(WorkspaceClient, instance=True)
+    return JobService(ws=ws, job_id=job_id, sql=sql), ws
+
+
+async def test_recent_failed_runs_come_from_the_jobs_api_not_the_warehouse(sql_executor_mock: MagicMock) -> None:
+    from databricks.sdk.service.jobs import BaseRun, JobParameter, RunLifeCycleState, RunResultState, RunState
+
+    def run(app_run_id: str, result: RunResultState, config: str = '{"source_table_fqn": "main.s.t"}') -> BaseRun:
+        return BaseRun(
+            run_id=len(app_run_id),
+            job_parameters=[
+                JobParameter(name="run_id", value=app_run_id),
+                JobParameter(name="task_type", value="dryrun"),
+                JobParameter(name="config_json", value=config),
+            ],
+            state=RunState(life_cycle_state=RunLifeCycleState.TERMINATED, result_state=result),
+        )
+
+    service, ws = _job_service(sql_executor_mock)
+    ws.jobs.list_runs.return_value = iter(
+        [
+            run("ok", RunResultState.SUCCESS),
+            run("failed", RunResultState.FAILED),
+            run("preview", RunResultState.FAILED, config='{"source_table_fqn": "main.s.t", "skip_history": true}'),
+            run("canceled", RunResultState.CANCELED),
+        ]
+    )
+
+    failed = await service.list_recent_failed_runs()
+
+    assert [r.app_run_id for r in failed] == ["failed"]
+    sql_executor_mock.query.assert_not_called()
+    sql_executor_mock.query_dicts.assert_not_called()
+
+
+async def test_recent_failed_runs_empty_without_a_job(sql_executor_mock: MagicMock) -> None:
+    service, ws = _job_service(sql_executor_mock, job_id="")
+
+    assert await service.list_recent_failed_runs() == []
+    ws.jobs.list_runs.assert_not_called()
+
+
+def test_lookup_source_tables_maps_run_ids(sql_executor_mock: MagicMock) -> None:
+    service, _ws = _job_service(sql_executor_mock)
+    sql_executor_mock.query.return_value = [("r1", "main.s.t1"), ("r2", None)]
+
+    result = service.lookup_source_tables("dqx.dqx_studio.dq_validation_runs", ["r1", "r2", "o'brien"])
+
+    assert result == {"r1": "main.s.t1"}
+    statement = sql_executor_mock.query.call_args.args[0]
+    assert "FROM dqx.dqx_studio.dq_validation_runs" in statement
+    assert "IN ('r1', 'r2', 'o''brien')" in statement
+
+
+def test_lookup_source_tables_skips_the_query_for_no_runs(sql_executor_mock: MagicMock) -> None:
+    service, _ws = _job_service(sql_executor_mock)
+
+    assert service.lookup_source_tables("dqx.dqx_studio.dq_validation_runs", []) == {}
+    sql_executor_mock.query.assert_not_called()

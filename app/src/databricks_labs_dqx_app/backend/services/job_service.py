@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     delete_staged_config,
     prepare_config_json,
 )
+from databricks_labs_dqx_app.backend.services.task_runner_runs import TaskRunnerRun, cached_recent_completed_runs
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -112,6 +113,31 @@ class JobService:
             result_state=state.result_state.value if state and state.result_state else None,
             message=state.state_message if state else None,
         )
+
+    async def list_recent_failed_runs(self) -> list[TaskRunnerRun]:
+        """Return the failed, non-preview runs among the most recent completed runs, newest first.
+
+        Read from the Jobs API (shared 30s cache), never the SQL warehouse, so the
+        app-wide failure-toast poll does not keep the warehouse running.
+        """
+        if not self._job_id:
+            return []
+        runs = await cached_recent_completed_runs(self._ws, self._job_id)
+        return [run for run in runs if run.is_failed and not run.is_preview]
+
+    def lookup_source_tables(self, table: str, run_ids: list[str]) -> dict[str, str]:
+        """Map *run_ids* to their ``source_table_fqn`` from the run table *table*.
+
+        Only needed for runs whose config was staged out of the job parameters
+        (oversized configs), so the Jobs API alone cannot name their table.
+        """
+        if not run_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(run_id)}'" for run_id in run_ids)
+        rows = self._sql.query(
+            f"SELECT DISTINCT run_id, source_table_fqn FROM {table} WHERE run_id IN ({in_list})"  # noqa: S608
+        )
+        return {row[0]: row[1] for row in rows if row and row[0] and len(row) > 1 and row[1]}
 
     def get_run_creator(self, job_run_id: int) -> str | None:
         """Return the requesting end-user for a job run, or None if unavailable.
