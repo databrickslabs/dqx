@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
@@ -19,6 +20,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
 def _passed(step_id: SetupStepId) -> SetupStep:
@@ -39,6 +41,9 @@ def _action_required(step_id: SetupStepId, code: str) -> SetupStep:
 class FakeCheckers:
     events: list[str]
     results: dict[SetupStepId, SetupStep] = field(default_factory=dict)
+    runner_reader: WorkspaceClient | None = None
+    runner_sql: SqlExecutor | None = None
+    output_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
@@ -52,6 +57,21 @@ class FakeCheckers:
 
     def check_unity_catalog(self) -> SetupStep:
         return self._result(SetupStepId.UNITY_CATALOG)
+
+    def check_runner_access(
+        self,
+        job_id: int,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+        include_outputs: bool = False,
+    ) -> SetupStep:
+        self.events.append(f"runner_outputs:{job_id}" if include_outputs else f"runner_volume:{job_id}")
+        self.runner_reader = reader_ws
+        self.runner_sql = reader_sql
+        if include_outputs:
+            return self.output_result
+        return self.results.get(SetupStepId.TASK_RUNNER, _passed(SetupStepId.TASK_RUNNER))
 
     def ensure_sibling_schemas(self) -> SetupStep:
         return self._result(SetupStepId.SCHEMAS)
@@ -239,6 +259,65 @@ async def test_reconcile_stops_at_external_run_as_action(resources: ActiveResour
     assert "publish_wheels" not in fixture.events
     assert "pg_migrations" not in fixture.events
     assert "delta_migrations" not in fixture.events
+
+
+@pytest.mark.asyncio
+async def test_reconcile_blocks_wheel_publication_until_runner_can_read_volume(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    fixture.checkers.results[SetupStepId.TASK_RUNNER] = _action_required(
+        SetupStepId.TASK_RUNNER, "task_runner_permissions_missing"
+    )
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.TASK_RUNNER
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_permissions_missing"
+    assert "publish_wheels" not in fixture.events
+    assert "pg_migrations" not in fixture.events
+    assert "activate" not in fixture.events
+
+    del fixture.checkers.results[SetupStepId.TASK_RUNNER]
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert fixture.events.index("runner_volume:27") < fixture.events.index("publish_wheels")
+
+
+@pytest.mark.asyncio
+async def test_runner_output_permissions_block_activation_after_migrations(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    fixture.checkers.output_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_permissions_missing")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.TASK_RUNNER
+    assert "delta_migrations" in fixture.events
+    assert "activate" not in fixture.events
+    assert not any(event.startswith("persist:") for event in fixture.events)
+
+    fixture.checkers.output_result = _passed(SetupStepId.TASK_RUNNER)
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert fixture.events.index("runner_outputs:27") > fixture.events.index("delta_migrations")
+    assert sum(step.id == SetupStepId.TASK_RUNNER for step in report.steps) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_passes_request_scoped_admin_reader_to_runner_check(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader_sql = create_autospec(SqlExecutor, instance=True)
+
+    report = await fixture.orchestrator.reconcile(
+        setup_user="admin@example.com", reader_ws=reader, reader_sql=reader_sql
+    )
+
+    assert report.state == SetupState.READY
+    assert fixture.checkers.runner_reader is reader
+    assert fixture.checkers.runner_sql is reader_sql
 
 
 @pytest.mark.asyncio

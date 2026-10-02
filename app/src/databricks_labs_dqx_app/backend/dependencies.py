@@ -1275,6 +1275,20 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     return orchestrator
 
 
+def get_setup_sql_executor(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+) -> SqlExecutor:
+    """Inspect setup grants with OBO SQL before application resources are activated."""
+    resources = orchestrator.resources
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
+
+
 def sanitize_setup_display(value: str | None) -> str | None:
     """Strip control characters from setup-related user and group display values."""
     if value is None:

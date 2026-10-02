@@ -379,6 +379,12 @@ def app_live_setup(
         live_resources.volume.volume,
         app_identity,
     )
+    grant_runner_wheel_privileges(live_resources.workspace, resources, runner_principal)
+    live_resources.workspace.grants.update(
+        "SCHEMA",
+        f"{resources.volume.catalog}.{resources.volume.schema}",
+        changes=[PermissionsChange(principal=runner_principal, add=[Privilege.SELECT, Privilege.MODIFY])],
+    )
     sql = SqlExecutor(
         ws=app_workspace,
         warehouse_id=resources.warehouse_id,
@@ -473,3 +479,14 @@ def _workspace_identity(workspace: WorkspaceClient) -> str:
     if not value:
         raise RuntimeError("The authenticated profile did not return an identity.")
     return value
+
+
+def grant_runner_wheel_privileges(workspace: WorkspaceClient, resources: ActiveResources, principal: str) -> None:
+    """Grant only the read capabilities required to install wheels from a test volume."""
+    volume = resources.volume
+    for kind, full_name, privilege in (
+        ("CATALOG", volume.catalog, Privilege.USE_CATALOG),
+        ("SCHEMA", f"{volume.catalog}.{volume.schema}", Privilege.USE_SCHEMA),
+        ("VOLUME", f"{volume.catalog}.{volume.schema}.{volume.volume}", Privilege.READ_VOLUME),
+    ):
+        workspace.grants.update(kind, full_name, changes=[PermissionsChange(principal=principal, add=[privilege])])
