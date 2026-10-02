@@ -185,6 +185,28 @@ async def test_fastapi_lifespan_yields_restricted_app_and_always_cleans_up(
     assert events == ["start", "served", "stop"]
 
 
+@pytest.mark.parametrize("groups", [(), ("studio-authors",)])
+def test_startup_warns_when_audience_access_is_administrator_managed(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, groups: tuple[str, ...]
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    startup.logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger=startup.logger.name):
+            startup.grant_user_view_access(delta_sql, resources, audience_groups=groups)
+    finally:
+        startup.logger.removeHandler(caplog.handler)
+
+    warnings = [record.message for record in caplog.records if "DQX_USER_GROUPS" in record.message]
+    assert bool(warnings) is (not groups)
+    if not groups:
+        assert "administrator-managed" in warnings[0]
+        delta_sql.execute_no_schema.assert_not_called()
+
+
 def test_user_view_grants_are_limited_to_approved_genie_objects(resources: ActiveResources) -> None:
     from databricks_labs_dqx_app.backend import startup
 

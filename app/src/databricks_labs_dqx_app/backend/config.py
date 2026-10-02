@@ -1,11 +1,13 @@
+import json
 import os
 from importlib import resources
 import logging
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks_labs_dqx_app.backend.volume import parse_volume_path
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
@@ -86,11 +88,31 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
-    user_groups: list[str] = Field(
+    user_groups: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         validation_alias="DQX_USER_GROUPS",
-        description="Explicit audience groups for temporary-schema and approved Genie-object access; empty means administrator-managed.",
+        description=(
+            "Explicit audience groups as a JSON list or unquoted comma-separated names; "
+            "an empty list means administrator-managed access."
+        ),
     )
+
+    @field_validator("user_groups", mode="before")
+    @classmethod
+    def parse_user_groups(cls, value: object) -> object:
+        """Accept JSON lists and simple CSV without reinterpreting malformed JSON."""
+        if not isinstance(value, str):
+            return value
+        error_message = "DQX_USER_GROUPS must be a JSON list of scoped group names or unquoted comma-separated names."
+        try:
+            decoded: object = json.loads(value)
+        except json.JSONDecodeError:
+            if any(character in value for character in '[]{}"'):
+                raise ValueError(error_message) from None
+            return value.split(",")
+        if not isinstance(decoded, list):
+            raise ValueError(error_message)
+        return decoded
 
     @field_validator("user_groups")
     @classmethod

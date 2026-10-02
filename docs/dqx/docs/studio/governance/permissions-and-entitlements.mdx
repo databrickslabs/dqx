@@ -23,7 +23,8 @@ Your entitlement follows you everywhere; permissions apply object by object.
 
 In-app roles and object permissions do **not** grant Databricks App access,
 warehouse access, or Unity Catalog privileges. Administrators configure the
-deployment audience with `DQX_USER_GROUPS`, a JSON list of scoped group names.
+deployment audience with `DQX_USER_GROUPS`, a JSON list of scoped group names
+or simple unquoted comma-separated names.
 Its default `[]` leaves audience access administrator-managed; built-in `users`
 and `account users` audiences are rejected. DAB uses `studio_user_group`
 (default `dqx-studio-users`, which must already exist) for warehouse, app,

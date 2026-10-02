@@ -1,5 +1,6 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
+import json
 import logging
 
 from databricks.sdk import WorkspaceClient
@@ -11,7 +12,7 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_fqn, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
@@ -31,7 +32,6 @@ class ResourceCheckers:
         pg: PgExecutor,
         compute: ComputeService,
         audience_groups: tuple[str, ...] = (),
-        runner_postgres_role: str = "",
     ) -> None:
         self._resources = resources
         self._workspace = workspace
@@ -39,7 +39,6 @@ class ResourceCheckers:
         self._pg = pg
         self._compute = compute
         self._audience_groups = audience_groups
-        self._runner_postgres_role = runner_postgres_role
         self._app_sp: str | None = None
         self._app_sp_resolved = False
 
@@ -120,7 +119,7 @@ class ResourceCheckers:
         reader_sql: SqlExecutor | None = None,
         include_outputs: bool = False,
     ) -> SetupStep:
-        """Verify wheel and schema access, then fixed outputs and Lakebase access.
+        """Verify wheel access, schema usage, and main-schema data access.
 
         Missing grants are reported for an administrator to apply; this check
         never grants the runner write or administrative privileges.
@@ -131,8 +130,9 @@ class ResourceCheckers:
                 inspection, or the app client during unattended startup.
             reader_sql: Administrator's SQL executor for SHOW GRANTS using the
                 supported Apps SQL scope instead of the grants REST API.
-            include_outputs: Check output-table SELECT/MODIFY and staged-config
-                Lakebase access after migrations. Source access remains run-specific.
+            include_outputs: Check main-schema SELECT/MODIFY after migrations.
+                Schema grants cover current and future outputs; source access
+                remains run-specific. Runner Lakebase access is not checked.
         """
         app_sp = self._app_sp_id()
         try:
@@ -154,18 +154,6 @@ class ResourceCheckers:
                 "task_runner_identity_unresolved",
                 "Could not resolve a task-runner service principal distinct from the app identity.",
             )
-        if self._runner_postgres_role and self._runner_postgres_role.casefold() != principal.casefold():
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_lakebase_identity_mismatch",
-                summary="The configured Lakebase runner role does not match the job's run-as identity.",
-                instructions=(
-                    "Remove DQX_TASK_RUNNER_POSTGRES_ROLE or set it to the job's run-as service principal client ID.",
-                ),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
-
         volume = self._resources.volume
         catalog = _instruction_identifier(volume.catalog)
         schema = f"{catalog}.{_instruction_identifier(volume.schema)}"
@@ -185,22 +173,28 @@ class ResourceCheckers:
         ]
         if include_outputs:
             requirements.extend(
-                ("TABLE", f"{self._main_schema_full_name()}.{table}", privilege, privilege, f"{schema}.`{table}`")
-                for table in ("dq_validation_runs", "dq_profiling_results", "dq_metrics", "dq_quarantine_records")
+                ("SCHEMA", self._main_schema_full_name(), privilege, privilege, schema)
                 for privilege in ("SELECT", "MODIFY")
             )
         instructions: list[str] = []
         unknown: list[str] = []
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
+        grant_rows: dict[tuple[str, str], list[dict[str, str]]] = {}
+        memberships: dict[str, frozenset[str]] = {}
         for kind, full_name, privilege, grant, quoted_name in requirements:
             key = (kind, full_name)
             if key not in inspected:
-                inspected[key] = self._runner_privileges(kind, full_name, principal, reader_sql)
+                required = frozenset(item[2] for item in requirements if item[:2] == key)
+                inspected[key] = self._runner_privileges(
+                    kind, full_name, principal, reader_sql, required, grant_rows, memberships
+                )
             privileges = inspected[key]
             if privileges is not None and (privilege in privileges or "ALL_PRIVILEGES" in privileges):
                 continue
-            if self._is_owner(kind, full_name, principal) or (
-                reader_ws is not None and self._is_owner(kind, full_name, principal, reader_ws=reader_ws)
+            # Container ownership does not imply data access to child tables.
+            if privilege not in {"SELECT", "MODIFY"} and (
+                self._is_owner(kind, full_name, principal)
+                or (reader_ws is not None and self._is_owner(kind, full_name, principal, reader_ws=reader_ws))
             ):
                 continue
             if privileges is None:
@@ -230,88 +224,85 @@ class ResourceCheckers:
                 instructions=tuple(instructions),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
-        if include_outputs:
-            database_step = self._check_runner_lakebase(principal)
-            if database_step.state != StepState.PASSED:
-                return database_step
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
 
-    def _check_runner_lakebase(self, principal: str) -> SetupStep:
-        role = escape_sql_string(principal)
-        database = self._resources.lakebase.database
-        schema = self._resources.lakebase.schema
-        table = f'{self._pg.q(schema)}."dq_run_configs"'
-        query = (
-            "SELECT rolcanlogin AS can_login, "
-            f"has_database_privilege(oid, '{escape_sql_string(database)}', 'CONNECT') AS can_connect, "
-            f"has_schema_privilege(oid, '{escape_sql_string(schema)}', 'USAGE') AS can_use, "
-            f"has_table_privilege(oid, '{escape_sql_string(table)}', 'SELECT') AS can_select, "
-            f"has_table_privilege(oid, '{escape_sql_string(table)}', 'DELETE') AS can_delete "
-            f"FROM pg_catalog.pg_roles WHERE rolname = '{role}'"
-        )
-        try:
-            rows = self._pg.query_dicts(query)
-        except Exception:
-            return _action_required(
-                SetupStepId.TASK_RUNNER,
-                "task_runner_lakebase_permission_check_failed",
-                "Could not inspect the runner's Lakebase role and effective permissions.",
-            )
-        if not rows or not _pg_boolean(rows[0].get("can_login")):
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_lakebase_role_missing",
-                summary="Create a Lakebase OAuth login role for the task-runner service principal.",
-                instructions=(
-                    "In the bound Lakebase project's branch, use Roles & Databases > Add role > OAuth "
-                    "and select the job's run-as service principal; do not grant superuser membership.",
-                    f"Alternatively, as a Lakebase role administrator: "
-                    f"CREATE EXTENSION IF NOT EXISTS databricks_auth; "
-                    f"SELECT databricks_create_role('{role}', 'SERVICE_PRINCIPAL');",
-                ),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
-        quoted_role = self._pg.q(principal)
-        grants = {
-            "can_connect": f"GRANT CONNECT ON DATABASE {self._pg.q(database)} TO {quoted_role};",
-            "can_use": f"GRANT USAGE ON SCHEMA {self._pg.q(schema)} TO {quoted_role};",
-            "can_select": f"GRANT SELECT ON TABLE {table} TO {quoted_role};",
-            "can_delete": f"GRANT DELETE ON TABLE {table} TO {quoted_role};",
-        }
-        missing = tuple(statement for key, statement in grants.items() if not _pg_boolean(rows[0].get(key)))
-        if missing:
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_lakebase_permissions_missing",
-                summary="The task-runner service principal needs narrowly scoped Lakebase access.",
-                instructions=(
-                    "Run these statements in the bound Lakebase database as an authorized administrator:",
-                    *missing,
-                ),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
-        return _passed(SetupStepId.TASK_RUNNER, "The runner can read and delete staged Lakebase configs.")
-
     def _runner_privileges(
-        self, kind: str, full_name: str, principal: str, reader_sql: SqlExecutor | None
+        self,
+        kind: str,
+        full_name: str,
+        principal: str,
+        reader_sql: SqlExecutor | None,
+        required: frozenset[str],
+        grant_rows: dict[tuple[str, str], list[dict[str, str]]],
+        memberships: dict[str, frozenset[str]],
     ) -> frozenset[str] | None:
+        # App credentials support effective grants, unlike the OBO grants API.
+        response = self._effective_permissions(kind, full_name, principal)
+        if response is not None:
+            return _privileges(response)
         if reader_sql is None:
-            response = self._effective_permissions(kind, full_name, principal)
-            return _privileges(response) if response is not None else None
+            return None
         try:
-            for part in full_name.split("."):
+            parts = full_name.split(".")
+            for part in parts:
                 validate_identifier(part)
             validate_identifier(principal)
-            rows = reader_sql.query_dicts(
-                f"SHOW GRANTS {_instruction_identifier(principal)} ON {kind} {quote_fqn(full_name)}"
-            )
-            return frozenset(
-                action.upper().replace(" ", "_")
+            objects = [(kind, full_name)]
+            if kind != "CATALOG":
+                objects.append(("CATALOG", parts[0]))
+            if kind == "VOLUME":
+                objects.append(("SCHEMA", ".".join(parts[:2])))
+            rows: list[dict[str, str]] = []
+            for object_kind, name in objects:
+                key = (object_kind, name)
+                if key not in grant_rows:
+                    normalized: list[dict[str, str]] = []
+                    for row in reader_sql.query_dicts(
+                        f"SHOW GRANTS ON {object_kind} {quote_fqn(name)}", require_complete=True
+                    ):
+                        values = {column.casefold(): value for column, value in row.items()}
+                        granted_principal = values.get("principal")
+                        action = values.get("actiontype")
+                        if (
+                            len(values) != len(row)
+                            or not isinstance(granted_principal, str)
+                            or not granted_principal.strip()
+                            or not isinstance(action, str)
+                            or not action.strip()
+                        ):
+                            return None
+                        normalized.append({"principal": granted_principal, "actiontype": action})
+                    grant_rows[key] = normalized
+                rows.extend(grant_rows[key])
+            direct = frozenset(
+                row["actiontype"].upper().replace(" ", "_")
                 for row in rows
-                if (row.get("principal") or "").casefold() == principal.casefold()
-                if (action := row.get("actionType"))
+                if row["principal"].strip().casefold() == principal.casefold()
+            )
+            if required.issubset(direct) or "ALL_PRIVILEGES" in direct:
+                return direct
+            if not any(row["principal"].strip().casefold() != principal.casefold() for row in rows):
+                return direct
+            if principal not in memberships:
+                matches = [
+                    sp
+                    for sp in self._workspace.service_principals.list(
+                        filter=f"applicationId eq {json.dumps(principal)}"
+                    )
+                    if (sp.application_id or "").casefold() == principal.casefold()
+                ]
+                if len(matches) != 1:
+                    return None
+                memberships[principal] = frozenset(
+                    value.strip().casefold()
+                    for group in matches[0].groups or []
+                    for value in (group.display, group.value)
+                    if value
+                )
+            return direct | frozenset(
+                row["actiontype"].upper().replace(" ", "_")
+                for row in rows
+                if row["principal"].strip().casefold() in memberships[principal]
             )
         except Exception:
             return None
@@ -579,7 +570,3 @@ def _instruction_identifier(value: str) -> str:
 
 def _has_control_characters(value: str) -> bool:
     return replace_control_characters(value) != value
-
-
-def _pg_boolean(value: str | None) -> bool:
-    return isinstance(value, str) and value.casefold() in {"true", "t", "1"}

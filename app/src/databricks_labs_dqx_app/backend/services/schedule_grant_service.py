@@ -181,6 +181,10 @@ class ScheduleGrantService:
         self._parent_blocks: dict[str, list[dict[str, str]]] = {}
         self._owner_inspection_failed: set[str] = set()
         self._scheduler_principals_cache: dict[str, set[str]] = {}
+        # Instance-local only: the dependency factory creates a fresh service
+        # per request. Unknown results stay errors, never confirmed denials.
+        self._parent_usage_cache: dict[tuple[str, str, str], bool | PrivilegeInspectionError] = {}
+        self._parent_owner_cache: dict[tuple[WorkspaceClient, str, str], str | None | PrivilegeInspectionError] = {}
 
     # ------------------------------------------------------------------
     # SP identity resolution
@@ -309,12 +313,12 @@ class ScheduleGrantService:
             self._owner_inspection_failed.add(fqn)
             logger.debug("Could not read table owner for manage check", exc_info=True)
         try:
-            _add(self._obo.schemas.get(f"{catalog}.{schema}").owner)
+            _add(self._parent_owner_name(self._obo, "SCHEMA", f"{catalog}.{schema}"))
         except Exception:
             self._owner_inspection_failed.add(fqn)
             logger.debug("Could not read schema owner for manage check", exc_info=True)
         try:
-            _add(self._obo.catalogs.get(catalog).owner)
+            _add(self._parent_owner_name(self._obo, "CATALOG", catalog))
         except Exception:
             self._owner_inspection_failed.add(fqn)
             logger.debug("Could not read catalog owner for manage check", exc_info=True)
@@ -337,8 +341,8 @@ class ScheduleGrantService:
             resp = self._run_sql(self._obo, f"SHOW GRANTS{subject} ON {kind} {quote_fqn(name)}")
             if not resp.manifest or not resp.manifest.schema or not resp.result or resp.manifest.truncated:
                 raise PrivilegeInspectionError("The SQL warehouse returned incomplete grant inspection results.")
-            columns = [column.name or "" for column in resp.manifest.schema.columns or []]
-            if not {"principal", "actionType"}.issubset(columns):
+            columns = [(column.name or "").casefold() for column in resp.manifest.schema.columns or []]
+            if not {"principal", "actiontype"}.issubset(columns) or len(set(columns)) != len(columns):
                 raise PrivilegeInspectionError("The SQL warehouse returned an unknown grant result schema.")
             rows: list[dict[str, str]] = []
             chunk = resp.result
@@ -383,7 +387,7 @@ class ScheduleGrantService:
             # Never accept a partial REST result after an inspection failure.
             rows = self._show_grants(kind, name, principal)
             direct = {
-                row["actionType"].upper().replace(" ", "_")
+                row["actiontype"].upper().replace(" ", "_")
                 for row in rows
                 if row["principal"].strip().casefold() == principal.casefold()
             }
@@ -393,7 +397,7 @@ class ScheduleGrantService:
             # A principal-filtered SHOW may omit grants to its groups. Inspect
             # all assignments and match only independently verified membership.
             return direct | {
-                row["actionType"].upper().replace(" ", "_")
+                row["actiontype"].upper().replace(" ", "_")
                 for row in self._show_grants(kind, name)
                 if row["principal"].strip().casefold() in principals
             }
@@ -423,7 +427,7 @@ class ScheduleGrantService:
         owners: set[str] = set()
         for ws in (self._sp_ws, self._obo):
             try:
-                owner = ws.catalogs.get(name).owner if kind == "CATALOG" else ws.schemas.get(name).owner
+                owner = self._parent_owner_name(ws, kind, name)
                 inspected = True
                 if owner and owner.strip().casefold() == principal.casefold():
                     return True
@@ -434,6 +438,50 @@ class ScheduleGrantService:
         if not inspected:
             raise PrivilegeInspectionError("Could not inspect source-parent ownership.")
         return bool(owners and owners.intersection(self._scheduler_principals(principal)))
+
+    def _parent_owner_name(self, ws: WorkspaceClient, kind: str, name: str) -> str | None:
+        """Read each parent's owner once per client in this request."""
+        key = (ws, kind, name)
+        if key not in self._parent_owner_cache:
+            try:
+                self._parent_owner_cache[key] = (
+                    ws.catalogs.get(name).owner if kind == "CATALOG" else ws.schemas.get(name).owner
+                )
+            except Exception:
+                # A failed metadata lookup must not look like an ownerless parent.
+                self._parent_owner_cache[key] = PrivilegeInspectionError("Could not inspect source-parent ownership.")
+        owner = self._parent_owner_cache[key]
+        if isinstance(owner, PrivilegeInspectionError):
+            raise owner
+        return owner
+
+    def _parent_has_usage(self, kind: str, name: str, principal: str, required: str) -> bool:
+        """Memoize complete usage decisions, including unknowns, for this request."""
+        key = (kind, name, principal)
+        cached = self._parent_usage_cache.get(key)
+        if isinstance(cached, PrivilegeInspectionError):
+            raise cached
+        if cached is not None:
+            return cached
+        try:
+            try:
+                privileges = self._parent_privileges(kind, name, principal)
+            except PrivilegeInspectionError:
+                # Positive ownership still proves usage when grant inspection fails.
+                if not self._parent_owner(kind, name, principal):
+                    raise
+                allowed = True
+            else:
+                allowed = (
+                    required in privileges
+                    or bool(privileges.intersection({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"}))
+                    or self._parent_owner(kind, name, principal)
+                )
+        except PrivilegeInspectionError as error:
+            self._parent_usage_cache[key] = error
+            raise
+        self._parent_usage_cache[key] = allowed
+        return allowed
 
     def _require_source_parents(self, fqn: str) -> bool:
         """Require parent usage for both identities; record precise admin remediation."""
@@ -453,17 +501,7 @@ class ScheduleGrantService:
                 ("CATALOG", catalog, "USE_CATALOG"),
                 ("SCHEMA", f"{catalog}.{schema}", "USE_SCHEMA"),
             ):
-                try:
-                    privileges = self._parent_privileges(kind, name, principal)
-                except PrivilegeInspectionError:
-                    # Positive ownership proves usage even if neither grants
-                    # inspection boundary is available.
-                    if self._parent_owner(kind, name, principal):
-                        continue
-                    raise
-                if required in privileges or privileges.intersection({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"}):
-                    continue
-                if self._parent_owner(kind, name, principal):
+                if self._parent_has_usage(kind, name, principal, required):
                     continue
                 missing.append(
                     {
@@ -518,7 +556,7 @@ class ScheduleGrantService:
             return True
 
         for row in self._show_grants("TABLE", fqn):
-            if row["principal"].strip().lower() in principals and row["actionType"].upper() in (
+            if row["principal"].strip().lower() in principals and row["actiontype"].upper() in (
                 "MANAGE",
                 "OWN",
                 "OWNERSHIP",
@@ -660,7 +698,7 @@ class ScheduleGrantService:
 
         for row in self._show_grants("TABLE", fqn):
             who = row["principal"]
-            if who and row["actionType"].upper() in ("MANAGE", "OWN", "OWNERSHIP"):
+            if who and row["actiontype"].upper() in ("MANAGE", "OWN", "OWNERSHIP"):
                 holders.setdefault(who.strip(), self._classify_principal(who.strip()))
 
         return [{"principal": p, "type": t} for p, t in holders.items()]

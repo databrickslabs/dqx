@@ -851,24 +851,71 @@ def _require_resolved_job_id() -> int:
 
 
 def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
-    """Resolve the actual job runner and app identities without retaining request credentials."""
-    job = workspace.jobs.get(_require_resolved_job_id())
+    """Resolve fresh runner and app identities, failing closed with setup guidance.
+
+    Raises:
+        HTTPException: Setup or identity inspection is unavailable, the principals
+            are not distinct, or the legacy runner role does not match.
+    """
+    job_id = _require_resolved_job_id()
+    # SDK authentication and transport failures may contain credentials; sanitize
+    # every failure at these external boundaries rather than exposing raw messages.
+    try:
+        job = workspace.jobs.get(job_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to inspect the task-runner job. Confirm the configured job exists and the "
+                "app service principal has CAN_MANAGE on it, then verify again in Studio setup."
+            ),
+        ) from None
     runner = getattr(getattr(job.settings, "run_as", None), "service_principal_name", None)
-    identity = workspace.current_user.me()
+    try:
+        identity = workspace.current_user.me()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to resolve the app service principal identity. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        ) from None
     app_principal = identity.user_name or identity.id
+    if (
+        not isinstance(app_principal, str)
+        or not app_principal.strip()
+        or sanitize_setup_display(app_principal) != app_principal
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "A valid app service principal identity is required. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        )
     if (
         not isinstance(runner, str)
         or not runner.strip()
         or sanitize_setup_display(runner) != runner
-        or not isinstance(app_principal, str)
-        or not app_principal.strip()
-        or sanitize_setup_display(app_principal) != app_principal
         or runner.casefold() == app_principal.casefold()
     ):
-        raise RuntimeError("A distinct task-runner service principal must be assigned before executing Studio jobs.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Assign a task-runner service principal distinct from the app service principal "
+                "in the Jobs UI, then verify again in Studio setup."
+            ),
+        )
     configured_role = conf.task_runner_postgres_role.strip()
     if configured_role and configured_role.casefold() != runner.casefold():
-        raise RuntimeError("DQX_TASK_RUNNER_POSTGRES_ROLE must match the job's run-as service principal.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "DQX_TASK_RUNNER_POSTGRES_ROLE must match the job's run-as service principal. "
+                "Correct or remove the override, then verify again in Studio setup."
+            ),
+        )
     return runner, app_principal
 
 

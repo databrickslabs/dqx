@@ -262,7 +262,6 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
                 pg=pg_executor,
                 compute=compute,
                 audience_groups=tuple(conf.user_groups),
-                runner_postgres_role=conf.task_runner_postgres_role,
             ),
             jobs=TaskRunnerJobManager(sp_ws),
             pg_migrations=PgMigrationRunner(pg_executor),
@@ -534,6 +533,13 @@ def grant_user_view_access(
         delta_sql: App service principal's SQL executor.
         resources: Resolved installation resources.
     """
+    if not audience_groups:
+        logger.warning(
+            "DQX_USER_GROUPS is empty: audience access is administrator-managed. "
+            "No audience grants will be applied; configure scoped groups or grant access manually. "
+            "Existing grants are not revoked."
+        )
+        return
     catalog = delta_sql.q(resources.volume.catalog)
     schema = delta_sql.q(resources.genie_schema)
     genie_objects = (

@@ -444,7 +444,6 @@ def app_live_setup(
     make_setup_schema(catalog=resources.volume.catalog, schema=resources.tmp_schema)
     app_identity = _workspace_identity(app_workspace)
     make_lakebase_oauth_role(principal=app_identity)
-    make_lakebase_oauth_role(principal=runner_principal)
     database = live_resources.pg.q(resources.lakebase.database)
     app_role = live_resources.pg.q(app_identity)
     live_resources.pg.execute(f"GRANT CONNECT, CREATE ON DATABASE {database} TO {app_role}")
@@ -504,15 +503,11 @@ def app_live_setup(
             """Avoid long-running scheduler and AI tasks in the live test process."""
 
     try:
-        # Grants on dq_run_configs require the production table to exist first.
+        # Only the app needs a Lakebase role for setup and application migrations.
         # Reconcile still exercises the idempotent production migration path.
         schema = pg.q(resources.lakebase.schema)
         pg.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {schema}")
         PgMigrationRunner(pg).run_all()
-        runner_role = pg.q(runner_principal)
-        live_resources.pg.execute(f"GRANT CONNECT ON DATABASE {database} TO {runner_role}")
-        pg.execute(f"GRANT USAGE ON SCHEMA {schema} TO {runner_role}")
-        pg.execute(f'GRANT SELECT, DELETE ON TABLE {schema}."dq_run_configs" TO {runner_role}')
         yield AppLiveSetup(
             setup_workspace=live_resources.workspace,
             app_workspace=app_workspace,
