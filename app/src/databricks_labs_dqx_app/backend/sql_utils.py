@@ -5,6 +5,7 @@ All SQL string escaping MUST use these functions instead of inline
 """
 
 import re
+from zoneinfo import available_timezones
 
 # Unity Catalog does not restrict catalog/schema/table names to "simple"
 # identifiers — objects created via the REST API (bypassing the SQL parser)
@@ -346,3 +347,39 @@ def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:
     if entity_type not in valid_types:
         raise ValueError(f"Invalid entity_type: '{entity_type}'. Must be one of {valid_types}")
     return entity_type
+
+
+_TIMEZONE_REGION_RE = re.compile(r"\A[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)+\Z")
+
+
+def validate_timezone(name: str) -> str:
+    """Validate a Row Scope time zone: an IANA region name (``Area/City``) or ``UTC``.
+
+    Abbreviations such as ``EST`` are rejected even though the tz database
+    knows them: they are fixed offsets, so ``EST`` silently ignores daylight
+    saving time. The task runner (a separate wheel) applies the same rule in
+    ``dqx_task_runner.row_scope.validate_timezone`` — keep them in step.
+
+    Raises ValueError otherwise. Returns the name unchanged.
+    """
+    if name == "UTC" or (_TIMEZONE_REGION_RE.match(name) and name in available_timezones()):
+        return name
+    raise ValueError(
+        f"Invalid time zone {name!r}: use a region name such as 'America/New_York' or 'UTC' "
+        "(abbreviations like 'EST' ignore daylight saving time)."
+    )
+
+
+def validate_row_scope(config: dict) -> None:
+    """Validate a schedule's Row Scope settings (``sample_interval_*``), when present.
+
+    The lookback must be a positive number of minutes (0 or unset turns the
+    window off; a negative one would put the cutoff in the future and match
+    nothing), and the time zone a valid region name. Raises ValueError.
+    """
+    minutes = config.get("sample_interval_minutes")
+    if minutes not in (None, 0) and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1):
+        raise ValueError("sample_interval_minutes must be a positive whole number of minutes")
+    timezone = config.get("sample_interval_timezone")
+    if timezone:
+        validate_timezone(str(timezone))

@@ -2,10 +2,11 @@ import functools
 from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import __version__
 from .config import AI_SAMPLE_ROW_LIMIT
+from .sql_utils import validate_row_scope, validate_timezone
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
 from .registry_models import RegistryRule as RegistryRuleDomain
@@ -1605,6 +1606,7 @@ class BatchRunFromCatalogIn(BaseModel):
     sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample per table")
     sample_interval_minutes: int | None = Field(
         default=None,
+        ge=1,
         description=(
             "Optional lookback window in minutes. When set, each table's sample is restricted to rows "
             "within the window and ordered by the most recently detected timestamp/date column, most "
@@ -1638,6 +1640,11 @@ class BatchRunFromCatalogIn(BaseModel):
             "schedule's Row Scope config."
         ),
     )
+
+    @field_validator("sample_interval_timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str | None) -> str | None:
+        return validate_timezone(value) if value else value
 
 
 class BatchRunFromCatalogOut(BaseModel):
@@ -2633,6 +2640,12 @@ class ScheduleConfigIn(BaseModel):
         pattern=r"^[a-zA-Z0-9_\-]{1,64}$",
     )
     config: dict[str, Any] = Field(description="Schedule configuration (frequency, scope, sample_size, etc.)")
+
+    @field_validator("config")
+    @classmethod
+    def _valid_row_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
+        validate_row_scope(value)
+        return value
 
 
 class ScheduleConfigHistoryOut(BaseModel):
