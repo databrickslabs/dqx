@@ -6,7 +6,7 @@ that can authenticate with a Databricks OAuth token — can poll DQX Studio
 as a health check: 200 on a clean run, 503 on a failed or dirty one.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -114,7 +114,7 @@ def get_validation_status_by_table(
             detail=f"No completed validation run for '{table_fqn}' (in-progress and canceled runs are not reported)",
         )
     stale = max_age_minutes is not None and _completed_before(
-        row.get("updated_at_epoch"), datetime.now(UTC) - timedelta(minutes=max_age_minutes)
+        row.get("updated_at_epoch"), datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
     )
     return _raise_for_status(row, stale)
 
