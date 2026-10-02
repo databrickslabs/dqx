@@ -92,6 +92,25 @@ class TestPrepareConfigJson:
         assert kwargs["key_cols"] == {"run_id": "run123"}
         assert json.loads(kwargs["value_cols"]["config"]) == config
 
+    def test_stub_carries_the_fields_jobs_api_readers_need(self) -> None:
+        # The failure toast reads a staged run's table and preview flag from
+        # the job parameters, so they must survive staging (no SQL lookup).
+        config = {**_big_config(), "source_table_fqn": "main.sales.orders", "skip_history": True, "run_type": "preview"}
+
+        result = prepare_config_json(
+            _oltp_mock(),
+            run_id="run123",
+            config=config,
+            job_parameters_without_config=_base_params(),
+        )
+
+        assert json.loads(result) == {
+            MANIFEST_CONFIG_KEY: True,
+            "source_table_fqn": "main.sales.orders",
+            "skip_history": True,
+            "run_type": "preview",
+        }
+
     def test_stub_stays_within_the_job_parameter_limit(self) -> None:
         # Regression guard: the stub plus base params must always fit, so a
         # staged config never re-trips the limit it was meant to dodge.

@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     delete_staged_config,
     prepare_config_json,
 )
+from databricks_labs_dqx_app.backend.services.task_runner_runs import TaskRunnerRun, cached_recent_completed_runs
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class JobService:
             config=config,
             job_parameters_without_config=base_params,
         )
-        staged = config_json == build_manifest_config_payload()
+        staged = config_json == build_manifest_config_payload(config)
 
         try:
             run = self._ws.jobs.run_now(
@@ -135,6 +136,17 @@ class JobService:
             result_state=state.result_state.value if state and state.result_state else None,
             message=state.state_message if state else None,
         )
+
+    async def list_recent_failed_runs(self) -> list[TaskRunnerRun]:
+        """Return the failed, non-preview runs among the most recent completed runs, newest first.
+
+        Read from the Jobs API (shared 30s cache), never the SQL warehouse, so the
+        app-wide failure-toast poll does not keep the warehouse running.
+        """
+        if not self._job_id:
+            return []
+        runs = await cached_recent_completed_runs(self._ws, self._job_id)
+        return [run for run in runs if run.is_failed and not run.is_preview]
 
     def get_run_creator(self, job_run_id: int) -> str | None:
         """Return the requesting end-user for a job run, or None if unavailable.

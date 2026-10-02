@@ -287,6 +287,7 @@ def make_scheduler():
         monitored_table_service: Any | None = None,
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
+        job_id: str = "test-job-0",
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -325,13 +326,14 @@ def make_scheduler():
             else:
                 oltp.select_json_text.side_effect = lambda c: f"to_json({c})"
 
+        ws = MagicMock(name="WorkspaceClient")
         svc = SchedulerService(
-            ws=MagicMock(name="WorkspaceClient"),
+            ws=ws,
             warehouse_id="test-wh",
             catalog=catalog,
             schema=schema,
             tmp_schema=tmp_schema if tmp_schema is not None else f"{schema}_tmp",
-            job_id="test-job-0",
+            job_id=job_id,
             oltp_sql=oltp,
             data_product_service=data_product_service,
             binding_run_service=binding_run_service,
@@ -341,7 +343,7 @@ def make_scheduler():
             reconcile_scores_on_start=reconcile_scores_on_start,
         )
 
-        mocks = SimpleNamespace(oltp=oltp)
+        mocks = SimpleNamespace(oltp=oltp, ws=ws)
         # The analytical and tmp executors have no constructor seam
         # today (the constructor builds them from ``ws + warehouse_id +
         # {schema,tmp_schema}``). Tests that need to assert on their
