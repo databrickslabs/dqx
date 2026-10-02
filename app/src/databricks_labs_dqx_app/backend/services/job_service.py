@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     prepare_config_json,
 )
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +183,6 @@ class JobService:
         warehouse stamps the value with its own clock and zone-mapping
         works correctly on the cluster key.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
         eu = escape_sql_string(requesting_user)
         ef = escape_sql_string(source_table_fqn)
@@ -297,8 +296,6 @@ class JobService:
         returned (server-side filter), so callers scoped to a single table
         don't have to pull the full history and filter client-side.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         where = ""
         if source_table_fqn:
             where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
@@ -400,12 +397,66 @@ class JobService:
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
+        Shared by the dry-run and profiler result readers, which must still see
+        ``preview`` runs and whose tables (e.g. ``dq_profiling_results``) have no
+        ``run_type`` column — so this stays a plain, column-agnostic lookup. The
+        monitoring health endpoint uses :meth:`get_run_status_row` instead.
+
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
         sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
+
+    def get_run_status_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
+        """Read a run's health row by run_id for the external monitoring endpoint.
+
+        Unlike the shared :meth:`get_run_result_row`, this excludes ad-hoc
+        ``preview`` runs — a throwaway preview never stands in for a run's health,
+        matching the by-table reader — and orders by ``updated_at DESC`` so the
+        result is deterministic if a run_id ever has more than one terminal row.
+        Only ever queries ``dq_validation_runs``, which carries ``run_type`` and
+        ``updated_at``.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no row found.
+        """
+        er = escape_sql_string(run_id)
+        sql = (
+            f"SELECT * FROM {table} WHERE run_id = '{er}' "  # noqa: S608
+            f"AND status != 'RUNNING' AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
+
+    def get_latest_completed_run_result_row(self, table: str, source_table_fqn: str) -> dict[str, str | None] | None:
+        """Read the most recently completed, non-preview run row for a table.
+
+        "Most recent" is by completion time (``updated_at``), not ``created_at``:
+        the runner back-dates ``created_at`` to the run's start, so with
+        overlapping runs a long run that finished later would otherwise lose
+        to a short run that finished earlier. The table name is compared
+        case-insensitively, as Unity Catalog identifiers are.
+
+        Completed means the run finished (``SUCCESS`` or ``FAILED``): in-progress
+        and canceled runs carry no results about the table's data, so they are
+        skipped. A ``FAILED`` run stays — the checks couldn't run, which a
+        monitor should see. Ad-hoc preview runs (``run_type = 'preview'``) are
+        excluded so a throwaway preview never stands in for the table's health.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no run was ever
+        recorded for this table.
+        """
+        ef = escape_sql_string(source_table_fqn)
+        sql = (
+            f"SELECT *, unix_timestamp(updated_at) AS updated_at_epoch "  # noqa: S608
+            f"FROM {table} WHERE lower(source_table_fqn) = lower('{ef}') "
+            f"AND status NOT IN ('RUNNING', 'CANCELED') AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
         rows = self._sql.query_dicts(sql)
         return rows[0] if rows else None
