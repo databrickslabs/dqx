@@ -144,6 +144,23 @@ def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> N
     assert settings.environments[0].spec.dependencies == ["/Volumes/c/s/v/runner.whl", "/Volumes/c/s/v/dqx.whl"]
 
 
+def test_configure_passes_lakebase_coordinates_to_runner(manager: TaskRunnerJobManager) -> None:
+    manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
+
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    parameters = settings.tasks[0].python_wheel_task.parameters
+    for name in (
+        "lakebase_endpoint",
+        "lakebase_database",
+        "lakebase_schema",
+        "lakebase_host",
+        "lakebase_port",
+        "lakebase_username",
+    ):
+        assert f"--{name}" in parameters
+        assert f"{{{{job.parameters.{name}}}}}" in parameters
+
+
 def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) -> None:
     """Reconciliation retains ownership, cost, and governance tags set outside Studio."""
     manager.workspace.jobs.get.return_value = Job(

@@ -12,6 +12,7 @@ targets:
       profile: <your-databricks-cli-profile>
     variables:
       catalog_name: <your-catalog>
+      studio_user_group: <your-scoped-studio-user-group>
       # Application id of the service principal that runs the task-runner job.
       dqx_service_principal_application_id: <your-service-principal-application-id>
       # Run the task runner against your LOCALLY-BUILT DQX so it matches the app

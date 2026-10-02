@@ -32,7 +32,7 @@ writes go through the SP ``SqlExecutor`` (``sp_sql``).
 
 Materialization failures propagate to the cached startup and Genie-message
 refresh coordinator, whose callers are best-effort. After each successful
-dimension refresh, its explicit user SELECT grant is retried best-effort
+dimension refresh, its configured audience SELECT grants are retried best-effort
 without exposing other Genie objects or blocking the remaining refresh.
 """
 
@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,10 @@ _MONITORED_TABLES_COLUMNS_DDL = (
 
 
 class MetadataDimService:
-    """Full-refresh materializer for the rule + monitored-table metadata dims."""
+    """Full-refresh metadata dims, granting SELECT only to configured groups.
+
+    Empty *audience_groups* leaves end-user grants administrator-managed.
+    """
 
     def __init__(
         self,
@@ -80,6 +83,7 @@ class MetadataDimService:
         registry: RegistryService,
         monitored_tables: MonitoredTableService,
         genie_schema: str,
+        audience_groups: tuple[str, ...] = (),
     ) -> None:
         self._sql = sp_sql
         self._registry = registry
@@ -87,6 +91,7 @@ class MetadataDimService:
         self._catalog = sp_sql.catalog
         self._schema = sp_sql.schema
         self._genie_schema = genie_schema
+        self._audience_groups = tuple(dict.fromkeys(audience_groups))
 
     def refresh(self) -> None:
         """Full-refresh both dims from the registry (SP credentials).
@@ -103,10 +108,11 @@ class MetadataDimService:
 
     def _grant_user_access(self, table_name: str) -> None:
         fqn = quote_object_fqn(self._catalog, self._genie_schema, table_name)
-        try:
-            self._sql.execute_no_schema(f"GRANT SELECT ON TABLE {fqn} TO `account users`")
-        except Exception:
-            logger.warning("Could not grant access to Genie metadata; refresh can continue.")
+        for group in self._audience_groups:
+            try:
+                self._sql.execute_no_schema(f"GRANT SELECT ON TABLE {fqn} TO {quote_ident(group)}")
+            except Exception:
+                logger.warning("Could not grant access to Genie metadata; refresh can continue.")
 
     def _refresh_rules(self) -> None:
         fqn = quote_object_fqn(self._catalog, self._genie_schema, DIM_RULES_TABLE_NAME)

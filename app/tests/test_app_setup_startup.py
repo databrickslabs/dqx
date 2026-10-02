@@ -185,24 +185,46 @@ async def test_fastapi_lifespan_yields_restricted_app_and_always_cleans_up(
     assert events == ["start", "served", "stop"]
 
 
+@pytest.mark.parametrize("groups", [(), ("studio-authors",)])
+def test_startup_warns_when_audience_access_is_administrator_managed(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, groups: tuple[str, ...]
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    startup.logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger=startup.logger.name):
+            startup.grant_user_view_access(delta_sql, resources, audience_groups=groups)
+    finally:
+        startup.logger.removeHandler(caplog.handler)
+
+    warnings = [record.message for record in caplog.records if "DQX_USER_GROUPS" in record.message]
+    assert bool(warnings) is (not groups)
+    if not groups:
+        assert "administrator-managed" in warnings[0]
+        delta_sql.execute_no_schema.assert_not_called()
+
+
 def test_user_view_grants_are_limited_to_approved_genie_objects(resources: ActiveResources) -> None:
     from databricks_labs_dqx_app.backend import startup
 
     delta_sql = create_autospec(SqlExecutor, instance=True)
     delta_sql.q.side_effect = lambda value: f"`{value}`"
 
-    startup.grant_user_view_access(delta_sql, resources)
+    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
     assert statements == [
-        "GRANT USE SCHEMA ON SCHEMA `main`.`genie` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`mv_dq_scores` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results_asof` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_attribution` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_rules` TO `account users`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `account users`",
+        "GRANT USE SCHEMA ON SCHEMA `main`.`genie` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`mv_dq_scores` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results_asof` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_attribution` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_rules` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
     ]
 
 
@@ -222,10 +244,10 @@ def test_user_view_grant_failure_does_not_block_other_grants(resources: ActiveRe
         None,
     ]
 
-    startup.grant_user_view_access(delta_sql, resources)
+    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
 
     assert delta_sql.execute_no_schema.call_args_list[-1].args == (
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `account users`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
     )
 
 
@@ -281,7 +303,15 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     startup_metadata_dims.refresh.assert_called_once_with()
     request_metadata_dims.refresh.assert_not_called()
     grant_statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
-    assert "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `account users`" in grant_statements
+    assert not any("account users" in statement for statement in grant_statements)
+
+
+def test_user_view_grants_default_to_administrator_managed(resources: ActiveResources) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    startup.grant_user_view_access(delta_sql, resources)
+    delta_sql.execute_no_schema.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -486,83 +516,3 @@ async def test_startup_cleans_open_context_when_reconciliation_is_cancelled(
         await startup.start_studio(app)
 
     pg_executor.close.assert_called_once_with()
-
-
-class TestGrantTaskRunnerRunConfigAccess:
-    """The app grants the task-runner SP read/delete on ``dq_run_configs`` at startup."""
-
-    def _oltp(self, dialect: str = "postgres") -> MagicMock:
-        oltp = MagicMock(name="oltp")
-        oltp.dialect = dialect
-        oltp.schema = "studio"
-        oltp.q.side_effect = lambda value: f'"{value}"'
-        oltp.fqn.side_effect = lambda name: f'"studio"."{name}"'
-        return oltp
-
-    def test_grants_usage_and_select_delete_when_configured(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)
-
-        issued = [call.args[0] for call in oltp.execute.call_args_list]
-        assert issued == [
-            'GRANT USAGE ON SCHEMA "studio" TO "sp-runner"',
-            'GRANT SELECT, DELETE ON "studio"."dq_run_configs" TO "sp-runner"',
-        ]
-
-    def test_noop_when_no_role_configured(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "")
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)
-        oltp.execute.assert_not_called()
-
-    def test_noop_when_oltp_is_not_postgres(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp(dialect="delta")
-        startup._grant_task_runner_run_config_access(oltp)
-        oltp.execute.assert_not_called()
-
-    def test_skips_grant_when_role_malformed(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        # A role that fails validate_object_id must never be interpolated into DDL,
-        # but this optional best-effort grant must not abort startup — it logs and
-        # skips rather than letting the ValueError propagate out of the lifespan.
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", 'evil"; DROP')
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)  # does not raise
-        oltp.execute.assert_not_called()
-
-    def test_names_failing_statement_and_continues(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        # A failed first grant must not stop the second, and the warning must name
-        # the specific failing statement so a later opaque runner permission error
-        # can be traced back to the grant that did not apply.
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp()
-        oltp.execute.side_effect = [RuntimeError("permission denied"), None]
-
-        # Capture directly off the module logger: the app reroutes logging, so
-        # pytest's caplog (which relies on root propagation) does not see these.
-        messages: list[str] = []
-
-        class _Capture(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                messages.append(record.getMessage())
-
-        handler = _Capture()
-        startup.logger.addHandler(handler)
-        try:
-            startup._grant_task_runner_run_config_access(oltp)
-        finally:
-            startup.logger.removeHandler(handler)
-
-        assert oltp.execute.call_count == 2  # did not stop after the first failure
-        assert any('GRANT USAGE ON SCHEMA "studio" TO "sp-runner"' in m for m in messages)
