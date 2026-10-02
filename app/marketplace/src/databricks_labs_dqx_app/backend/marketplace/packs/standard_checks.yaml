@@ -1,0 +1,65 @@
+id: standard-checks
+title: Standard checks
+icon: SquareCheck
+description: >
+  The reusable baseline every table needs — presence, emptiness, whitespace,
+  uniqueness, UUID format, and statistical outliers.
+rules:
+  - name: Must not be null
+    description: Value is present.
+    dimension: Completeness
+    severity: High
+    check:
+      function: is_not_null
+      arguments:
+        column: "{{column}}"
+  - name: Must not be empty
+    description: String value is not the empty string.
+    dimension: Completeness
+    severity: High
+    check:
+      function: is_not_empty
+      arguments:
+        column: "{{column}}"
+  - name: Must have no surrounding whitespace
+    description: Value has no leading or trailing whitespace.
+    dimension: Validity
+    severity: Low
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{column}} = trim({{column}})"
+  - name: Must be unique
+    description: Value is unique across the dataset.
+    dimension: Uniqueness
+    severity: Critical
+    check:
+      function: is_unique
+      arguments:
+        columns:
+          - "{{column}}"
+  - name: Valid UUID
+    description: Value matches the canonical 8-4-4-4-12 UUID format.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{uuid}}"
+        regex: "^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$"
+  - name: Must have no statistical outliers
+    description: Value lies within the median-absolute-deviation bounds.
+    dimension: Accuracy
+    severity: Medium
+    check:
+      function: has_no_outliers
+      arguments:
+        column: "{{column}}"
+  - name: Must not be null or empty
+    description: Value is present and is not the empty string.
+    dimension: Completeness
+    severity: High
+    check:
+      function: is_not_null_and_not_empty
+      arguments:
+        column: "{{column}}"

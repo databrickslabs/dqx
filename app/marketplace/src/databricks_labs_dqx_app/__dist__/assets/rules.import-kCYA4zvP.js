@@ -1,0 +1,1 @@
+import{eW as o,j as e,ai as r}from"./index-Du3w-W-k.js";import{u as a}from"./use-permissions-CVTN-BQx.js";import"./selector-DrlYLf2R.js";function n(){const{canCreateRules:t}=a(),{from:s}=o.useSearch();return t?e.jsx(r,{to:"/registry-rules/import",search:{from:s},replace:!0}):e.jsx(r,{to:"/registry-rules",replace:!0})}export{n as component};

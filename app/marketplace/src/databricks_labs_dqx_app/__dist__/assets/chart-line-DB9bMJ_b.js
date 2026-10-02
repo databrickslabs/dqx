@@ -1,0 +1,1 @@
+import{I as e}from"./index-Du3w-W-k.js";const o=[["path",{d:"M3 3v16a2 2 0 0 0 2 2h16",key:"c24i48"}],["path",{d:"m19 9-5 5-4-4-3 3",key:"2osh9i"}]],a=e("chart-line",o);export{a as C};

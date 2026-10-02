@@ -1,0 +1,1 @@
+import{j as e,ai as r}from"./index-Du3w-W-k.js";import{u as s}from"./use-permissions-CVTN-BQx.js";import"./selector-DrlYLf2R.js";function u(){const{canCreateRules:t}=s();return t?e.jsx(r,{to:"/monitored-tables/import",replace:!0}):e.jsx(r,{to:"/registry-rules",replace:!0})}export{u as component};
