@@ -253,10 +253,10 @@ try:
                 ),
             ),
             columns=[
-                ColumnRelationship(source_column="VBELN", target_column="invoice_id"),
-                ColumnRelationship(source_column="KUNAG", target_column="client_id"),
-                ColumnRelationship(source_column="NETWR", target_column="amount"),
-                ColumnRelationship(source_column="WAERK", target_column="currency_code"),
+                ColumnRelationship(source="VBELN", target="invoice_id"),
+                ColumnRelationship(source="KUNAG", target="client_id"),
+                ColumnRelationship(source="NETWR", target="amount"),
+                ColumnRelationship(source="WAERK", target="currency_code"),
             ],
         )
     )

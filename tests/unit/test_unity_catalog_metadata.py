@@ -2,13 +2,16 @@
 
 Covers Pydantic config validators, collectors (table metadata, tags, column + table upstream
 lineage, external lineage), and the top-level *build_schema_json* renderer. No real Spark or
-workspace is involved — all externals are mocked with *create_autospec* / *MagicMock*.
+workspace is involved — all externals are mocked with *create_autospec*.
 """
 
 import json
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec
 
 import pytest
+from pydantic import ValidationError
+from pyspark.sql import DataFrame, Row, SparkSession
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import (
     ColumnInfo,
@@ -16,24 +19,20 @@ from databricks.sdk.service.catalog import (
     ExternalLineageExternalMetadataInfo,
     ExternalLineageFileInfo,
     ExternalLineageInfo,
+    ExternalLineageObject,
     ExternalLineageRelationshipInfo,
     ExternalLineageTableInfo,
     LineageDirection,
     SystemType,
     TableInfo,
 )
-from pydantic import ValidationError
-from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import (
     ColumnUpstreamLineageConfig,
     ExternalLineageConfig,
     UnityCatalogMetadataConfig,
 )
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.unity_catalog_metadata import (
-    _sql_str_literal,
-    _split_three_part_name,
     build_schema_json,
     collect_column_upstream_lineage,
     collect_external_upstream_lineage,
@@ -88,40 +87,22 @@ def test_unity_catalog_metadata_config_forbids_unknown_fields():
         UnityCatalogMetadataConfig(unexpected=True)  # type: ignore[call-arg]
 
 
-# -- _sql_str_literal --------------------------------------------------------------------
+# -- test helpers ------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("plain", "'plain'"),
-        ("has 'quote'", "'has ''quote'''"),
-        ("has \\ backslash", "'has \\\\ backslash'"),
-        ("trailing\\", "'trailing\\\\'"),
-    ],
-)
-def test_sql_str_literal(value, expected):
-    assert _sql_str_literal(value) == expected
-
-
-# -- _split_three_part_name --------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["catalog.schema.table", "`a`.`b`.`c`"],
-)
-def test_split_three_part_name_valid(name):
-    assert len(_split_three_part_name(name)) == 3
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["two.part", "one", "a.b.c.d", "..", "a..c"],
-)
-def test_split_three_part_name_rejects_bad_input(name):
-    with pytest.raises(InvalidParameterError):
-        _split_three_part_name(name)
+def _spark_with_sql_results(*responses: list[Row]) -> SparkSession:
+    """Return an autospec'd SparkSession where successive spark.sql(...).collect() calls return
+    each ``responses`` entry in order. Each response may be an empty list."""
+    spark = create_autospec(SparkSession, instance=True)
+    df_mocks: list[DataFrame] = []
+    for rows in responses:
+        df = create_autospec(DataFrame, instance=True)
+        df.collect.return_value = list(rows)
+        df_mocks.append(df)
+    spark.sql.side_effect = df_mocks
+    temp_df = create_autospec(DataFrame, instance=True)
+    spark.createDataFrame.return_value = temp_df
+    return spark
 
 
 # -- collect_table_metadata --------------------------------------------------------------
@@ -175,28 +156,17 @@ def test_collect_table_metadata_tolerates_sdk_error(mock_workspace_client):
 # -- collect_table_tags ------------------------------------------------------------------
 
 
-def _make_spark_sql_mock(responses: list[list[dict]]):
-    """Return a Mock spark where successive spark.sql(...).collect() calls return the given rows."""
-    spark = MagicMock(spec=SparkSession)
-    sql_mocks = []
-    for rows in responses:
-        collect_mock = MagicMock()
-        collect_mock.collect.return_value = [MagicMock(**{"__getitem__": lambda _, k, r=r: r[k]}) for r in rows]
-        sql_mocks.append(collect_mock)
-    spark.sql.side_effect = sql_mocks
-    return spark
-
-
 def test_collect_table_tags_merges_rows():
-    spark = _make_spark_sql_mock(
+    spark = _spark_with_sql_results(
         [
-            [{"tag_name": "pii", "tag_value": "yes"}, {"tag_name": "domain", "tag_value": "finance"}],
-            [
-                {"column_name": "id", "tag_name": "pk", "tag_value": "true"},
-                {"column_name": "id", "tag_name": "pii", "tag_value": "client"},
-                {"column_name": "amount", "tag_name": "financial", "tag_value": "true"},
-            ],
-        ]
+            Row(tag_name="pii", tag_value="yes"),
+            Row(tag_name="domain", tag_value="finance"),
+        ],
+        [
+            Row(column_name="id", tag_name="pk", tag_value="true"),
+            Row(column_name="id", tag_name="pii", tag_value="client"),
+            Row(column_name="amount", tag_name="financial", tag_value="true"),
+        ],
     )
     result = collect_table_tags(spark, "cat.sch.tab")
     assert result["table_tags"] == [
@@ -211,13 +181,13 @@ def test_collect_table_tags_merges_rows():
 
 
 def test_collect_table_tags_degrades_on_sql_error():
-    spark = MagicMock(spec=SparkSession)
+    spark = create_autospec(SparkSession, instance=True)
     spark.sql.side_effect = RuntimeError("denied")
     assert collect_table_tags(spark, "cat.sch.tab") == {"table_tags": [], "column_tags": {}}
 
 
 def test_collect_table_tags_rejects_bad_name():
-    spark = MagicMock(spec=SparkSession)
+    spark = create_autospec(SparkSession, instance=True)
     # Bad name — collector logs a warning and returns the empty structure without hitting Spark.
     assert collect_table_tags(spark, "two.part") == {"table_tags": [], "column_tags": {}}
     spark.sql.assert_not_called()
@@ -226,18 +196,8 @@ def test_collect_table_tags_rejects_bad_name():
 # -- collect_column_upstream_lineage -----------------------------------------------------
 
 
-def _make_spark_with_sql_capture():
-    """Return a mock SparkSession whose spark.sql call is captured for inspection."""
-    spark = MagicMock(spec=SparkSession)
-    temp_df = MagicMock()
-    spark.createDataFrame.return_value = temp_df
-    temp_df.createOrReplaceTempView = MagicMock()
-    return spark
-
-
 def test_collect_column_upstream_lineage_sql_has_cycle_guard_and_limits():
-    spark = _make_spark_with_sql_capture()
-    spark.sql.return_value.collect.return_value = []
+    spark = _spark_with_sql_results([])
 
     collect_column_upstream_lineage(
         spark,
@@ -252,15 +212,13 @@ def test_collect_column_upstream_lineage_sql_has_cycle_guard_and_limits():
     assert "LIMIT 25" in sql_text  # per-member and tail LIMITs
     assert "INTERVAL 10 DAYS" in sql_text
     assert "e.depth < 3" in sql_text
-    # Anchor table literal is escaped via _sql_str_literal (single quotes doubled on bare 'tab').
+    # Anchor table literal is escaped as a SQL string literal with single quotes doubled.
     assert "'cat.sch.tab'" in sql_text
     spark.catalog.dropTempView.assert_called_once()
 
 
 def test_collect_column_upstream_lineage_unbounded_depth_omits_predicate():
-    spark = _make_spark_with_sql_capture()
-    spark.sql.return_value.collect.return_value = []
-
+    spark = _spark_with_sql_results([])
     collect_column_upstream_lineage(
         spark,
         "cat.sch.tab",
@@ -272,7 +230,8 @@ def test_collect_column_upstream_lineage_unbounded_depth_omits_predicate():
 
 
 def test_collect_column_upstream_lineage_drops_view_on_sql_failure():
-    spark = _make_spark_with_sql_capture()
+    spark = create_autospec(SparkSession, instance=True)
+    spark.createDataFrame.return_value = create_autospec(DataFrame, instance=True)
     spark.sql.side_effect = RuntimeError("permission denied")
 
     result = collect_column_upstream_lineage(
@@ -281,25 +240,24 @@ def test_collect_column_upstream_lineage_drops_view_on_sql_failure():
         ["id"],
         config=ColumnUpstreamLineageConfig(),
     )
-    assert result == []
+    assert not result
     spark.catalog.dropTempView.assert_called_once()
 
 
 def test_collect_column_upstream_lineage_no_seed_columns_short_circuits():
-    spark = _make_spark_with_sql_capture()
+    spark = create_autospec(SparkSession, instance=True)
     result = collect_column_upstream_lineage(
         spark,
         "cat.sch.tab",
         [],
         config=ColumnUpstreamLineageConfig(),
     )
-    assert result == []
+    assert not result
     spark.sql.assert_not_called()
 
 
 def test_collect_upstream_table_lineage_builds_recursive_cte():
-    spark = _make_spark_with_sql_capture()
-    spark.sql.return_value.collect.return_value = []
+    spark = _spark_with_sql_results([])
     collect_upstream_table_lineage(
         spark,
         "cat.sch.tab",
@@ -315,7 +273,7 @@ def test_collect_upstream_table_lineage_builds_recursive_cte():
 # -- collect_external_upstream_lineage ---------------------------------------------------
 
 
-def _external_metadata_info(system_type=SystemType.SAP):
+def _external_metadata_info(system_type: SystemType = SystemType.SAP) -> ExternalLineageInfo:
     return ExternalLineageInfo(
         external_metadata_info=ExternalLineageExternalMetadataInfo(
             name="sap_sd_invoices",
@@ -323,8 +281,8 @@ def _external_metadata_info(system_type=SystemType.SAP):
             entity_type="TABLE",
         ),
         external_lineage_info=ExternalLineageRelationshipInfo(
-            source=None,
-            target=None,
+            source=ExternalLineageObject(),
+            target=ExternalLineageObject(),
             columns=[
                 ColumnRelationship(source="VBELN", target="invoice_id"),
                 ColumnRelationship(source="WAERK", target="currency_code"),
@@ -334,19 +292,23 @@ def _external_metadata_info(system_type=SystemType.SAP):
     )
 
 
-def _external_table_info():
+def _external_table_info() -> ExternalLineageInfo:
     return ExternalLineageInfo(
         table_info=ExternalLineageTableInfo(catalog_name="src", schema_name="raw", name="orders"),
-        external_lineage_info=ExternalLineageRelationshipInfo(source=None, target=None),
+        external_lineage_info=ExternalLineageRelationshipInfo(
+            source=ExternalLineageObject(), target=ExternalLineageObject()
+        ),
     )
 
 
-def _external_file_info():
+def _external_file_info() -> ExternalLineageInfo:
     return ExternalLineageInfo(
         file_info=ExternalLineageFileInfo(
             path="s3://bucket/path", securable_name="volumes.ext", securable_type="VOLUME"
         ),
-        external_lineage_info=ExternalLineageRelationshipInfo(source=None, target=None),
+        external_lineage_info=ExternalLineageRelationshipInfo(
+            source=ExternalLineageObject(), target=ExternalLineageObject()
+        ),
     )
 
 
@@ -403,7 +365,7 @@ def test_collect_external_upstream_lineage_respects_max_relationships():
 def test_collect_external_upstream_lineage_degrades_on_sdk_error():
     ws = create_autospec(WorkspaceClient, instance=True)
     ws.external_lineage.list_external_lineage_relationships.side_effect = RuntimeError("api disabled")
-    assert collect_external_upstream_lineage(ws, "cat.sch.tab", config=ExternalLineageConfig()) == []
+    assert not collect_external_upstream_lineage(ws, "cat.sch.tab", config=ExternalLineageConfig())
 
 
 # -- build_schema_json -------------------------------------------------------------------
@@ -413,17 +375,9 @@ def test_build_schema_json_omits_empty_keys(mock_workspace_client):
     """Baseline enrichment with no comments/tags/lineage emits only the required keys."""
     mock_workspace_client.tables.get.return_value = TableInfo(columns=[ColumnInfo(name="id", type_text="string")])
     ws = mock_workspace_client
-
-    spark = _make_spark_sql_mock([[], []])  # empty tag reads
-    spark.sql.side_effect = [
-        MagicMock(collect=MagicMock(return_value=[])),  # table tags
-        MagicMock(collect=MagicMock(return_value=[])),  # column tags
-        MagicMock(collect=MagicMock(return_value=[])),  # column upstream lineage
-        MagicMock(collect=MagicMock(return_value=[])),  # upstream table lineage
-    ]
-    spark.createDataFrame = MagicMock()
-
     ws.external_lineage.list_external_lineage_relationships.return_value = iter([])
+
+    spark = _spark_with_sql_results([], [], [], [])  # table tags, column tags, column lineage, table lineage
 
     result = json.loads(
         build_schema_json(
@@ -447,12 +401,7 @@ def test_build_schema_json_skips_disabled_sub_models(mock_workspace_client):
     """Setting column_upstream_lineage=None and external_lineage=None skips both walks entirely."""
     mock_workspace_client.tables.get.return_value = TableInfo(columns=[ColumnInfo(name="id", type_text="string")])
     ws = mock_workspace_client
-
-    spark = MagicMock(spec=SparkSession)
-    spark.sql.side_effect = [
-        MagicMock(collect=MagicMock(return_value=[])),  # table tags
-        MagicMock(collect=MagicMock(return_value=[])),  # column tags
-    ]
+    spark = _spark_with_sql_results([], [])  # table tags, column tags only
 
     config = UnityCatalogMetadataConfig(column_upstream_lineage=None, external_lineage=None)
     result = json.loads(
@@ -467,30 +416,18 @@ def test_build_schema_json_skips_disabled_sub_models(mock_workspace_client):
     assert "column_upstream_lineage" not in result
     assert "external_lineage" not in result
     assert "upstream_tables" not in result
-    # Only two spark.sql calls (both tag reads); no lineage CTE invoked.
-    assert spark.sql.call_count == 2
-    # External lineage API is not called.
+    assert spark.sql.call_count == 2  # only the two tag reads
     ws.external_lineage.list_external_lineage_relationships.assert_not_called()
 
 
 def test_build_schema_json_includes_comments_and_external_lineage(mock_workspace_client):
     mock_workspace_client.tables.get.return_value = TableInfo(
         comment="Invoice fact table",
-        columns=[
-            ColumnInfo(name="invoice_id", type_text="string", comment="Invoice primary key"),
-        ],
+        columns=[ColumnInfo(name="invoice_id", type_text="string", comment="Invoice primary key")],
     )
     ws = mock_workspace_client
     ws.external_lineage.list_external_lineage_relationships.return_value = iter([_external_metadata_info()])
-
-    spark = MagicMock(spec=SparkSession)
-    spark.sql.side_effect = [
-        MagicMock(collect=MagicMock(return_value=[])),  # table tags
-        MagicMock(collect=MagicMock(return_value=[])),  # column tags
-        MagicMock(collect=MagicMock(return_value=[])),  # column upstream lineage
-        MagicMock(collect=MagicMock(return_value=[])),  # upstream table lineage
-    ]
-    spark.createDataFrame = MagicMock()
+    spark = _spark_with_sql_results([], [], [], [])  # all four Spark reads empty
 
     result = json.loads(
         build_schema_json(

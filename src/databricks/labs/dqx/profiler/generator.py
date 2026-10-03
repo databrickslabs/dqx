@@ -30,12 +30,13 @@ from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
-from databricks.labs.dqx.utils import get_table_column_metadata, sanitize_for_logging
+from databricks.labs.dqx.profiler.unity_catalog_metadata import build_schema_json
+from databricks.labs.dqx.utils import get_table_column_dicts, get_table_column_metadata, sanitize_for_logging
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-    from databricks.labs.dqx.llm.llm_utils import get_column_metadata
+    from databricks.labs.dqx.llm.llm_utils import get_column_dicts, get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
@@ -257,20 +258,26 @@ class DQGenerator(DQEngineBase):
 
         if UC_TABLE_PATTERN.match(location):
             logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_table_column_metadata(
-                self.ws,
-                location,
-                unity_catalog_metadata_config=unity_catalog_metadata_config,
+            if unity_catalog_metadata_config is None:
+                return get_table_column_metadata(self.ws, location)
+            return build_schema_json(
+                table_full_name=location,
+                column_dicts=get_table_column_dicts(self.ws, location),
+                ws=self.ws,
                 spark=self._spark,
+                config=unity_catalog_metadata_config,
             )
 
         if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):
             logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_column_metadata(
-                self.spark,
-                input_config,
-                workspace_client=self.ws,
-                unity_catalog_metadata_config=unity_catalog_metadata_config,
+            if unity_catalog_metadata_config is None:
+                return get_column_metadata(self.spark, input_config)
+            return build_schema_json(
+                table_full_name=location,
+                column_dicts=get_column_dicts(self.spark, input_config),
+                ws=self.ws,
+                spark=self.spark,
+                config=unity_catalog_metadata_config,
             )
 
         raise InvalidConfigError(

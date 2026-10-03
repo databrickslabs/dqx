@@ -8,11 +8,10 @@ import json
 import yaml
 import dspy  # type: ignore
 from pyspark.sql import SparkSession
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
-from databricks.labs.dqx.config import InputConfig, UnityCatalogMetadataConfig
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
 
 logger = logging.getLogger(__name__)
@@ -24,6 +23,7 @@ __all__ = [
     "create_optimizer_training_set",
     "create_optimizer_training_set_with_stats",
     "get_column_metadata",
+    "get_column_dicts",
     "extract_json_rules",
 ]
 
@@ -258,42 +258,24 @@ def create_optimizer_training_set_with_stats(
     return examples
 
 
-def get_column_metadata(
-    spark: SparkSession,
-    input_config: InputConfig,
-    *,
-    workspace_client: WorkspaceClient | None = None,
-    unity_catalog_metadata_config: UnityCatalogMetadataConfig | None = None,
-) -> str:
+def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
     """
     Get the column metadata for a given table.
 
     Args:
         input_config (InputConfig): Input configuration for the table.
         spark (SparkSession): The Spark session used to access the table.
-        workspace_client: Optional *WorkspaceClient*; required for Unity Catalog comment / tag
-            lookups and the external-lineage SDK call when
-            *unity_catalog_metadata_config* is set.
-        unity_catalog_metadata_config: Optional *UnityCatalogMetadataConfig* that opts into
-            comment / tag / lineage enrichment. When *None* (default) the function emits the
-            minimal ``{"columns":[{"name","type"}]}`` payload for byte-identical back-compat.
 
     Returns:
         str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
     """
-    df = read_input_data(spark, input_config)
-    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
-    if unity_catalog_metadata_config is None:
-        return json.dumps({"columns": columns})
-    from databricks.labs.dqx.profiler.unity_catalog_metadata import build_schema_json
+    return json.dumps({"columns": get_column_dicts(spark, input_config)})
 
-    return build_schema_json(
-        table_full_name=input_config.location,
-        column_dicts=columns,
-        ws=workspace_client,
-        spark=spark,
-        config=unity_catalog_metadata_config,
-    )
+
+def get_column_dicts(spark: SparkSession, input_config: InputConfig) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list for ``input_config`` using Spark."""
+    df = read_input_data(spark, input_config)
+    return [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
 
 
 def _load_training_examples() -> list[dict[str, Any]]:

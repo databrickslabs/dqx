@@ -1,15 +1,10 @@
 import json
-from unittest.mock import MagicMock
 
 import pytest
 from databricks.sdk.service.catalog import ColumnInfo, TableInfo
-from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.config import (
-    UC_TABLE_PATTERN,
-    UnityCatalogMetadataConfig,
-)
-from databricks.labs.dqx.utils import get_table_column_metadata
+from databricks.labs.dqx.config import UC_TABLE_PATTERN
+from databricks.labs.dqx.utils import get_table_column_dicts, get_table_column_metadata
 
 
 def test_get_table_column_metadata_returns_name_and_type(mock_workspace_client):
@@ -102,33 +97,12 @@ def test_uc_table_pattern_rejects_non_uc_locations(location):
     assert not UC_TABLE_PATTERN.match(location)
 
 
-def test_get_table_column_metadata_baseline_unchanged_when_config_none(mock_workspace_client):
-    """Byte-identical back-compat: a None config emits exactly the pre-enrichment payload."""
+def test_get_table_column_dicts_returns_name_and_type(mock_workspace_client):
+    """``get_table_column_dicts`` is the typed-list seed used by the enrichment path."""
     mock_workspace_client.tables.get.return_value = TableInfo(
-        columns=[ColumnInfo(name="id", type_text="string")],
+        columns=[ColumnInfo(name="id", type_text="STRING"), ColumnInfo(name="age", type_text="int")],
     )
-    result = get_table_column_metadata(mock_workspace_client, "main.default.t")
-    assert result == json.dumps({"columns": [{"name": "id", "type": "string"}]})
-
-
-def test_get_table_column_metadata_enriches_with_config(mock_workspace_client):
-    """Passing a config switches to the enriched renderer and attaches table/column comments."""
-    mock_workspace_client.tables.get.return_value = TableInfo(
-        comment="Fact table",
-        columns=[ColumnInfo(name="id", type_text="string", comment="Primary key")],
-    )
-    mock_workspace_client.external_lineage.list_external_lineage_relationships.return_value = iter([])
-    spark = MagicMock(spec=SparkSession)
-    spark.sql.return_value.collect.return_value = []
-
-    config = UnityCatalogMetadataConfig(column_upstream_lineage=None, external_lineage=None)
-    payload = json.loads(
-        get_table_column_metadata(
-            mock_workspace_client,
-            "main.default.t",
-            unity_catalog_metadata_config=config,
-            spark=spark,
-        )
-    )
-    assert payload["table_comment"] == "Fact table"
-    assert payload["columns"][0]["comment"] == "Primary key"
+    assert get_table_column_dicts(mock_workspace_client, "main.default.t") == [
+        {"name": "id", "type": "string"},
+        {"name": "age", "type": "int"},
+    ]

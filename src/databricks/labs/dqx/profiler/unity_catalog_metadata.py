@@ -22,14 +22,15 @@ import logging
 import uuid
 from typing import Any
 
+from pyspark.sql import SparkSession
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import (
-    ExternalLineageObject,
-    LineageDirection,
     ExternalLineageInfo,
+    ExternalLineageObject,
     ExternalLineageTable,
+    LineageDirection,
 )
-from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import (
     ColumnUpstreamLineageConfig,
@@ -521,73 +522,116 @@ def build_schema_json(
     base_columns = [dict(c) for c in column_dicts]
     result: dict[str, Any] = {"table": table_full_name, "columns": base_columns}
 
-    table_meta: dict[str, Any] = {}
-    # TODO (IK): EXTRACT COMMENTS COLLECTION TO SEPARATE METHOD
-    if ws is not None and (config.include_table_comment or config.include_column_comments):
-        table_meta = collect_table_metadata(
-            ws,
-            table_full_name,
-            include_table_comment=config.include_table_comment,
-            include_column_comments=config.include_column_comments,
-        )
-        if config.include_table_comment and "comment" in table_meta:
-            result["table_comment"] = table_meta["comment"]
-        if config.include_column_comments:
-            comment_lookup = {c["name"]: c.get("comment") for c in table_meta.get("columns", [])}
-            for entry in base_columns:
-                comment = comment_lookup.get(entry["name"])
-                if comment:
-                    entry["comment"] = comment
-    elif ws is None and (config.include_table_comment or config.include_column_comments):
-        logger.warning("build_schema_json: WorkspaceClient not provided; skipping table/column comment enrichment")
-
-    # TODO (IK): EXTRACT TAGS COLLECTION TO SEPARATE METHOD
-    tags: dict[str, Any] = {"table_tags": [], "column_tags": {}}
-    if config.include_tags:
-        if spark is not None:
-            tags = collect_table_tags(spark, table_full_name)
-            if tags["table_tags"]:
-                result["table_tags"] = tags["table_tags"]
-            _merge_tags(base_columns, tags["column_tags"])
-        else:
-            logger.warning("build_schema_json: SparkSession not provided; skipping tags enrichment")
-
-    # TODO (IK): EXTRACT LINEAGE COLLECTION TO SEPARATE METHOD
-    if config.column_upstream_lineage is not None:
-        if spark is not None:
-            seed = [c["name"] for c in base_columns]
-            column_edges = collect_column_upstream_lineage(
-                spark, table_full_name, seed, config=config.column_upstream_lineage
-            )
-            if column_edges:
-                result["column_upstream_lineage"] = column_edges
-            table_edges = collect_upstream_table_lineage(spark, table_full_name, config=config.column_upstream_lineage)
-            if table_edges:
-                upstream_tables: list[dict[str, Any]] = []
-                for edge in table_edges:
-                    upstream_tables.append(
-                        _collect_upstream_table_entry(
-                            ws=ws,
-                            spark=spark,
-                            table_full_name=edge["target_table"],
-                            depth=edge["depth"],
-                            config=config,
-                        )
-                    )
-                if upstream_tables:
-                    result["upstream_tables"] = upstream_tables
-        else:
-            logger.warning("build_schema_json: SparkSession not provided; skipping column upstream lineage enrichment")
-
-    if config.external_lineage is not None:
-        if ws is not None:
-            external = collect_external_upstream_lineage(ws, table_full_name, config=config.external_lineage)
-            if external:
-                result["external_lineage"] = external
-        else:
-            logger.warning("build_schema_json: WorkspaceClient not provided; skipping external lineage enrichment")
+    _enrich_with_comments(result, base_columns, ws=ws, table_full_name=table_full_name, config=config)
+    _enrich_with_tags(result, base_columns, spark=spark, table_full_name=table_full_name, config=config)
+    _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=table_full_name, config=config)
+    _enrich_with_external_lineage(result, ws=ws, table_full_name=table_full_name, config=config)
 
     return json.dumps(result)
+
+
+def _enrich_with_comments(
+    result: dict[str, Any],
+    base_columns: list[dict[str, Any]],
+    *,
+    ws: WorkspaceClient | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach table + column comments to ``result`` / ``base_columns`` in place."""
+    if not (config.include_table_comment or config.include_column_comments):
+        return
+    if ws is None:
+        logger.warning("build_schema_json: WorkspaceClient not provided; skipping table/column comment enrichment")
+        return
+    table_meta = collect_table_metadata(
+        ws,
+        table_full_name,
+        include_table_comment=config.include_table_comment,
+        include_column_comments=config.include_column_comments,
+    )
+    if config.include_table_comment and "comment" in table_meta:
+        result["table_comment"] = table_meta["comment"]
+    if config.include_column_comments:
+        comment_lookup = {c["name"]: c.get("comment") for c in table_meta.get("columns", [])}
+        for entry in base_columns:
+            comment = comment_lookup.get(entry["name"])
+            if comment:
+                entry["comment"] = comment
+
+
+def _enrich_with_tags(
+    result: dict[str, Any],
+    base_columns: list[dict[str, Any]],
+    *,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach table + column tags to ``result`` / ``base_columns`` in place."""
+    if not config.include_tags:
+        return
+    if spark is None:
+        logger.warning("build_schema_json: SparkSession not provided; skipping tags enrichment")
+        return
+    tags = collect_table_tags(spark, table_full_name)
+    if tags["table_tags"]:
+        result["table_tags"] = tags["table_tags"]
+    _merge_tags(base_columns, tags["column_tags"])
+
+
+def _enrich_with_lineage(
+    result: dict[str, Any],
+    base_columns: list[dict[str, Any]],
+    *,
+    ws: WorkspaceClient | None,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach column + upstream-table lineage edges to ``result`` in place."""
+    if config.column_upstream_lineage is None:
+        return
+    if spark is None:
+        logger.warning("build_schema_json: SparkSession not provided; skipping column upstream lineage enrichment")
+        return
+    seed = [c["name"] for c in base_columns]
+    column_edges = collect_column_upstream_lineage(spark, table_full_name, seed, config=config.column_upstream_lineage)
+    if column_edges:
+        result["column_upstream_lineage"] = column_edges
+    table_edges = collect_upstream_table_lineage(spark, table_full_name, config=config.column_upstream_lineage)
+    if not table_edges:
+        return
+    upstream_tables = [
+        _collect_upstream_table_entry(
+            ws=ws,
+            spark=spark,
+            table_full_name=edge["target_table"],
+            depth=edge["depth"],
+            config=config,
+        )
+        for edge in table_edges
+    ]
+    if upstream_tables:
+        result["upstream_tables"] = upstream_tables
+
+
+def _enrich_with_external_lineage(
+    result: dict[str, Any],
+    *,
+    ws: WorkspaceClient | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach upstream external-lineage edges to ``result`` in place."""
+    if config.external_lineage is None:
+        return
+    if ws is None:
+        logger.warning("build_schema_json: WorkspaceClient not provided; skipping external lineage enrichment")
+        return
+    external = collect_external_upstream_lineage(ws, table_full_name, config=config.external_lineage)
+    if external:
+        result["external_lineage"] = external
 
 
 def _collect_upstream_table_entry(
@@ -605,34 +649,56 @@ def _collect_upstream_table_entry(
     overall walk still contributes its structural shape to the prompt.
     """
     entry: dict[str, Any] = {"name": table_full_name, "depth": depth}
-    if ws is not None and (config.include_table_comment or config.include_column_comments):
-        meta = collect_table_metadata(
-            ws,
-            table_full_name,
-            include_table_comment=config.include_table_comment,
-            include_column_comments=config.include_column_comments,
-        )
-        if config.include_table_comment and "comment" in meta:
-            entry["comment"] = meta["comment"]
-        if config.include_column_comments and meta.get("columns"):
-            cols: list[dict[str, Any]] = []
-            for col in meta["columns"]:
-                col_entry: dict[str, Any] = {"name": col["name"]}
-                if "comment" in col:
-                    col_entry["comment"] = col["comment"]
-                cols.append(col_entry)
-            if cols:
-                entry["columns"] = cols
-    if config.include_tags and spark is not None:
-        tags = collect_table_tags(spark, table_full_name)
-        if tags["table_tags"]:
-            entry["tags"] = tags["table_tags"]
-        if tags["column_tags"]:
-            cols = entry.setdefault("columns", [])
-            existing = {c["name"]: c for c in cols}
-            for column_name, column_tag_list in tags["column_tags"].items():
-                if column_name in existing:
-                    existing[column_name]["tags"] = column_tag_list
-                else:
-                    cols.append({"name": column_name, "tags": column_tag_list})
+    _attach_upstream_comments(entry, ws=ws, table_full_name=table_full_name, config=config)
+    _attach_upstream_tags(entry, spark=spark, table_full_name=table_full_name, config=config)
     return entry
+
+
+def _attach_upstream_comments(
+    entry: dict[str, Any],
+    *,
+    ws: WorkspaceClient | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    if ws is None or not (config.include_table_comment or config.include_column_comments):
+        return
+    meta = collect_table_metadata(
+        ws,
+        table_full_name,
+        include_table_comment=config.include_table_comment,
+        include_column_comments=config.include_column_comments,
+    )
+    if config.include_table_comment and "comment" in meta:
+        entry["comment"] = meta["comment"]
+    if not (config.include_column_comments and meta.get("columns")):
+        return
+    cols = [
+        {"name": col["name"], "comment": col["comment"]} if "comment" in col else {"name": col["name"]}
+        for col in meta["columns"]
+    ]
+    if cols:
+        entry["columns"] = cols
+
+
+def _attach_upstream_tags(
+    entry: dict[str, Any],
+    *,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    if spark is None or not config.include_tags:
+        return
+    tags = collect_table_tags(spark, table_full_name)
+    if tags["table_tags"]:
+        entry["tags"] = tags["table_tags"]
+    if not tags["column_tags"]:
+        return
+    cols = entry.setdefault("columns", [])
+    existing = {c["name"]: c for c in cols}
+    for column_name, column_tag_list in tags["column_tags"].items():
+        if column_name in existing:
+            existing[column_name]["tags"] = column_tag_list
+        else:
+            cols.append({"name": column_name, "tags": column_tag_list})

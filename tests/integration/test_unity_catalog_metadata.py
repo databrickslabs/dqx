@@ -17,18 +17,7 @@ LLM-adjacent concerns live in ``test_ai_assisted_unity_catalog_metadata.py``; th
 strictly about the collector-level contract.
 """
 
-import pytest
-from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.sdk.service.catalog import (
-    ColumnRelationship,
-    CreateRequestExternalLineage,
-    DeleteRequestExternalLineage,
-    ExternalLineageExternalMetadata,
-    ExternalLineageObject,
-    ExternalLineageTable,
-    ExternalMetadata,
-    SystemType,
-)
+from databricks.sdk.service.catalog import SystemType
 
 from databricks.labs.dqx.config import ColumnUpstreamLineageConfig, ExternalLineageConfig
 from databricks.labs.dqx.profiler.unity_catalog_metadata import (
@@ -39,74 +28,6 @@ from databricks.labs.dqx.profiler.unity_catalog_metadata import (
     collect_upstream_table_lineage,
 )
 from tests.constants import TEST_CATALOG
-
-
-@pytest.fixture
-def _external_metadata(ws, make_random):
-    """Create an ``ExternalMetadata`` object; clean up on teardown."""
-
-    def create():
-        name = f"dqx_test_sap_{make_random(6).lower()}"
-        return ws.external_metadata.create_external_metadata(
-            ExternalMetadata(
-                name=name,
-                system_type=SystemType.SAP,
-                entity_type="TABLE",
-                description="SAP SD invoice headers (VBRK) — DQX integration test",
-            )
-        )
-
-    def delete(em):
-        if em is None:
-            return
-        try:
-            ws.external_metadata.delete_external_metadata(name=em.name)
-        except Exception:
-            pass
-
-    yield from factory("external_metadata", create, delete)
-
-
-@pytest.fixture
-def _external_lineage_rel(ws):
-    """Create an external-lineage relationship pointing to a UC table; clean up on teardown."""
-
-    def create(em_name: str, target_table_full_name: str):
-        catalog, schema, name = target_table_full_name.split(".")
-        request = CreateRequestExternalLineage(
-            source=ExternalLineageObject(
-                external_metadata=ExternalLineageExternalMetadata(name=em_name),
-            ),
-            target=ExternalLineageObject(
-                table=ExternalLineageTable(name=f"{catalog}.{schema}.{name}"),
-            ),
-            columns=[
-                ColumnRelationship(source="VBELN", target="invoice_id"),
-                ColumnRelationship(source="WAERK", target="currency_code"),
-            ],
-        )
-        return (ws.external_lineage.create_external_lineage_relationship(request), em_name, target_table_full_name)
-
-    def delete(created):
-        if created is None:
-            return
-        _rel, em_name, target_table_full_name = created
-        catalog, schema, name = target_table_full_name.split(".")
-        try:
-            ws.external_lineage.delete_external_lineage_relationship(
-                DeleteRequestExternalLineage(
-                    source=ExternalLineageObject(
-                        external_metadata=ExternalLineageExternalMetadata(name=em_name),
-                    ),
-                    target=ExternalLineageObject(
-                        table=ExternalLineageTable(name=f"{catalog}.{schema}.{name}"),
-                    ),
-                )
-            )
-        except Exception:
-            pass
-
-    yield from factory("external_lineage_rel", create, delete)
 
 
 def test_collect_table_metadata_returns_table_and_column_comments(ws, spark, make_schema, make_table):
@@ -160,17 +81,15 @@ def test_collect_upstream_table_lineage_finds_direct_predecessor(ws, spark, make
         schema_name=schema.name,
         columns=[("invoice_id", "string"), ("amount", "int")],
     )
-    # CTAS from `source` → `derived`; the write registers an edge in system.access.table_lineage.
     derived_full_name = f"{TEST_CATALOG}.{schema.name}.invoices_derived"
     spark.sql(f"CREATE TABLE {derived_full_name} AS SELECT invoice_id, amount FROM {source.full_name}")
     try:
-        # system.access.table_lineage is populated asynchronously; use a generous lookback and node cap.
         config = ColumnUpstreamLineageConfig(depth=2, lookback_days=1, max_nodes=50)
         edges = collect_upstream_table_lineage(spark, derived_full_name, config=config)
 
         upstream_tables = {edge["target_table"] for edge in edges}
         assert source.full_name in upstream_tables, (
-            f"expected {source.full_name!r} among upstream edges of {derived_full_name!r}, got {upstream_tables!r}"
+            f"expected {source.full_name!r} among upstream edges of {derived_full_name!r}, " f"got {upstream_tables!r}"
         )
         assert all(edge["depth"] >= 1 for edge in edges)
     finally:
@@ -204,7 +123,7 @@ def test_collect_column_upstream_lineage_executes_against_real_system_tables(ws,
 
 
 def test_collect_external_upstream_lineage_returns_sap_metadata(
-    ws, spark, make_schema, make_table, _external_metadata, _external_lineage_rel
+    ws, make_schema, make_table, make_external_metadata, make_external_lineage_relationship
 ):
     schema = make_schema(catalog_name=TEST_CATALOG)
     target = make_table(
@@ -212,13 +131,19 @@ def test_collect_external_upstream_lineage_returns_sap_metadata(
         schema_name=schema.name,
         columns=[("invoice_id", "string"), ("currency_code", "string")],
     )
-    em = _external_metadata()
-    _external_lineage_rel(em.name, target.full_name)
+    external_metadata = make_external_metadata()
+    make_external_lineage_relationship(
+        external_metadata.name,
+        target.full_name,
+        column_mappings=[("VBELN", "invoice_id"), ("WAERK", "currency_code")],
+    )
 
     results = collect_external_upstream_lineage(ws, target.full_name, config=ExternalLineageConfig())
 
-    sap_records = [r for r in results if r["source_kind"] == "external_metadata" and r["source_name"] == em.name]
-    assert sap_records, f"expected an external_metadata record for {em.name!r}, got {results!r}"
+    sap_records = [
+        r for r in results if r["source_kind"] == "external_metadata" and r["source_name"] == external_metadata.name
+    ]
+    assert sap_records, f"expected an external_metadata record for {external_metadata.name!r}, got {results!r}"
     sap = sap_records[0]
     assert sap["system_type"] == SystemType.SAP.value
     assert sap["entity_type"] == "TABLE"
