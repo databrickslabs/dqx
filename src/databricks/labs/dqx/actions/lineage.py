@@ -338,14 +338,19 @@ class CollectLineageAction(Action):
         # temp view (see *_column_direction_df*).
         failed_columns_view = _register_failed_columns_view(spark, failed_columns_df)
         try:
-            df = _collect_lineage_rows(
+            df, collect_success = _collect_lineage_rows(
                 spark=spark,
                 source_table=source_table,
                 run_id=context.run_id,
                 run_time_iso=context.run_time.isoformat(),
                 failed_columns_view=failed_columns_view,
                 config=self.config,
+                safe_name=safe_name,
             )
+            # If every enabled direction failed we must not write — doing so would stamp an empty
+            # frame over existing lineage in overwrite mode and misreport the run as HEALTHY.
+            if not collect_success:
+                return ActionResult(action_name=self.name, fired=True, status=ActionStatus.CONFIG_ERROR, extras=None)
             save_dataframe_as_table(df, self.output_config)
             _document_table(spark=spark, location=self.output_config.location, safe_name=safe_name)
             return ActionResult(
@@ -564,7 +569,8 @@ def _collect_lineage_rows(
     run_time_iso: str,
     failed_columns_view: str | None,
     config: LineageActionConfig,
-) -> DataFrame:
+    safe_name: str,
+) -> tuple[DataFrame, bool]:
     """Collect all lineage rows for *source_table* into a single DataFrame with *LINEAGE_TABLE_SCHEMA*.
 
     Each enabled branch (*upstream*, *downstream*, *column_upstream*, *column_downstream*)
@@ -577,6 +583,13 @@ def _collect_lineage_rows(
     the failed-columns set is empty / column lineage is skipped. It is referenced by the
     recursive column-lineage CTE via ``IN (SELECT col_name FROM <view>)``. When *None*, both
     column-lineage branches are skipped regardless of their sub-configs.
+
+    Returns:
+        Tuple of (lineage DataFrame, ``collect_success`` flag). ``collect_success`` is *False*
+        only when at least one branch was attempted *and* every attempted branch failed to
+        read lineage — the caller must not persist that result (an empty frame in overwrite
+        mode would clobber prior lineage). *True* in all other cases, including "no branches
+        attempted" (empty frame is a legitimate empty result, not a failure).
     """
     common: dict[str, Any] = {
         "run_id": run_id,
@@ -585,38 +598,58 @@ def _collect_lineage_rows(
         "source_table": source_table,
     }
     result = _empty_lineage_df(spark)
+    enabled_count = 0
+    failed_count = 0
     if config.upstream is not None:
-        result = result.unionByName(
-            _collect_upstream_df(spark=spark, source_table=source_table, search=config.upstream, common=common)
+        enabled_count += 1
+        branch_df, succeeded = _collect_upstream_df(
+            spark=spark, source_table=source_table, search=config.upstream, common=common
         )
+        if not succeeded:
+            failed_count += 1
+        result = result.unionByName(branch_df)
     if config.downstream is not None:
-        result = result.unionByName(
-            _collect_downstream_df(spark=spark, source_table=source_table, search=config.downstream, common=common)
+        enabled_count += 1
+        branch_df, succeeded = _collect_downstream_df(
+            spark=spark, source_table=source_table, search=config.downstream, common=common
         )
+        if not succeeded:
+            failed_count += 1
+        result = result.unionByName(branch_df)
     if failed_columns_view is not None:
         if config.column_upstream is not None:
-            result = result.unionByName(
-                _column_direction_df(
-                    spark=spark,
-                    source_table=source_table,
-                    failed_columns_view=failed_columns_view,
-                    edge_type=_EDGE_COLUMN_UPSTREAM,
-                    search=config.column_upstream,
-                    common=common,
-                )
+            enabled_count += 1
+            branch_df, succeeded = _column_direction_df(
+                spark=spark,
+                source_table=source_table,
+                failed_columns_view=failed_columns_view,
+                edge_type=_EDGE_COLUMN_UPSTREAM,
+                search=config.column_upstream,
+                common=common,
             )
+            if not succeeded:
+                failed_count += 1
+            result = result.unionByName(branch_df)
         if config.column_downstream is not None:
-            result = result.unionByName(
-                _column_direction_df(
-                    spark=spark,
-                    source_table=source_table,
-                    failed_columns_view=failed_columns_view,
-                    edge_type=_EDGE_COLUMN_DOWNSTREAM,
-                    search=config.column_downstream,
-                    common=common,
-                )
+            enabled_count += 1
+            branch_df, succeeded = _column_direction_df(
+                spark=spark,
+                source_table=source_table,
+                failed_columns_view=failed_columns_view,
+                edge_type=_EDGE_COLUMN_DOWNSTREAM,
+                search=config.column_downstream,
+                common=common,
             )
-    return _resolve_target_delta_versions(spark, result)
+            if not succeeded:
+                failed_count += 1
+            result = result.unionByName(branch_df)
+    collect_success = not (enabled_count > 0 and failed_count == enabled_count)
+    if not collect_success:
+        logger.warning(
+            f"CollectLineageAction '{safe_name}' aborted write: all {enabled_count} enabled "
+            f"lineage directions failed to read."
+        )
+    return _resolve_target_delta_versions(spark, result), collect_success
 
 
 def _lookup_target_delta_version(spark: SparkSession, table: str) -> tuple[str, int] | None:
@@ -661,7 +694,7 @@ def _collect_upstream_df(
     source_table: str,
     search: LineageSearchConfig,
     common: dict[str, Any],
-) -> DataFrame:
+) -> tuple[DataFrame, bool]:
     """Thin wrapper — upstream walk from *source_table* as a *LINEAGE_TABLE_SCHEMA* DataFrame.
 
     Args:
@@ -669,6 +702,10 @@ def _collect_upstream_df(
         source_table: 3-level UC name of the anchor table.
         search: Bound for depth, lookback window, and node cap.
         common: Constants (run_id, run_time_iso, source_table) added to each emitted row.
+
+    Returns:
+        Tuple of (DataFrame, success flag). ``success == False`` means the branch failed
+        to read lineage; the DataFrame is empty in that case.
     """
     return _walk_lineage(
         spark=spark, table_full_name=source_table, direction=_EDGE_UPSTREAM, search=search, common=common
@@ -681,7 +718,7 @@ def _collect_downstream_df(
     source_table: str,
     search: LineageSearchConfig,
     common: dict[str, Any],
-) -> DataFrame:
+) -> tuple[DataFrame, bool]:
     """Thin wrapper — downstream walk from *source_table* as a *LINEAGE_TABLE_SCHEMA* DataFrame.
 
     Args:
@@ -689,6 +726,10 @@ def _collect_downstream_df(
         source_table: 3-level UC name of the anchor table.
         search: Bound for depth, lookback window, and node cap.
         common: Constants (run_id, run_time_iso, source_table) added to each emitted row.
+
+    Returns:
+        Tuple of (DataFrame, success flag). ``success == False`` means the branch failed
+        to read lineage; the DataFrame is empty in that case.
     """
     return _walk_lineage(
         spark=spark, table_full_name=source_table, direction=_EDGE_DOWNSTREAM, search=search, common=common
@@ -702,7 +743,7 @@ def _walk_lineage(
     direction: str,
     search: LineageSearchConfig,
     common: dict[str, Any],
-) -> DataFrame:
+) -> tuple[DataFrame, bool]:
     """Walk *table_full_name*'s upstream or downstream neighbours with a recursive CTE.
 
     Uses a single ``WITH RECURSIVE`` query against *LINEAGE_TABLE_LINEAGE*. Cycle detection is
@@ -735,8 +776,9 @@ def _walk_lineage(
     produces more edges than the cap (no ordering contract).
 
     Returns:
-        DataFrame conforming to *LINEAGE_TABLE_SCHEMA* — one row per discovered edge, with the
-        constant columns from *common* prefixed and unrelated columns set to typed NULLs.
+        Tuple of (DataFrame conforming to *LINEAGE_TABLE_SCHEMA*, success flag). ``success`` is
+        ``False`` when the lineage read failed; the DataFrame is empty in that case so union
+        composition stays schema-stable.
     """
     key_source = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
     key_other = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
@@ -799,8 +841,8 @@ def _walk_lineage(
         materialized_rows = projected.collect()
     except Exception as exc:  # broad catch: lineage reads are non-fatal, degrade branch to empty
         logger.warning(f"Lineage read failed for '{_sanitize(table_full_name)}' ({direction}): {_sanitize(str(exc))}")
-        return _empty_lineage_df(spark)
-    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA)
+        return _empty_lineage_df(spark), False
+    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA), True
 
 
 def _column_direction_df(
@@ -811,7 +853,7 @@ def _column_direction_df(
     edge_type: str,
     search: LineageSearchConfig,
     common: dict[str, Any],
-) -> DataFrame:
+) -> tuple[DataFrame, bool]:
     """Recursive column-lineage walk for one direction, seeded from the failed-columns temp view.
 
     Mirrors *_walk_lineage*: a single ``WITH RECURSIVE`` query against
@@ -838,6 +880,9 @@ def _column_direction_df(
     table so unrelated tables that happen to have a column with the same name still surface;
     only cycles back to the seed pair itself are rejected, since those are already covered by
     the depth-1 seed and re-visiting them would inflate the walk with redundant paths.
+
+    Returns:
+        Tuple of (DataFrame conforming to *LINEAGE_TABLE_SCHEMA*, success flag).
     """
     if edge_type == _EDGE_COLUMN_UPSTREAM:
         anchor_key, anchor_col_key = "target_table_full_name", "target_column"
@@ -920,8 +965,8 @@ def _column_direction_df(
         logger.warning(
             f"Column lineage read failed for '{_sanitize(source_table)}' ({edge_type}): {_sanitize(str(exc))}"
         )
-        return _empty_lineage_df(spark)
-    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA)
+        return _empty_lineage_df(spark), False
+    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA), True
 
 
 def _project_edge_rows(
