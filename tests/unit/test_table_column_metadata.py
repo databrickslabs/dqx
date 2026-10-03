@@ -4,7 +4,7 @@ import pytest
 from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
 from databricks.labs.dqx.config import UC_TABLE_PATTERN
-from databricks.labs.dqx.utils import get_table_column_metadata
+from databricks.labs.dqx.utils import get_table_column_dicts, get_table_column_metadata
 
 
 def test_get_table_column_metadata_returns_name_and_type(mock_workspace_client):
@@ -95,3 +95,14 @@ def test_uc_table_pattern_matches_three_level_names(location):
 )
 def test_uc_table_pattern_rejects_non_uc_locations(location):
     assert not UC_TABLE_PATTERN.match(location)
+
+
+def test_get_table_column_dicts_returns_name_and_type(mock_workspace_client):
+    """``get_table_column_dicts`` is the typed-list seed used by the enrichment path."""
+    mock_workspace_client.tables.get.return_value = TableInfo(
+        columns=[ColumnInfo(name="id", type_text="STRING"), ColumnInfo(name="age", type_text="int")],
+    )
+    assert get_table_column_dicts(mock_workspace_client, "main.default.t") == [
+        {"name": "id", "type": "string"},
+        {"name": "age", "type": "int"},
+    ]

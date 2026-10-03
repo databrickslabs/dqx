@@ -803,6 +803,12 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
     return json.dumps({"columns": columns})
 
 
+def get_table_column_dicts(workspace_client: WorkspaceClient, table: str) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list used to seed the LLM schema prompt."""
+    table_info = workspace_client.tables.get(table.replace("`", ""))
+    return [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+
+
 def missing_required_packages(packages: list[str]) -> bool:
     """
     Checks if any of the required packages are missing.
