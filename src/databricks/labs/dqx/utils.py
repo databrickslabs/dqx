@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeGuard, TypeVar, overload, Annotated
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -27,6 +27,13 @@ from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
+
+if TYPE_CHECKING:
+    # Last-resort TYPE_CHECKING import: config.py already imports VariableValue from utils.py,
+    # so an eager import of UnityCatalogMetadataConfig here would be a cycle. SparkSession is
+    # kept lazy to avoid pulling PySpark into import graphs that only need utility helpers.
+    from pyspark.sql import SparkSession
+    from databricks.labs.dqx.config import UnityCatalogMetadataConfig
 
 
 def to_utc(value: datetime.datetime) -> datetime.datetime:
@@ -778,7 +785,13 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
         return set()
 
 
-def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> str:
+def get_table_column_metadata(
+    workspace_client: WorkspaceClient,
+    table: str,
+    *,
+    unity_catalog_metadata_config: "UnityCatalogMetadataConfig | None" = None,
+    spark: "SparkSession | None" = None,
+) -> str:
     """
     Gets column metadata for a Unity Catalog table using the Databricks SDK.
 
@@ -791,16 +804,35 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
         workspace_client: Databricks WorkspaceClient instance.
         table: Fully qualified table name (e.g. *catalog.schema.table*). Backtick-quoted identifiers
             are accepted and unquoted before the lookup.
+        unity_catalog_metadata_config: Optional *UnityCatalogMetadataConfig* that opts into
+            comment / tag / lineage enrichment. When *None* (default), the function emits the
+            minimal ``{"columns":[{"name","type"}]}`` payload for byte-identical back-compat.
+        spark: Optional *SparkSession* required for the Spark-only enrichment paths (tag reads
+            against *system.information_schema.*_tags* and the recursive-CTE column lineage
+            walker). Skipped with a warning when missing.
 
     Returns:
         A JSON string containing the column metadata with columns wrapped in a "columns" key.
+        When *unity_catalog_metadata_config* is set the payload may also include
+        ``table``, ``table_comment``, ``table_tags``, column-level ``comment`` / ``tags``,
+        ``upstream_tables``, ``column_upstream_lineage``, and ``external_lineage`` keys.
 
     Raises:
         NotFound: If the table does not exist or is not accessible.
     """
     table_info = workspace_client.tables.get(table.replace("`", ""))
     columns = [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
-    return json.dumps({"columns": columns})
+    if unity_catalog_metadata_config is None:
+        return json.dumps({"columns": columns})
+    from databricks.labs.dqx.profiler.unity_catalog_metadata import build_schema_json
+
+    return build_schema_json(
+        table_full_name=table,
+        column_dicts=columns,
+        ws=workspace_client,
+        spark=spark,
+        config=unity_catalog_metadata_config,
+    )
 
 
 def missing_required_packages(packages: list[str]) -> bool:

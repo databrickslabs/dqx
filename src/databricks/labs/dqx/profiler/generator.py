@@ -8,7 +8,13 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import LLMModelConfig, InputConfig, TABLE_PATTERN, UC_TABLE_PATTERN
+from databricks.labs.dqx.config import (
+    LLMModelConfig,
+    InputConfig,
+    TABLE_PATTERN,
+    UC_TABLE_PATTERN,
+    UnityCatalogMetadataConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import (
     GEOMETRYCOLLECTION_TYPE,
@@ -142,7 +148,11 @@ class DQGenerator(DQEngineBase):
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
     def generate_dq_rules_ai_assisted(
-        self, user_input: str = "", summary_stats: dict | None = None, input_config: InputConfig | None = None
+        self,
+        user_input: str = "",
+        summary_stats: dict | None = None,
+        input_config: InputConfig | None = None,
+        unity_catalog_metadata_config: UnityCatalogMetadataConfig | None = None,
     ) -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.
@@ -152,6 +162,18 @@ class DQGenerator(DQEngineBase):
             summary_stats: Optional summary statistics of the input data.
             input_config: Optional input config providing input data location as a path or fully qualified table name
                 to infer schema. If not provided, LLM will be used to guess the table schema.
+            unity_catalog_metadata_config: Optional *UnityCatalogMetadataConfig* that opts into
+                attaching Unity Catalog table / column comments, tags, bounded column upstream
+                lineage, and bounded external upstream lineage to the LLM schema prompt.
+                Instantiating ``UnityCatalogMetadataConfig()`` enables every enrichment with
+                sensible defaults; set the ``column_upstream_lineage`` or ``external_lineage``
+                sub-model to ``None`` to disable just that walk. Lineage walks require Spark
+                access to ``system.access.column_lineage`` / ``system.access.table_lineage``
+                (DBR 17+ for recursive-CTE support), tag reads require privileges on
+                ``system.information_schema.*_tags``, and external-lineage listing requires
+                permission on the external lineage API. All enrichment paths are non-fatal:
+                missing privileges / unavailable APIs degrade to the baseline schema with a
+                sanitised warning rather than raising.
 
         Returns:
             A list of dictionaries representing the generated data quality rules. Rules that fail
@@ -177,7 +199,11 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = self._get_schema_info(input_config) if input_config else ""
+        schema_info = (
+            self._get_schema_info(input_config, unity_catalog_metadata_config=unity_catalog_metadata_config)
+            if input_config
+            else ""
+        )
 
         # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.detect_business_rules_with_llm(
@@ -200,7 +226,12 @@ class DQGenerator(DQEngineBase):
         )
         return dq_rules
 
-    def _get_schema_info(self, input_config: InputConfig) -> str:
+    def _get_schema_info(
+        self,
+        input_config: InputConfig,
+        *,
+        unity_catalog_metadata_config: UnityCatalogMetadataConfig | None = None,
+    ) -> str:
         """
         Gets the input schema as JSON for use as LLM context.
 
@@ -210,6 +241,9 @@ class DQGenerator(DQEngineBase):
 
         Args:
             input_config: Input config providing the input data location.
+            unity_catalog_metadata_config: Optional Unity Catalog enrichment config forwarded
+                to both metadata helpers so comments / tags / lineage can be attached to the
+                prompt.
 
         Returns:
             A JSON string containing the column metadata with columns wrapped in a "columns" key.
@@ -223,11 +257,21 @@ class DQGenerator(DQEngineBase):
 
         if UC_TABLE_PATTERN.match(location):
             logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_table_column_metadata(self.ws, location)
+            return get_table_column_metadata(
+                self.ws,
+                location,
+                unity_catalog_metadata_config=unity_catalog_metadata_config,
+                spark=self._spark,
+            )
 
         if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):
             logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_column_metadata(self.spark, input_config)
+            return get_column_metadata(
+                self.spark,
+                input_config,
+                workspace_client=self.ws,
+                unity_catalog_metadata_config=unity_catalog_metadata_config,
+            )
 
         raise InvalidConfigError(
             "Invalid input location. It must be a 2 or 3-level table namespace or storage path, "
