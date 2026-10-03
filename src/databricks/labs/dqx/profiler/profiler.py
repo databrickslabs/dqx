@@ -585,7 +585,7 @@ class DQProfiler(DQEngineBase):
         if profile_type.contextual_builder is not None:
             raw = profile_type.contextual_builder(builder_ctx)
         elif profile_type.builder is not None:
-            raw = profile_type.builder(column_df, field.name, field.dataType, dict(metrics), dict(opts))
+            raw = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
         if raw is None:
             return []
         if isinstance(raw, DQProfile):

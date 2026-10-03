@@ -150,6 +150,10 @@ def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
     below the configured *distinct_ratio* threshold — the same denominator used by
     the semantic-enum detector so the two paths agree on low-repetition columns.
 
+    Note:
+        The ratio uses *count_non_null* as the denominator, so null-heavy
+        low-cardinality columns may fail the gate and not emit *is_in*.
+
     Args:
         ctx: Profile context (column, type, metrics, options, semantic_type).
 

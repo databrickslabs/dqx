@@ -22,8 +22,8 @@ Public surface:
     * detectors: *DEFAULT_ENUM_DETECTOR*, *DEFAULT_KEY_DETECTOR*,
       *DEFAULT_MEASUREMENT_DETECTOR*, *DEFAULT_TEXT_DETECTOR*,
       *default_semantic_detectors()*
-    * thresholds: *ENUM_MAX_CARDINALITY_RATIO*, *KEY_MIN_DENSITY_RATIO*,
-      *KEY_MIN_LENGTH_STABILITY_RATIO*
+    * thresholds: *ENUM_MAX_CARDINALITY_RATIO*, *KEY_MIN_DISTINCTNESS_RATIO*,
+      *KEY_MIN_DENSITY_RATIO*, *KEY_MIN_LENGTH_STABILITY_RATIO*
 """
 
 import logging
@@ -185,6 +185,11 @@ class DQSemanticTypeDetector(BaseModel):
 # max_distinct_ratio* emission condition).
 ENUM_MAX_CARDINALITY_RATIO = 0.05
 
+# Key (all types): count_distinct / count_non_null must be at or above this
+# ratio — the primary distinctness signal shared by numeric and string key
+# detection. Tolerates a tiny fraction of accidental duplicates.
+KEY_MIN_DISTINCTNESS_RATIO = 0.99
+
 # Key (numeric): count_distinct / (max - min + 1) must be at or above this
 # ratio for a numeric column to be classified as *key*. Tolerates small
 # gaps while rejecting continuous distributions where max - min swamps
@@ -242,8 +247,8 @@ def _detect_enum(ctx: DQProfileContext) -> DQSemanticType | None:
 def _detect_key(ctx: DQProfileContext) -> DQSemanticType | None:
     """Detect *key*-like columns using two positive signals.
 
-    Distinctness (>= 0.99) is the required primary signal for all types; a
-    second type-specific signal must also fire:
+    Distinctness (>= *KEY_MIN_DISTINCTNESS_RATIO*) is the required primary
+    signal for all types; a second type-specific signal must also fire:
 
     * Numeric columns — density = count_distinct / (max - min + 1) must be
       at or above *KEY_MIN_DENSITY_RATIO*.
@@ -259,7 +264,7 @@ def _detect_key(ctx: DQProfileContext) -> DQSemanticType | None:
         return None
 
     distinctness = cardinality / count_non_null
-    if distinctness < 0.99:
+    if distinctness < KEY_MIN_DISTINCTNESS_RATIO:
         return None
 
     column_type = ctx.column_type
