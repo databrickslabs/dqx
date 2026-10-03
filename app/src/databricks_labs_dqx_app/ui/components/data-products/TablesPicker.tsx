@@ -28,6 +28,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Database, Layers, Table2 } from "lucide-react";
+import { GroupBySelect } from "@/components/data-table/GroupBySelect";
+import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { useListMonitoredTablesSuspense, type MonitoredTableSummaryOut } from "@/lib/api";
 import selector from "@/lib/selector";
 import { Input } from "@/components/ui/input";
@@ -287,32 +289,15 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           aria-label={t("dataProducts.pickerSelectAllToggleAria")}
         />
 
-        <div className="flex items-center gap-1.5">
-          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground">{t("dataProducts.pickerGroupByLabel")}</span>
-          <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupMode)}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="catalog" className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <Database className="h-3 w-3" /> {t("dataProducts.pickerGroupByCatalog")}
-                </span>
-              </SelectItem>
-              <SelectItem value="schema" className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <Layers className="h-3 w-3" /> {t("dataProducts.pickerGroupBySchema")}
-                </span>
-              </SelectItem>
-              <SelectItem value="none" className="text-xs">
-                <span className="flex items-center gap-1.5">
-                  <Table2 className="h-3 w-3" /> {t("dataProducts.pickerGroupByFlat")}
-                </span>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <GroupBySelect
+          value={groupBy}
+          onChange={setGroupBy}
+          options={[
+            { value: "catalog", label: t("dataProducts.pickerGroupByCatalog"), icon: Database },
+            { value: "schema", label: t("dataProducts.pickerGroupBySchema"), icon: Layers },
+            { value: "none", label: t("dataProducts.pickerGroupByFlat"), icon: Table2 },
+          ]}
+        />
 
         {/* Separator's own `data-[orientation=vertical]:h-full` utility
             outranks a plain `h-6` because an attribute-selector variant has
@@ -322,7 +307,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
         <Separator orientation="vertical" className="!h-6" />
 
         <Select value={catalogFilter} onValueChange={(v) => { setCatalogFilter(v); setSchemaFilter(ALL); }}>
-          <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("monitoredTables.colCatalog")}>
+          <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colCatalog")}>
             <SelectValue placeholder={t("monitoredTables.colCatalog")} />
           </SelectTrigger>
           <SelectContent>
@@ -337,7 +322,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           </SelectContent>
         </Select>
         <Select value={schemaFilter} onValueChange={setSchemaFilter}>
-          <SelectTrigger className="w-40 h-8 text-xs" aria-label={t("monitoredTables.colSchema")}>
+          <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colSchema")}>
             <SelectValue placeholder={t("monitoredTables.colSchema")} />
           </SelectTrigger>
           <SelectContent>
@@ -352,7 +337,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
           </SelectContent>
         </Select>
         <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-          <SelectTrigger className="w-44 h-8 text-xs" aria-label={t("dataProducts.colOwner")}>
+          <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colOwner")}>
             <SelectValue placeholder={t("dataProducts.colOwner")} />
           </SelectTrigger>
           <SelectContent>
@@ -366,7 +351,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             ))}
           </SelectContent>
         </Select>
-        <LabelFilter available={availableTags} selected={tagFilter} onChange={setTagFilter} />
+        <LabelFilter available={availableTags} selected={tagFilter} onChange={setTagFilter} className={FILTER_TRIGGER_CLASS} />
 
         <Input
           placeholder={t("monitoredTables.searchTablesPlaceholder")}

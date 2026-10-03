@@ -25,24 +25,20 @@ Schema mapping highlights
   declaratively where the access pattern justifies them.  Each table
   gets the small set of indexes the FastAPI services actually need.
 
-Single-baseline schema
-----------------------
-:data:`PG_MIGRATIONS` holds exactly one entry: v1, which creates every
-OLTP table at its final shape.  The app has no external installs to
-upgrade yet, so the schema is expressed as ``CREATE TABLE`` rather than
-a replayable chain of ``ALTER TABLE`` steps — a shape change is edited
-into the baseline in place.
+Baseline plus additive upgrades
+-------------------------------
+v1 creates every OLTP table at its final shape, so a fresh install
+reads the whole schema in one place.  A column added later is written
+into the v1 ``CREATE TABLE`` **and** appended as a later
+:class:`PgMigration` of ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``
+statements.
 
-**An existing deployment does not pick up an edited baseline.** Its
-``dq_migrations`` table already records v1 as applied, so the runner
-skips it and the old columns stay. Re-provision such a workspace with
-``DROP SCHEMA … CASCADE`` (or the admin database-reset action) and let
-the next start rebuild it.
-
-Once the app ships externally this has to change: append a new
-:class:`PgMigration` with the next version number instead of editing v1.
-Postgres supports ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` natively,
-so re-running such a migration is safe out of the box.
+The ALTER is what upgrades an existing deployment: its ``dq_migrations``
+table already records v1 as applied, so an edited baseline alone is
+skipped and the new column never appears.  On a fresh install the ALTER
+is a no-op because v1 already created the column.  Keep later
+migrations additive (``ADD COLUMN IF NOT EXISTS`` only) so the baseline
+stays the single description of the schema.
 """
 
 import logging
@@ -233,6 +229,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  last_run_id   TEXT,"
             "  status        TEXT,"
             "  updated_at    TIMESTAMPTZ,"
+            # Pause is its own flag, not a status: the scheduler rewrites
+            # ``status`` after every firing, which would silently undo a pause
+            # issued mid-run, and resuming would erase the last run's outcome.
+            "  paused        BOOLEAN NOT NULL DEFAULT FALSE,"
             "  CONSTRAINT chk_dq_schedule_runs_status "
             "    CHECK (status IS NULL OR status IN "
             "      ('pending','success','partial_failure','failed'))"
@@ -477,6 +477,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  column_mapping JSONB,"
             "  created_by     TEXT,"
             "  created_at     TIMESTAMPTZ,"
+            "  row_filter     TEXT,"
+            "  pass_threshold INT,"
             "  CONSTRAINT uq_dq_pending_applications_binding_rule "
             "    UNIQUE (binding_id, rule_id)"
             ");"
@@ -805,6 +807,15 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  a.rule_fingerprint                            AS rule_fingerprint,"
             "  s.rule_set_fingerprint                        AS rule_set_fingerprint "
             "FROM approved a JOIN set_fp s USING (table_fqn)"
+        ),
+    ),
+    PgMigration(
+        version=2,
+        description="Schedule pause flag; row filter and pass threshold on pending applications",
+        sql=(
+            f"ALTER TABLE {_S}.dq_schedule_runs ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT FALSE;"
+            f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS row_filter TEXT;"
+            f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS pass_threshold INT;"
         ),
     ),
 ]

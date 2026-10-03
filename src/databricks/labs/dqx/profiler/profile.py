@@ -37,14 +37,13 @@ class DQProfile:
 # compatibility with user-authored builders registered via @register_profile_builder without
 # kind="context". Prefer *ContextualProfileBuilder* for new code.
 ProfileBuilder = Callable[
-    [DataFrame, str, DataType, dict[str, Any], dict[str, Any]],
-    DQProfile | None,
+    [DataFrame, str, DataType, dict[str, Any], dict[str, Any]], DQProfile | list[DQProfile] | None
 ]
 
 # Preferred single-argument callback shape. Receives *DQProfileContext* so it can inspect
 # *ctx.semantic_type* and gate its output on the detected type — giving the builder access
 # to the detected semantic type and other profiling metadata.
-ContextualProfileBuilder = Callable[[DQProfileContext], DQProfile | None]
+ContextualProfileBuilder = Callable[[DQProfileContext], DQProfile | list[DQProfile] | None]
 
 
 class DQProfileBuilder(BaseModel):

@@ -81,7 +81,7 @@ def test_dq_profile_context_with_metrics_returns_new_instance_with_snapshot():
 
 def test_dq_profile_context_with_metrics_snapshots_supplied_mapping():
     """Later mutations to the source dict must not be reflected in the returned context."""
-    source: dict = {"count": 10}
+    source: dict[str, int] = {"count": 10}
     df_mock = create_autospec(DataFrame)
     ctx = DQProfileContext(
         df=df_mock,

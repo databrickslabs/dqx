@@ -21,8 +21,17 @@ as:
   derivation fails or is absent we still grant the app SP and log a warning —
   never fail the whole operation.
 
+A table the app SP can already read (it owns it, or it is readable by every
+principal like ``samples``) needs no grant, so the caller only has to be able to
+read it themselves instead of holding ``MANAGE``. The caller's own read access is
+always required: otherwise app-level edit rights would let a user schedule runs
+whose results expose a table Unity Catalog doesn't let them read.
+
 All reads and the grant run under the caller's OBO client, so Unity Catalog
-enforces exactly what the user is allowed to do. A user who cannot grant (no
+enforces exactly what the user is allowed to do. The grant is issued as a SQL
+``GRANT`` on the app's warehouse: the App's OBO token only carries read-only
+Unity Catalog API scopes, so the grants REST API rejects it, while the ``sql``
+scope lets the user run the statement under their own privileges. A user who cannot grant (no
 ``MANAGE`` privilege and not an owner — directly or via a group they belong to)
 is hard-blocked, and we surface the users/groups that *do* hold ``MANAGE`` so
 the UI can ask one of them to set the schedule up instead.
@@ -32,17 +41,25 @@ import asyncio
 import logging
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.catalog import PermissionsChange, Privilege, SecurableType
+from databricks.sdk.service.sql import StatementState
 
-from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, quote_ident, validate_fqn
 
 logger = logging.getLogger(__name__)
 
 # UC securable type is passed to the grants API as a string.
 _TABLE_SECURABLE = SecurableType.TABLE.value
+
+# Upper bound on concurrent read-probe statements per request, so a large
+# collection can't flood the app warehouse.
+_PROBE_CONCURRENCY = 8
 
 
 class CannotManageError(Exception):
@@ -56,6 +73,23 @@ class CannotManageError(Exception):
         self.fqn = fqn
         self.manage_holders = manage_holders
         super().__init__(f"You do not have permission to grant SELECT on '{fqn}'.")
+
+
+class StatementFailedError(RuntimeError):
+    """The warehouse ran the statement and rejected it (e.g. permission denied, table not found)."""
+
+
+class WarehouseUnavailableError(RuntimeError):
+    """The warehouse gave no definitive answer (cold start, timeout, cancelled, no status).
+
+    Transient: callers should ask the user to retry rather than treat the
+    statement's target as inaccessible.
+    """
+
+
+WAREHOUSE_UNAVAILABLE_DETAIL = (
+    "The SQL warehouse is starting up or unavailable, so table access could not be checked. Try again in a moment."
+)
 
 
 def manage_block_detail(blocked: list[tuple[str, list[dict[str, str]]]]) -> dict[str, object]:
@@ -82,6 +116,7 @@ class TablePreflight:
     fqn: str
     can_manage: bool
     manage_holders: list[dict[str, str]]
+    access_unverified: bool = False
 
 
 def _is_real_three_part_fqn(fqn: str) -> bool:
@@ -103,10 +138,19 @@ _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 class ScheduleGrantService:
     """Check grantability and grant SELECT to the scheduler SPs, all via OBO."""
 
-    def __init__(self, obo_ws: WorkspaceClient, sp_ws: WorkspaceClient, job_id: str) -> None:
+    def __init__(
+        self,
+        obo_ws: WorkspaceClient,
+        sp_ws: WorkspaceClient,
+        job_id: str,
+        warehouse_id: str = "",
+    ) -> None:
         self._obo = obo_ws
         self._sp_ws = sp_ws
         self._job_id = (job_id or "").strip()
+        self._warehouse_id = (warehouse_id or "").strip()
+        self._scheduler_can_read_cache: dict[str, bool] = {}
+        self._user_can_read_cache: dict[str, bool] = {}
         # Per-request memoization of the (otherwise per-table) identity lookups.
         # The service is constructed per request (see ``get_schedule_grant_service``),
         # so caching here scopes each identity round-trip to a single request —
@@ -116,6 +160,9 @@ class ScheduleGrantService:
         self._app_sp_id_cached: bool = False
         self._task_runner_sp_id_cache: str | None = None
         self._task_runner_sp_id_cached: bool = False
+        # First inconclusive warehouse answer this request. Later probes fail
+        # fast with it instead of each waiting out their own deadline.
+        self._warehouse_unavailable: WarehouseUnavailableError | None = None
 
     # ------------------------------------------------------------------
     # SP identity resolution
@@ -348,6 +395,113 @@ class ScheduleGrantService:
 
         return False
 
+    def scheduler_can_read(self, fqn: str) -> bool:
+        """Return whether the app SP can already ``SELECT`` from *fqn*.
+
+        Probed by running ``SELECT 1 ... LIMIT 0`` as the app SP, which covers
+        ownership, direct and inherited grants, and account-wide access (e.g.
+        ``samples``). Any failure — including no warehouse — reads as ``False``
+        so the caller falls back to granting. Memoized per request.
+        """
+        return self._probe_read(self._sp_ws, fqn, self._scheduler_can_read_cache)
+
+    def user_can_read(self, fqn: str) -> bool:
+        """Return whether the OBO caller can ``SELECT`` from *fqn* (same probe, as the caller)."""
+        return self._probe_read(self._obo, fqn, self._user_can_read_cache)
+
+    def _probe_read(self, ws: WorkspaceClient, fqn: str, cache: dict[str, bool]) -> bool:
+        """Probe read access, caching only definitive answers.
+
+        A rejected statement (or a permission/not-found API error) means "not
+        readable". Anything else — cold start, timeout, network error — raises
+        :class:`WarehouseUnavailableError` uncached, so a transient hiccup is
+        never reported to the user as a missing grant. After the first such
+        error, the remaining probes in this request re-raise it straight away
+        rather than each waiting out the warehouse deadline again.
+        """
+        if fqn not in cache:
+            readable = False
+            if self._warehouse_id and _is_real_three_part_fqn(fqn):
+                if self._warehouse_unavailable is not None:
+                    raise self._warehouse_unavailable
+                try:
+                    validate_fqn(fqn)
+                    self._run_sql(ws, f"SELECT 1 FROM {quote_fqn(fqn)} LIMIT 0")
+                    readable = True
+                except (StatementFailedError, PermissionDenied, NotFound, ValueError):
+                    logger.debug("Read probe denied for %s", fqn, exc_info=True)
+                except WarehouseUnavailableError as e:
+                    self._warehouse_unavailable = e
+                    raise
+                except Exception as e:
+                    self._warehouse_unavailable = WarehouseUnavailableError(
+                        f"Could not verify read access to '{fqn}': {e}"
+                    )
+                    raise self._warehouse_unavailable from e
+            cache[fqn] = readable
+        return cache[fqn]
+
+    def prime_read_probes(self, fqns: list[str]) -> None:
+        """Run the scheduler and caller read probes for *fqns* concurrently.
+
+        Each probe is a warehouse round-trip, so checking N tables one probe at
+        a time costs up to 2N sequential statements. This fills the per-request
+        caches in parallel; later checks read from them.
+        """
+        if not self._warehouse_id:
+            return
+        targets = [f for f in dict.fromkeys(fqns) if f and _is_real_three_part_fqn(f)]
+        jobs = [(self._sp_ws, f, self._scheduler_can_read_cache) for f in targets] + [
+            (self._obo, f, self._user_can_read_cache) for f in targets
+        ]
+        jobs = [job for job in jobs if job[1] not in job[2]]
+        if len(jobs) < 2:
+            return
+        with ThreadPoolExecutor(max_workers=min(_PROBE_CONCURRENCY, len(jobs))) as pool:
+            # Transient failures are re-raised by the per-table checks: nothing
+            # was cached for them, and the request is marked unavailable.
+            list(pool.map(lambda job: self._probe_read_or_none(*job), jobs))
+
+    def _probe_read_or_none(self, ws: WorkspaceClient, fqn: str, cache: dict[str, bool]) -> bool | None:
+        try:
+            return self._probe_read(ws, fqn, cache)
+        except WarehouseUnavailableError:
+            return None
+
+    def _has_separate_task_runner(self) -> bool:
+        task_id = self.task_runner_sp_id()
+        return bool(task_id) and task_id != self.app_sp_id()
+
+    def _needs_no_grant(self, fqn: str) -> bool:
+        """The scheduler can already read *fqn* and so can the caller — nothing to grant.
+
+        Only the app SP's access can be probed. When scheduled runs execute as
+        a separate task-runner SP, its access is unknown and granting it needs
+        MANAGE, so this is never true there.
+        """
+        if self._has_separate_task_runner():
+            return False
+        self.prime_read_probes([fqn])
+        return self.scheduler_can_read(fqn) and self.user_can_read(fqn)
+
+    def can_schedule(self, fqn: str) -> bool:
+        """Return whether a schedule on *fqn* can be saved by the OBO caller.
+
+        True when both the scheduler and the caller can already read the table
+        (nothing to grant), or the caller can grant the scheduler access.
+        Raises :class:`WarehouseUnavailableError` when the read probes were
+        inconclusive and the caller also lacks MANAGE, rather than reporting a
+        missing grant that may not exist.
+        """
+        try:
+            if self._needs_no_grant(fqn):
+                return True
+        except WarehouseUnavailableError:
+            if self.user_can_manage(fqn):
+                return True
+            raise
+        return self.user_can_manage(fqn)
+
     def manage_holders(self, fqn: str) -> list[dict[str, str]]:
         """Return the users/groups that can grant on *fqn*: MANAGE holders + owners.
 
@@ -373,6 +527,7 @@ class ScheduleGrantService:
 
     def preflight(self, fqns: list[str]) -> list[TablePreflight]:
         """Per-table grantability + manage-holder enumeration for the UI editor."""
+        self.prime_read_probes(fqns)
         out: list[TablePreflight] = []
         seen: set[str] = set()
         for fqn in fqns:
@@ -388,7 +543,13 @@ class ScheduleGrantService:
                 # Synthetic cross-table checks need no source-table grant — never block.
                 out.append(TablePreflight(fqn=fqn, can_manage=True, manage_holders=[]))
                 continue
-            can_manage = self.user_can_manage(fqn)
+            try:
+                can_manage = self.can_schedule(fqn)
+            except WarehouseUnavailableError:
+                # Report this table as unverified rather than failing the whole
+                # preflight, so the other tables still show their grantability.
+                out.append(TablePreflight(fqn=fqn, can_manage=False, manage_holders=[], access_unverified=True))
+                continue
             holders = [] if can_manage else self.manage_holders(fqn)
             out.append(TablePreflight(fqn=fqn, can_manage=can_manage, manage_holders=holders))
         return out
@@ -397,7 +558,34 @@ class ScheduleGrantService:
     # Grant
     # ------------------------------------------------------------------
 
+    def _run_sql(self, ws: WorkspaceClient, statement: str) -> None:
+        """Run *statement* on the app warehouse as *ws*; raise with UC's message on failure."""
+        resp = ws.statement_execution.execute_statement(
+            statement=statement, warehouse_id=self._warehouse_id, wait_timeout="30s"
+        )
+        deadline = time.monotonic() + 90
+        delay = 0.25
+        while resp.status is None or resp.status.state in (None, StatementState.PENDING, StatementState.RUNNING):
+            if not resp.statement_id:
+                raise WarehouseUnavailableError("The SQL warehouse returned no statement status.")
+            if time.monotonic() > deadline:
+                raise WarehouseUnavailableError("Timed out waiting for the SQL warehouse.")
+            time.sleep(delay)
+            delay = min(delay * 2, 2.0)
+            resp = ws.statement_execution.get_statement(resp.statement_id)
+        state = resp.status.state
+        if state == StatementState.SUCCEEDED:
+            return
+        error = resp.status.error
+        message = error.message if error and error.message else None
+        if state == StatementState.FAILED:
+            raise StatementFailedError(message or "The SQL statement failed.")
+        raise WarehouseUnavailableError(message or f"The SQL statement ended as {state.value}.")
+
     def _grant_select(self, fqn: str, principal: str) -> None:
+        if self._warehouse_id:
+            self._run_sql(self._obo, f"GRANT SELECT ON TABLE {quote_fqn(fqn)} TO {quote_ident(principal)}")
+            return
         self._obo.grants.update(
             _TABLE_SECURABLE,
             fqn,
@@ -418,7 +606,7 @@ class ScheduleGrantService:
             # Nothing to grant on a synthetic cross-table key.
             return []
 
-        if not self.user_can_manage(fqn):
+        if not self.can_schedule(fqn):
             raise CannotManageError(fqn, self.manage_holders(fqn))
 
         return self._grant_to_schedulers_unchecked(fqn)
@@ -453,12 +641,17 @@ class ScheduleGrantService:
         if not _is_real_three_part_fqn(fqn):
             return []
 
+        granted: list[str] = []
         app_id = self.app_sp_id()
-        if not app_id:
-            raise RuntimeError("Could not resolve the app service principal identity to grant SELECT.")
-
-        self._grant_select(fqn, app_id)  # essential — propagate on failure
-        granted = [app_id]
+        try:
+            sp_can_read = self.scheduler_can_read(fqn)
+        except WarehouseUnavailableError:
+            sp_can_read = False  # re-granting is idempotent
+        if not sp_can_read:
+            if not app_id:
+                raise RuntimeError("Could not resolve the app service principal identity to grant SELECT.")
+            self._grant_select(fqn, app_id)  # essential — propagate on failure
+            granted.append(app_id)
 
         task_id = self.task_runner_sp_id()
         if task_id and task_id != app_id:
@@ -475,6 +668,9 @@ class ScheduleGrantService:
 
     async def preflight_async(self, fqns: list[str]) -> list[TablePreflight]:
         return await asyncio.to_thread(self.preflight, fqns)
+
+    async def can_schedule_async(self, fqn: str) -> bool:
+        return await asyncio.to_thread(self.can_schedule, fqn)
 
     async def user_can_manage_async(self, fqn: str) -> bool:
         return await asyncio.to_thread(self.user_can_manage, fqn)

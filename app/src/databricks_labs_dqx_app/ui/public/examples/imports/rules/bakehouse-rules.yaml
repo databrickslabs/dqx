@@ -1,0 +1,49 @@
+# DQX Studio reusable-rule import example.
+# Import from Rules > Import rules. Each rule is a template: map {{column}} to a
+# real column when you apply it, e.g. on the samples.bakehouse tables.
+
+- criticality: error
+  user_metadata:
+    name: Identifier is present
+    description: Identifiers such as samples.bakehouse.sales_transactions.transactionID must never be null.
+    dimension: Completeness
+    severity: High
+  check:
+    function: is_not_null
+    arguments:
+      column: "{{column}}"
+
+- criticality: warn
+  user_metadata:
+    name: Text value is not blank
+    description: Text fields such as samples.bakehouse.sales_transactions.product must contain a non-empty value.
+    dimension: Completeness
+    severity: Medium
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: "{{column}}"
+      trim_strings: true
+
+- criticality: error
+  user_metadata:
+    name: Amount is not negative
+    description: Quantities and prices such as samples.bakehouse.sales_transactions.totalPrice must be zero or greater.
+    dimension: Validity
+    severity: High
+  check:
+    function: is_not_less_than
+    arguments:
+      column: "{{column}}"
+      limit: 0
+
+- criticality: warn
+  user_metadata:
+    name: Timestamp is not in the future
+    description: Event times such as samples.bakehouse.sales_transactions.dateTime must not be later than now.
+    dimension: Timeliness
+    severity: Medium
+  check:
+    function: is_not_in_future
+    arguments:
+      column: "{{column}}"

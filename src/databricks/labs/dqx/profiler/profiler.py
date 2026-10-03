@@ -19,9 +19,8 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.common import TEXT_TYPES
-from databricks.labs.dqx.profiler.common import is_text
-from databricks.labs.dqx.profiler.profile import DQProfile
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_geospatial, is_text
+from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
@@ -542,6 +541,9 @@ class DQProfiler(DQEngineBase):
         After a min_max profile is produced, its resolved min/max values are written back into
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
         without triggering a second Spark action.
+
+        A builder may return a single profile or a list of profiles (e.g. the geospatial builder
+        derives several rules from one column); both are appended, and an empty result is skipped.
         """
         semantic_type = self._detect_semantic_type(column_df, field.name, field.dataType, metrics, opts)
 
@@ -555,29 +557,40 @@ class DQProfiler(DQEngineBase):
         )
 
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
-            if profile_type.contextual_builder is not None:
-                profile = profile_type.contextual_builder(builder_ctx)
-            elif profile_type.builder is not None:
-                profile = profile_type.builder(column_df, field.name, field.dataType, dict(metrics), dict(opts))
-            else:
+            result = self._build_profiles(profile_type, column_df, builder_ctx, field, metrics, opts)
+            if not result:
                 continue
-            if not profile:
-                continue
-            if semantic_type is not None and profile.semantic_type is None:
-                profile = dataclasses.replace(profile, semantic_type=semantic_type.name)
-            dq_rules.append(profile)
-            # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
-            # can access the final values without re-running Spark aggregates.
-            if profile.name == "min_max" and profile.parameters:
-                if profile.parameters.get("min") is not None:
-                    metrics["min"] = profile.parameters.get("min")
-                if profile.parameters.get("max") is not None:
-                    metrics["max"] = profile.parameters.get("max")
+            result = [result] if isinstance(result, DQProfile) else result
+            for profile in result:
+                if semantic_type is not None and profile.semantic_type is None:
+                    profile = dataclasses.replace(profile, semantic_type=semantic_type.name)
+                dq_rules.append(profile)
+                metrics.update(self._min_max_metrics(profile))
                 # Refresh the frozen context so contextual builders registered after *min_max*
                 # observe the resolved min/max values just written back. Pydantic materializes
                 # *ctx.metrics* as a fresh dict at construction, so contextual builders will not
                 # see mutations to the outer *metrics* dict without an explicit refresh.
                 builder_ctx = builder_ctx.with_metrics(metrics)
+
+    @staticmethod
+    def _build_profiles(
+        profile_type: DQProfileBuilder,
+        column_df: DataFrame,
+        builder_ctx: DQProfileContext,
+        field: T.StructField,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+    ) -> list[DQProfile]:
+        raw: DQProfile | list[DQProfile] | None = None
+        if profile_type.contextual_builder is not None:
+            raw = profile_type.contextual_builder(builder_ctx)
+        elif profile_type.builder is not None:
+            raw = profile_type.builder(column_df, field.name, field.dataType, dict(metrics), dict(opts))
+        if raw is None:
+            return []
+        if isinstance(raw, DQProfile):
+            return [raw]
+        return raw
 
     def _detect_semantic_type(
         self,
@@ -602,6 +615,32 @@ class DQProfiler(DQEngineBase):
             if match is not None:
                 return match
         return None
+
+    @staticmethod
+    def _min_max_metrics(profile: DQProfile) -> dict[str, Any]:
+        """
+        Returns the resolved min/max values from a min_max profile as a metrics update.
+
+        Downstream consumers (e.g. LLM primary-key detection, summary_stats consumers) read these
+        final values without re-running Spark aggregates. Returns an empty dict for other profiles
+        or when the bounds are absent.
+
+        Args:
+            profile: The profile produced by a builder.
+
+        Returns:
+            A dictionary with *min* and/or *max* keys, or an empty dictionary when nothing applies.
+        """
+        if profile.name != "min_max" or not profile.parameters:
+            return {}
+        updates: dict[str, Any] = {}
+        min_value = profile.parameters.get("min")
+        if min_value is not None:
+            updates["min"] = min_value
+        max_value = profile.parameters.get("max")
+        if max_value is not None:
+            updates["max"] = max_value
+        return updates
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
@@ -669,8 +708,12 @@ class DQProfiler(DQEngineBase):
             A dictionary with metrics per column.
         """
         sm_dict: dict[str, dict] = {}
-        field_types = {f.name: f.dataType for f in df.schema.fields}
-        for row in df.summary().collect():
+        summary_fields = [f.name for f in df.schema.fields if not is_geospatial(f.dataType)]
+        if not summary_fields:
+            return sm_dict
+        summary_df = df.select(*summary_fields)
+        field_types = {f.name: f.dataType for f in summary_df.schema.fields}
+        for row in summary_df.summary().collect():
             row_dict = row.asDict()
             metric = row_dict["summary"]
             self._process_row(row_dict, metric, sm_dict, field_types)
