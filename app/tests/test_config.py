@@ -49,8 +49,9 @@ def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
     assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
 
 
-def test_genie_schema_name_default_and_env(monkeypatch):
+def test_sibling_schema_names_follow_bound_volume_schema(monkeypatch):
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
+    monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
     # Re-import so pydantic-settings picks up the cleared env.
     import importlib
 
@@ -59,7 +60,59 @@ def test_genie_schema_name_default_and_env(monkeypatch):
     importlib.reload(config_module)
     from databricks_labs_dqx_app.backend.config import AppConfig
 
-    assert AppConfig().genie_schema_name == "genie"
+    config = AppConfig(_env_file=None, wheels_volume="/Volumes/main/dqx/wheels")
+    assert config.tmp_schema_name == "dqx_tmp"
+    assert config.genie_schema_name == "dqx_genie"
 
     monkeypatch.setenv("DQX_GENIE_SCHEMA", "custom_genie")
-    assert AppConfig().genie_schema_name == "custom_genie"
+    monkeypatch.setenv("DQX_TMP_SCHEMA", "custom_tmp")
+    configured = AppConfig(_env_file=None, wheels_volume="/Volumes/main/dqx/wheels")
+    assert configured.genie_schema_name == "custom_genie"
+    assert configured.tmp_schema_name == "custom_tmp"
+
+
+@pytest.mark.parametrize(
+    "volume_path",
+    ["/Volumes/main/../wheels", "/Volumes/main/bad\nschema/wheels", "/Volumes/main/studio/wheels/"],
+)
+def test_invalid_volume_does_not_determine_sibling_schema_names(
+    monkeypatch: pytest.MonkeyPatch, volume_path: str
+) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
+    monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
+    config = AppConfig(_env_file=None, schema_name="configured", wheels_volume=volume_path)
+
+    assert config.tmp_schema_name == "configured_tmp"
+    assert config.genie_schema_name == "configured_genie"
+
+
+def test_explicit_schema_mismatch_warns_without_exposing_identifiers(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_SCHEMA", "configured_schema")
+    monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
+    monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
+    config = AppConfig(_env_file=None, wheels_volume="/Volumes/main/bound_schema/wheels")
+
+    assert config.tmp_schema_name == "bound_schema_tmp"
+    assert "DQX_SCHEMA differs from the bound volume schema" in caplog.text
+    assert "configured_schema" not in caplog.text
+    assert "bound_schema" not in caplog.text
+
+
+@pytest.mark.parametrize("schema", [None, "bound_schema"])
+def test_default_or_matching_schema_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, schema: str | None
+) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_SCHEMA", raising=False)
+    if schema is not None:
+        monkeypatch.setenv("DQX_SCHEMA", schema)
+    AppConfig(_env_file=None, wheels_volume="/Volumes/main/bound_schema/wheels")
+
+    assert "DQX_SCHEMA differs" not in caplog.text

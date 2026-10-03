@@ -523,7 +523,7 @@ def get_profile_run_status(
 
         is_terminal = status.state in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
-        if is_terminal and meta.view_fqn:
+        if is_terminal and meta.view_fqn and "tmp_view_" in meta.view_fqn:
             try:
                 view_svc.drop_view(meta.view_fqn)
                 view_cleaned_up = True
@@ -622,7 +622,7 @@ def cancel_profile_run(
             error_message=f"Canceled by {canceling_user}",
             canceled_by=canceling_user,
         )
-        if meta.view_fqn:
+        if meta.view_fqn and "tmp_view_" in meta.view_fqn:
             try:
                 view_svc.drop_view(meta.view_fqn)
                 logger.info("Cleaned up temporary view after cancel: %s", meta.view_fqn)

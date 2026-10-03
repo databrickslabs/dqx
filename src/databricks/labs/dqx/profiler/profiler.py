@@ -17,7 +17,7 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_geospatial, is_text
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
@@ -519,19 +519,44 @@ class DQProfiler(DQEngineBase):
         After a min_max profile is produced, its resolved min/max values are written back into
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
         without triggering a second Spark action.
+
+        A builder may return a single profile or a list of profiles (e.g. the geospatial builder
+        derives several rules from one column); both are appended, and an empty result is skipped.
         """
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
-            profile = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
-            if not profile:
+            result = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
+            if not result:
                 continue
-            dq_rules.append(profile)
-            # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
-            # can access the final values without re-running Spark aggregates.
-            if profile.name == "min_max" and profile.parameters:
-                if profile.parameters.get("min") is not None:
-                    metrics["min"] = profile.parameters.get("min")
-                if profile.parameters.get("max") is not None:
-                    metrics["max"] = profile.parameters.get("max")
+            profiles = result if isinstance(result, list) else [result]
+            for profile in profiles:
+                dq_rules.append(profile)
+                metrics.update(self._min_max_metrics(profile))
+
+    @staticmethod
+    def _min_max_metrics(profile: DQProfile) -> dict[str, Any]:
+        """
+        Returns the resolved min/max values from a min_max profile as a metrics update.
+
+        Downstream consumers (e.g. LLM primary-key detection, summary_stats consumers) read these
+        final values without re-running Spark aggregates. Returns an empty dict for other profiles
+        or when the bounds are absent.
+
+        Args:
+            profile: The profile produced by a builder.
+
+        Returns:
+            A dictionary with *min* and/or *max* keys, or an empty dictionary when nothing applies.
+        """
+        if profile.name != "min_max" or not profile.parameters:
+            return {}
+        updates: dict[str, Any] = {}
+        min_value = profile.parameters.get("min")
+        if min_value is not None:
+            updates["min"] = min_value
+        max_value = profile.parameters.get("max")
+        if max_value is not None:
+            updates["max"] = max_value
+        return updates
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
@@ -599,8 +624,12 @@ class DQProfiler(DQEngineBase):
             A dictionary with metrics per column.
         """
         sm_dict: dict[str, dict] = {}
-        field_types = {f.name: f.dataType for f in df.schema.fields}
-        for row in df.summary().collect():
+        summary_fields = [f.name for f in df.schema.fields if not is_geospatial(f.dataType)]
+        if not summary_fields:
+            return sm_dict
+        summary_df = df.select(*summary_fields)
+        field_types = {f.name: f.dataType for f in summary_df.schema.fields}
+        for row in summary_df.summary().collect():
             row_dict = row.asDict()
             metric = row_dict["summary"]
             self._process_row(row_dict, metric, sm_dict, field_types)

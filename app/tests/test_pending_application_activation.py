@@ -36,8 +36,12 @@ def test_activate_applies_and_deletes_each_pending():
     _activate_pending_applications("r1", "approver@example.com", apply_rules=apply_rules, pending=pending)
 
     assert apply_rules.apply_rule.call_count == 2
-    apply_rules.apply_rule.assert_any_call("b1", "r1", [{"column": "col_b1"}], "author@example.com")
-    apply_rules.apply_rule.assert_any_call("b2", "r1", [{"column": "col_b2"}], "author@example.com")
+    apply_rules.apply_rule.assert_any_call(
+        "b1", "r1", [{"column": "col_b1"}], "author@example.com", row_filter=None, pass_threshold=None
+    )
+    apply_rules.apply_rule.assert_any_call(
+        "b2", "r1", [{"column": "col_b2"}], "author@example.com", row_filter=None, pass_threshold=None
+    )
     assert {c.args[0] for c in pending.delete.call_args_list} == {"pa1", "pa2"}
 
 
@@ -48,7 +52,24 @@ def test_activate_uses_approver_when_created_by_missing():
 
     _activate_pending_applications("r1", "approver@example.com", apply_rules=apply_rules, pending=pending)
 
-    apply_rules.apply_rule.assert_called_once_with("b1", "r1", [{"column": "col_b1"}], "approver@example.com")
+    apply_rules.apply_rule.assert_called_once_with(
+        "b1", "r1", [{"column": "col_b1"}], "approver@example.com", row_filter=None, pass_threshold=None
+    )
+
+
+def test_activate_carries_row_filter_and_pass_threshold():
+    apply_rules = create_autospec(ApplyRulesService, instance=True)
+    pending = create_autospec(PendingApplicationService, instance=True)
+    staged = _pending("pa1", "b1")
+    staged.row_filter = "region = 'EU'"
+    staged.pass_threshold = 95
+    pending.list_for_rule.return_value = [staged]
+
+    _activate_pending_applications("r1", "approver@example.com", apply_rules=apply_rules, pending=pending)
+
+    apply_rules.apply_rule.assert_called_once_with(
+        "b1", "r1", [{"column": "col_b1"}], "author@example.com", row_filter="region = 'EU'", pass_threshold=95
+    )
 
 
 def test_activate_is_best_effort_per_row():
