@@ -6,11 +6,12 @@ read it back via ``context.extras.get(<producer-name>)``.
 """
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 from unittest.mock import create_autospec
 
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import (
+    Action,
     ActionContext,
     ActionResult,
     ActionServices,
@@ -43,9 +44,14 @@ def _make_services() -> ActionServices:
 
 
 def _make_dq_action(action: object, name: str) -> DQAction:
-    """Build a DQAction wrapping an arbitrary test action (bypasses type validation)."""
+    """Build a DQAction wrapping an arbitrary test action (bypasses Pydantic validation).
+
+    The fake action classes in this module intentionally don't subclass *Action* — they are
+    minimal duck-typed stand-ins that avoid the Pydantic field/discriminator machinery. The
+    cast expresses that intentional bypass without suppressing the type checker.
+    """
     dq_action = DQAction(action=FailPipeline(name=name or "placeholder"), condition=None, name=name)
-    dq_action.action = action  # type: ignore[assignment]
+    dq_action.action = cast(Action, action)
     return dq_action
 
 

@@ -530,15 +530,17 @@ lineage collection is affected.
 **Configuration:**
 
 - *LineageSearchConfig* (used for *upstream*, *downstream*, *column_upstream*,
-  *column_downstream*): *depth* (int ≥ 1, default `1`), *lookback_days* (int ≥ 1, default
-  `30`), *max_nodes* (int ≥ 1, default `100`). Both the table-lineage and column-lineage
-  walks are recursive and honour *depth* and *max_nodes* identically. *max_nodes* is a
-  **guardrail** applied as a ``LIMIT`` inside each member of the recursive CTE (bounding the
-  frontier per hop, so intermediate expansion is capped per iteration) and once more at the
-  tail (bounding total output). Together with *depth* this bounds the traversal's
-  materialised row count to ``O(depth * max_nodes)``. It does **not** guarantee which rows
-  survive when the graph produces more edges than the cap (no ordering contract); treat it
-  as a safety limit.
+  *column_downstream*): *depth* (int ≥ 1 or `None`, default `100`), *lookback_days* (int ≥ 1,
+  default `30`), *max_nodes* (int ≥ 1, default `100`). The *depth* default of `100` matches
+  Spark's own *spark.sql.cteRecursionLevelLimit*; set a smaller value for a stricter per-direction
+  hop cap, or `None` to opt into unbounded walks (very deep graphs may then trip Spark's recursion
+  limit at execution time). Both the table-lineage and column-lineage walks are recursive and
+  honour *depth* and *max_nodes* identically. *max_nodes* is a **guardrail** applied as a
+  ``LIMIT`` inside each member of the recursive CTE (bounding the frontier per hop, so intermediate
+  expansion is capped per iteration) and once more at the tail (bounding total output). Together
+  with *depth* this bounds the traversal's materialised row count to ``O(depth * max_nodes)``.
+  It does **not** guarantee which rows survive when the graph produces more edges than the cap
+  (no ordering contract); treat it as a safety limit.
 - *LineageActionConfig* composes four optional sub-configs — *upstream*, *downstream*,
   *column_upstream*, *column_downstream*:
   - Sub-configs each default to a fresh *LineageSearchConfig* (direction on by default); set
@@ -574,6 +576,7 @@ when they need the full structure — see [Passing data between actions (extras)
 | *source_table*         | STRING       | every row (`context.input_location`)             |
 | *edge_type*            | STRING       | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream* |
 | *depth*                | BIGINT       | edge rows (BFS depth)                            |
+| *predecessor*          | STRING       | edge rows — immediate predecessor table in the walk direction (equal to *source_table* at depth 1) |
 | *target_table*         | STRING       | edge rows                                        |
 | *target_delta_version* | BIGINT       | edge rows (when known)                           |
 | *source_column*        | STRING       | column-lineage rows                              |

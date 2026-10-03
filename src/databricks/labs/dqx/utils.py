@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeAlias, TypeGuard, TypeVar, overload, Annotated
+from typing import Any, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -139,18 +139,19 @@ def _strip_literals_and_comments(match: "re.Match[str]") -> str:
     return "" if match.group("comment") is not None else " "
 
 
-ScalarLeaf: TypeAlias = str | int | float | bool
-"""JSON-safe leaf type used across the variable-substitution subsystem."""
+_SCALAR_VARIABLE_TYPES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bool,
+    Decimal,
+    datetime.date,
+    datetime.datetime,
+    datetime.time,
+)
 
-_SCALAR_LEAF_TYPES: tuple[type, ...] = (str, int, float, bool)
-_SCALAR_VARIABLE_TYPES = (*_SCALAR_LEAF_TYPES, Decimal, datetime.date, datetime.datetime, datetime.time)
-
-VariableValue = ScalarLeaf | Decimal | datetime.date | datetime.datetime | datetime.time
-"""Supported scalar types for variable substitution values.
-
-Extends *ScalarLeaf* with *Decimal* and date/datetime/time types that are meaningful for variable
-substitution into SQL/column expressions.
-"""
+VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
+"""Supported scalar types for variable substitution into SQL / column expressions."""
 
 
 def get_column_name_or_alias(

@@ -1021,16 +1021,8 @@ def test_end_to_end_streaming_via_dqengine(
 ) -> None:
     """Streaming e2e smoke: *CollectLineageAction* fires per micro-batch and writes to the sink.
 
-    Batch coverage above (*test_end_to_end_via_dqengine*) proves the engine → evaluator →
-    action wiring on the batch path. Streaming has real differences — actions are evaluated
-    per micro-batch via *StreamingQueryListener*, dispatched asynchronously after the query
-    terminates — so this test drives the same action through a *readStream* /
-    ``availableNow=True`` run and asserts the sink is populated with the expected downstream
-    edge.
-
-    Scope is deliberately narrow: we don't re-cover walk scenarios, cycle guards, or
-    column-lineage (those live on the direct-execute suite above). Proving the action
-    executes and writes correctly on the streaming path closes the e2e story.
+    Batch e2e coverage lives in *test_apply_checks_and_save_collects_lineage*; this test drives
+    the same action through a *readStream* / ``availableNow=True`` run to cover the streaming path.
     """
     schema = make_schema(catalog_name=TEST_CATALOG)
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema.name).name

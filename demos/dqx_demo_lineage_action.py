@@ -285,9 +285,9 @@ from databricks.labs.dqx.actions import (
 )
 from databricks.labs.dqx.config import OutputConfig
 
-# Uses LineageActionConfig defaults: depth=None (unbounded — cycle detection + max_nodes keep the walk
-# finite) and lookback_days=30 (window over system.access.*_lineage). Set LineageSearchConfig.depth
-# to add a hop-count safety guardrail per direction; override other knobs via LineageActionConfig.
+# Uses LineageActionConfig defaults: depth=100 (matches Spark's cteRecursionLevelLimit) and
+# lookback_days=30 (window over system.access.*_lineage). Set LineageSearchConfig.depth to a smaller
+# value for a stricter per-direction hop cap, or to None to opt into unbounded walks.
 lineage_action = CollectLineageAction(
     output_config=OutputConfig(location=lineage_sink_table, mode="append"),
 )

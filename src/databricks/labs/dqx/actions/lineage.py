@@ -168,9 +168,11 @@ class LineageSearchConfig(BaseModel):
     Attributes:
         depth: Optional maximum walk depth from the source table in hops. When set, must be
             ``>= 1`` and acts as a **safety guardrail** capping recursion depth for both the
-            table-lineage and column-lineage walks. Defaults to *None* (unbounded) — the
-            in-CTE full-path cycle guard plus *max_nodes* still keep the traversal finite;
-            set an explicit *depth* when a stricter hop cap is required.
+            table-lineage and column-lineage walks. Defaults to ``100`` — matches Spark's
+            default *spark.sql.cteRecursionLevelLimit*, so the recursive CTE stays within the
+            engine's own hop limit on deep graphs. Set to *None* to opt into unbounded walks
+            (the in-CTE full-path cycle guard plus *max_nodes* still keep the traversal
+            finite, but very deep graphs may trip Spark's recursion limit at execution time).
         lookback_days: How far back to consider lineage entries in *system.access.table_lineage*
             / *system.access.column_lineage*. Must be ``>= 1``.
         max_nodes: Guardrail row cap applied both **inside** each member of the recursive
@@ -185,7 +187,7 @@ class LineageSearchConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    depth: int | None = None
+    depth: int | None = 100
     lookback_days: int = 30
     max_nodes: int = 100
 
@@ -706,9 +708,13 @@ def _walk_lineage(
     Uses a single ``WITH RECURSIVE`` query against *LINEAGE_TABLE_LINEAGE*. Cycle detection is
     performed inside the CTE by carrying the visited path as an array column and rejecting any
     neighbour already in the path — so multi-hop cycles (a → b → a → c) are blocked, not only
-    the nearest-anchor case. Requires DBR 17+ for the recursive-CTE feature; on parse / read
-    failure the caller-visible result is an empty *LINEAGE_TABLE_SCHEMA* DataFrame and a
-    sanitised warning is logged.
+    the nearest-anchor case. Requires DBR 17+ for the recursive-CTE feature. Both parse-time
+    *and* runtime failures (missing permissions on *system.access.table_lineage*, exceeding
+    Spark's ``cteRecursionLevelLimit`` on a deep graph, etc.) are isolated per-direction: the
+    query is executed inside the ``try`` via a bounded ``.collect()`` so any failure degrades
+    just this branch to an empty *LINEAGE_TABLE_SCHEMA* DataFrame and logs a sanitised warning,
+    rather than escaping to the outer *CollectLineageAction.execute* broad-catch (which would
+    turn the whole action into *CONFIG_ERROR*).
 
     *table_full_name* is inlined as a single-quoted SQL string literal via *_sql_str_literal*
     (escapes embedded quotes). *search.depth* is an optional validated Pydantic int (>= 1 when
@@ -771,22 +777,30 @@ def _walk_lineage(
     )
     try:
         walk_df = spark.sql(query)
-    except Exception as exc:  # broad catch: system-table read errors are non-fatal for lineage
+        projected = _project_edge_rows(
+            walk_df,
+            edge_type=direction,
+            # The CTE's *anchor* column already carries the immediate predecessor at each hop:
+            # depth 1 → *table_full_name* (the source anchor); depth N → the previous hop's
+            # neighbour (see ``SELECT e.neighbour AS anchor`` in the recursive member).
+            predecessor_col=F.col("anchor"),
+            target_table_col=F.col("neighbour"),
+            depth_col=F.col("depth").cast("long"),
+            source_column_col=F.lit(None).cast("string"),
+            target_column_col=F.lit(None).cast("string"),
+            common=common,
+        )
+        # Force the recursive CTE to execute inside this try/except — spark.sql(..) only
+        # builds the lazy plan, so without this materialisation a runtime read error (denied
+        # system.access.table_lineage, cteRecursionLevelLimit, etc.) would surface later at
+        # _resolve_target_delta_versions' .collect() and escape to the outer execute() handler,
+        # sinking the whole action instead of just this branch. The result is bounded by
+        # search.max_nodes (default 100), so driver-side .collect() is safe.
+        materialized_rows = projected.collect()
+    except Exception as exc:  # broad catch: lineage reads are non-fatal, degrade branch to empty
         logger.warning(f"Lineage read failed for '{_sanitize(table_full_name)}' ({direction}): {_sanitize(str(exc))}")
         return _empty_lineage_df(spark)
-    return _project_edge_rows(
-        walk_df,
-        edge_type=direction,
-        # The CTE's *anchor* column already carries the immediate predecessor at each hop:
-        # depth 1 → *table_full_name* (the source anchor); depth N → the previous hop's
-        # neighbour (see ``SELECT e.neighbour AS anchor`` in the recursive member).
-        predecessor_col=F.col("anchor"),
-        target_table_col=F.col("neighbour"),
-        depth_col=F.col("depth").cast("long"),
-        source_column_col=F.lit(None).cast("string"),
-        target_column_col=F.lit(None).cast("string"),
-        common=common,
-    )
+    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA)
 
 
 def _column_direction_df(
@@ -889,21 +903,25 @@ def _column_direction_df(
     )
     try:
         walk_df = spark.sql(query)
-    except Exception as exc:  # broad catch: system-table read errors are non-fatal for lineage
+        projected = _project_edge_rows(
+            walk_df,
+            edge_type=edge_type,
+            predecessor_col=F.col("predecessor"),
+            target_table_col=F.col("neighbour"),
+            depth_col=F.col("depth").cast("long"),
+            source_column_col=F.col("source_column"),
+            target_column_col=F.col("target_column"),
+            common=common,
+        )
+        # Force execution inside this try/except — see _walk_lineage for the full rationale.
+        # Result is bounded by search.max_nodes (default 100), so .collect() is safe.
+        materialized_rows = projected.collect()
+    except Exception as exc:  # broad catch: lineage reads are non-fatal, degrade branch to empty
         logger.warning(
             f"Column lineage read failed for '{_sanitize(source_table)}' ({edge_type}): {_sanitize(str(exc))}"
         )
         return _empty_lineage_df(spark)
-    return _project_edge_rows(
-        walk_df,
-        edge_type=edge_type,
-        predecessor_col=F.col("predecessor"),
-        target_table_col=F.col("neighbour"),
-        depth_col=F.col("depth").cast("long"),
-        source_column_col=F.col("source_column"),
-        target_column_col=F.col("target_column"),
-        common=common,
-    )
+    return spark.createDataFrame(materialized_rows, LINEAGE_TABLE_SCHEMA)
 
 
 def _project_edge_rows(

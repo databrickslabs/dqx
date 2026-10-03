@@ -1,8 +1,7 @@
 """Unit tests for *CollectLineageAction* — pure-logic scope only.
 
-System-table read paths and recursive-CTE walks are exercised by the integration suite (see
-*tests/integration/actions/test_lineage_action.py*). Anything that would require a live Spark
-session or fabricated *spark.sql* results has been moved there.
+System-table read paths and recursive-CTE walks are exercised by the integration suite
+(*tests/integration/test_lineage_action.py*).
 """
 
 from datetime import datetime, timezone
@@ -52,7 +51,7 @@ def test_execute_returns_healthy_with_none_extras_when_input_location_missing() 
 
     assert result.status == ActionStatus.HEALTHY
     assert result.extras is None
-    spark.sql.assert_not_called()  # type: ignore[attr-defined]
+    spark.sql.assert_not_called()
 
 
 def test_execute_returns_config_error_when_services_spark_is_none() -> None:
