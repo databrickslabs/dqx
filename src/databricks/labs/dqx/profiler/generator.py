@@ -201,7 +201,9 @@ class DQGenerator(DQEngineBase):
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
         schema_info = (
-            self._get_schema_info(input_config, unity_catalog_metadata_config=unity_catalog_metadata_config)
+            self._get_schema_info(
+                input_config=input_config, unity_catalog_metadata_config=unity_catalog_metadata_config
+            )
             if input_config
             else ""
         )

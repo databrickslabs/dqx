@@ -19,9 +19,9 @@ systems) is not recorded in *system.access.*_lineage*.
 
 import json
 import logging
-import uuid
 from typing import Any
 
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
@@ -43,7 +43,7 @@ from databricks.labs.dqx.utils import sanitize_for_logging
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "collect_table_metadata",
+    "collect_table_comments",
     "collect_table_tags",
     "collect_column_upstream_lineage",
     "collect_upstream_table_lineage",
@@ -90,54 +90,36 @@ def _split_three_part_name(name: str) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
-def collect_table_metadata(
-    ws: WorkspaceClient,
-    table: str,
-    *,
-    include_table_comment: bool,
-    include_column_comments: bool,
-) -> dict[str, Any]:
-    """Return per-column schema metadata plus optional table/column comments.
+def collect_table_comments(ws: WorkspaceClient, table: str) -> tuple[str | None, dict[str, str]]:
+    """Return ``(table_comment, {column_name: column_comment})`` for ``table`` in one SDK call.
 
-    Reads via ``ws.tables.get(table)`` (backticks stripped first) and emits
-    ``{"name", "comment"?, "columns": [{"name","type","comment"?}]}``. Keys for comments are
-    **omitted** when the corresponding flag is False or when the UC value is missing /
-    whitespace-only. Returns an empty structure (same shape, no comments, no columns) on any
-    read error so the caller can still render a schema prompt.
+    Reads via ``ws.tables.get(table)`` (backticks stripped first). The table comment is
+    ``None`` when missing / whitespace-only; the column map omits columns without a comment.
+    Returns ``(None, {})`` on any read error so the caller can still render a schema prompt.
     """
-    result: dict[str, Any] = {"name": table, "columns": []}
     try:
         table_info = ws.tables.get(table.replace("`", ""))
     except Exception as exc:  # broad catch: UC read failures are non-fatal for enrichment
         logger.warning(
-            f"collect_table_metadata: failed to read '{sanitize_for_logging(table)}': {sanitize_for_logging(str(exc))}"
+            f"collect_table_comments: failed to read '{sanitize_for_logging(table)}': "
+            f"{sanitize_for_logging(str(exc))}"
         )
-        return result
-
-    if include_table_comment:
-        comment = _sanitize_text(getattr(table_info, "comment", None))
-        if comment is not None:
-            result["comment"] = comment
-
-    columns = getattr(table_info, "columns", None) or []
-    for column in columns:
-        name = getattr(column, "name", None) or ""
-        type_text = (getattr(column, "type_text", None) or "").lower()
-        entry: dict[str, Any] = {"name": name, "type": type_text}
-        if include_column_comments:
-            comment = _sanitize_text(getattr(column, "comment", None))
-            if comment is not None:
-                entry["comment"] = comment
-        result["columns"].append(entry)
-    return result
+        return None, {}
+    table_comment = _sanitize_text(table_info.comment)
+    column_comments: dict[str, str] = {}
+    for column in table_info.columns or []:
+        comment = _sanitize_text(column.comment)
+        if column.name and comment is not None:
+            column_comments[column.name] = comment
+    return table_comment, column_comments
 
 
 def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
     """Return UC tags for a 3-part table name via ``system.information_schema.*_tags``.
 
-    Queries parametrise *catalog_name*, *schema_name*, *table_name* via ``spark.sql(..,
-    args={...})`` so user input is never interpolated into the SQL (SQL-injection safe per
-    CLAUDE.md).
+    Uses the PySpark DataFrame API — ``spark.table(...).filter(...).select(...)`` — so the
+    catalog, schema, and table name are passed as literal column comparisons rather than
+    inlined into a SQL string (SQL-injection safe by construction).
 
     Returns:
         ``{"table_tags": [{"key","value"}], "column_tags": {"<col>": [{"key","value"}]}}``.
@@ -149,18 +131,15 @@ def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
     except InvalidParameterError as exc:
         logger.warning(f"collect_table_tags: {sanitize_for_logging(str(exc))}")
         return empty
-    args = {"catalog_name": catalog, "schema_name": schema, "table_name": table_name}
+    name_filter = (
+        (F.col("catalog_name") == catalog) & (F.col("schema_name") == schema) & (F.col("table_name") == table_name)
+    )
 
     table_tags: list[dict[str, str]] = []
     column_tags: dict[str, list[dict[str, str]]] = {}
 
     try:
-        table_rows = spark.sql(
-            f"SELECT tag_name, tag_value FROM {_TABLE_TAGS_TABLE} "
-            "WHERE catalog_name = :catalog_name AND schema_name = :schema_name "
-            "AND table_name = :table_name",
-            args=args,
-        ).collect()
+        table_rows = spark.table(_TABLE_TAGS_TABLE).filter(name_filter).select("tag_name", "tag_value").collect()
         for row in table_rows:
             table_tags.append({"key": row["tag_name"], "value": row["tag_value"] or ""})
     except Exception as exc:  # broad catch: tag reads are non-fatal
@@ -170,12 +149,9 @@ def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
         )
 
     try:
-        column_rows = spark.sql(
-            f"SELECT column_name, tag_name, tag_value FROM {_COLUMN_TAGS_TABLE} "
-            "WHERE catalog_name = :catalog_name AND schema_name = :schema_name "
-            "AND table_name = :table_name",
-            args=args,
-        ).collect()
+        column_rows = (
+            spark.table(_COLUMN_TAGS_TABLE).filter(name_filter).select("column_name", "tag_name", "tag_value").collect()
+        )
         for row in column_rows:
             column = row["column_name"]
             column_tags.setdefault(column, []).append({"key": row["tag_name"], "value": row["tag_value"] or ""})
@@ -186,17 +162,6 @@ def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
         )
 
     return {"table_tags": table_tags, "column_tags": column_tags}
-
-
-def _register_seed_columns_view(spark: SparkSession, seed_columns: list[str]) -> str | None:
-    """Register a session temp view with a single ``col_name STRING`` column; return its name."""
-    distinct = sorted({c for c in seed_columns if c})
-    if not distinct:
-        return None
-    name = f"_dqx_profiler_cols_{uuid.uuid4().hex[:12]}"
-    df = spark.createDataFrame([(c,) for c in distinct], "col_name STRING")
-    df.createOrReplaceTempView(name)
-    return name
 
 
 def collect_column_upstream_lineage(
@@ -213,30 +178,29 @@ def collect_column_upstream_lineage(
     an ``INTERVAL n DAYS`` lookback from *config.lookback_days*, and an optional
     ``e.depth < N`` predicate from *config.depth* (omitted when *None* → unbounded).
 
-    *seed_columns* is injected as a session temp view (``_dqx_profiler_cols_<uuid>``) so
-    the recursive member can filter via ``IN (SELECT col_name FROM <view>)`` without
-    string-interpolating any user-supplied column name. The temp view is dropped in a
-    *finally* even on failure.
+    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column*; each entry
+    is escaped via ``_sql_str_literal``, so user-supplied column names cannot inject SQL.
+    Empty or whitespace-only entries are dropped; the walk short-circuits to an empty list
+    when no usable seeds remain.
 
     Returns:
         ``[{"source_table","source_column","target_column","depth","predecessor"}, ...]`` or
         an empty list on any read failure.
     """
-    view = _register_seed_columns_view(spark, seed_columns)
-    if view is None:
+    distinct_seeds = sorted({c for c in seed_columns if c})
+    if not distinct_seeds:
         return []
 
-    max_depth = int(config.depth) if config.depth is not None else None
-    lookback_days = int(config.lookback_days)
-    max_nodes = int(config.max_nodes)
+    max_depth = config.depth
+    lookback_days = config.lookback_days
+    max_nodes = config.max_nodes
     table_literal = _sql_str_literal(source_table)
+    seed_list = ", ".join(_sql_str_literal(c) for c in distinct_seeds)
     depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
-    seed_subquery = f"SELECT col_name FROM {view}"
 
-    # nosec B608: identifiers + validated Pydantic ints only; the anchor table name is
-    # wrapped by _sql_str_literal, the seed view name is a UUID-suffixed internal
-    # identifier (never user input), max_depth / lookback_days / max_nodes are
-    # Pydantic-validated ints (>= 1).
+    # nosec B608: identifiers + validated Pydantic ints only; the anchor table name and each
+    # seed column are wrapped by _sql_str_literal, and max_depth / lookback_days / max_nodes
+    # are Pydantic-validated ints (>= 1).
     query = (
         "WITH RECURSIVE edges("
         "frontier_table, frontier_column, predecessor, source_column, target_column, "
@@ -249,7 +213,7 @@ def collect_column_upstream_lineage(
         f"        event_time "
         f" FROM {_COLUMN_LINEAGE_TABLE} "
         f" WHERE target_table_full_name = {table_literal} "
-        f"   AND target_column IN ({seed_subquery}) "
+        f"   AND target_column IN ({seed_list}) "
         f"   AND source_table_full_name IS NOT NULL "
         f"   AND source_column IS NOT NULL "
         f"   AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
@@ -281,11 +245,6 @@ def collect_column_upstream_lineage(
             f"'{sanitize_for_logging(source_table)}': {sanitize_for_logging(str(exc))}"
         )
         return []
-    finally:
-        try:
-            spark.catalog.dropTempView(view)
-        except Exception as exc:  # broad catch: temp-view drop is best-effort
-            logger.warning(f"collect_column_upstream_lineage: temp view drop failed: {sanitize_for_logging(str(exc))}")
 
     return [
         {
@@ -315,7 +274,7 @@ def collect_upstream_table_lineage(
         ``[{"predecessor","target_table","depth"}, ...]`` where *target_table* is the upstream
         neighbour and *predecessor* is the previous hop (equal to *source_table* at depth 1).
     """
-    max_depth = int(config.depth) if config.depth is not None else None
+    max_depth = config.depth
     lookback_days = int(config.lookback_days)
     max_nodes = int(config.max_nodes)
     table_literal = _sql_str_literal(source_table)
@@ -503,7 +462,7 @@ def build_schema_json(
     *,
     table_full_name: str,
     column_dicts: list[dict[str, Any]],
-    ws: WorkspaceClient | None,
+    ws: WorkspaceClient,
     spark: SparkSession | None,
     config: UnityCatalogMetadataConfig,
 ) -> str:
@@ -534,28 +493,19 @@ def _enrich_with_comments(
     result: dict[str, Any],
     base_columns: list[dict[str, Any]],
     *,
-    ws: WorkspaceClient | None,
+    ws: WorkspaceClient,
     table_full_name: str,
     config: UnityCatalogMetadataConfig,
 ) -> None:
     """Attach table + column comments to ``result`` / ``base_columns`` in place."""
     if not (config.include_table_comment or config.include_column_comments):
         return
-    if ws is None:
-        logger.warning("build_schema_json: WorkspaceClient not provided; skipping table/column comment enrichment")
-        return
-    table_meta = collect_table_metadata(
-        ws,
-        table_full_name,
-        include_table_comment=config.include_table_comment,
-        include_column_comments=config.include_column_comments,
-    )
-    if config.include_table_comment and "comment" in table_meta:
-        result["table_comment"] = table_meta["comment"]
+    table_comment, column_comments = collect_table_comments(ws, table_full_name)
+    if config.include_table_comment and table_comment is not None:
+        result["table_comment"] = table_comment
     if config.include_column_comments:
-        comment_lookup = {c["name"]: c.get("comment") for c in table_meta.get("columns", [])}
         for entry in base_columns:
-            comment = comment_lookup.get(entry["name"])
+            comment = column_comments.get(entry["name"])
             if comment:
                 entry["comment"] = comment
 
@@ -663,22 +613,11 @@ def _attach_upstream_comments(
 ) -> None:
     if ws is None or not (config.include_table_comment or config.include_column_comments):
         return
-    meta = collect_table_metadata(
-        ws,
-        table_full_name,
-        include_table_comment=config.include_table_comment,
-        include_column_comments=config.include_column_comments,
-    )
-    if config.include_table_comment and "comment" in meta:
-        entry["comment"] = meta["comment"]
-    if not (config.include_column_comments and meta.get("columns")):
-        return
-    cols = [
-        {"name": col["name"], "comment": col["comment"]} if "comment" in col else {"name": col["name"]}
-        for col in meta["columns"]
-    ]
-    if cols:
-        entry["columns"] = cols
+    table_comment, column_comments = collect_table_comments(ws, table_full_name)
+    if config.include_table_comment and table_comment is not None:
+        entry["comment"] = table_comment
+    if config.include_column_comments and column_comments:
+        entry["columns"] = [{"name": name, "comment": value} for name, value in column_comments.items()]
 
 
 def _attach_upstream_tags(

@@ -3,8 +3,8 @@
 Exercises each collector in isolation against a real workspace so we have confidence that
 the SDK + Spark queries that back the LLM prompt enrichment keep working end-to-end:
 
-* ``collect_table_metadata`` returns the table-level and per-column UC comments we set via
-  ``COMMENT ON TABLE`` / ``ALTER TABLE … ALTER COLUMN … COMMENT``.
+* ``collect_table_comments`` returns the table-level and per-column UC comments we set via
+  ``COMMENT ON TABLE`` / ``ALTER TABLE … ALTER COLUMN … COMMENT`` in a single SDK call.
 * ``collect_table_tags`` returns the table-level and per-column tags we set via
   ``ALTER TABLE … SET TAGS`` and ``ALTER TABLE … ALTER COLUMN … SET TAGS`` as surfaced by
   ``system.information_schema.table_tags`` / ``column_tags``.
@@ -23,14 +23,14 @@ from databricks.labs.dqx.config import ColumnUpstreamLineageConfig, ExternalLine
 from databricks.labs.dqx.profiler.unity_catalog_metadata import (
     collect_column_upstream_lineage,
     collect_external_upstream_lineage,
-    collect_table_metadata,
+    collect_table_comments,
     collect_table_tags,
     collect_upstream_table_lineage,
 )
 from tests.constants import TEST_CATALOG
 
 
-def test_collect_table_metadata_returns_table_and_column_comments(ws, spark, make_schema, make_table):
+def test_collect_table_comments_returns_table_and_column_values(ws, spark, make_schema, make_table):
     schema = make_schema(catalog_name=TEST_CATALOG)
     table = make_table(
         catalog_name=TEST_CATALOG,
@@ -41,18 +41,12 @@ def test_collect_table_metadata_returns_table_and_column_comments(ws, spark, mak
     spark.sql(f"ALTER TABLE {table.full_name} ALTER COLUMN invoice_id COMMENT 'Invoice primary key'")
     spark.sql(f"ALTER TABLE {table.full_name} ALTER COLUMN amount COMMENT 'Positive integer amount'")
 
-    result = collect_table_metadata(
-        ws,
-        table.full_name,
-        include_table_comment=True,
-        include_column_comments=True,
-    )
-
-    assert result["comment"] == "Confirmed invoice lines"
-    by_name = {c["name"]: c for c in result["columns"]}
-    assert by_name["invoice_id"]["comment"] == "Invoice primary key"
-    assert by_name["amount"]["comment"] == "Positive integer amount"
-    assert "comment" not in by_name["currency_code"], "columns without a comment must omit the key"
+    table_comment, column_comments = collect_table_comments(ws, table.full_name)
+    assert table_comment == "Confirmed invoice lines"
+    assert column_comments == {
+        "invoice_id": "Invoice primary key",
+        "amount": "Positive integer amount",
+    }, "columns without a comment must not appear in the map"
 
 
 def test_collect_table_tags_returns_table_and_column_tags(ws, spark, make_schema, make_table):
