@@ -233,11 +233,11 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_profiling_results", "created_at"),
     (_QUARANTINE_TABLE_NAME, "created_at"),
     ("dq_metrics", "run_time"),
+    ("dq_run_configs", "created_at"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
-    ("dq_run_configs", "created_at"),
 )
 
 
@@ -2227,52 +2227,6 @@ class SchedulerService:
             logger.info(
                 "Tmp-view sweep complete: targeted=%d dropped=%d failed=%d", len(views_to_drop), dropped, failed
             )
-
-        try:
-            self._sweep_staged_run_configs()
-        except Exception:
-            logger.exception("Run-config sweep failed (non-fatal)")
-
-    def _sweep_staged_run_configs(self) -> None:
-        """Delete staged ``dq_run_configs`` rows for runs that have finished.
-
-        The task runner reads its oversized config from this table at run start
-        but no longer deletes it — serverless compute has no psycopg driver, so
-        the runner reads over JDBC and the delete moved here. Each staged row
-        whose run has reached a terminal state in the Delta run tables is removed,
-        so a completed run never leaves its full ``checks`` payload staged. The
-        submit-failure path (``delete_staged_config``) covers runs that never
-        started; this sweep covers every run that did.
-        """
-        from databricks_labs_dqx_app.backend.config import AppConfig
-        from databricks_labs_dqx_app.backend.run_status_manager import has_terminal_result
-
-        configs_table = self._oltp_sql.fqn("dq_run_configs")
-        try:
-            staged = self._oltp_sql.select_rows(configs_table, ["run_id"])
-        except Exception as exc:
-            logger.warning("Run-config sweep: failed to list staged configs: %s", exc)
-            return
-        run_ids = [row[0] for row in staged if row and row[0]]
-        if not run_ids:
-            return
-
-        app_conf = AppConfig(catalog=self._catalog, schema_name=self._schema)
-        deleted = 0
-        for run_id in run_ids:
-            finished = any(
-                has_terminal_result(self._sql, app_conf, table_name, run_id)
-                for table_name in ("dq_validation_runs", "dq_profiling_results")
-            )
-            if not finished:
-                continue
-            try:
-                self._oltp_sql.delete(configs_table, where={"run_id": run_id})
-                deleted += 1
-            except Exception as exc:
-                logger.warning("Run-config sweep: failed to delete staged config %s: %s", run_id, exc)
-        if deleted:
-            logger.info("Run-config sweep: deleted %d staged run config(s) for finished runs", deleted)
 
     # ------------------------------------------------------------------
     # Orphan tmp-view GC (weekly, Saturday 01:00 UTC)

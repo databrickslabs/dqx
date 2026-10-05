@@ -612,7 +612,7 @@ async def _build_scheduler_data_product_service(
         materializer=materializer,
     )
     view_service = await get_scheduler_view_service(sp_ws=workspace, sp_sql=delta_sql)
-    job_service = await get_job_service(sp_ws=workspace, sql=delta_sql, oltp=oltp, app_settings=app_settings)
+    job_service = await get_job_service(sp_ws=workspace, sql=delta_sql, app_settings=app_settings)
     run_sets = await get_run_set_service(sql=oltp, validation_sql=delta_sql)
     binding_runs = await get_binding_run_service(
         monitored_tables=monitored_tables,

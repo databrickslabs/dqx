@@ -23,9 +23,9 @@ After assigning the task-runner service principal in the Jobs UI, setup resolves
 | Wheels volume | `READ VOLUME` |
 | Main schema | Schema-level `SELECT` and `MODIFY`, covering current and future tables |
 
-Checks include inherited permissions and ownership; table-specific output grants alone do not satisfy the main-schema requirement. Schema ownership alone does not establish `SELECT` or `MODIFY` on its tables. Schema-level runner access avoids maintaining a per-table checklist, and applies to every table in that schema, so bind a dedicated Studio schema rather than one containing unrelated data. Missing or uninspectable UC permissions keep setup action-required. Setup neither automatically grants UC runner privileges nor changes `run_as`; verification is never cached across startups. Source-data access remains run-specific. Runner Lakebase roles and privileges are outside setup verification.
+Checks include inherited permissions and ownership; table-specific output grants alone do not satisfy the main-schema requirement. Schema ownership alone does not establish `SELECT` or `MODIFY` on its tables. Schema-level runner access avoids maintaining a per-table checklist, and applies to every table in that schema, so bind a dedicated Studio schema rather than one containing unrelated data. Missing or uninspectable UC permissions keep setup action-required. Setup neither automatically grants UC runner privileges nor changes `run_as`; verification is never cached across startups. Source-data access remains run-specific. The runner needs no Lakebase access; oversized run configs are staged in the Delta `dq_run_configs` table in the main schema.
 
-Setup first tries effective UC grant inspection with app credentials. If unavailable, the setup administrator's request-scoped OBO SQL executor inspects `SHOW GRANTS` on the target and parent containers using the supported `sql` OAuth scope. Column names are matched case-insensitively, and group grants require independently verified runner membership. SQL inspection reads every result chunk and rejects truncated or incomplete results. Job management and writes remain under the app SP. The administrator needs ownership, `READ METADATA`, `MANAGE`, or metastore administration to inspect grants, plus warehouse `CAN_USE` and parent `USE CATALOG` / `USE SCHEMA` (including the temporary schema). If unattended startup cannot inspect access as the app SP, open setup as an authorized administrator and verify again after each restart. Unknown permissions are distinguished from confirmed missing grants. DAB grants do not replace the catalog prerequisite. The current oversized-config implementation still requires [manual runner Lakebase provisioning](#task-runner-lakebase-access), but setup does not verify it.
+Setup first tries effective UC grant inspection with app credentials. If unavailable, the setup administrator's request-scoped OBO SQL executor inspects `SHOW GRANTS` on the target and parent containers using the supported `sql` OAuth scope. Column names are matched case-insensitively, and group grants require independently verified runner membership. SQL inspection reads every result chunk and rejects truncated or incomplete results. Job management and writes remain under the app SP. The administrator needs ownership, `READ METADATA`, `MANAGE`, or metastore administration to inspect grants, plus warehouse `CAN_USE` and parent `USE CATALOG` / `USE SCHEMA` (including the temporary schema). If unattended startup cannot inspect access as the app SP, open setup as an authorized administrator and verify again after each restart. Unknown permissions are distinguished from confirmed missing grants. DAB grants do not replace the catalog prerequisite.
 
 An explicitly configured `DQX_SCHEMA` that differs from the bound volume schema produces a warning; the volume still determines application storage. Successful metadata-dimension refreshes retry the two explicit metadata-table SELECT grants, including when a startup refresh failed before creating the tables.
 
@@ -93,7 +93,6 @@ The deploying user (you) needs the permissions below. Both `databricks bundle de
 | 6 | **USE CATALOG** + **CREATE SCHEMA** on `<catalog_name>` | Your user or an admin group you're in | `bundle deploy` of the `schemas` and `volumes` resources | `Error: User does not have CREATE_SCHEMA on catalog '<catalog>'` |
 | 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` to the intended **user groups**, the **app SP**, and the **task-runner SP** (see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
 | 8 | **Service Principal: User** role on the task-runner SP | Your user, on the SP you'll use as `dqx_service_principal_application_id` | `bundle deploy` of the `jobs.dqx_task_runner` resource (sets `run_as.service_principal_name`) | `Error: User is not authorized to use this service principal` |
-| 9 | **Lakebase role administration and grant authority** | Bound Lakebase branch / database | Creating the runner's OAuth role and granting scoped access to `dq_run_configs` for the current oversized-config implementation | Oversized-config jobs fail at runtime; setup does not verify runner Lakebase access |
 
 **Two convenience patterns** that reduce the per-user grants in rows 6 and 7:
 
@@ -151,7 +150,7 @@ You'll see `prevent_destroy: true` on `schemas.main_schema`, `schemas.tmp_schema
 
 What this means in practice:
 
-- **Deploy** — `make app-deploy` builds, deploys the resources in dependency order, applies bundle-declared grants natively, then starts the app. Catalog usage and scoped runner Lakebase grants remain administrator prerequisites.
+- **Deploy** — `make app-deploy` builds, deploys the resources in dependency order, applies bundle-declared grants natively, then starts the app. Catalog usage remains an administrator prerequisite.
 - **Schema drift** — if you change `catalog_name`, `schema_name`, or the Lakebase project id in a way that would force the bundle to delete and recreate the resource, `prevent_destroy` blocks the destroy step and the deploy fails fast (good — the alternative is silent data loss). Treat those names as immutable.
 - **Intentional teardown** — to drop a protected resource, remove `lifecycle.prevent_destroy: true` from `databricks.yml`, run `databricks bundle deployment unbind <key> -t <target>` to detach it from bundle state, then destroy it manually.
 
@@ -165,7 +164,7 @@ GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
 ```
 
-The app SP also receives `USE CATALOG` through its wheels-volume binding; keep the explicit grant alongside the other principals. Bundle audience grants use `studio_user_group`, not broad built-in groups. Separately provision the runner's Lakebase role and scoped grants below.
+The app SP also receives `USE CATALOG` through its wheels-volume binding; keep the explicit grant alongside the other principals. Bundle audience grants use `studio_user_group`, not broad built-in groups.
 
 ## Step 4: Configure `databricks.yml`
 
@@ -280,7 +279,7 @@ The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.
 2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **bundle-declared grants** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
 3. `databricks bundle run` — starts the app.
 
-Remember the manual prerequisites: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) for the app SP, task-runner SP, and scoped audience, plus [runner Lakebase role and grants](#task-runner-lakebase-access) for the current oversized-config path. Cold-start UC checks must pass before Studio is ready; they do not verify runner Lakebase access.
+Remember the manual prerequisites: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) for the app SP, task-runner SP, and scoped audience. Cold-start UC checks must pass before Studio is ready.
 
 > **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and publishes the task-runner wheel to the UC volume. Wait for the setup checks to report that wheel publishing is ready before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
 
@@ -378,31 +377,10 @@ DQX Studio stores its **OLTP state** — rules catalog, app settings, RBAC, comm
 
 | Backend | Tables | Why |
 |---|---|---|
-| Delta Lake | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | High-volume append; Spark task runner writes them; columnar reads. |
+| Delta Lake | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`, `dq_run_configs` | High-volume append; Spark task runner reads and writes them; columnar reads. |
 | Lakebase Postgres | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | OLTP — sub-ms reads from FastAPI handlers, row-level upserts, primary keys. |
 
-Lakebase is declared as a Postgres *project* bundle resource (`postgres_projects.dqx_studio`, plus `postgres_roles.app_sp`) and provisioned by `databricks bundle deploy` with `lifecycle.prevent_destroy: true` — see [Step 3](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start. The bundle creates the app SP's migration role; runner access still requires the scoped administrator grants below.
-
-### Task-runner Lakebase access
-
-Use the **actual Jobs `run_as` service principal's client/application ID** as the runner's Postgres username. Runtime resolves that identity from the job; the legacy `DQX_TASK_RUNNER_POSTGRES_ROLE` override, if set, must match it. It is not a way to select a different database identity.
-
-If the OAuth role is absent, a Lakebase administrator creates it on the bound branch using **Roles & Databases → Add role → OAuth**, selecting the runner service principal. Alternatively, run the following as an authorized Lakebase role administrator in the bound database:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS databricks_auth;
-SELECT databricks_create_role('runner-client-id', 'SERVICE_PRINCIPAL');
-```
-
-Then, after application migrations create `dq_run_configs`, apply only the required scoped grants (substitute the actual client ID, database, and Lakebase schema):
-
-```sql
-GRANT CONNECT ON DATABASE databricks_postgres TO "runner-client-id";
-GRANT USAGE ON SCHEMA dqx_studio TO "runner-client-id";
-GRANT SELECT, DELETE ON TABLE dqx_studio.dq_run_configs TO "runner-client-id";
-```
-
-Setup does **not** check the runner's Lakebase role, privileges, or OAuth identity mapping. The current oversized-config implementation still uses Lakebase directly; its replacement is separate work. An administrator must establish the mapping through the OAuth role UI or `databricks_create_role` above; an ordinary Postgres role with the same name is not sufficient. The grants allow reading and deleting staged run configs, not writing other application state. **Never grant `DATABRICKS_SUPERUSER` membership to the runner.** Studio does not automatically apply runner PostgreSQL grants; an administrator must apply them even if a role already exists. Jobs and Lakebase use OAuth; no plaintext client secret is needed for this setup.
+Lakebase is declared as a Postgres *project* bundle resource (`postgres_projects.dqx_studio`, plus `postgres_roles.app_sp`) and provisioned by `databricks bundle deploy` with `lifecycle.prevent_destroy: true` — see [Step 3](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start. The bundle creates the app SP's migration role. The task runner does not connect to Lakebase.
 
 ### Lakebase token rotation
 
@@ -449,8 +427,8 @@ databricks bundle deploy -p <your-profile> --force          # or force deploy
 3. Confirm the app SP has `CAN_MANAGE` on the job (set automatically by DABs), and the actual `run_as` runner passes the cold-start UC checks.
 4. For OBO views, confirm runner `SELECT` and app-SP `MANAGE` were granted on the specific view; do not restore `account users` access.
 
-**An oversized-config run fails while reading staged Lakebase configuration:**
-Follow [Task-runner Lakebase access](#task-runner-lakebase-access) as a Lakebase administrator, using the actual Jobs `run_as` client ID. Check `LOGIN`, effective `CONNECT` / `USAGE`, and `SELECT` / `DELETE` on `dq_run_configs`. A legacy role override must match that client ID. Runner Lakebase access is not verified by setup, so a ready setup report does not establish these runtime permissions.
+**An oversized-config run fails while reading its staged configuration:**
+The runner reads the row from `<catalog>.<schema>.dq_run_configs`. Confirm the Delta migrations have run (the table exists) and that the actual Jobs `run_as` principal has schema-level `SELECT` / `MODIFY` on the main schema.
 
 **Job fails with "file not found" on wheel:**
 The task-runner job installs wheels from the UC volume. If the volume is empty the job fails. Start the app and wait for the wheel upload to complete:

@@ -834,13 +834,13 @@ def run_monitored_table(
         raise HTTPException(status_code=400, detail=str(e))
     except RunConfigStagingError as e:
         # Staging the oversized config failed for an infrastructure reason
-        # (Lakebase unreachable, or dq_run_configs missing) — a server-side
+        # (SQL warehouse unreachable, or dq_run_configs missing) — a server-side
         # fault, not a bad request. Subclass check must precede RunConfigError.
         logger.error(f"Failed to stage run config for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=str(e))
     except RunConfigError as e:
-        # Caller/config-level: config too large to submit, or Lakebase disabled
-        # for an oversized config. These are genuinely 400-class.
+        # Caller/config-level: config too large to submit even as a manifest
+        # stub. This is genuinely 400-class.
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to run monitored table {binding_id}: {e}", exc_info=True)

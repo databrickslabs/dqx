@@ -799,7 +799,6 @@ def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-    oltp: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> JobService:
     """Create a JobService using app (SP) credentials.
@@ -809,33 +808,15 @@ async def get_job_service(
     threaded into the submitted run so the task runner's temp-view cleanup path
     honours it (env fallback when unset).
 
-    Oversized run configs are staged in the ``dq_run_configs`` Lakebase table via
-    the OLTP executor; the Lakebase connection settings are passed to the runner
-    as job parameters so tasks can read the staged configs.
+    Oversized run configs are staged in the ``dq_run_configs`` Delta table in the
+    main schema, which the runner reads with Spark.
     """
-    lakebase = rt.require_resources().lakebase
-    # Prefer the coordinates the live OLTP executor already resolved, falling
-    # back to the configured connection values. Resolve all of them (including
-    # schema/database) from the same source so the app writes the staged row to
-    # exactly the schema the runner is told to read from.
-    resolved_endpoint = getattr(oltp, "endpoint", None) or lakebase.endpoint or ""
-    resolved_host = getattr(oltp, "host", None) or lakebase.host or ""
-    resolved_port = getattr(oltp, "port", None) or lakebase.port or 5432
-    resolved_database = getattr(oltp, "database", None) or lakebase.database or ""
-    resolved_schema = getattr(oltp, "schema", None) or lakebase.schema or ""
-    resolved_username, _app_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    await asyncio.to_thread(resolve_execution_principals, sp_ws)
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
         sql=sql,
-        oltp_sql=oltp,
         warehouse_id=resolve_warehouse_id(app_settings),
-        lakebase_endpoint=resolved_endpoint,
-        lakebase_database=resolved_database,
-        lakebase_schema=resolved_schema,
-        lakebase_host=resolved_host,
-        lakebase_port=resolved_port,
-        lakebase_username=resolved_username,
     )
 
 
@@ -854,8 +835,8 @@ def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
     """Resolve fresh runner and app identities, failing closed with setup guidance.
 
     Raises:
-        HTTPException: Setup or identity inspection is unavailable, the principals
-            are not distinct, or the legacy runner role does not match.
+        HTTPException: Setup or identity inspection is unavailable, or the
+            principals are not distinct.
     """
     job_id = _require_resolved_job_id()
     # SDK authentication and transport failures may contain credentials; sanitize
@@ -905,15 +886,6 @@ def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
             detail=(
                 "Assign a task-runner service principal distinct from the app service principal "
                 "in the Jobs UI, then verify again in Studio setup."
-            ),
-        )
-    configured_role = conf.task_runner_postgres_role.strip()
-    if configured_role and configured_role.casefold() != runner.casefold():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "DQX_TASK_RUNNER_POSTGRES_ROLE must match the job's run-as service principal. "
-                "Correct or remove the override, then verify again in Studio setup."
             ),
         )
     return runner, app_principal
