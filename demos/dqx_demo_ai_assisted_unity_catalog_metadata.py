@@ -2,8 +2,7 @@
 # MAGIC %md
 # MAGIC # AI-assisted rule generation — with and without Unity Catalog metadata
 # MAGIC
-# MAGIC Builds a synthetic bronze → silver → gold invoice pipeline (same data layer as
-# MAGIC `demos/dqx_demo_lineage_action.py`), then calls
+# MAGIC Builds a synthetic bronze → silver → gold invoice pipeline, then calls
 # MAGIC `DQGenerator.generate_dq_rules_ai_assisted` **twice** against the same table:
 # MAGIC
 # MAGIC 1. **Baseline** — `unity_catalog_metadata_config=None`; the LLM sees only column names
@@ -27,12 +26,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
-
-if dbutils.widgets.get("test_library_ref") != "":
-    %pip install '{dbutils.widgets.get("test_library_ref")}' dbldatagen
-else:
-    %pip install 'databricks-labs-dqx[llm]' dbldatagen
+%pip install 'databricks-labs-dqx[llm]' dbldatagen
 
 %restart_python
 
@@ -40,7 +34,7 @@ else:
 
 dbutils.widgets.text("demo_catalog", "main", "Catalog Name")
 dbutils.widgets.text("demo_schema", "default", "Schema Name")
-dbutils.widgets.text("model_name", "databricks/databricks-claude-sonnet-4-5", "Model Name")
+dbutils.widgets.text("model_name", "databricks/claude-sonnet-5-5", "Model Name")
 
 # COMMAND ----------
 

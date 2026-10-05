@@ -5,7 +5,22 @@ workspace — comments and tags are read via the Databricks SDK + Spark, externa
 read via the UC External Lineage SDK — and to confirm that the enriched prompt still yields
 valid DQX rules. LLM output is non-deterministic, so we assert on structural properties
 (``len > 0``, ``validate_checks`` has no errors) rather than specific rule content.
+
+LLM access is configured **explicitly** via env vars so a test run doesn't silently depend on
+whichever Foundation Model endpoint happens to be provisioned in the workspace:
+
+* ``DQX_TEST_LLM_MODEL`` — DSPy model identifier (default
+  ``databricks/databricks-claude-sonnet-4-5``). Prefix with ``databricks/`` to route through
+  Model Serving, ``openai/`` / ``anthropic/`` to hit the external provider directly.
+* ``DQX_TEST_LLM_API_BASE`` — endpoint URL, or a ``secret_scope/secret_key`` reference.
+* ``DQX_TEST_LLM_API_KEY`` — API key, or a ``secret_scope/secret_key`` reference.
+
+When ``DQX_TEST_LLM_API_BASE`` / ``DQX_TEST_LLM_API_KEY`` are unset the Databricks SDK
+resolves credentials from the ambient auth (same host/token the rest of the integration
+suite uses).
 """
+
+import os
 
 import pytest
 
@@ -13,11 +28,25 @@ from databricks.labs.dqx.config import (
     ColumnUpstreamLineageConfig,
     ExternalLineageConfig,
     InputConfig,
+    LLMModelConfig,
     UnityCatalogMetadataConfig,
 )
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from tests.constants import TEST_CATALOG
+
+
+_DEFAULT_LLM_MODEL = "databricks/claude-sonnet-5-5"
+
+
+@pytest.fixture
+def llm_model_config() -> LLMModelConfig:
+    """Build an ``LLMModelConfig`` from env vars so endpoint selection is explicit per run."""
+    return LLMModelConfig(
+        model_name=os.getenv("DQX_TEST_LLM_MODEL", _DEFAULT_LLM_MODEL),
+        api_base=os.getenv("DQX_TEST_LLM_API_BASE", ""),
+        api_key=os.getenv("DQX_TEST_LLM_API_KEY", ""),
+    )
 
 
 USER_INPUT = (
@@ -50,6 +79,7 @@ def test_generate_rules_with_unity_catalog_metadata(
     make_table,
     make_external_metadata,
     make_external_lineage_relationship,
+    llm_model_config,
     config_factory,
 ):
     schema = make_schema(catalog_name=TEST_CATALOG)
@@ -83,7 +113,7 @@ def test_generate_rules_with_unity_catalog_metadata(
         column_mappings=[("VBELN", "invoice_id"), ("WAERK", "currency_code")],
     )
 
-    generator = DQGenerator(ws, spark)
+    generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
     checks = generator.generate_dq_rules_ai_assisted(
         user_input=USER_INPUT,
         input_config=InputConfig(location=source_table.full_name),
