@@ -150,7 +150,7 @@ app-release-marketplace: ## Create and verify a local signed Marketplace release
 
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
-	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ -v
+	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ --studio-integration -v
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's

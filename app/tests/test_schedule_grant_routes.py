@@ -9,7 +9,24 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
-from databricks.sdk.service.catalog import Privilege
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import (
+    EffectivePermissionsList,
+    EffectivePrivilege,
+    EffectivePrivilegeAssignment,
+    Privilege,
+)
+from databricks.sdk.service.sql import (
+    ColumnInfo,
+    ResultData,
+    ResultManifest,
+    ResultSchema,
+    ServiceError,
+    StatementExecutionAPI,
+    StatementResponse,
+    StatementState,
+    StatementStatus,
+)
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
@@ -285,26 +302,47 @@ class TestScopeConfigScheduleGate:
 
     @pytest.fixture
     def obo(self):
-        ws = MagicMock(name="obo_ws")
+        ws = create_autospec(WorkspaceClient, instance=True)
         ws.current_user.me.return_value = _me()
         ws.tables.get.return_value = SimpleNamespace(owner=None)
         ws.schemas.get.return_value = SimpleNamespace(owner=None)
         ws.catalogs.get.return_value = SimpleNamespace(owner=None)
         ws.grants.get_effective.return_value = _eff([])
-        return ws
-
-    @pytest.fixture
-    def sp(self):
-        ws = MagicMock(name="sp_ws")
-        ws.jobs.get.return_value = SimpleNamespace(
-            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="task-runner-sp"))
+        ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+        ws.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(
+                schema=ResultSchema(columns=[ColumnInfo(name="principal"), ColumnInfo(name="actionType")])
+            ),
+            result=ResultData(data_array=[]),
         )
         return ws
 
     @pytest.fixture
-    def grant_svc(self, obo, sp, monkeypatch):  # type: ignore[override]
+    def sp(self):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.jobs.get.return_value = SimpleNamespace(
+            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="task-runner-sp"))
+        )
+        ws.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: (
+            EffectivePermissionsList(
+                privilege_assignments=[
+                    EffectivePrivilegeAssignment(
+                        principal=principal, privileges=[EffectivePrivilege(privilege=Privilege.ALL_PRIVILEGES)]
+                    )
+                ]
+            )
+        )
+        ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+        ws.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.FAILED, error=ServiceError(message="denied"))
+        )
+        return ws
+
+    @pytest.fixture
+    def grant_svc(self, obo, sp, monkeypatch):
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
-        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123")
+        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="warehouse-1")
 
     @staticmethod
     def _config_svc(fqns):
@@ -333,9 +371,14 @@ class TestScopeConfigScheduleGate:
 
         assert result.schedule_name == "nightly"
         # Full coverage: SELECT granted to app SP + task-runner SP on EVERY table.
-        assert obo.grants.update.call_count == 2 * len(fqns)
-        granted_principals = {c.kwargs["changes"][0].principal for c in obo.grants.update.call_args_list}
-        assert granted_principals == {"app-sp-id", "task-runner-sp"}
+        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
+        assert set(statements) == {
+            f"GRANT SELECT ON TABLE `cat`.`sch`.`t{i}` TO `{principal}`"
+            for i in range(20)
+            for principal in ("app-sp-id", "task-runner-sp")
+        }
+        assert len(statements) == 2 * len(fqns)
+        obo.grants.update.assert_not_called()
         # MANAGE checked exactly once per table (owner read once each, not twice).
         assert obo.tables.get.call_count == len(fqns)
         # Identity round-trips do NOT scale with the table count: the OBO caller
@@ -354,8 +397,12 @@ class TestScopeConfigScheduleGate:
 
         obo.tables.get.side_effect = _tables_get
         # A different principal holds MANAGE on the blocked tables (surfaced to UI).
-        obo.grants.get_effective.return_value = _eff(
-            [SimpleNamespace(principal="bob@example.com", privileges=[SimpleNamespace(privilege=Privilege.MANAGE)])]
+        obo.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(
+                schema=ResultSchema(columns=[ColumnInfo(name="principal"), ColumnInfo(name="actionType")])
+            ),
+            result=ResultData(data_array=[["bob@example.com", "MANAGE"]]),
         )
         svc = self._config_svc(fqns)
         body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
@@ -369,11 +416,14 @@ class TestScopeConfigScheduleGate:
         assert blocked == {"cat.sch.t0", "cat.sch.t2"}  # ALL blocked tables aggregated
         # Hard block: nothing granted and nothing saved.
         obo.grants.update.assert_not_called()
+        assert not any(
+            c.kwargs["statement"].startswith("GRANT") for c in obo.statement_execution.execute_statement.call_args_list
+        )
         svc.save.assert_not_called()
 
     async def test_grant_failure_returns_a_fixed_message(self, obo, sp, grant_svc):
         obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
-        obo.grants.update.side_effect = RuntimeError(_LEAKY)
+        obo.statement_execution.execute_statement.side_effect = RuntimeError(_LEAKY)
         svc = self._config_svc(["cat.sch.t0"])
         body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
 

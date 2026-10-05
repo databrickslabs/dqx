@@ -2,10 +2,11 @@
 
 import asyncio
 from unittest.mock import MagicMock, create_autospec
+from databricks.sdk.service.jobs import Job, JobSettings, JobRunAs
 
 import pytest
 
-from databricks_labs_dqx_app.backend.dependencies import get_job_service
+from databricks_labs_dqx_app.backend.dependencies import get_job_service, get_schedule_grant_service
 from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.routes.v1.config import get_workspace_host
 from databricks_labs_dqx_app.backend.services.job_service import JobService
@@ -18,6 +19,8 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
     """Submissions use the reconciled job ID, not the obsolete config binding."""
     workspace = MagicMock(name="WorkspaceClient")
     workspace.jobs.run_now.return_value.run_id = 17
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-id")))
+    workspace.current_user.me.return_value.user_name = "app-id"
     settings = MagicMock(name="AppSettingsService")
     settings.get_sql_warehouse_id.return_value = "warehouse-id"
     previous_job_id = setup_runtime.job_id
@@ -49,7 +52,7 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
     oltp_mock.endpoint = "projects/project/branches/branch/endpoints/primary"
     oltp_mock.host = "pg.example.databricks.com"
     oltp_mock.port = 5432
-    oltp_mock.username = "sp-runner"
+    oltp_mock.username = "app-id"
     oltp_mock.database = "pg_db_from_oltp"
     oltp_mock.schema = "pg_schema_from_oltp"
     try:
@@ -65,6 +68,30 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
     params = workspace.jobs.run_now.call_args.kwargs["job_parameters"]
     assert params["lakebase_schema"] == "pg_schema_from_oltp"
     assert params["lakebase_database"] == "pg_db_from_oltp"
+    assert params["lakebase_username"] == "runner-id"
+
+
+def test_schedule_grants_use_resolved_job_identity() -> None:
+    workspace = MagicMock()
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-id")))
+    previous_job_id = setup_runtime.job_id
+    previous_resources = rt.resources
+    setup_runtime.job_id = 42
+    rt.resources = ActiveResources(
+        volume=VolumeLocation("catalog", "schema", "wheels", "/Volumes/catalog/schema/wheels"),
+        lakebase=LakebaseConnection("projects/p/branches/b/endpoints/e", None, 5432, "db", None, None, "schema"),
+        warehouse_id="warehouse",
+        job_id=None,
+        tmp_schema="tmp",
+        genie_schema="genie",
+    )
+    try:
+        service = asyncio.run(get_schedule_grant_service(workspace, workspace))
+        assert service.task_runner_sp_id() == "runner-id"
+        workspace.jobs.get.assert_called_once_with(42)
+    finally:
+        setup_runtime.job_id = previous_job_id
+        rt.resources = previous_resources
 
 
 def _job_service_with_failing_submit() -> tuple[JobService, MagicMock, MagicMock]:

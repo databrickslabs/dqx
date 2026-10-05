@@ -1613,7 +1613,7 @@ def test_view_service_names_views_from_its_sql_executor_schema():
 
     mark_tmp_schema_ready()  # skip the CREATE SCHEMA path
     try:
-        svc = ViewService(sql=sql, sp_sql=sp)
+        svc = ViewService(sql=sql, sp_sql=sp, runner_principal="runner-sp", cleanup_principal="app-sp")
         view_name = svc.create_view("dqx.sales.orders")
         assert (
             ".dqx_studio_tmp.tmp_view_" in view_name

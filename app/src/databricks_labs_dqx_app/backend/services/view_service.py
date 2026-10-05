@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
     ProfilerSample,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,32 @@ ROW_SAMPLE_MARGIN = 1.5
 
 # Upper bound for a generated TABLESAMPLE seed; well inside Spark's INT range.
 _MAX_SAMPLE_SEED = 2_000_000_000
+
+
+def quote_view_principal(principal: str) -> str:
+    """Validate and quote a direct temporary-view grant recipient.
+
+    UUID application IDs and user names are accepted. Missing identities,
+    control characters, and the built-in users/account-users groups fail closed without
+    including the supplied identity in the error.
+
+    Args:
+        principal: Direct Jobs run-as identity or app service principal.
+
+    Returns:
+        The validated principal as a single backtick-quoted identifier.
+
+    Raises:
+        RuntimeError: The identity is missing, unsafe, or a built-in users group.
+    """
+    unwrapped = principal[1:-1] if principal.startswith("`") and principal.endswith("`") else principal
+    if (
+        not unwrapped.strip()
+        or unwrapped.strip().casefold() in {"users", "account users"}
+        or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in principal)
+    ):
+        raise RuntimeError("A valid direct principal is required for temporary view permissions.")
+    return quote_ident(principal)
 
 
 def needs_row_count(sample: ProfilerSample | None) -> bool:
@@ -117,9 +144,41 @@ def build_sample_select(quoted_source: str, sample: ProfilerSample | None, total
 class ViewService:
     """Create and drop temporary views via the SQL Statement Execution API."""
 
-    def __init__(self, sql: SqlExecutor, sp_sql: SqlExecutor | None = None) -> None:
+    def __init__(
+        self,
+        sql: SqlExecutor,
+        sp_sql: SqlExecutor | None = None,
+        runner_principal: str = "",
+        cleanup_principal: str = "",
+    ) -> None:
+        """Keep creation under OBO and grant cleanup rights to the app identity.
+
+        Args:
+            sql: OBO executor; the creating user remains the view owner.
+            sp_sql: App executor used as a fallback when dropping views.
+            runner_principal: Actual Jobs run-as identity, resolved by the caller.
+            cleanup_principal: App service principal application ID. Receives
+                MANAGE on each view so orphan cleanup does not require ownership
+                of the schema. Both identities are required before creation.
+        """
         self._sql = sql
         self._sp_sql = sp_sql
+        self._runner_principal = runner_principal
+        self._cleanup_principal = cleanup_principal
+
+    def _grant_permissions(self, view_name: str, runner: str, cleanup: str) -> None:
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        quoted_view = quote_fqn(view_name)
+        try:
+            self._sql.execute(f"GRANT MANAGE ON VIEW {quoted_view} TO {cleanup}")
+            self._sql.execute(f"GRANT SELECT ON VIEW {quoted_view} TO {runner}")
+        except Exception:
+            self.drop_view(view_name)
+            raise RuntimeError(
+                "Cannot configure temporary view permissions. View cleanup was attempted; "
+                "verify the runner and app principals and the creating user's grant authority."
+            ) from None
 
     def _ensure_schema(self) -> None:
         """Ensure the tmp schema exists. Uses SP credentials for DDL if available."""
@@ -138,7 +197,7 @@ class ViewService:
             _tmp_schema_ready = True
         except Exception as e:
             raise RuntimeError(
-                f"Cannot create tmp schema `{cat}`.`{schema}` via service principal. " f"Original error: {e}"
+                f"Cannot create tmp schema `{cat}`.`{schema}` via service principal. Original error: {e}"
             ) from e
 
     def _sample_select(self, quoted_source: str, sample: ProfilerSample | None, seed: int) -> str:
@@ -186,6 +245,8 @@ class ViewService:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
         validate_fqn(source_table_fqn)
+        runner = quote_view_principal(self._runner_principal)
+        cleanup = quote_view_principal(self._cleanup_principal)
         self._ensure_schema()
 
         view_id = uuid4().hex[:12]
@@ -200,25 +261,7 @@ class ViewService:
         logger.info("Creating view %s from %s", view_name, source_table_fqn)
         self._sql.execute(sql)
 
-        grant_sql = f"GRANT SELECT ON VIEW {quoted_view} TO `account users`"
-        try:
-            self._sql.execute(grant_sql)
-            logger.info("Granted SELECT on %s to account users", view_name)
-        except Exception as e:
-            logger.error(
-                "GRANT SELECT failed on %s: %s — the background job (running as SP) "
-                "will not be able to read this view. Check that the user has GRANT "
-                "privileges on schema %s.%s",
-                view_name,
-                e,
-                self._sql.catalog,
-                self._sql.schema,
-            )
-            raise RuntimeError(
-                f"Cannot grant SELECT on temporary view to account users. "
-                f"Ensure the user has ownership or GRANT privilege on "
-                f"schema {self._sql.catalog}.{self._sql.schema}: {e}"
-            ) from e
+        self._grant_permissions(view_name, runner, cleanup)
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")
@@ -254,6 +297,8 @@ class ViewService:
 
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
+        runner = quote_view_principal(self._runner_principal)
+        cleanup = quote_view_principal(self._cleanup_principal)
         self._ensure_schema()
 
         view_id = uuid4().hex[:12]
@@ -264,22 +309,7 @@ class ViewService:
         logger.info("Creating SQL-check view %s", view_name)
         self._sql.execute(sql)
 
-        grant_sql = f"GRANT SELECT ON VIEW {quoted_view} TO `account users`"
-        try:
-            self._sql.execute(grant_sql)
-            logger.info("Granted SELECT on %s to account users", view_name)
-        except Exception as e:
-            logger.error(
-                "GRANT SELECT failed on SQL-check view %s: %s — the background job "
-                "will not be able to read this view.",
-                view_name,
-                e,
-            )
-            raise RuntimeError(
-                f"Cannot grant SELECT on temporary view to account users. "
-                f"Ensure the user has ownership or GRANT privilege on "
-                f"schema {self._sql.catalog}.{self._sql.schema}: {e}"
-            ) from e
+        self._grant_permissions(view_name, runner, cleanup)
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")
@@ -292,9 +322,8 @@ class ViewService:
 
         Tries the caller's OBO credentials first (views are created OBO so
         the creating user is the owner). Falls back to the service principal
-        when wired — the SP holds ALL_PRIVILEGES on the tmp schema and can
-        reap orphans the hourly sweep discovers after a client never polled
-        run status to terminal.
+        when wired -- the app SP receives MANAGE on each OBO-created view
+        and can reap orphans after a client never polls run status to terminal.
         """
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
@@ -304,13 +333,13 @@ class ViewService:
             logger.info("Dropped view %s", view_fqn)
             return
         except Exception:
-            logger.warning("OBO DROP failed for %s; trying service principal", view_fqn, exc_info=True)
+            logger.warning("OBO view cleanup failed; trying service principal")
         if self._sp_sql is not None:
             try:
                 self._sp_sql.execute(sql)
                 logger.info("Dropped view %s via service principal", view_fqn)
                 return
             except Exception:
-                logger.warning("Failed to drop view %s via service principal", view_fqn, exc_info=True)
+                logger.warning("Temporary view cleanup failed via service principal")
         else:
-            logger.warning("Failed to drop view %s and no service principal is available", view_fqn)
+            logger.warning("Temporary view cleanup failed and no service principal is available")

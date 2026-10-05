@@ -1378,6 +1378,9 @@ class TestJobService:
 # Tests for ViewService
 # ============================================================================
 
+VIEW_RUNNER_PRINCIPAL = "11111111-1111-4111-8111-111111111111"
+VIEW_CLEANUP_PRINCIPAL = "22222222-2222-4222-8222-222222222222"
+
 
 class TestViewService:
     """Unit tests for ViewService."""
@@ -1396,7 +1399,7 @@ class TestViewService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return ViewService(sql=sql)
+        return ViewService(sql=sql, runner_principal=VIEW_RUNNER_PRINCIPAL, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1407,14 +1410,20 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view should issue CREATE OR REPLACE VIEW referencing the source table."""
+        """Create the source view with only runner SELECT and app cleanup MANAGE grants."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
-        svc.create_view("cat.sch.src_table")
+        view = svc.create_view("cat.sch.src_table")
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
     def test_create_view_adds_limit_clause_for_a_row_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """A records sample should cap the view with LIMIT.
@@ -1519,17 +1528,23 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view_from_sql should embed the user query in CREATE OR REPLACE VIEW ... AS."""
+        """Embed the query and grant only runner SELECT and app cleanup MANAGE."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
         query = "SELECT id FROM cat.sch.src_table"
 
-        svc.create_view_from_sql(query)
+        view = svc.create_view_from_sql(query)
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         create_stmts = [s for s in sql_stmts if "CREATE OR REPLACE VIEW" in s]
         assert len(create_stmts) == 1
         assert query in create_stmts[0]
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
     # ---------- create_view_from_sql: is_sql_query_safe gate ----------
 

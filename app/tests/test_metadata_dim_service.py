@@ -10,7 +10,7 @@ DDL, the zero-rows case (CREATE only, no INSERT), and literal rendering
 """
 
 from datetime import datetime, timezone
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -297,8 +297,9 @@ def test_refresh_propagates_execute_failures(service, sql_executor_mock, registr
 
 
 def test_refresh_restores_dimension_grants_after_creation_failure(
-    service: MetadataDimService, sql_executor_mock, registry, monitored_tables
+    sql_executor_mock: MagicMock, registry: MagicMock, monitored_tables: MagicMock
 ) -> None:
+    service = MetadataDimService(sql_executor_mock, registry, monitored_tables, "genie", audience_groups=("readers",))
     registry.list_rules.return_value = []
     monitored_tables.list_monitored_tables.return_value = []
     sql_executor_mock.execute.side_effect = RuntimeError("warehouse unavailable")
@@ -310,14 +311,20 @@ def test_refresh_restores_dimension_grants_after_creation_failure(
 
     grants = [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list]
     assert grants == [
-        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_rules TO `account users`",
-        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_monitored_tables TO `account users`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_rules TO `readers`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_monitored_tables TO `readers`",
     ]
 
 
 def test_dimension_grant_failure_does_not_stop_refresh(
-    service: MetadataDimService, sql_executor_mock, registry, monitored_tables, caplog: pytest.LogCaptureFixture
+    sql_executor_mock: MagicMock,
+    registry: MagicMock,
+    monitored_tables: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    service = MetadataDimService(
+        sql_executor_mock, registry, monitored_tables, "genie", audience_groups=("readers", "authors")
+    )
     registry.list_rules.return_value = []
     monitored_tables.list_monitored_tables.return_value = [_summary()]
     sql_executor_mock.execute_no_schema.side_effect = RuntimeError("sensitive grant error")
@@ -327,3 +334,34 @@ def test_dimension_grant_failure_does_not_stop_refresh(
     assert any(statement.startswith(f"INSERT INTO {DIM_TABLES_FQN}") for statement in _executed(sql_executor_mock))
     assert "Could not grant access to Genie metadata" in caplog.text
     assert "sensitive grant error" not in caplog.text
+    assert sql_executor_mock.execute_no_schema.call_count == 4
+
+
+def test_default_audience_never_grants_broad_access(
+    service: MetadataDimService, sql_executor_mock: MagicMock, registry: MagicMock, monitored_tables: MagicMock
+) -> None:
+    registry.list_rules.return_value = []
+    monitored_tables.list_monitored_tables.return_value = []
+    service.refresh()
+    sql_executor_mock.execute_no_schema.assert_not_called()
+
+
+def test_named_audience_grants_only_metadata_dimensions(
+    sql_executor_mock: MagicMock, registry: MagicMock, monitored_tables: MagicMock
+) -> None:
+    registry.list_rules.return_value = []
+    monitored_tables.list_monitored_tables.return_value = []
+    service = MetadataDimService(
+        sql_executor_mock,
+        registry,
+        monitored_tables,
+        "genie",
+        audience_groups=("readers", "data`owners", "readers"),
+    )
+    service.refresh()
+    assert [call.args[0] for call in sql_executor_mock.execute_no_schema.call_args_list] == [
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_rules TO `readers`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_rules TO `data``owners`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_monitored_tables TO `readers`",
+        "GRANT SELECT ON TABLE `dqx_test`.`genie`.dim_dq_monitored_tables TO `data``owners`",
+    ]

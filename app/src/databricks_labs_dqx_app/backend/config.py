@@ -1,13 +1,16 @@
+import json
 import os
 from importlib import resources
 import logging
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks_labs_dqx_app.backend.volume import parse_volume_path
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 
 from .._metadata import app_name, app_slug
 
@@ -85,6 +88,48 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_ADMIN_GROUP",
         description="Databricks workspace group name for bootstrap Admin access",
     )
+    user_groups: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias="DQX_USER_GROUPS",
+        description=(
+            "Explicit audience groups as a JSON list or unquoted comma-separated names; "
+            "an empty list means administrator-managed access."
+        ),
+    )
+
+    @field_validator("user_groups", mode="before")
+    @classmethod
+    def parse_user_groups(cls, value: object) -> object:
+        """Accept JSON lists and simple CSV without reinterpreting malformed JSON."""
+        if not isinstance(value, str):
+            return value
+        error_message = "DQX_USER_GROUPS must be a JSON list of scoped group names or unquoted comma-separated names."
+        try:
+            decoded: object = json.loads(value)
+        except json.JSONDecodeError:
+            if any(character in value for character in '[]{}"'):
+                raise ValueError(error_message) from None
+            return value.split(",")
+        if not isinstance(decoded, list):
+            raise ValueError(error_message)
+        return decoded
+
+    @field_validator("user_groups")
+    @classmethod
+    def validate_user_groups(cls, values: list[str]) -> list[str]:
+        groups: list[str] = []
+        for value in values:
+            group = value.strip()
+            if (
+                not group
+                or "`" in group
+                or replace_control_characters(value) != value
+                or group.casefold() in {"account users", "users"}
+            ):
+                raise ValueError("DQX_USER_GROUPS must contain scoped group names, not broad built-in groups.")
+            if group not in groups:
+                groups.append(group)
+        return groups
 
     @field_validator("admin_group")
     @classmethod
@@ -149,12 +194,12 @@ class AppConfig(BaseSettings):
     )
     # The task-runner job runs as a separate service principal and reads staged
     # run configs from ``dq_run_configs`` over Postgres. Its Postgres role (the
-    # SP client id) is granted USAGE + SELECT/DELETE at startup by the app (the
-    # table owner). Empty when there is no separate runner SP.
+    # SP client id) needs administrator-provisioned OAuth login and scoped grants.
+    # Startup checks the actual job identity; an optional legacy override must match.
     task_runner_postgres_role: str = Field(
         default="",
         validation_alias="DQX_TASK_RUNNER_POSTGRES_ROLE",
-        description="Postgres role (service principal client id for the task runner). Granted read/delete on dq_run_configs.",
+        description="Optional legacy runner role override; must match the job's run-as service principal client ID.",
     )
     # Default 0 so the pool can drain to zero idle connections and let a
     # scale-to-zero Lakebase endpoint suspend. A held-open connection (min_size
