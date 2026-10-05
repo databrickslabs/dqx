@@ -78,8 +78,8 @@ def test_generate_rules_with_unity_catalog_metadata(
 
     external_metadata = make_external_metadata()
     make_external_lineage_relationship(
-        external_metadata.name,
-        source_table.full_name,
+        external_metadata_name=external_metadata.name,
+        target_table_full_name=source_table.full_name,
         column_mappings=[("VBELN", "invoice_id"), ("WAERK", "currency_code")],
     )
 
