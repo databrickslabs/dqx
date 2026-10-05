@@ -16,7 +16,6 @@ import logging
 import sys
 import time
 import re
-from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -46,33 +45,13 @@ _SQL_QUARANTINE_MAX_ROWS = 100_000
 # Inline stub key when the app stages an oversized config in the run config table.
 _MANIFEST_CONFIG_KEY = "__manifest__"
 
-# Lakebase table holding run configs too large to inline.
+# Delta table in the result schema holding run configs too large to inline.
 _RUN_CONFIGS_TABLE = "dq_run_configs"
 
 # Legacy inline stub key: the app used to stage oversized configs as a JSON
 # file on the wheels volume. Superseded by the manifest table, but still read
 # here so any in-flight job submitted by an older app keeps working.
 _STAGED_CONFIG_KEY = "__staged__"
-
-
-@dataclass(frozen=True)
-class _LakebaseConn:
-    """Resolved Lakebase connection coordinates threaded from the app as job parameters.
-
-    The app resolves the *endpoint* (even in platform-bound mode, where it is
-    derived from the bound host), *host*, *port*, and *username* once and passes
-    them here, so the runner does not repeat that resolution — it only mints a
-    fresh OAuth token. *username* is the task-runner SP's Postgres role (the
-    identity the job runs as), which must match the OAuth token subject.
-    *schema* qualifies ``dq_run_configs`` in the query.
-    """
-
-    endpoint: str
-    host: str
-    port: int
-    username: str
-    database: str
-    schema: str
 
 
 # User-facing observer names written to ``dq_metrics.run_name``. The
@@ -293,94 +272,18 @@ def _read_staged_config(ws: WorkspaceClient, path: str) -> dict[str, Any]:
     return parsed
 
 
-def _pg_run_configs_identifier(schema: str) -> str:
-    """Return the double-quoted ``"schema"."dq_run_configs"`` Postgres identifier.
-
-    The schema is a job parameter, so it is validated against the identifier
-    pattern before being quoted into the JDBC query. psycopg's *sql.Identifier*
-    is unavailable on serverless compute, which ships the Postgres JDBC driver
-    but not the psycopg native driver.
-    """
-    if not _FQN_PART_RE.match(schema):
-        raise ValueError(f"Invalid Lakebase schema: '{schema}'.")
-    return f'"{schema}"."{_RUN_CONFIGS_TABLE}"'
+def _run_configs_table(catalog: str, schema: str) -> str:
+    """Return the quoted FQN of the ``dq_run_configs`` table in the result schema."""
+    return _quote_fqn(_validate_fqn(f"{catalog}.{schema}.{_RUN_CONFIGS_TABLE}"))
 
 
-def _lakebase_jdbc(ws: WorkspaceClient, conn: _LakebaseConn) -> tuple[str, dict[str, str]]:
-    """Build a Lakebase JDBC URL and connection properties with a fresh OAuth token.
-
-    Serverless compute ships the Postgres JDBC driver but not the psycopg native
-    driver, so the runner reads its staged config over Spark JDBC. The app already
-    resolved the endpoint (even in platform-bound mode), host, port, and username
-    and threaded them here, so this only mints a short-lived token.
-    """
-    if not conn.endpoint:
-        raise RuntimeError("Lakebase endpoint was not provided to the task runner")
-    if not conn.host or not conn.username:
-        raise RuntimeError("Lakebase host/username were not provided to the task runner")
-
-    credential = ws.postgres.generate_database_credential(endpoint=conn.endpoint)
-    if not credential.token:
-        raise RuntimeError(f"Lakebase credential response had no token (endpoint={conn.endpoint})")
-    url = f"jdbc:postgresql://{conn.host}:{conn.port}/{conn.database}"
-    properties = {
-        "user": conn.username,
-        "password": credential.token,
-        "driver": "org.postgresql.Driver",
-        "sslmode": "require",
-        # Bound the read phase (seconds). pgjdbc defaults socketTimeout=0
-        # (infinite) and there is no job-level timeout backstop, so a Lakebase
-        # endpoint that accepts the socket but then stalls would otherwise hang
-        # the run indefinitely — and the retry/backoff loop in
-        # _read_manifest_config can't interrupt a single stalled .collect().
-        # This connection only ever runs the single-row manifest-config lookup
-        # (never a long analytical query — DQ reads go through Spark, not here),
-        # so a tight bound is safe and simply lets a stalled attempt fail fast
-        # and be retried. The connect phase keeps pgjdbc's bounded 10s default,
-        # which the retry loop covers across a Lakebase cold-start resume.
-        "socketTimeout": "60",
-    }
-    return url, properties
-
-
-def _read_manifest_config(
-    spark: SparkSession,
-    ws: WorkspaceClient,
-    conn: _LakebaseConn,
-    run_id: str,
-    max_retries: int = 5,
-    initial_delay: float = 2.0,
-    max_delay: float = 15.0,
-) -> dict[str, Any]:
-    """Load the staged run config for *run_id* from the ``dq_run_configs`` table over JDBC."""
+def _read_manifest_config(spark: SparkSession, table: str, run_id: str) -> dict[str, Any]:
+    """Load the staged run config for *run_id* from the ``dq_run_configs`` table."""
     _validate_run_id(run_id)
-    subquery = f"(SELECT config FROM {_pg_run_configs_identifier(conn.schema)} WHERE run_id = '{run_id}') AS manifest"
-    last_error: Exception | None = None
-    delay = initial_delay
-    for attempt in range(max_retries):
-        value: object = None
-        try:
-            url, properties = _lakebase_jdbc(ws, conn)
-            rows = spark.read.jdbc(url=url, table=subquery, properties=properties).collect()
-        except Exception as e:
-            last_error = e
-        else:
-            value = rows[0]["config"] if rows else None
-            if value is not None:
-                return _parse_manifest_config(value, run_id)
-            last_error = RuntimeError(f"No manifest run config row for run_id={run_id}")
-        if attempt < max_retries - 1:
-            logger.warning(
-                "Manifest run config for %s not ready (attempt %d/%d), retrying in %.1fs: %s",
-                run_id,
-                attempt + 1,
-                max_retries,
-                delay,
-                last_error,
-            )
-            time.sleep(delay)
-            delay = min(delay * 1.5, max_delay)
-    raise last_error or RuntimeError(f"Manifest run config for {run_id} not found")
+    rows = spark.sql(f"SELECT config FROM {table} WHERE run_id = :run_id", args={"run_id": run_id}).collect()
+    if not rows:
+        raise RuntimeError(f"No manifest run config row for run_id={run_id}")
+    return _parse_manifest_config(rows[0]["config"], run_id)
 
 
 def _parse_manifest_config(value: object, run_id: str) -> dict[str, Any]:
@@ -399,13 +302,13 @@ def _resolve_run_config(
     spark: SparkSession,
     ws: WorkspaceClient,
     config_raw: dict[str, Any],
-    lakebase: _LakebaseConn,
+    run_configs_table: str,
     run_id: str,
 ) -> tuple[dict[str, Any], tuple[str, str | None] | None]:
     """Resolve the full run config from an inline manifest stub."""
     if config_raw.get(_MANIFEST_CONFIG_KEY):
-        config = _read_manifest_config(spark, ws, lakebase, run_id)
-        return config, None
+        config = _read_manifest_config(spark, run_configs_table, run_id)
+        return config, ("table", run_configs_table)
     staged = config_raw.get(_STAGED_CONFIG_KEY)
     if isinstance(staged, str) and staged.strip():
         path = staged.strip()
@@ -413,13 +316,28 @@ def _resolve_run_config(
     return config_raw, None
 
 
-def _cleanup_run_config(ws: WorkspaceClient, cleanup: tuple[str, str | None] | None) -> None:
-    """Best-effort removal of a legacy volume-staged run config once the run finished."""
+def _cleanup_run_config(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    cleanup: tuple[str, str | None] | None,
+    run_id: str,
+) -> None:
+    """Best-effort removal of a staged run config once the run finished."""
     if not cleanup:
         return
-    kind, path = cleanup
-    if kind == "volume" and path:
-        _delete_staged_config(ws, path)
+    kind, location = cleanup
+    if kind == "table" and location:
+        _delete_manifest_config(spark, location, run_id)
+    elif kind == "volume" and location:
+        _delete_staged_config(ws, location)
+
+
+def _delete_manifest_config(spark: SparkSession, table: str, run_id: str) -> None:
+    try:
+        spark.sql(f"DELETE FROM {table} WHERE run_id = :run_id", args={"run_id": run_id})
+        logger.info("Deleted staged run config for %s from %s", run_id, table)
+    except Exception as exc:
+        logger.warning("Could not delete staged run config for %s from %s: %s", run_id, table, exc)
 
 
 def _delete_staged_config(ws: WorkspaceClient, path: str) -> None:
@@ -445,13 +363,6 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Databricks job run id (wired as {{job.run_id}}) used to deep-link the run in the UI",
     )
-    # Lakebase connection coordinates for reading a staged run config.
-    parser.add_argument("--lakebase_endpoint", default="", help="Resolved Lakebase endpoint path")
-    parser.add_argument("--lakebase_database", default="", help="Lakebase database name")
-    parser.add_argument("--lakebase_schema", default="", help="Lakebase schema holding dq_run_configs")
-    parser.add_argument("--lakebase_host", default="", help="Resolved Lakebase read/write host")
-    parser.add_argument("--lakebase_port", type=int, default=5432, help="Resolved Lakebase port")
-    parser.add_argument("--lakebase_username", default="", help="Resolved Lakebase role (SP client id)")
     return parser.parse_args()
 
 
@@ -1484,20 +1395,13 @@ def main() -> None:
     ws = WorkspaceClient()
     spark = SparkSession.builder.getOrCreate()
     job_run_id = _parse_job_run_id(args.job_run_id)
-    lakebase = _LakebaseConn(
-        endpoint=args.lakebase_endpoint,
-        host=args.lakebase_host,
-        port=args.lakebase_port,
-        username=args.lakebase_username,
-        database=args.lakebase_database,
-        schema=args.lakebase_schema,
-    )
     config: dict[str, Any] = {}
     config_cleanup: tuple[str, str | None] | None = None
     source_table_fqn = ""
 
     try:
-        config, config_cleanup = _resolve_run_config(spark, ws, config_raw, lakebase, args.run_id)
+        run_configs_table = _run_configs_table(args.result_catalog, args.result_schema)
+        config, config_cleanup = _resolve_run_config(spark, ws, config_raw, run_configs_table, args.run_id)
         source_table_fqn = config.get("source_table_fqn", "")
         if args.task_type == "profile":
             _run_profile(
@@ -1557,7 +1461,7 @@ def main() -> None:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
-        _cleanup_run_config(ws, config_cleanup)
+        _cleanup_run_config(spark, ws, config_cleanup, args.run_id)
         # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
         #
         # The authoritative cleanup is the app's OBO ``drop_view`` (run as the

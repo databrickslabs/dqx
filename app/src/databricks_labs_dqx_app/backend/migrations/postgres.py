@@ -736,27 +736,6 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  model        TEXT,"
             "  updated_at   TIMESTAMPTZ"
             ");"
-            # ----------------------------------------------------------
-            # dq_run_configs — staging table for task-runner run configs
-            # too large to inline in the job's ``config_json`` parameter.
-            # Databricks caps job parameters at 10,000 characters. The app
-            # upserts the fully-resolved config keyed by ``run_id`` and
-            # passes a tiny ``{"__manifest__": true}`` stub; the serverless
-            # task runner reads the row back over Spark JDBC by ``run_id``
-            # (serverless ships the JDBC driver but not psycopg). The runner
-            # does not delete it — the scheduler's staged-config sweep removes
-            # a row once its run has a terminal result, and the daily retention
-            # sweep is the backstop for rows a crashed run left behind.
-            # ``run_id`` is a real enforced PRIMARY KEY so a resubmit replaces
-            # the row and the reader always sees exactly one. ``config`` is the
-            # compact JSON payload stored as text (same convention as
-            # ``dq_schedule_configs.config_json``).
-            # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_configs ("
-            "  run_id     TEXT PRIMARY KEY,"
-            "  config     TEXT NOT NULL,"
-            "  created_at TIMESTAMPTZ NOT NULL"
-            ");"
             # dq_rules_core — dqx-core-compatible READ view over the
             # APPROVED rules in ``dq_resolved_rules``. It reshapes Studio's
             # storage into exactly the columns dqx-core's
@@ -819,6 +798,11 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS row_filter TEXT;"
             f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS pass_threshold INT;"
         ),
+    ),
+    PgMigration(
+        version=3,
+        description="Drop dq_run_configs; oversized run configs are staged in Delta",
+        sql=f"DROP TABLE IF EXISTS {_S}.dq_run_configs;",
     ),
 ]
 

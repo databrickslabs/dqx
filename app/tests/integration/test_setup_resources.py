@@ -24,7 +24,6 @@ _EXPECTED_OLTP_TABLES = (
     "dq_resolved_rules",
     "dq_resolved_rules_history",
     "dq_role_mappings",
-    "dq_run_configs",
     "dq_comments",
     "dq_schedule_runs",
     "dq_schedule_configs",

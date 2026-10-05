@@ -15,7 +15,7 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     delete_staged_config,
     prepare_config_json,
 )
-from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
@@ -37,29 +37,11 @@ class JobService:
         ws: WorkspaceClient,
         job_id: str,
         sql: SqlExecutor,
-        oltp_sql: OltpExecutorProtocol,
         warehouse_id: str | None = None,
-        lakebase_endpoint: str = "",
-        lakebase_database: str = "",
-        lakebase_schema: str = "",
-        lakebase_host: str = "",
-        lakebase_port: int = 5432,
-        lakebase_username: str = "",
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
         self._sql = sql
-        self._oltp_sql = oltp_sql
-        # Lakebase connection coordinates threaded to the runner so it can read a
-        # staged config back over Postgres. ``endpoint``/``host``/``username`` are
-        # the values the app already resolved, so the runner does not re-run host/identity
-        # resolution — it only mints a fresh OAuth token.
-        self._lakebase_endpoint = lakebase_endpoint
-        self._lakebase_database = lakebase_database
-        self._lakebase_schema = lakebase_schema
-        self._lakebase_host = lakebase_host
-        self._lakebase_port = lakebase_port
-        self._lakebase_username = lakebase_username
         # SQL warehouse the task runner uses for its temp-view cleanup path.
         # The admin-configured warehouse (``dq_app_settings`` → resolved by the
         # caller) wins; otherwise fall back to the SP executor's env-bound
@@ -89,15 +71,9 @@ class JobService:
             "run_id": run_id,
             "requesting_user": requesting_user,
             "warehouse_id": self._warehouse_id,
-            "lakebase_endpoint": self._lakebase_endpoint,
-            "lakebase_database": self._lakebase_database,
-            "lakebase_schema": self._lakebase_schema,
-            "lakebase_host": self._lakebase_host,
-            "lakebase_port": str(self._lakebase_port),
-            "lakebase_username": self._lakebase_username,
         }
         config_json = prepare_config_json(
-            self._oltp_sql,
+            self._sql,
             run_id=run_id,
             config=config,
             job_parameters_without_config=base_params,
@@ -111,7 +87,7 @@ class JobService:
             )
         except Exception:
             if staged:
-                delete_staged_config(self._oltp_sql, run_id)
+                delete_staged_config(self._sql, run_id)
             raise
         logger.info(
             "Submitted job run %s (job_id=%s, task_type=%s, app_run_id=%s)",
