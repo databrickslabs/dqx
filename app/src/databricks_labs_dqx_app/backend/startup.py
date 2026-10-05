@@ -28,7 +28,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_rules_catalog_service,
     get_run_set_service,
     get_sp_ws,
-    get_view_service,
+    get_scheduler_view_service,
     set_oltp_executor,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -85,9 +85,7 @@ from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
-from databricks_labs_dqx_app.backend.run_config_store import RUN_CONFIGS_TABLE
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import validate_object_id
 
 StartupHook = Callable[[], Awaitable[None] | None]
 
@@ -263,6 +261,7 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
                 sql=sp_sql,
                 pg=pg_executor,
                 compute=compute,
+                audience_groups=tuple(conf.user_groups),
             ),
             jobs=TaskRunnerJobManager(sp_ws),
             pg_migrations=PgMigrationRunner(pg_executor),
@@ -442,8 +441,7 @@ async def _run_post_migration_startup(
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     ensure_entitlement_objects(delta_sql, resources)
-    grant_user_view_access(delta_sql, resources)
-    _grant_task_runner_run_config_access(oltp)
+    grant_user_view_access(delta_sql, resources, audience_groups=tuple(conf.user_groups))
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
@@ -503,6 +501,7 @@ async def _ensure_metadata_dims(
                 registry=RegistryService(sql=oltp),
                 monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
                 genie_schema=resources.genie_schema,
+                audience_groups=tuple(conf.user_groups),
             )
         )
     except Exception:
@@ -525,13 +524,22 @@ def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResource
         raise RequiredViewSetupError() from None
 
 
-def grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
+def grant_user_view_access(
+    delta_sql: SqlExecutor, resources: ActiveResources, *, audience_groups: tuple[str, ...] = ()
+) -> None:
     """Best-effort user access to approved Genie views and metadata tables.
 
     Args:
         delta_sql: App service principal's SQL executor.
         resources: Resolved installation resources.
     """
+    if not audience_groups:
+        logger.warning(
+            "DQX_USER_GROUPS is empty: audience access is administrator-managed. "
+            "No audience grants will be applied; configure scoped groups or grant access manually. "
+            "Existing grants are not revoked."
+        )
+        return
     catalog = delta_sql.q(resources.volume.catalog)
     schema = delta_sql.q(resources.genie_schema)
     genie_objects = (
@@ -543,47 +551,17 @@ def grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -
         DIM_RULES_TABLE_NAME,
         DIM_MONITORED_TABLES_TABLE_NAME,
     )
-    statements = [
-        f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `account users`",
-        *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{delta_sql.q(name)} TO `account users`" for name in genie_objects),
-    ]
-    for statement in statements:
-        try:
-            delta_sql.execute_no_schema(statement)
-        except Exception:
-            logger.warning("Could not grant account users access to a Genie object; setup can continue.")
-
-
-def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
-    """Grant the task-runner SP read/delete on ``dq_run_configs`` in Lakebase."""
-    role = conf.task_runner_postgres_role.strip()
-    if not role or getattr(oltp, "dialect", "") != "postgres":
-        return
-    # A malformed role must never be interpolated into DDL, but a cosmetic
-    # misconfig of this optional grant must not abort startup — this is a
-    # best-effort step, like the adjacent grants. Log and skip instead of
-    # letting validate_object_id's ValueError propagate out of the lifespan.
-    try:
-        validate_object_id(role)
-    except ValueError:
-        logger.warning(
-            "Task-runner Postgres role is not a valid identifier; skipping the dq_run_configs grant", exc_info=True
-        )
-        return
-    schema = oltp.q(oltp.schema)
-    table = oltp.fqn(RUN_CONFIGS_TABLE)
-    quoted_role = oltp.q(role)
-    statements = [
-        f"GRANT USAGE ON SCHEMA {schema} TO {quoted_role}",
-        f"GRANT SELECT, DELETE ON {table} TO {quoted_role}",
-    ]
-    for statement in statements:
-        try:
-            oltp.execute(statement)
-        except Exception:
-            # Name the failing statement so a later opaque runner permission
-            # error can be traced back to the specific grant that did not apply.
-            logger.warning("Task-runner grant failed: %s", statement, exc_info=True)
+    for group in audience_groups:
+        principal = delta_sql.q(group)
+        statements = [
+            f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO {principal}",
+            *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{delta_sql.q(name)} TO {principal}" for name in genie_objects),
+        ]
+        for statement in statements:
+            try:
+                delta_sql.execute_no_schema(statement)
+            except Exception:
+                logger.warning("Could not grant a configured audience group access to a Genie object.")
 
 
 def _ensure_genie_space(
@@ -600,6 +578,7 @@ def _ensure_genie_space(
             warehouse_id=resources.warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
+            audience_groups=tuple(conf.user_groups),
         )
     except Exception:
         logger.warning("Could not provision the DQ Genie space")
@@ -632,7 +611,7 @@ async def _build_scheduler_data_product_service(
         rules_catalog=rules_catalog,
         materializer=materializer,
     )
-    view_service = await get_view_service(sql=delta_sql, sp_sql=delta_sql)
+    view_service = await get_scheduler_view_service(sp_ws=workspace, sp_sql=delta_sql)
     job_service = await get_job_service(sp_ws=workspace, sql=delta_sql, oltp=oltp, app_settings=app_settings)
     run_sets = await get_run_set_service(sql=oltp, validation_sql=delta_sql)
     binding_runs = await get_binding_run_service(

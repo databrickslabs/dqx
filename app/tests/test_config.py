@@ -4,6 +4,100 @@ import pytest
 from pydantic import ValidationError
 
 
+def test_audience_groups_are_explicit_and_scoped() -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    assert AppConfig(_env_file=None).user_groups == []
+    assert AppConfig(_env_file=None, user_groups=["studio-authors", "studio-viewers"]).user_groups == [
+        "studio-authors",
+        "studio-viewers",
+    ]
+
+
+@pytest.mark.parametrize("group", ["account users", "users", "`account users`", "`UsErS`", " account users "])
+def test_broad_audience_groups_are_rejected(group: str) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    with pytest.raises(ValidationError):
+        AppConfig(_env_file=None, user_groups=[group])
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ('["studio-authors", "studio-viewers"]', ["studio-authors", "studio-viewers"]),
+        ("studio-authors,studio-viewers", ["studio-authors", "studio-viewers"]),
+        (" studio-authors , studio-viewers , studio-authors ", ["studio-authors", "studio-viewers"]),
+        ("studio-authors", ["studio-authors"]),
+        ('["studio,authors", "studio-viewers"]', ["studio,authors", "studio-viewers"]),
+        ("[]", []),
+    ],
+)
+def test_audience_groups_env_accepts_json_and_simple_csv(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: list[str]
+) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_USER_GROUPS", value)
+
+    assert AppConfig(_env_file=None).user_groups == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '["studio-authors"',
+        '["studio-authors",]',
+        '"studio-authors","studio-viewers"',
+        "['studio-authors']",
+        '{"group": "studio-authors"}',
+        '"studio-authors"',
+        "null",
+        "true",
+        "123",
+        "[123]",
+        "[null]",
+        '[["studio-authors"]]',
+        "",
+        " ",
+        "studio-authors,",
+        ",studio-authors",
+        "studio-authors,,studio-viewers",
+        "studio-authors,users",
+        "studio-authors, Account Users ",
+        '["UsErS"]',
+        "studio-authors,`studio-viewers`",
+        "studio-authors,studio\nviewers",
+        '["studio\\u0000viewers"]',
+    ],
+)
+def test_invalid_audience_groups_env_has_actionable_validation(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_USER_GROUPS", value)
+
+    with pytest.raises(ValidationError) as raised:
+        AppConfig(_env_file=None)
+
+    errors = raised.value.errors(include_input=False, include_context=False)
+    assert all(error["loc"][0] == "DQX_USER_GROUPS" for error in errors)
+
+
+def test_malformed_audience_json_explains_supported_formats(monkeypatch: pytest.MonkeyPatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_USER_GROUPS", '["studio-authors",]')
+
+    with pytest.raises(ValidationError) as raised:
+        AppConfig(_env_file=None)
+
+    message = raised.value.errors(include_input=False, include_context=False)[0]["msg"]
+    assert "DQX_USER_GROUPS" in message
+    assert "JSON list" in message
+    assert "comma-separated" in message
+    assert "JSONDecodeError" not in message
+
+
 def test_lakebase_pool_min_size_defaults_to_zero(monkeypatch):
     # Scale-to-zero: the pool must be allowed to drain to zero idle
     # connections so a suspended Lakebase endpoint isn't kept warm.

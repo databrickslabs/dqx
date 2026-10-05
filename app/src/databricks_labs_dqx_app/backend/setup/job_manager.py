@@ -139,6 +139,12 @@ def _task_runner_task() -> Task:
         "run_id",
         "requesting_user",
         "warehouse_id",
+        "lakebase_endpoint",
+        "lakebase_database",
+        "lakebase_schema",
+        "lakebase_host",
+        "lakebase_port",
+        "lakebase_username",
     )
     parameters = [item for name in parameter_names for item in (f"--{name}", f"{{{{job.parameters.{name}}}}}")]
     parameters.extend(["--job_run_id", "{{job.run_id}}"])
@@ -163,6 +169,12 @@ def _task_runner_parameters() -> list[JobParameterDefinition]:
         JobParameterDefinition(name="run_id", default=""),
         JobParameterDefinition(name="requesting_user", default="unknown"),
         JobParameterDefinition(name="warehouse_id", default=""),
+        JobParameterDefinition(name="lakebase_endpoint", default=""),
+        JobParameterDefinition(name="lakebase_database", default="databricks_postgres"),
+        JobParameterDefinition(name="lakebase_schema", default="dqx_studio"),
+        JobParameterDefinition(name="lakebase_host", default=""),
+        JobParameterDefinition(name="lakebase_port", default="5432"),
+        JobParameterDefinition(name="lakebase_username", default=""),
     ]
 
 
