@@ -742,13 +742,15 @@ PG_MIGRATIONS: list[PgMigration] = [
             # Databricks caps job parameters at 10,000 characters. The app
             # upserts the fully-resolved config keyed by ``run_id`` and
             # passes a tiny ``{"__manifest__": true}`` stub; the serverless
-            # task runner reads the row back over Postgres by ``run_id``,
-            # then deletes it. ``run_id`` is a real enforced PRIMARY KEY so
-            # a resubmit replaces the row and the reader always sees exactly
-            # one. ``config`` is the compact JSON payload stored as text
-            # (same convention as ``dq_schedule_configs.config_json``); the
-            # daily retention sweep is the backstop for rows a crashed run
-            # left behind.
+            # task runner reads the row back over Spark JDBC by ``run_id``
+            # (serverless ships the JDBC driver but not psycopg). The runner
+            # does not delete it — the scheduler's staged-config sweep removes
+            # a row once its run has a terminal result, and the daily retention
+            # sweep is the backstop for rows a crashed run left behind.
+            # ``run_id`` is a real enforced PRIMARY KEY so a resubmit replaces
+            # the row and the reader always sees exactly one. ``config`` is the
+            # compact JSON payload stored as text (same convention as
+            # ``dq_schedule_configs.config_json``).
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_run_configs ("
             "  run_id     TEXT PRIMARY KEY,"

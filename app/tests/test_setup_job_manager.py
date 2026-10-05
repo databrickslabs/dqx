@@ -144,11 +144,15 @@ def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> N
     assert settings.environments[0].spec.dependencies == ["/Volumes/c/s/v/runner.whl", "/Volumes/c/s/v/dqx.whl"]
 
 
-def test_configure_passes_lakebase_coordinates_to_runner(manager: TaskRunnerJobManager) -> None:
+def test_configure_forwards_lakebase_args_to_the_runner(manager: TaskRunnerJobManager) -> None:
+    """The task command must pass the lakebase_* params, else the runner can't read
+    an oversized staged config and fails with 'Invalid Lakebase schema'."""
+    manager.workspace.jobs.get.return_value = managed_job(42)
+
     manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
 
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
-    parameters = settings.tasks[0].python_wheel_task.parameters
+    task_args = settings.tasks[0].python_wheel_task.parameters
     for name in (
         "lakebase_endpoint",
         "lakebase_database",
@@ -157,8 +161,12 @@ def test_configure_passes_lakebase_coordinates_to_runner(manager: TaskRunnerJobM
         "lakebase_port",
         "lakebase_username",
     ):
-        assert f"--{name}" in parameters
-        assert f"{{{{job.parameters.{name}}}}}" in parameters
+        assert f"--{name}" in task_args
+        assert f"{{{{job.parameters.{name}}}}}" in task_args
+    declared = {p.name for p in settings.parameters}
+    assert {"lakebase_schema", "lakebase_host", "lakebase_port", "lakebase_username"} <= declared
+    # lakebase_port must have a non-empty default (parsed as int by the runner).
+    assert next(p.default for p in settings.parameters if p.name == "lakebase_port") == "5432"
 
 
 def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) -> None:
