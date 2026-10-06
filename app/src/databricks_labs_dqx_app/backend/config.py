@@ -1,20 +1,15 @@
 import json
 import os
 from importlib import resources
-import logging
 from pathlib import Path
 from typing import Annotated
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-from databricks.labs.dqx.errors import InvalidParameterError
-from databricks_labs_dqx_app.backend.volume import parse_volume_path
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 
 from .._metadata import app_name, app_slug
-
-logger = logging.getLogger(__name__)
 
 # project root is the parent of the src folder
 project_root = Path(__file__).parent.parent.parent.parent

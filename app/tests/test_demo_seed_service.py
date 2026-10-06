@@ -112,7 +112,7 @@ def test_build_source_data_tags_demo_schema_and_tables():
     deps["resource_tagger"].reconcile.assert_called_once_with(
         demo_tag_targets(
             "dqx",
-            manifest.SOURCE_SCHEMA,
+            "dqx_studio_demo",
             tuple(table.name for table in manifest.TABLES),
         )
     )
@@ -1780,7 +1780,7 @@ def test_schedule_grants_cover_every_target_table():
     product_ids = {spec.name: f"p-{i}" for i, spec in enumerate(manifest.DATA_PRODUCTS)}
     for spec in manifest.SCHEDULES:
         if spec.target_kind == "table":
-            expected.add(f"dqx.{manifest.SOURCE_SCHEMA}.{spec.target}")
+            expected.add(f"dqx.dqx_studio_demo.{spec.target}")
         else:
             expected.add(f"dqx.demo.{product_ids[spec.target]}_member")
     assert granted == expected

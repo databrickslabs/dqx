@@ -18,7 +18,6 @@ from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
 from .common.authorization import UserRole, get_user_email
 from .config import AppConfig, conf, get_sql_warehouse_path
-from .demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
 from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
@@ -314,7 +313,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             warehouse_id=warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
-            audience_groups=tuple(conf.user_groups),
+            audience_groups=resources.audience.workspace_principals,
         )
 
     return _reprovision
@@ -971,12 +970,13 @@ async def get_metadata_dim_service(
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
 ) -> MetadataDimService:
     """Create the materializer for the Genie metadata dimensions."""
+    resources = rt.require_resources()
     return MetadataDimService(
         sp_sql=sp_sql,
         registry=registry,
         monitored_tables=monitored_tables,
-        genie_schema=rt.require_resources().genie_schema,
-        audience_groups=tuple(conf.user_groups),
+        genie_schema=resources.genie_schema,
+        audience_groups=resources.audience.uc_principals,
     )
 
 
@@ -1086,7 +1086,7 @@ async def get_demo_seed_service(
     load-bearing:
 
     * ``demo_sql`` is a fresh :class:`SqlExecutor` bound to the demo source
-      schema (:data:`~backend.demo.manifest.SOURCE_SCHEMA`), where the seeded
+      schema (*resources.demo_schema*), where the seeded
       e-commerce tables live, rather than the app's own ``dqx_studio`` schema.
     * The :class:`BindingRunService` is built with a :class:`ViewService` whose
       ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
@@ -1105,7 +1105,7 @@ async def get_demo_seed_service(
         ws=sp_ws,
         warehouse_id=warehouse_id,
         catalog=resources.volume.catalog,
-        schema=DEMO_SOURCE_SCHEMA,
+        schema=resources.demo_schema,
     )
     sp_view = ViewService(
         sql=SqlExecutor(
@@ -1167,6 +1167,7 @@ async def get_demo_seed_service(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
         catalog=resources.volume.catalog,
+        schema=resources.demo_schema,
     )
 
 

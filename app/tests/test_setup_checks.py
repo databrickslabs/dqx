@@ -13,6 +13,7 @@ from databricks.sdk.service.catalog import (
 )
 from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers, required_catalog_grants
@@ -55,6 +56,8 @@ def resources() -> ActiveResources:
         job_id=None,
         tmp_schema="dqx_studio_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 

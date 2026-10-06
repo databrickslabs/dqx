@@ -17,6 +17,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import ColumnInfo, ColumnMask, TableInfo, TableRowFilter
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.entitlement_service import (
     ENTITLEMENT_TTL_HOURS,
     ENTITLEMENTS_TABLE_NAME,
@@ -54,6 +55,8 @@ def startup_resources() -> ActiveResources:
         job_id="1",
         tmp_schema="dqx_app_test_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 

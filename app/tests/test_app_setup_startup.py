@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 import pytest
 from fastapi import FastAPI
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.runtime import Runtime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
@@ -38,6 +39,8 @@ def resources() -> ActiveResources:
         job_id="29",
         tmp_schema="studio_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 
@@ -516,3 +519,26 @@ async def test_startup_cleans_open_context_when_reconciliation_is_cancelled(
         await startup.start_studio(app)
 
     pg_executor.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_startup_reports_invalid_audience_configuration_and_does_not_activate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    previous_report = setup_runtime.report()
+    monkeypatch.setattr(startup.conf, "wheels_volume", "/Volumes/main/studio/wheels")
+    monkeypatch.setattr(startup.conf, "lakebase_endpoint", "projects/p/branches/b/endpoints/e")
+    monkeypatch.setattr(startup.conf, "user_groups", [])
+    try:
+        context = await startup.start_studio(FastAPI())
+        report = setup_runtime.report()
+    finally:
+        setup_runtime.publish(previous_report)
+
+    assert context is None
+    assert report.state is SetupState.SETUP_REQUIRED
+    assert report.current_step is SetupStepId.UNITY_CATALOG
+    assert report.steps[0].code == "audience_configuration_invalid"
+    assert report.steps[0].summary == "A valid Studio audience group is required."

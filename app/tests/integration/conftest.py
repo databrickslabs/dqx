@@ -26,6 +26,7 @@ from databricks.sdk.service.postgres import (
     RoleRoleSpec,
 )
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.migrations import MigrationRunner
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor_from_connection
@@ -309,6 +310,8 @@ def live_resources(
         job_id=None,
         tmp_schema=tmp_schema,
         genie_schema=genie_schema,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=bound_volume.catalog, schema=bound_volume.schema)
     pg = build_pg_executor_from_connection(ws, resources.lakebase)
