@@ -8,6 +8,7 @@ from unittest.mock import create_autospec
 import pytest
 from databricks.sdk import WorkspaceClient
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.models import (
@@ -186,6 +187,8 @@ def resources() -> ActiveResources:
         job_id="27",
         tmp_schema="dqx_studio_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 
@@ -329,6 +332,8 @@ async def test_discovered_job_becomes_runtime_state_before_external_action(resou
         job_id=None,
         tmp_schema=resources.tmp_schema,
         genie_schema=resources.genie_schema,
+        demo_schema=resources.demo_schema,
+        audience=resources.audience,
     )
     fixture = _make_orchestrator(unresolved_resources)
     fixture.jobs.resolved = ResolvedJob(job_id=81, created=True)
@@ -352,6 +357,8 @@ async def test_later_setup_admin_can_manage_job_created_during_startup(resources
         job_id=None,
         tmp_schema=resources.tmp_schema,
         genie_schema=resources.genie_schema,
+        demo_schema=resources.demo_schema,
+        audience=resources.audience,
     )
     fixture = _make_orchestrator(unresolved_resources)
     fixture.jobs.resolved = ResolvedJob(job_id=81, created=True)

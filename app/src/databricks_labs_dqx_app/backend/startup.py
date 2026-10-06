@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import (
@@ -261,7 +263,7 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
                 sql=sp_sql,
                 pg=pg_executor,
                 compute=compute,
-                audience_groups=tuple(conf.user_groups),
+                audience_groups=resources.audience.uc_principals,
             ),
             jobs=TaskRunnerJobManager(sp_ws),
             pg_migrations=PgMigrationRunner(pg_executor),
@@ -327,6 +329,16 @@ def _resolve_resources() -> ActiveResources | None:
         )
         return None
 
+    try:
+        audience = resolve_audience(conf.user_groups, conf.admin_group, allow_broad=True)
+    except InvalidParameterError:
+        _publish_unavailable(
+            SetupStepId.UNITY_CATALOG,
+            "audience_configuration_invalid",
+            "A valid Studio audience group is required.",
+        )
+        return None
+
     return ActiveResources(
         volume=volume,
         lakebase=lakebase,
@@ -334,6 +346,8 @@ def _resolve_resources() -> ActiveResources | None:
         job_id=conf.job_id.strip() or None,
         tmp_schema=conf.tmp_schema_name or f"{volume.schema}_tmp",
         genie_schema=conf.genie_schema_name or f"{volume.schema}_genie",
+        demo_schema=conf.demo_schema_name or f"{volume.schema}_demo",
+        audience=audience,
     )
 
 
@@ -441,7 +455,7 @@ async def _run_post_migration_startup(
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
     ensure_entitlement_objects(delta_sql, resources)
-    grant_user_view_access(delta_sql, resources, audience_groups=tuple(conf.user_groups))
+    grant_user_view_access(delta_sql, resources, audience_groups=resources.audience.uc_principals)
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
@@ -501,7 +515,7 @@ async def _ensure_metadata_dims(
                 registry=RegistryService(sql=oltp),
                 monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
                 genie_schema=resources.genie_schema,
-                audience_groups=tuple(conf.user_groups),
+                audience_groups=resources.audience.uc_principals,
             )
         )
     except Exception:
@@ -578,7 +592,7 @@ def _ensure_genie_space(
             warehouse_id=resources.warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
-            audience_groups=tuple(conf.user_groups),
+            audience_groups=resources.audience.workspace_principals,
         )
     except Exception:
         logger.warning("Could not provision the DQ Genie space")

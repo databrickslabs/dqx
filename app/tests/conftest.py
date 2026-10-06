@@ -53,19 +53,16 @@ def _activate_test_runtime_resources() -> Iterator[None]:
     from databricks_labs_dqx_app.backend.config import conf
     from databricks_labs_dqx_app.backend.runtime import rt
     from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+    from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 
     previous_resources = rt.resources
-    # Derive schemas with fallback logic (same as startup._resolve_resources)
-    volume_schema = conf.schema_name or "dqx_studio"
-    tmp_schema = conf.tmp_schema_name or f"{volume_schema}_tmp"
-    genie_schema = conf.genie_schema_name or f"{volume_schema}_genie"
-    demo_schema = getattr(conf, "demo_schema_name", "") or f"{volume_schema}_demo"
+    audience_groups = conf.user_groups or ["data-team"]
     resources = ActiveResources(
         volume=VolumeLocation(
             conf.catalog,
-            volume_schema,
+            conf.schema_name,
             "wheels",
-            f"/Volumes/{conf.catalog}/{volume_schema}/wheels",
+            f"/Volumes/{conf.catalog}/{conf.schema_name}/wheels",
         ),
         lakebase=LakebaseConnection(
             endpoint="projects/test/branches/test/endpoints/primary",
@@ -78,8 +75,10 @@ def _activate_test_runtime_resources() -> Iterator[None]:
         ),
         warehouse_id="test-warehouse",
         job_id="1",
-        tmp_schema=tmp_schema,
-        genie_schema=genie_schema,
+        tmp_schema=conf.tmp_schema_name,
+        genie_schema=conf.genie_schema_name,
+        demo_schema=conf.demo_schema_name,
+        audience=resolve_audience(audience_groups, conf.admin_group, allow_broad=False),
     )
     rt.activate(resources)
     try:

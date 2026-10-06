@@ -7,6 +7,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from fastapi.testclient import TestClient
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.app import app
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import get_conf, get_setup_sql_executor, get_obo_ws
@@ -51,6 +52,8 @@ def resources() -> ActiveResources:
         job_id=None,
         tmp_schema="dqx_studio_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 

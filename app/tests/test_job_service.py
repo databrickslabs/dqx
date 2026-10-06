@@ -6,6 +6,7 @@ from databricks.sdk.service.jobs import Job, JobSettings, JobRunAs
 
 import pytest
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.dependencies import get_job_service, get_schedule_grant_service
 from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.routes.v1.config import get_workspace_host
@@ -42,6 +43,8 @@ def test_job_service_submits_to_resolved_setup_job_id(sql_executor_mock: MagicMo
             job_id=None,
             tmp_schema="dqx_studio_tmp",
             genie_schema="genie",
+            demo_schema="studio_demo",
+            audience=resolve_audience(["data-team"], "admins", allow_broad=False),
         )
     )
     # get_job_service reads all resolved Lakebase coordinates off the executor;
@@ -84,6 +87,8 @@ def test_schedule_grants_use_resolved_job_identity() -> None:
         job_id=None,
         tmp_schema="tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     try:
         service = asyncio.run(get_schedule_grant_service(workspace, workspace))
