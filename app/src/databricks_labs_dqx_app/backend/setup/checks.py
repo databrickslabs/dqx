@@ -1,6 +1,5 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
-import json
 import logging
 
 from databricks.sdk import WorkspaceClient
@@ -9,10 +8,11 @@ from databricks.sdk.service.catalog import EffectivePermissionsList
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege, missing_privileges
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
@@ -39,6 +39,7 @@ class ResourceCheckers:
         self._pg = pg
         self._compute = compute
         self._audience_groups = audience_groups
+        self._inspector = GrantInspector(workspace)
         self._app_sp: str | None = None
         self._app_sp_resolved = False
 
@@ -68,7 +69,7 @@ class ResourceCheckers:
                 "volume_permission_check_failed",
                 "Could not verify app service principal access to the wheels volume.",
             )
-        missing = _missing_privileges(response, _VOLUME_PRIVILEGES)
+        missing = missing_privileges(response, _VOLUME_PRIVILEGES)
         if missing and not self._is_owner("VOLUME", self._volume_full_name(), app_sp):
             return SetupStep(
                 id=SetupStepId.VOLUME,
@@ -94,8 +95,8 @@ class ResourceCheckers:
                 "catalog_permission_check_failed",
                 "Could not verify the required Unity Catalog permissions.",
             )
-        missing_catalog = _missing_privileges(catalog_response, _CATALOG_PRIVILEGES)
-        missing_schema = _missing_privileges(schema_response, _SCHEMA_PRIVILEGES)
+        missing_catalog = missing_privileges(catalog_response, _CATALOG_PRIVILEGES)
+        missing_schema = missing_privileges(schema_response, _SCHEMA_PRIVILEGES)
         if missing_catalog and self._is_owner("CATALOG", self._resources.volume.catalog, app_sp):
             missing_catalog = frozenset()
         if missing_schema and self._is_owner("SCHEMA", self._main_schema_full_name(), app_sp):
@@ -179,17 +180,14 @@ class ResourceCheckers:
         instructions: list[str] = []
         unknown: list[str] = []
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
-        grant_rows: dict[tuple[str, str], list[dict[str, str]]] = {}
-        memberships: dict[str, frozenset[str]] = {}
+        inspector = GrantInspector(self._workspace, reader_sql)
         for kind, full_name, privilege, grant, quoted_name in requirements:
             key = (kind, full_name)
             if key not in inspected:
                 required = frozenset(item[2] for item in requirements if item[:2] == key)
-                inspected[key] = self._runner_privileges(
-                    kind, full_name, principal, reader_sql, required, grant_rows, memberships
-                )
+                inspected[key] = inspector.privileges(kind, full_name, principal, required=required)
             privileges = inspected[key]
-            if privileges is not None and (privilege in privileges or "ALL_PRIVILEGES" in privileges):
+            if privileges is not None and has_privilege(privileges, privilege):
                 continue
             # Container ownership does not imply data access to child tables.
             if privilege not in {"SELECT", "MODIFY"} and (
@@ -226,87 +224,6 @@ class ResourceCheckers:
             )
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
 
-    def _runner_privileges(
-        self,
-        kind: str,
-        full_name: str,
-        principal: str,
-        reader_sql: SqlExecutor | None,
-        required: frozenset[str],
-        grant_rows: dict[tuple[str, str], list[dict[str, str]]],
-        memberships: dict[str, frozenset[str]],
-    ) -> frozenset[str] | None:
-        # App credentials support effective grants, unlike the OBO grants API.
-        response = self._effective_permissions(kind, full_name, principal)
-        if response is not None:
-            return _privileges(response)
-        if reader_sql is None:
-            return None
-        try:
-            parts = full_name.split(".")
-            for part in parts:
-                validate_identifier(part)
-            validate_identifier(principal)
-            objects = [(kind, full_name)]
-            if kind != "CATALOG":
-                objects.append(("CATALOG", parts[0]))
-            if kind == "VOLUME":
-                objects.append(("SCHEMA", ".".join(parts[:2])))
-            rows: list[dict[str, str]] = []
-            for object_kind, name in objects:
-                key = (object_kind, name)
-                if key not in grant_rows:
-                    normalized: list[dict[str, str]] = []
-                    for row in reader_sql.query_dicts(
-                        f"SHOW GRANTS ON {object_kind} {quote_fqn(name)}", require_complete=True
-                    ):
-                        values = {column.casefold(): value for column, value in row.items()}
-                        granted_principal = values.get("principal")
-                        action = values.get("actiontype")
-                        if (
-                            len(values) != len(row)
-                            or not isinstance(granted_principal, str)
-                            or not granted_principal.strip()
-                            or not isinstance(action, str)
-                            or not action.strip()
-                        ):
-                            return None
-                        normalized.append({"principal": granted_principal, "actiontype": action})
-                    grant_rows[key] = normalized
-                rows.extend(grant_rows[key])
-            direct = frozenset(
-                row["actiontype"].upper().replace(" ", "_")
-                for row in rows
-                if row["principal"].strip().casefold() == principal.casefold()
-            )
-            if required.issubset(direct) or "ALL_PRIVILEGES" in direct:
-                return direct
-            if not any(row["principal"].strip().casefold() != principal.casefold() for row in rows):
-                return direct
-            if principal not in memberships:
-                matches = [
-                    sp
-                    for sp in self._workspace.service_principals.list(
-                        filter=f"applicationId eq {json.dumps(principal)}"
-                    )
-                    if (sp.application_id or "").casefold() == principal.casefold()
-                ]
-                if len(matches) != 1:
-                    return None
-                memberships[principal] = frozenset(
-                    value.strip().casefold()
-                    for group in matches[0].groups or []
-                    for value in (group.display, group.value)
-                    if value
-                )
-            return direct | frozenset(
-                row["actiontype"].upper().replace(" ", "_")
-                for row in rows
-                if row["principal"].strip().casefold() in memberships[principal]
-            )
-        except Exception:
-            return None
-
     def ensure_sibling_schemas(self) -> SetupStep:
         """Create sibling schemas and verify the app can create views in them."""
         app_sp = self._app_sp_id()
@@ -336,7 +253,7 @@ class ResourceCheckers:
                     "sibling_schema_permission_check_failed",
                     "Could not verify the app service principal's sibling-schema permissions.",
                 )
-            missing = _missing_privileges(response, _SCHEMA_PRIVILEGES)
+            missing = missing_privileges(response, _SCHEMA_PRIVILEGES)
             if missing and not self._is_owner("SCHEMA", full_name, app_sp):
                 quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
                 principal = _instruction_identifier(app_sp)
@@ -451,10 +368,7 @@ class ResourceCheckers:
         full_name: str,
         app_sp: str,
     ) -> EffectivePermissionsList | None:
-        try:
-            return self._workspace.grants.get_effective(securable_type, full_name, principal=app_sp)
-        except Exception:
-            return None
+        return self._inspector.effective_permissions(securable_type, full_name, app_sp)
 
     def _is_owner(
         self,
@@ -463,22 +377,8 @@ class ResourceCheckers:
         app_sp: str,
         reader_ws: WorkspaceClient | None = None,
     ) -> bool:
-        workspace = reader_ws or self._workspace
-        try:
-            if securable_type == "VOLUME":
-                securable = workspace.volumes.read(full_name)
-            elif securable_type == "CATALOG":
-                securable = workspace.catalogs.get(full_name)
-            elif securable_type == "SCHEMA":
-                securable = workspace.schemas.get(full_name)
-            elif securable_type == "TABLE":
-                securable = workspace.tables.get(full_name)
-            else:
-                return False
-        except Exception:
-            return False
-        owner = getattr(securable, "owner", None)
-        return isinstance(owner, str) and owner.casefold() == app_sp.casefold()
+        owner = self._inspector.owner(securable_type, full_name, reader_ws)
+        return owner is not None and owner.casefold() == app_sp.casefold()
 
     def _volume_full_name(self) -> str:
         volume = self._resources.volume
@@ -511,24 +411,6 @@ def _required_volume_grants(app_sp: str, resources: ActiveResources) -> tuple[st
     )
     principal = _instruction_identifier(app_sp)
     return (f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME {full_name} TO {principal};",)
-
-
-def _privileges(response: EffectivePermissionsList) -> frozenset[str]:
-    privileges: set[str] = set()
-    for assignment in response.privilege_assignments or []:
-        for effective_privilege in assignment.privileges or []:
-            privilege = effective_privilege.privilege
-            value = getattr(privilege, "value", privilege)
-            if isinstance(value, str):
-                privileges.add(value)
-    return frozenset(privileges)
-
-
-def _missing_privileges(response: EffectivePermissionsList, required: frozenset[str]) -> frozenset[str]:
-    privileges = _privileges(response)
-    if "ALL_PRIVILEGES" in privileges:
-        return frozenset()
-    return required - privileges
 
 
 def _passed(step_id: SetupStepId, summary: str) -> SetupStep:
