@@ -1,6 +1,7 @@
 """HTTP contract tests for setup readiness and bootstrap administration."""
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
@@ -10,8 +11,22 @@ from fastapi.testclient import TestClient
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.app import app
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.dependencies import get_conf, get_obo_ws, get_optional_setup_sql_executor
-from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.dependencies import (
+    get_conf,
+    get_obo_ws,
+    get_optional_setup_sql_executor,
+    get_setup_configuration_store,
+    get_sp_ws,
+)
+from databricks_labs_dqx_app.backend.setup.configuration import SetupConfigurationStore
+from databricks_labs_dqx_app.backend.setup.models import (
+    SetupConfigurationView,
+    SetupReport,
+    SetupState,
+    SetupStep,
+    SetupStepId,
+    StepState,
+)
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -79,8 +94,35 @@ def reader_sql() -> MagicMock:
     return create_autospec(SqlExecutor, instance=True)
 
 
+class MemorySettings:
+    """In-memory setup settings persistence."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get_setting(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:
+        self.values[key] = value
+
+
 @pytest.fixture
-def client(obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock) -> Iterator[TestClient]:
+def settings() -> MemorySettings:
+    return MemorySettings()
+
+
+@pytest.fixture
+def sp_ws() -> MagicMock:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.groups.list.return_value = [SimpleNamespace(display_name="data-team")]
+    return workspace
+
+
+@pytest.fixture
+def client(
+    obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock, sp_ws: MagicMock, settings: MemorySettings
+) -> Iterator[TestClient]:
     """Expose the registered API with OBO identity and setup orchestration injected."""
     previous_report = setup_runtime.report()
     had_orchestrator = hasattr(app.state, "setup_orchestrator")
@@ -88,6 +130,9 @@ def client(obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock) ->
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws
     app.dependency_overrides[get_optional_setup_sql_executor] = lambda: reader_sql
     app.dependency_overrides[get_conf] = lambda: AppConfig(admin_group="admins")
+    app.dependency_overrides[get_sp_ws] = lambda: sp_ws
+    app.dependency_overrides[get_setup_configuration_store] = lambda: SetupConfigurationStore(settings)
+    orchestrator.configuration_view.return_value = SetupConfigurationView(source="none")
     app.state.setup_orchestrator = orchestrator
     setup_runtime.publish(
         SetupReport(
@@ -108,6 +153,8 @@ def client(obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock) ->
         app.dependency_overrides.pop(get_obo_ws, None)
         app.dependency_overrides.pop(get_optional_setup_sql_executor, None)
         app.dependency_overrides.pop(get_conf, None)
+        app.dependency_overrides.pop(get_sp_ws, None)
+        app.dependency_overrides.pop(get_setup_configuration_store, None)
         if had_orchestrator:
             app.state.setup_orchestrator = previous_orchestrator
         else:
@@ -228,3 +275,90 @@ def test_reconcile_sanitizes_the_authenticated_administrator_name(
     orchestrator.reconcile.assert_awaited_once_with(
         setup_user="admin @example.com", reader_ws=obo_ws, reader_sql=reader_sql
     )
+
+
+_VALID = {"catalog": "main", "prefix": "dqx_studio", "audience_group": "data-team"}
+
+
+def test_status_exposes_resolved_configuration(client: TestClient, orchestrator: MagicMock) -> None:
+    orchestrator.configuration_view.return_value = SetupConfigurationView(source="saved", catalog="main")
+
+    response = client.get("/api/v1/setup/status")
+
+    assert response.json()["configuration"]["catalog"] == "main"
+
+
+def test_configuration_requires_setup_admin(client: TestClient, obo_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("data-team")
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 403
+
+
+def test_configuration_rejects_broad_audience(client: TestClient) -> None:
+    response = client.post("/api/v1/setup/configuration", json={**_VALID, "audience_group": "users"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "configuration_invalid"
+
+
+def test_configuration_is_rejected_when_deployment_managed(client: TestClient, orchestrator: MagicMock) -> None:
+    orchestrator.configuration_view.return_value = SetupConfigurationView(source="deployment", catalog="main")
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "configuration_managed_by_deployment"
+
+
+def test_configuration_locked_rejects_different_values(client: TestClient, settings: MemorySettings) -> None:
+    settings.values.update(
+        setup_catalog="main", setup_prefix="dqx_studio", setup_audience_group="other", setup_storage_locked="true"
+    )
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "configuration_locked"
+
+
+def test_configuration_locked_identical_values_only_reconcile(
+    client: TestClient, settings: MemorySettings, orchestrator: MagicMock
+) -> None:
+    settings.values.update(
+        setup_catalog="main", setup_prefix="dqx_studio", setup_audience_group="data-team", setup_storage_locked="true"
+    )
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 200
+    orchestrator.reconcile.assert_awaited_once()
+
+
+def test_configuration_rejects_unknown_catalog(client: TestClient, obo_ws: MagicMock) -> None:
+    obo_ws.catalogs.get.side_effect = RuntimeError("missing")
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "catalog_not_found"
+
+
+def test_configuration_rejects_unknown_group(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = []
+
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "audience_group_not_found"
+
+
+def test_configuration_saves_and_reconciles(
+    client: TestClient, obo_ws: MagicMock, orchestrator: MagicMock, settings: MemorySettings
+) -> None:
+    response = client.post("/api/v1/setup/configuration", json=_VALID)
+
+    assert response.status_code == 200
+    assert settings.values["setup_audience_group"] == "data-team"
+    orchestrator.reconcile.assert_awaited_once_with(setup_user="admin@example.com", reader_ws=obo_ws, reader_sql=None)

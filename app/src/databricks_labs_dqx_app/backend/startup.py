@@ -366,18 +366,20 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             resource_tagger=ResourceTaggingService(sp_ws),
         )
         lifecycle.binder = binder
+        configuration_store = SetupConfigurationStore(app_settings)
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
             bootstrap=bootstrap,
             bootstrap_checks=bootstrap_checks,
             pg_migrations=PgMigrationRunner(pg_executor),
-            configuration=_ConfigurationResolver(conf, SetupConfigurationStore(app_settings)),
+            configuration=_ConfigurationResolver(conf, configuration_store),
             binder=binder,
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
             app_sp_id=compute.sp_application_id(),
         )
         app.state.setup_orchestrator = orchestrator
+        app.state.setup_configuration_store = configuration_store
         await orchestrator.reconcile()
         return lifecycle
     except BaseException as startup_error:
