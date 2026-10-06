@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _StrEnum(str, Enum):
@@ -106,6 +106,16 @@ class SetupConfigurationView(_ImmutableModel):
     schemas: tuple[str, ...] = ()
     broad_audience: bool = False
     locked: bool = False
+
+
+class SetupConfigurationRequest(BaseModel):
+    """Administrator-submitted catalog, prefix and audience group (Marketplace path)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    catalog: str = Field(max_length=255)
+    prefix: str = Field(default="dqx_studio", max_length=64)
+    audience_group: str = Field(max_length=255)
 
 
 class SetupStatusResponse(_ImmutableModel):

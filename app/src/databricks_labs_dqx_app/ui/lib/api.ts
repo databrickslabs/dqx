@@ -2939,6 +2939,8 @@ export interface ProfilerConfig {
   max_null_ratio?: ProfilerConfigMaxNullRatio;
   max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
   outliers_ratio?: ProfilerConfigOutliersRatio;
+  profile_geospatial?: boolean;
+  geospatial_srid?: number;
 }
 
 export type ProfilerSampleInSampleKind = typeof ProfilerSampleInSampleKind[keyof typeof ProfilerSampleInSampleKind];
@@ -4435,7 +4437,43 @@ export type SetupActionId = typeof SetupActionId[keyof typeof SetupActionId];
 export const SetupActionId = {
   reconcile: 'reconcile',
   verify_again: 'verify_again',
+  configure: 'configure',
 } as const;
+
+/**
+ * Administrator-submitted catalog, prefix and audience group (Marketplace path).
+ */
+export interface SetupConfigurationRequest {
+  /** @maxLength 255 */
+  catalog: string;
+  /** @maxLength 64 */
+  prefix?: string;
+  /** @maxLength 255 */
+  audience_group: string;
+}
+
+export type SetupConfigurationViewSource = typeof SetupConfigurationViewSource[keyof typeof SetupConfigurationViewSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupConfigurationViewSource = {
+  deployment: 'deployment',
+  saved: 'saved',
+  none: 'none',
+} as const;
+
+/**
+ * Sanitized view of the active Studio storage and audience configuration.
+ */
+export interface SetupConfigurationView {
+  source: SetupConfigurationViewSource;
+  catalog?: string;
+  prefix?: string;
+  audience_group?: string;
+  schemas?: string[];
+  broad_audience?: boolean;
+  locked?: boolean;
+}
 
 export type SetupReportCurrentStep = SetupStepId | null;
 
@@ -4462,6 +4500,8 @@ export const SetupState = {
   ready: 'ready',
 } as const;
 
+export type SetupStatusResponseConfiguration = SetupConfigurationView | null;
+
 /**
  * Setup report projected with caller-specific management access.
  */
@@ -4469,6 +4509,7 @@ export interface SetupStatusResponse {
   report: SetupReport;
   can_manage: boolean;
   admin_group: string;
+  configuration?: SetupStatusResponseConfiguration;
 }
 
 /**
@@ -4492,15 +4533,17 @@ export type SetupStepId = typeof SetupStepId[keyof typeof SetupStepId];
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const SetupStepId = {
   identity: 'identity',
-  volume: 'volume',
-  unity_catalog: 'unity_catalog',
-  schemas: 'schemas',
   lakebase: 'lakebase',
+  configuration: 'configuration',
+  unity_catalog: 'unity_catalog',
+  storage: 'storage',
   warehouse: 'warehouse',
   task_runner: 'task_runner',
   wheels: 'wheels',
   migrations: 'migrations',
   activation: 'activation',
+  access: 'access',
+  app_sharing: 'app_sharing',
 } as const;
 
 /**
@@ -4545,6 +4588,7 @@ export const StepState = {
   passed: 'passed',
   action_required: 'action_required',
   failed: 'failed',
+  warning: 'warning',
 } as const;
 
 /**
@@ -5114,6 +5158,31 @@ export interface ValidationRunSummaryOut {
   review_status_is_default?: boolean;
   review_status_updated_by?: ValidationRunSummaryOutReviewStatusUpdatedBy;
   review_status_updated_at?: ValidationRunSummaryOutReviewStatusUpdatedAt;
+}
+
+export type ValidationStatusOutErrorRows = number | null;
+
+export type ValidationStatusOutWarningRows = number | null;
+
+export type ValidationStatusOutUpdatedAt = string | null;
+
+/**
+ * Pass/fail status for a single validation run, for external uptime monitors.
+
+Deliberately minimal — an uptime monitor (e.g. Site24x7) only needs the
+status and enough context to identify the run, not the full
+``ValidationRunSummaryOut`` shape.
+ */
+export interface ValidationStatusOut {
+  /** Validation run status: SUCCESS | FAILED | CANCELED */
+  status: string;
+  source_table_fqn: string;
+  run_id: string;
+  error_rows?: ValidationStatusOutErrorRows;
+  warning_rows?: ValidationStatusOutWarningRows;
+  updated_at?: ValidationStatusOutUpdatedAt;
+  /** True when the run completed longer ago than the caller's max_age_minutes */
+  stale?: boolean;
 }
 
 export interface VersionOut {
@@ -5687,6 +5756,13 @@ q: string;
 limit?: number;
 };
 
+export type GetValidationStatusByTableParams = {
+/**
+ * Report 503 when the latest completed run finished longer ago than this
+ */
+max_age_minutes?: number | null;
+};
+
 /**
  * @summary Version
  */
@@ -6126,7 +6202,7 @@ export function useCurrentUserRoleSuspense<TData = Awaited<ReturnType<typeof cur
 
 
 /**
- * Return readiness and the caller's bootstrap setup-management access.
+ * Return readiness, the caller's bootstrap setup access and the resolved configuration.
  * @summary Get Setup Status
  */
 export const getSetupStatus = (
@@ -6272,6 +6348,69 @@ export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getS
 
 
 
+/**
+ * Validate and save catalog, prefix and audience group, then run the setup workflow.
+ * @summary Configure Setup
+ */
+export const configureSetup = (
+    setupConfigurationRequest: SetupConfigurationRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/configuration`,
+      setupConfigurationRequest,options
+    );
+  }
+
+
+
+export const getConfigureSetupMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext> => {
+
+const mutationKey = ['configureSetup'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof configureSetup>>, {data: SetupConfigurationRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  configureSetup(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfigureSetupMutationResult = NonNullable<Awaited<ReturnType<typeof configureSetup>>>
+    export type ConfigureSetupMutationBody = SetupConfigurationRequest
+    export type ConfigureSetupMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Configure Setup
+ */
+export const useConfigureSetup = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof configureSetup>>,
+        TError,
+        {data: SetupConfigurationRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getConfigureSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
 /**
  * Run the serialized setup workflow as a bootstrap administrator.
  * @summary Reconcile Setup
@@ -27337,7 +27476,7 @@ export const useSaveComputeSettings = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Check whether the app SP has CAN_USE on *warehouse_id*.
+ * Check whether the app SP has CAN_MANAGE on *warehouse_id*.
 
 Never raises for the access-read itself — returns ``"unknown"`` when the ACL
 can't be read so the UI shows no false warning.
@@ -27489,7 +27628,7 @@ export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof 
 
 
 /**
- * Grant the app SP CAN_USE on the warehouse via the admin's OBO client.
+ * Grant the app SP CAN_MANAGE on the warehouse via the admin's OBO client.
  * @summary Grant Warehouse Access
  */
 export const grantWarehouseAccess = (
@@ -29503,3 +29642,320 @@ export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationErr
 
       return useMutation(mutationOptions, queryClient);
     }
+    
+/**
+ * Return the latest completed run's pass/fail status for a table.
+
+Meant for external polling (e.g. a Site24x7 REST monitor authenticating
+with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
+In-progress and canceled runs are skipped: they say nothing about the data.
+
+Set *max_age_minutes* to a little more than the table's schedule interval
+so a validation job that stops running is reported as down (503 with
+``stale: true``) instead of returning its last result indefinitely.
+400 for a malformed table name.
+ * @summary Get Validation Status By Table
+ */
+export const getValidationStatusByTable = (
+    tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ValidationStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitoring/status/table/${tableFqn}`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetValidationStatusByTableQueryKey = (tableFqn?: string,
+    params?: GetValidationStatusByTableParams,) => {
+    return [
+    `/api/v1/monitoring/status/table/${tableFqn}`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetValidationStatusByTableQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByTableQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByTable>>> = ({ signal }) => getValidationStatusByTable(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(tableFqn), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByTableQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByTable>>>
+export type GetValidationStatusByTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetValidationStatusByTableParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Table
+ */
+
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByTableQueryOptions(tableFqn,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetValidationStatusByTableSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByTableQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByTable>>> = ({ signal }) => getValidationStatusByTable(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByTableSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByTable>>>
+export type GetValidationStatusByTableSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetValidationStatusByTableParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Table
+ */
+
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByTableSuspenseQueryOptions(tableFqn,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return a specific run's pass/fail status.
+
+Same 200/503 contract as ``getValidationStatusByTable`` but keyed by
+``run_id`` instead of table name; a canceled run is reported as such (503).
+400 for a malformed run id.
+ * @summary Get Validation Status By Run
+ */
+export const getValidationStatusByRun = (
+    runId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ValidationStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitoring/status/run/${runId}`,options
+    );
+  }
+
+
+
+
+export const getGetValidationStatusByRunQueryKey = (runId?: string,) => {
+    return [
+    `/api/v1/monitoring/status/run/${runId}`
+    ] as const;
+    }
+
+    
+export const getGetValidationStatusByRunQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByRunQueryKey(runId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByRun>>> = ({ signal }) => getValidationStatusByRun(runId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(runId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByRunQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByRun>>>
+export type GetValidationStatusByRunQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Run
+ */
+
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByRunQueryOptions(runId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetValidationStatusByRunSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByRunQueryKey(runId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByRun>>> = ({ signal }) => getValidationStatusByRun(runId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByRunSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByRun>>>
+export type GetValidationStatusByRunSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Run
+ */
+
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByRunSuspenseQueryOptions(runId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}

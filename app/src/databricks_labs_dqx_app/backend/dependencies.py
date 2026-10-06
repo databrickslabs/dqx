@@ -24,6 +24,7 @@ from .migrations import MigrationRunner
 from .runtime import rt
 from .sanitization import replace_control_characters
 from .setup.runtime import setup_runtime
+from .setup.configuration import SetupConfigurationStore
 from .setup.orchestrator import SetupOrchestrator
 from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
@@ -1347,6 +1348,18 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     if orchestrator is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
     return orchestrator
+
+
+def get_setup_configuration_store(request: Request) -> SetupConfigurationStore:
+    """Return the setup choices store built over the startup Lakebase executor.
+
+    The store is published on application state during startup, before activation, so it is
+    available while the setup gate still blocks every other database-backed route.
+    """
+    store = getattr(request.app.state, "setup_configuration_store", None)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
+    return store
 
 
 def get_optional_setup_sql_executor(
