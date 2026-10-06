@@ -46,6 +46,7 @@ GENIE_ALLOWLIST: tuple[str, ...] = (
 
 _GENIE_RUN_LEVELS = frozenset({"CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
 _DASHBOARD_READ_LEVELS = frozenset({"CAN_READ", "CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
+_APP_USE_LEVELS = frozenset({"CAN_USE", "CAN_MANAGE"})
 logger = logging.getLogger(__name__)
 
 
@@ -164,15 +165,57 @@ class AudienceAccess:
         return SetupStep(id=SetupStepId.ACCESS, state=StepState.PASSED, summary=summary)
 
     def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
-        """Report app sharing; verification is performed by a later setup step.
+        """Verify the audience and administrators can use the Databricks App; never writes its ACL.
+
+        The ACL is read as the app service principal, then as the setup administrator. When
+        no identity can read it, a non-blocking warning carries manual sharing instructions.
 
         Args:
             reader_ws: Setup administrator's client for reading the app ACL.
+
+        Returns:
+            A passed step, a blocking step naming the groups lacking CAN USE, or a warning
+            when the ACL cannot be read.
         """
+        principals = self._resources.audience.workspace_principals
+        entries = self._read_app_acl(self._workspace)
+        if entries is None and reader_ws is not None:
+            entries = self._read_app_acl(reader_ws)
+        if entries is None:
+            return SetupStep(
+                id=SetupStepId.APP_SHARING,
+                state=StepState.WARNING,
+                code="app_sharing_unverified",
+                summary="Could not verify that Studio users can open the app. Share it manually if needed.",
+                instructions=tuple(self._app_sharing_instruction(group) for group in principals),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        absent = missing_principals(group_levels(entries), principals, _APP_USE_LEVELS)
+        if absent:
+            return SetupStep(
+                id=SetupStepId.APP_SHARING,
+                state=StepState.ACTION_REQUIRED,
+                code="app_sharing_missing",
+                summary="Studio users or administrators cannot open the app.",
+                instructions=tuple(self._app_sharing_instruction(group) for group in absent),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
         return SetupStep(
             id=SetupStepId.APP_SHARING,
             state=StepState.PASSED,
-            summary="Audience access is verified in a later setup step.",
+            summary="Studio users and administrators can use the app.",
+        )
+
+    def _read_app_acl(self, client: WorkspaceClient) -> list[object] | None:
+        try:
+            return list(client.apps.get_permissions(self._app_name).access_control_list or [])
+        except Exception:
+            return None
+
+    def _app_sharing_instruction(self, group: str) -> str:
+        return (
+            f"Share the app {instruction_identifier(self._app_name)} with group "
+            f"{instruction_identifier(group)} (CAN USE) in Compute > Apps > Permissions."
         )
 
     def _apply_uc_grants(self, triples: Sequence[tuple[str, str, str]], principals: Sequence[str]) -> None:

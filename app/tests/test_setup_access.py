@@ -296,8 +296,63 @@ def test_unconfigured_shared_resources_are_not_applicable(workspace, sql) -> Non
     workspace.permissions.get.assert_not_called()
 
 
-def test_app_sharing_is_deferred(workspace, sql) -> None:
+def _app_acl(*entries: tuple[str, str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        access_control_list=[
+            SimpleNamespace(
+                group_name=group,
+                service_principal_name=None,
+                user_name=None,
+                all_permissions=[SimpleNamespace(permission_level=level)],
+            )
+            for group, level in entries
+        ]
+    )
+
+
+def test_app_sharing_passes_when_audience_can_use(workspace, sql) -> None:
+    workspace.apps.get_permissions.return_value = _app_acl(("data-team", "CAN_USE"))
+
     step = _access(workspace, sql).check_app_sharing()
 
     assert step.id == SetupStepId.APP_SHARING
     assert step.state == StepState.PASSED
+
+
+def test_app_sharing_missing_blocks(workspace, sql) -> None:
+    workspace.apps.get_permissions.return_value = _app_acl()
+
+    step = _access(workspace, sql).check_app_sharing()
+
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "app_sharing_missing"
+    assert any("data-team" in instruction and "CAN USE" in instruction for instruction in step.instructions)
+    workspace.apps.update_permissions.assert_not_called()
+    workspace.apps.set_permissions.assert_not_called()
+
+
+def test_app_sharing_falls_back_to_the_administrator_client(workspace, sql) -> None:
+    workspace.apps.get_permissions.side_effect = PermissionError("denied")
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.apps.get_permissions.return_value = _app_acl(("data-team", "CAN_MANAGE"))
+
+    assert _access(workspace, sql).check_app_sharing(reader).state == StepState.PASSED
+
+
+def test_app_sharing_unreadable_is_a_warning(workspace, sql) -> None:
+    workspace.apps.get_permissions.side_effect = PermissionError("denied")
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.apps.get_permissions.side_effect = PermissionError("denied")
+
+    step = _access(workspace, sql).check_app_sharing(reader)
+
+    assert step.state == StepState.WARNING
+    assert step.code == "app_sharing_unverified"
+    assert any("data-team" in instruction for instruction in step.instructions)
+    workspace.apps.update_permissions.assert_not_called()
+
+
+def test_app_sharing_without_reader_and_unreadable_is_a_warning(workspace, sql) -> None:
+    workspace.apps.get_permissions.side_effect = PermissionError("denied")
+
+    assert _access(workspace, sql).check_app_sharing().state == StepState.WARNING
