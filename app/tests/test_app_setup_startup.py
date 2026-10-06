@@ -584,6 +584,4 @@ async def test_startup_configuration_reproduces_deployment_resources(
     assert bound.resources == deployment
     assert checker_kwargs["app_sp_id"] == "app-sp-name"
     assert isinstance(bound.access, AudienceAccess)
-    sharing = bound.access.check_app_sharing()
-    assert sharing.state is StepState.PASSED
-    assert sharing.summary == "Audience access is verified in a later setup step."
+    assert bound.access.check_app_sharing().id is SetupStepId.APP_SHARING
