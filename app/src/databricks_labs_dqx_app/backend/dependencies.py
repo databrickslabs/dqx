@@ -103,6 +103,7 @@ _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
+_WORKSPACE_ADMINS_GROUP = "admins"  # workspace administrators may always run setup
 
 
 # ---------------------------------------------------------------------------
@@ -1268,20 +1269,29 @@ class SetupAccess:
 def setup_access(user: User, admin_group: str) -> SetupAccess:
     """Derive bootstrap setup access from a trusted SCIM user record.
 
+    Members of the configured administrator group or of the workspace *admins* group may
+    manage setup. Group names are compared case-insensitively after sanitization.
+
     Args:
         user: User returned by the caller's OBO-authenticated SCIM request.
         admin_group: Configured Databricks group permitted to manage setup.
 
     Returns:
-        Sanitized user identity and whether they are a member of the configured group.
+        Sanitized user identity and whether they may manage setup.
     """
-    configured_group = sanitize_setup_display(admin_group)
+    setup_groups = {
+        group.casefold()
+        for group in (sanitize_setup_display(admin_group), _WORKSPACE_ADMINS_GROUP)
+        if group is not None
+    }
     groups = {
-        display for group in (user.groups or []) if (display := sanitize_setup_display(group.display)) is not None
+        display.casefold()
+        for group in (user.groups or [])
+        if (display := sanitize_setup_display(group.display)) is not None
     }
     return SetupAccess(
         user_name=sanitize_setup_display(user.user_name) or "unknown",
-        can_manage=configured_group is not None and configured_group in groups,
+        can_manage=not setup_groups.isdisjoint(groups),
     )
 
 
@@ -1321,7 +1331,10 @@ def require_setup_admin() -> object:
         if not access.can_manage:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Setup reconciliation requires membership in the configured administrator group.",
+                detail=(
+                    "Setup reconciliation requires membership in the configured administrator group "
+                    "or the workspace admins group."
+                ),
             )
         return access
 

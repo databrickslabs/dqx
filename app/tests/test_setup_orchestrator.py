@@ -227,7 +227,7 @@ class FakeBinder:
     publish_wheels: Callable[[], Awaitable[list[str]]]
     binds: list[ActiveResources] = field(default_factory=list)
 
-    def bind(self, resources: ActiveResources) -> BoundSetup:
+    async def bind(self, resources: ActiveResources) -> BoundSetup:
         self.binds.append(resources)
         return BoundSetup(
             resources=resources,
@@ -406,7 +406,7 @@ async def test_configuration_resolution_failure_is_logged_without_details(caplog
 async def test_binding_failure_is_logged_without_details(caplog: pytest.LogCaptureFixture) -> None:
     harness = _harness()
 
-    def fail_bind(resources: ActiveResources) -> BoundSetup:
+    async def fail_bind(resources: ActiveResources) -> BoundSetup:
         raise ValueError("catalog=secret")
 
     harness.orchestrator.binder = SimpleNamespace(bind=fail_bind)

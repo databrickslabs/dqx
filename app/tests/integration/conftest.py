@@ -577,7 +577,7 @@ class FixedBinder:
 
     bound: BoundSetup
 
-    def bind(self, resources: ActiveResources) -> BoundSetup:
+    async def bind(self, resources: ActiveResources) -> BoundSetup:
         """Return the prebuilt collaborators for the factory resources."""
         assert resources == self.bound.resources
         return self.bound
