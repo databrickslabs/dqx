@@ -67,6 +67,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -115,6 +116,8 @@ def _activate_test_runtime_resources() -> Generator[None, None, None]:
         job_id="1",
         tmp_schema=conf.tmp_schema_name,
         genie_schema=conf.genie_schema_name,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     rt.activate(resources)
     try:
