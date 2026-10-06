@@ -11,21 +11,30 @@ variables:
   catalog_name:
     description: "Catalog for DQX Studio storage"
     default: "dqx"
+  prefix:
+    description: "Storage prefix: names the main schema, its _tmp/_genie/_demo siblings, and the wheels volume parent"
+    default: "dqx_studio"
   schema_name:
     description: "Main schema for DQX Studio storage"
-    default: "dqx_studio"
+    default: "${var.prefix}"
   tmp_schema_name:
     description: "Temp schema for per-user dry-run views"
-    default: "dqx_studio_tmp"
+    default: "${var.prefix}_tmp"
   genie_schema_name:
     description: "Schema for Genie-facing derived views/dims"
-    default: "genie"
+    default: "${var.prefix}_genie"
+  demo_schema_name:
+    description: "Schema for seeded demo source tables"
+    default: "${var.prefix}_demo"
   admin_group:
     description: "Workspace group bootstrapped with the Admin role"
     default: "admins"
   studio_user_group:
     description: "Existing scoped workspace group allowed to use Studio, its warehouse, and approved Genie objects"
     default: "dqx-studio-users"
+  studio_uc_principal:
+    description: "UC grantee for the audience; account users in broad mode"
+    default: "${var.studio_user_group}"
   app_name:
     description: "Databricks App name (unique per workspace)"
     default: "dqx-studio"
@@ -35,9 +44,6 @@ variables:
   sql_warehouse_size:
     description: "Cluster size of the bundle-managed SQL warehouse (e.g. 2X-Small / Small / Medium)."
     default: "Small"
-  wheels_volume_name:
-    description: "UC volume for DQX wheel files"
-    default: "wheels"
   app_source_path:
     description: "App source directory: local build or prebuilt Studio release"
     default: ".build"
@@ -138,6 +144,8 @@ variables:
           value_from: "dqx-sql-warehouse"
         - name: "DQX_CATALOG"
           value: "${var.catalog_name}"
+        - name: "DQX_PREFIX"
+          value: "${var.prefix}"
         - name: "DQX_SCHEMA"
           value: "${var.schema_name}"
         - name: "DQX_JOB_ID"
@@ -152,8 +160,6 @@ variables:
           value: "${var.admin_group}"
         - name: "DQX_USER_GROUPS"
           value: '["${var.studio_user_group}"]'
-        - name: "DQX_WHEELS_VOLUME"
-          value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
         - name: "DQX_LAKEBASE_ENDPOINT"
           value: "${var.lakebase_endpoint}"
         - name: "DQX_LAKEBASE_DATABASE_NAME"
@@ -171,6 +177,8 @@ variables:
           value: "${var.app_name}"
         - name: "DQX_GENIE_SCHEMA"
           value: "${var.genie_schema_name}"
+        - name: "DQX_DEMO_SCHEMA"
+          value: "${var.demo_schema_name}"
 
 sync:
   include:
@@ -235,7 +243,7 @@ resources:
         - name: "dqx-wheels-volume"
           description: "UC volume for DQX wheels — bound so USE CATALOG / USE SCHEMA are auto-granted"
           uc_securable:
-            securable_full_name: ${var.catalog_name}.${var.schema_name}.${var.wheels_volume_name}
+            securable_full_name: ${var.catalog_name}.${var.schema_name}.wheels
             securable_type: VOLUME
             permission: WRITE_VOLUME
         # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
@@ -244,6 +252,8 @@ resources:
       # Share only with the explicitly configured Studio audience.
       permissions:
         - group_name: ${var.studio_user_group}
+          level: "CAN_USE"
+        - group_name: ${var.admin_group}
           level: "CAN_USE"
 
   # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
@@ -263,10 +273,12 @@ resources:
       # List the app SP explicitly: with ``permissions`` set, the app's warehouse
       # binding would otherwise override them and drop its access.
       permissions:
-        - level: CAN_USE
+        - level: CAN_MANAGE
           service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
         - level: CAN_USE
           group_name: ${var.studio_user_group}
+        - level: CAN_USE
+          group_name: ${var.admin_group}
 
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
@@ -276,6 +288,9 @@ resources:
   # binding the wheels volume as an app ``uc_securable`` above (Databricks Apps
   # auto-grants USE CATALOG + USE SCHEMA on the parents). The **task-runner SP** and
   # configured OBO audience still need a manual catalog grant — see DEPLOYMENT.md.
+  # Admin-group UC grants are intentionally NOT declared: the admin group may be
+  # the built-in ``admins`` group (which can never receive UC grants), and a bundle
+  # cannot conditionally omit a grant. The app applies and verifies them at runtime.
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
@@ -285,9 +300,12 @@ resources:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
             - ALL_PRIVILEGES
+            - MANAGE
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
+            - SELECT
+            - MODIFY
         # The starter Insights dashboard embeds the deployer's credentials, so the
         # deployer needs SELECT on the DQX tables (created by the app SP, not the
         # deployer). Schema-level SELECT covers current + future tables.
@@ -305,12 +323,13 @@ resources:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
             - ALL_PRIVILEGES
+            - MANAGE
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
         # End users create temp views here via their OBO token during dry-run /
         # preview, so they need USE SCHEMA + CREATE TABLE.
-        - principal: ${var.studio_user_group}
+        - principal: ${var.studio_uc_principal}
           privileges:
             - USE_SCHEMA
             - CREATE_TABLE
@@ -324,11 +343,9 @@ resources:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
             - ALL_PRIVILEGES
-        - principal: ${var.dqx_service_principal_application_id}
-          privileges:
-            - ALL_PRIVILEGES
+            - MANAGE
         # Startup grants SELECT only on five Genie views and two metadata tables.
-        - principal: ${var.studio_user_group}
+        - principal: ${var.studio_uc_principal}
           privileges:
             - USE_SCHEMA
       lifecycle:
@@ -342,18 +359,16 @@ resources:
       # already fully owns. Kept separate from the app's own dqx_studio schema so
       # a demo re-seed never touches app state.
       catalog_name: ${var.catalog_name}
-      name: dqx_studio_demo
+      name: ${var.demo_schema_name}
       comment: "DQX Studio demo content source tables (seeded e-commerce data)"
       grants:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
             - ALL_PRIVILEGES
-        - principal: ${var.dqx_service_principal_application_id}
-          privileges:
-            - ALL_PRIVILEGES
+            - MANAGE
         # End users browse/preview the demo source tables via OBO, so they need
         # read access (the demo is meant to be explored).
-        - principal: ${var.studio_user_group}
+        - principal: ${var.studio_uc_principal}
           privileges:
             - USE_SCHEMA
             - SELECT
@@ -364,7 +379,7 @@ resources:
     wheels:
       catalog_name: ${var.catalog_name}
       schema_name: ${resources.schemas.main_schema.name}
-      name: ${var.wheels_volume_name}
+      name: wheels
       volume_type: MANAGED
       comment: "DQX Studio wheel storage for the task runner"
       grants:
@@ -373,7 +388,7 @@ resources:
             - ALL_PRIVILEGES
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
-            - ALL_PRIVILEGES
+            - READ_VOLUME
       lifecycle:
         prevent_destroy: true
 
@@ -444,6 +459,8 @@ resources:
       permissions:
         - level: CAN_READ
           group_name: ${var.studio_user_group}
+        - level: CAN_READ
+          group_name: ${var.admin_group}
 
   jobs:
     dqx_task_runner:
