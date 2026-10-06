@@ -68,7 +68,7 @@ but is protected transitively by the instance-level guard.
 
 ```
 {user_catalog}
- ├── dqx_studio                       ← main schema (SP-managed)
+ ├── <prefix>                         ← main schema (default prefix `dqx_studio`; SP-managed)
  │   ├── dq_profiling_results         (Delta) profiler run results
  │   ├── dq_validation_runs           (Delta) dryrun + scheduled run history
  │   ├── dq_quarantine_records        (Delta) invalid rows captured by runs
@@ -84,8 +84,10 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
  │   ├── dq_run_configs               (OLTP*) staged run configs too large to inline in job params
  │   └── dq_migrations                (Delta) Delta migration version tracker
- ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
- └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
+ │   └── wheels (volume)              ← DQX + task-runner wheels uploaded at app startup
+ ├── <prefix>_tmp                     ← temp views created via OBO for profiler/dryrun jobs
+ ├── <prefix>_genie                   ← approved Genie views + metadata dimensions
+ └── <prefix>_demo                    ← demo source tables
 
 Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`):
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
@@ -97,6 +99,8 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
          └── dq_migrations             (Postgres migration version tracker)
 ```
 
+The Lakebase schema (`DQX_LAKEBASE_SCHEMA`) never follows the UC prefix. UC storage names derive from an existing catalog and a validated prefix (`setup/storage.py`): DAB passes `DQX_CATALOG` / `DQX_PREFIX` (plus per-schema overrides) and treats them as authoritative; Marketplace has no volume binding and collects catalog, prefix, and audience through the setup form (`routes/v1/setup.py`, persisted via `setup/configuration.py`, locked once storage exists).
+
 `(OLTP*)` = lives in **Lakebase Postgres** when
 `lakebase_endpoint` is set, otherwise **Delta** (the
 `v2: Delta OLTP fallback` migration).
@@ -104,7 +108,7 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
 ## Key Decisions
 
 - **No config.yaml** — all settings stored in Delta or Lakebase tables.
-- **Dedicated catalog** — user selects at install; `dqx_studio` and `dqx_studio_tmp` schemas are declared as bundle resources and created by `databricks bundle deploy`.
+- **Dedicated catalog** — user selects at install; the prefix-derived schemas (`<prefix>`, `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_demo`) are declared as bundle resources and created by `databricks bundle deploy`; Marketplace setup creates them instead.
 - **Hybrid storage** — high-volume append tables in Delta; transactional/low-latency tables in Lakebase Postgres.
 - **Rule promotion** — export rules then deploy separately to prod; or save directly to prod checks table.
 - **Target environments** — Dev, UAT/QA (prod-like data); app is not intended for production rule execution.
@@ -113,16 +117,18 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
 
 Stateful resources declared in `databricks.yml`:
 
-- `resources.schemas.main_schema` — `dqx_studio` schema
-- `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
-- `resources.volumes.wheels` — wheels volume
+- `resources.schemas.main_schema` — `${var.prefix}` schema
+- `resources.schemas.tmp_schema` — `${var.prefix}_tmp` schema
+- `resources.schemas.genie_schema` — `${var.prefix}_genie` schema
+- `resources.schemas.demo_schema` — `${var.prefix}_demo` schema
+- `resources.volumes.wheels` — `wheels` volume inside the main schema
 - `resources.postgres_projects.dqx_studio` — Lakebase Postgres project (autoscaling, scale-to-zero)
 
 Each carries `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+), which blocks `databricks bundle destroy` and any deploy that would force-replace the resource. To intentionally tear something down: drop the flag, `databricks bundle deployment unbind <key> -t <target>`, then destroy.
 
 The app connects to the always-present `databricks_postgres` admin database on the Lakebase project (set as the default `lakebase_database_name`) via the `DQX_LAKEBASE_ENDPOINT` endpoint path and creates its own `dqx_studio` Postgres schema there on first start. The app SP's Postgres role (`resources.postgres_roles.app_sp`, a `DATABRICKS_SUPERUSER` member) grants the CREATE-schema privilege. We deliberately do not use `database_catalogs` because it also creates a Unity Catalog catalog and therefore requires `CREATE CATALOG` on the metastore — a permission most app deployers don't hold.
 
-UC privileges for the app SP and task-runner SP are declared **natively** as `grants:` on the schema/volume resources (using `${resources.apps.dqx-studio.service_principal_client_id}` and `${var.dqx_service_principal_application_id}`), so `databricks bundle deploy` applies them — there is no post-deploy grant script. The one exception is `USE CATALOG` on the pre-existing (user-selected) catalog, which the bundle can't grant because it doesn't manage the catalog; grant it once per catalog as a documented prerequisite (see `DEPLOYMENT.md`).
+UC privileges for the app SP and task-runner SP are declared **natively** as `grants:` on the schema/volume resources (using `${resources.apps.dqx-studio.service_principal_client_id}` and `${var.dqx_service_principal_application_id}`), so `databricks bundle deploy` applies them — there is no post-deploy grant script. DAB schemas are owned by the deployer, so the app SP gets `ALL_PRIVILEGES` **plus `MANAGE`** on each Studio schema (`ALL_PRIVILEGES` alone does not confer permission management). The runner SP is least privilege: `USE_SCHEMA`/`SELECT`/`MODIFY` on the main schema, `USE_SCHEMA` on `_tmp`, `READ_VOLUME` on wheels, nothing on `_genie`/`_demo`. The audience is granted via `studio_uc_principal` (the `studio_user_group`, or `account users` in broad mode); admin-group UC grants are deliberately not declared because `admin_group` may be the built-in `admins` (never a valid UC grantee), so the app applies and verifies them at runtime after each restart. The one manual step is catalog access on the pre-existing (user-selected) catalog, which the bundle can't grant because it doesn't manage the catalog: `USE CATALOG` + `CREATE SCHEMA` for the app SP, `USE CATALOG` for the runner and audience (see `DEPLOYMENT.md`). The warehouse ACL gives the app SP `CAN_MANAGE`; audience and admin group get `CAN_USE`.
 
 ## Architecture
 
@@ -499,7 +505,7 @@ See `DEVELOPMENT.md` for local `.env` and Lakebase notes.
 ## Important Notes
 
 - **SQL safety:** all interpolated identifiers must pass `validate_fqn` and be wrapped with `quote_fqn` from `sql_utils.py`. All string literals must be escaped with `escape_sql_string` (ANSI doubled quotes — never backslash). User-supplied SQL bodies must pass `is_sql_query_safe()` from the DQX library and raise `UnsafeSqlQueryError` on rejection.
-- **Setup and activation:** Lakebase and Delta migrations, app-SP sibling-schema capabilities, score views, and the entitlement view are required before the app reports ready. End-user grants are best effort and never gate readiness; catalog access can be scoped to the intended user groups. Genie SELECT grants are limited to five approved views and two metadata tables (`dim_dq_rules` and `dim_dq_monitored_tables`), never the whole schema or entitlement table. Each successful metadata refresh retries the metadata-table grants. Metadata refresh and Genie space provisioning remain best effort.
+- **Setup and activation:** Lakebase and Delta migrations, app-SP catalog/schema capabilities, score views, and the entitlement view are required before the app reports ready. Audience, administrator, and runner access is **applied and verified by the setup access step** (`setup/access.py`, `setup/checks.py`): setup attempts each grant or additive ACL update, then re-reads the state, and missing or uninspectable grants block readiness (fail closed). The one exception is app sharing (`app_sharing` step): if neither the app SP nor the setup administrator can read the app ACL it reports a warning, not a block. Configured audiences come from `setup/audience.py`: a dedicated group, or `users` in DAB broad mode only (workspace ACL `users`, UC `account users`); the workspace `admins` group never receives UC grants, only a custom `DQX_ADMIN_GROUP` does. Setup mutations are allowed for members of `DQX_ADMIN_GROUP` or `admins`. Genie SELECT grants are limited to five approved views and two metadata tables (`dim_dq_rules` and `dim_dq_monitored_tables`), never the whole schema or entitlement table. Each successful metadata refresh retries the metadata-table grants. Metadata refresh and Genie space provisioning remain best effort. ACL changes are additive (`update_permissions`), never `set_permissions`.
 - **Scheduler:** runs in-process as an asyncio task, gated by an exclusive file lock (`/tmp/.dqx_scheduler.lock`) so only one uvicorn worker drives it. Disable with `DQX_SCHEDULER_DISABLED=1`.
 - **Caches:** `app_cache` (`cache.py`) is per-process in-memory with TTL. SP `WorkspaceClient`, OBO `WorkspaceClient`, and per-user catalog list are all cached. Use the `MISS` sentinel — never `is None` — to detect cache absence.
 - **SPA static files:** `spa_static.py` falls through to `index.html` only for non-asset paths (positive allowlist of asset extensions), so SPA routes containing dots still work.
@@ -581,9 +587,11 @@ to their native syntax.
 Stateful resources declared in `databricks.yml` with
 `lifecycle.prevent_destroy: true` (Databricks CLI 0.268+):
 
-* `resources.schemas.main_schema` — `dqx_studio` schema
-* `resources.schemas.tmp_schema` — `dqx_studio_tmp` schema
-* `resources.volumes.wheels` — wheels volume
+* `resources.schemas.main_schema` — `${var.prefix}` schema
+* `resources.schemas.tmp_schema` — `${var.prefix}_tmp` schema
+* `resources.schemas.genie_schema` — `${var.prefix}_genie` schema
+* `resources.schemas.demo_schema` — `${var.prefix}_demo` schema
+* `resources.volumes.wheels` — `wheels` volume inside the main schema
 * `resources.postgres_projects.dqx_studio` — Lakebase Postgres project
   (autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling)),
   paired with `resources.postgres_roles.app_sp` (the app SP's Postgres role)
@@ -620,8 +628,11 @@ UC privileges for the app SP and task-runner SP are declared
 **natively** as `grants:` on the schema/volume resources (via
 `${resources.apps.dqx-studio.service_principal_client_id}` and
 `${var.dqx_service_principal_application_id}`), so `bundle deploy`
-applies them — there is no post-deploy grant script. The one manual
-step is `USE CATALOG` on the pre-existing (user-selected) catalog,
-which the bundle can't grant because it doesn't manage the catalog;
-grant it once per catalog as a documented prerequisite (see
-`DEPLOYMENT.md`).
+applies them — there is no post-deploy grant script. The app SP gets
+`ALL_PRIVILEGES` + `MANAGE` on the Studio schemas; the runner SP is
+least privilege (see "Bundle conventions" above). The one manual step
+is catalog access on the pre-existing (user-selected) catalog, which
+the bundle can't grant because it doesn't manage the catalog; grant it
+once per catalog as a documented prerequisite (see `DEPLOYMENT.md`).
+The wheels `uc_securable` app binding is DAB-only; the Marketplace
+manifest binds just the warehouse (`CAN_MANAGE`) and Lakebase.

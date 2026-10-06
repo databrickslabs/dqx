@@ -318,7 +318,7 @@
     "computeWarehouseDefaultSuffix": "(padrão)",
     "computeWarehouseCustomOption": "salvo",
     "computeNoWarehouses": "Nenhum warehouse encontrado",
-    "computeSpAccessMissing": "A entidade de serviço do app ainda não pode usar este warehouse.",
+    "computeSpAccessMissing": "A entidade de serviço do app precisa de CAN MANAGE neste warehouse.",
     "computeGrantButton": "Conceder acesso",
     "computeGrantAdminOnly": "Apenas administradores podem conceder acesso.",
     "computeJobsLabel": "Computação dos jobs",
