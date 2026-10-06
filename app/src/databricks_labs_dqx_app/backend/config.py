@@ -34,12 +34,20 @@ class AppConfig(BaseSettings):
     )
     app_name: str = Field(default=app_name)
     api_prefix: str = Field(default="/api")
-    catalog: str = Field(default="dqx")
-    schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
+    catalog: str = Field(default="", validation_alias="DQX_CATALOG")
+    prefix: str = Field(default="", validation_alias="DQX_PREFIX")
+    schema_name: str = Field(default="", validation_alias="DQX_SCHEMA")
     tmp_schema_name: str = Field(default="", validation_alias="DQX_TMP_SCHEMA")
     genie_schema_name: str = Field(default="", validation_alias="DQX_GENIE_SCHEMA")
+    demo_schema_name: str = Field(default="", validation_alias="DQX_DEMO_SCHEMA")
+    default_dashboard_id: str = Field(default="", validation_alias="DQX_DEFAULT_DASHBOARD_ID")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
     wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
+
+    @property
+    def has_deployment_storage(self) -> bool:
+        """Whether the deployment supplies Studio storage (bundle deployments)."""
+        return bool(self.catalog.strip())
 
     @model_validator(mode="after")
     def derive_sibling_schema_names(self) -> "AppConfig":
@@ -47,7 +55,7 @@ class AppConfig(BaseSettings):
         try:
             schema = parse_volume_path(self.wheels_volume).schema
         except InvalidParameterError:
-            schema = self.schema_name
+            schema = self.schema_name or "dqx_studio"
         if "schema_name" in self.model_fields_set and self.schema_name != schema:
             logger.warning(
                 "DQX_SCHEMA differs from the bound volume schema; the bound volume determines application storage."
@@ -124,9 +132,8 @@ class AppConfig(BaseSettings):
                 not group
                 or "`" in group
                 or replace_control_characters(value) != value
-                or group.casefold() in {"account users", "users"}
             ):
-                raise ValueError("DQX_USER_GROUPS must contain scoped group names, not broad built-in groups.")
+                raise ValueError("DQX_USER_GROUPS must contain group names without backticks or control characters.")
             if group not in groups:
                 groups.append(group)
         return groups

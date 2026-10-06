@@ -14,14 +14,6 @@ def test_audience_groups_are_explicit_and_scoped() -> None:
     ]
 
 
-@pytest.mark.parametrize("group", ["account users", "users", "`account users`", "`UsErS`", " account users "])
-def test_broad_audience_groups_are_rejected(group: str) -> None:
-    from databricks_labs_dqx_app.backend.config import AppConfig
-
-    with pytest.raises(ValidationError):
-        AppConfig(_env_file=None, user_groups=[group])
-
-
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -63,9 +55,6 @@ def test_audience_groups_env_accepts_json_and_simple_csv(
         "studio-authors,",
         ",studio-authors",
         "studio-authors,,studio-viewers",
-        "studio-authors,users",
-        "studio-authors, Account Users ",
-        '["UsErS"]',
         "studio-authors,`studio-viewers`",
         "studio-authors,studio\nviewers",
         '["studio\\u0000viewers"]',
@@ -210,3 +199,24 @@ def test_default_or_matching_schema_does_not_warn(
     AppConfig(_env_file=None, wheels_volume="/Volumes/main/bound_schema/wheels")
 
     assert "DQX_SCHEMA differs" not in caplog.text
+
+
+def test_users_is_accepted_as_deployment_broad_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_USER_GROUPS", '["users"]')
+
+    assert AppConfig().user_groups == ["users"]
+
+
+def test_deployment_storage_requires_explicit_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.delenv("DQX_CATALOG", raising=False)
+    assert AppConfig().has_deployment_storage is False
+
+    monkeypatch.setenv("DQX_CATALOG", "main")
+    monkeypatch.setenv("DQX_PREFIX", "studio")
+    config = AppConfig()
+    assert config.has_deployment_storage is True
+    assert config.prefix == "studio"
