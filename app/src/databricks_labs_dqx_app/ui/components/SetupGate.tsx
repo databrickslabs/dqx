@@ -6,7 +6,9 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 
+import axios from "axios";
 import {
+  configureSetup,
   getGetSetupStatusQueryKey,
   getSetupStatus,
   reconcileSetup,
@@ -17,6 +19,7 @@ import {
   SetupStatusUnavailable,
   SetupWizard,
 } from "@/components/setup/SetupWizard";
+import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -56,6 +59,17 @@ export function reconciliationMutationOptions(
   };
 }
 
+/** Extract the backend error code from a failed configuration request. */
+export function configurationErrorCode(error: unknown): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const detail: unknown = error.response?.data?.detail;
+  if (typeof detail === "object" && detail !== null && "code" in detail) {
+    const { code } = detail;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Blocks Studio routes until the authenticated caller's setup readiness is
  * known. Remediation actions are rendered only from the backend report.
@@ -65,6 +79,10 @@ export function SetupGate({ children }: SetupGateProps) {
   const reconciliation = useMutation(
     reconciliationMutationOptions(queryClient, () => reconcileSetup()),
   );
+  const configuration = useMutation({
+    mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
   const setupStatus = useQuery({
     queryKey: getGetSetupStatusQueryKey(),
     queryFn: () => getSetupStatus(),
@@ -98,6 +116,13 @@ export function SetupGate({ children }: SetupGateProps) {
       isReconciling={reconciliation.isPending}
       onReconcile={() => reconciliation.mutate()}
       reconciliationFailed={reconciliation.isError}
+      onConfigure={(values) => configuration.mutate(values)}
+      isConfiguring={configuration.isPending}
+      configurationError={
+        configuration.isError
+          ? (configurationErrorCode(configuration.error) ?? "default")
+          : undefined
+      }
     />
   );
 }

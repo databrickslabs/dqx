@@ -135,9 +135,9 @@ describe("SetupGate", () => {
     const status = setupStatus(true);
     status.report.steps = [
       {
-        id: "volume",
+        id: "storage",
         state: "action_required",
-        summary: "Grant access to the wheels volume.",
+        summary: "Grant access to the storage schemas.",
         actions: ["verify_again"],
       },
     ];
@@ -145,9 +145,7 @@ describe("SetupGate", () => {
     const markup = renderGate(status);
 
     expect(markup).not.toContain("Why this is needed");
-    expect(markup).toContain(
-      'aria-label="Stores the DQX Core library and task-runner application used by profiling and data-quality jobs."',
-    );
+    expect(markup).toContain(`aria-label="${en.setup.purposes.storage}"`);
   });
 
   test("renders the active setup step while initialization is running", () => {
@@ -267,5 +265,87 @@ describe("SetupGate", () => {
     );
 
     expect(writes).toEqual([["cdh-ui-theme", "light"]]);
+  });
+});
+
+function configurationStatus(canManage: boolean): SetupStatusResponse {
+  return {
+    can_manage: canManage,
+    admin_group: "admins",
+    configuration: {
+      source: "none",
+      catalog: "",
+      prefix: "",
+      audience_group: "",
+      schemas: [],
+      broad_audience: false,
+      locked: false,
+    },
+    report: {
+      state: "setup_required",
+      current_step: "configuration",
+      steps: [
+        { id: "identity", state: "passed" },
+        { id: "lakebase", state: "passed" },
+        {
+          id: "configuration",
+          state: "action_required",
+          code: "configuration_required",
+          actions: ["configure"],
+        },
+      ],
+    },
+  };
+}
+
+function renderWizard(status: SetupStatusResponse): string {
+  return renderSetup(
+    <SetupWizard
+      view={setupView(status)}
+      isReconciling={false}
+      onReconcile={() => undefined}
+      reconciliationFailed={false}
+    />,
+  );
+}
+
+describe("setup configuration", () => {
+  test("admins see the configuration form", () => {
+    const html = renderWizard(configurationStatus(true));
+    expect(html).toContain('name="catalog"');
+    expect(html).toContain('value="dqx_studio"');
+    expect(html).toContain('name="audience_group"');
+  });
+
+  test("non-admins never see the form", () => {
+    const html = renderWizard(configurationStatus(false));
+    expect(html).not.toContain('name="catalog"');
+  });
+
+  test("deployment configuration is read-only", () => {
+    const status = configurationStatus(true);
+    status.configuration = {
+      ...status.configuration!,
+      source: "deployment",
+      catalog: "main",
+      prefix: "dqx_studio",
+      broad_audience: true,
+    };
+    status.report.steps[2] = { id: "configuration", state: "passed" };
+    const html = renderWizard(status);
+    expect(html).not.toContain('name="catalog"');
+    expect(html).toContain(en.setup.configuration.broadAudience);
+  });
+
+  test("warning steps are labelled", () => {
+    const status = configurationStatus(true);
+    status.report.steps.push({
+      id: "app_sharing",
+      state: "warning",
+      code: "app_sharing_unverified",
+      instructions: ["Share the app"],
+    });
+    const html = renderWizard(status);
+    expect(html).toContain(en.setup.states.warning);
   });
 });

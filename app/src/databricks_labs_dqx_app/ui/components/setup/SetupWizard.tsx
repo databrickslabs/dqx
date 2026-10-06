@@ -20,7 +20,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { SetupStep, StepState } from "@/lib/api";
+import {
+  SetupConfigurationForm,
+  type SetupConfigurationValues,
+} from "@/components/setup/SetupConfigurationForm";
+import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
 import type { SetupViewAction, SetupViewModel } from "@/lib/setup-state";
 
 type SetupWizardProps = {
@@ -29,6 +33,9 @@ type SetupWizardProps = {
   isReconciling: boolean;
   onReconcile: () => void;
   reconciliationFailed: boolean;
+  onConfigure?: (values: SetupConfigurationValues) => void;
+  isConfiguring?: boolean;
+  configurationError?: string;
 };
 
 function progressSteps(view: SetupViewModel): SetupStep[] {
@@ -86,11 +93,51 @@ function StepIcon({ state }: { state: StepState }) {
       return (
         <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
       );
+    case "warning":
+      return (
+        <CircleAlert className="size-5 text-amber-500" aria-hidden="true" />
+      );
     case "pending":
       return (
         <Clock3 className="size-5 text-muted-foreground" aria-hidden="true" />
       );
   }
+}
+
+function ConfigurationSummary({
+  configuration,
+}: {
+  configuration: SetupConfigurationView;
+}) {
+  const { t } = useTranslation();
+  const rows: [string, string | undefined][] = [
+    ["catalog", configuration.catalog],
+    ["prefix", configuration.prefix],
+    ["schemas", configuration.schemas?.join(", ")],
+    ["audience_group", configuration.audience_group],
+  ];
+
+  return (
+    <div className="space-y-2">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        {rows
+          .filter(([, value]) => value)
+          .map(([key, value]) => (
+            <div key={key} className="contents">
+              <dt className="text-muted-foreground">
+                {t(`setup.configuration.${key}`)}
+              </dt>
+              <dd className="break-all font-mono text-xs">{value}</dd>
+            </div>
+          ))}
+      </dl>
+      {configuration.broad_audience && (
+        <Badge variant="outline">
+          {t("setup.configuration.broadAudience")}
+        </Badge>
+      )}
+    </div>
+  );
 }
 
 function StepActions({
@@ -130,6 +177,11 @@ function StepCard({
   jobsUrl,
   isReconciling,
   onReconcile,
+  configuration,
+  showConfigurationForm,
+  onConfigure,
+  isConfiguring,
+  configurationError,
 }: {
   step: SetupStep;
   actions: SetupViewAction[];
@@ -137,8 +189,19 @@ function StepCard({
   jobsUrl: string | null;
   isReconciling: boolean;
   onReconcile: () => void;
+  configuration: SetupConfigurationView | null;
+  showConfigurationForm: boolean;
+  onConfigure?: (values: SetupConfigurationValues) => void;
+  isConfiguring: boolean;
+  configurationError?: string;
 }) {
   const { t } = useTranslation();
+  const isConfigurationStep = step.id === "configuration";
+  const showForm = isConfigurationStep && showConfigurationForm;
+  const showSummary =
+    isConfigurationStep &&
+    !!configuration &&
+    (configuration.source === "deployment" || configuration.source === "saved");
   const stepActions = actions.filter((action) => action.stepId === step.id);
 
   return (
@@ -166,6 +229,8 @@ function StepCard({
         {(step.code ||
           step.instructions?.length ||
           stepActions.length > 0 ||
+          showForm ||
+          showSummary ||
           (canManage && step.id === "task_runner" && jobsUrl)) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
             {step.code && (
@@ -186,6 +251,16 @@ function StepCard({
                 ))}
               </div>
             ) : null}
+            {showSummary && configuration && (
+              <ConfigurationSummary configuration={configuration} />
+            )}
+            {showForm && (
+              <SetupConfigurationForm
+                isSubmitting={isConfiguring}
+                errorCode={configurationError}
+                onSubmit={(values) => onConfigure?.(values)}
+              />
+            )}
             {canManage && step.id === "task_runner" && jobsUrl && (
               <a
                 href={jobsUrl}
@@ -257,6 +332,9 @@ export function SetupWizard({
   isReconciling,
   onReconcile,
   reconciliationFailed,
+  onConfigure,
+  isConfiguring = false,
+  configurationError,
 }: SetupWizardProps) {
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
@@ -299,6 +377,11 @@ export function SetupWizard({
               jobsUrl={jobsUrl}
               isReconciling={isReconciling}
               onReconcile={onReconcile}
+              configuration={view.configuration}
+              showConfigurationForm={view.showConfigurationForm}
+              onConfigure={onConfigure}
+              isConfiguring={isConfiguring}
+              configurationError={configurationError}
             />
           ))}
         </ol>

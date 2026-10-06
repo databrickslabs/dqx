@@ -1,4 +1,10 @@
-import type { SetupActionId, SetupReport, SetupStatusResponse, SetupStep } from "./api";
+import type {
+  SetupActionId,
+  SetupConfigurationView,
+  SetupReport,
+  SetupStatusResponse,
+  SetupStep,
+} from "./api";
 
 export type SetupViewAction = {
   id: SetupActionId;
@@ -11,6 +17,8 @@ export type SetupViewModel = {
   actions: SetupViewAction[];
   canManage: boolean;
   adminGroup: string;
+  configuration: SetupConfigurationView | null;
+  showConfigurationForm: boolean;
 };
 
 /**
@@ -19,18 +27,43 @@ export type SetupViewModel = {
  */
 export function setupView(status: SetupStatusResponse): SetupViewModel {
   const { report, can_manage: canManage, admin_group: adminGroup } = status;
+  const configuration = status.configuration ?? null;
   const actions = canManage
     ? report.steps.flatMap((step) =>
-        (step.actions ?? []).map((id) => ({ id, stepId: step.id })),
+        (step.actions ?? [])
+          .filter((id) => id !== "configure")
+          .map((id) => ({ id, stepId: step.id })),
       )
     : [];
+  const showConfigurationForm =
+    canManage &&
+    report.steps.some(
+      (step) =>
+        step.id === "configuration" && step.actions?.includes("configure"),
+    );
 
   if (report.state === "ready") {
-    return { kind: "ready", report, actions: [], canManage, adminGroup };
+    return {
+      kind: "ready",
+      report,
+      actions: [],
+      canManage,
+      adminGroup,
+      configuration,
+      showConfigurationForm,
+    };
   }
 
   if (report.state === "checking" || report.state === "initializing") {
-    return { kind: "checking", report, actions: [], canManage, adminGroup };
+    return {
+      kind: "checking",
+      report,
+      actions: [],
+      canManage,
+      adminGroup,
+      configuration,
+      showConfigurationForm,
+    };
   }
 
   return {
@@ -39,5 +72,7 @@ export function setupView(status: SetupStatusResponse): SetupViewModel {
     actions,
     canManage,
     adminGroup,
+    configuration,
+    showConfigurationForm,
   };
 }

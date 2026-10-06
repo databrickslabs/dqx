@@ -3012,42 +3012,69 @@
     "whyNeeded": "Why this is needed",
     "purposes": {
       "identity": "A service principal used by DQX Studio to manage application resources and perform setup operations.",
-      "volume": "Stores the DQX Core library and task-runner application used by profiling and data-quality jobs.",
       "unity_catalog": "Lets Studio create and query its schemas, tables, temporary views, and run results.",
-      "schemas": "Separates application state, temporary views, and Genie-facing objects in Unity Catalog.",
       "lakebase": "Stores transactional Studio state such as rules, roles, settings, and schedules.",
       "warehouse": "Runs Studio's SQL queries for setup, metadata, results, and interactive checks.",
       "task_runner": "Runs Spark-based profiling and data-quality workloads outside the web application.",
       "wheels": "Keeps the task runner on the same DQX and Studio code versions as the application.",
       "migrations": "Creates and upgrades the Delta and Lakebase tables required by this Studio version.",
-      "activation": "Starts Studio APIs and background services only after every dependency is ready."
+      "activation": "Starts Studio APIs and background services only after every dependency is ready.",
+      "configuration": "The catalog, storage prefix and audience group that Studio uses for its data and access.",
+      "storage": "Creates the Unity Catalog schemas and wheels volume that hold Studio state, temporary views and Genie-facing objects.",
+      "access": "Grants the audience group and administrators the workspace and data access they need to use Studio.",
+      "app_sharing": "Confirms that the audience group can open this app. Sharing is managed in the app permissions."
     },
     "steps": {
       "identity": "Application identity",
-      "volume": "Wheels volume",
       "unity_catalog": "Unity Catalog access",
-      "schemas": "Application schemas",
       "lakebase": "Lakebase database",
       "warehouse": "SQL warehouse",
       "task_runner": "Task-runner job",
       "wheels": "Application wheels",
       "migrations": "Database migrations",
-      "activation": "Activate Studio"
+      "activation": "Activate Studio",
+      "configuration": "Studio configuration",
+      "storage": "Storage schemas and volume",
+      "access": "Audience access",
+      "app_sharing": "App sharing"
     },
     "states": {
       "pending": "Pending",
       "running": "In progress",
       "passed": "Ready",
       "action_required": "Action required",
-      "failed": "Needs attention"
+      "failed": "Needs attention",
+      "warning": "Needs attention"
     },
     "actions": {
       "reconcile": "Run setup",
       "verify_again": "Verify again",
-      "openJobs": "Open Jobs"
+      "openJobs": "Open Jobs",
+      "configure": "Save configuration"
     },
     "instructions": "How to resolve this",
-    "diagnosticCode": "Code: {{code}}"
+    "diagnosticCode": "Code: {{code}}",
+    "configuration": {
+      "catalog": "Catalog",
+      "catalogHelp": "An existing Unity Catalog catalog. Studio creates its schemas here.",
+      "prefix": "Storage prefix",
+      "prefixHelp": "Lower-case letters, digits and underscores. Schemas: <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
+      "audience_group": "Audience group",
+      "audience_groupHelp": "An existing account group assigned to this workspace. Members can use Studio; roles are assigned separately.",
+      "schemas": "Schemas",
+      "submit": "Save and continue",
+      "broadAudience": "Broad audience: all workspace users",
+      "errors": {
+        "configuration_invalid": "Check the catalog, prefix and group name.",
+        "catalog_not_found": "The catalog does not exist or you cannot access it.",
+        "audience_group_not_found": "The group does not exist in this workspace.",
+        "configuration_locked": "Storage is already provisioned; the configuration can no longer change.",
+        "configuration_managed_by_deployment": "This configuration is managed by the deployment.",
+        "catalog_check_failed": "The catalog could not be verified. Try again.",
+        "group_check_failed": "The group could not be verified. Try again.",
+        "default": "Could not save the configuration."
+      }
+    }
   },
   "schedules": {
     "title": "Schedules",
