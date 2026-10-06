@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.setup.configuration import (
     ConfigurationSource,
     ResolvedConfiguration,
     SetupChoices,
+    SetupConfigurationStore,
 )
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
@@ -1119,3 +1120,74 @@ async def test_cancelled_reconcile_propagates_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert harness.runtime.report().state != SetupState.READY
+
+
+class _MemorySettings:
+    def __init__(self, values: dict[str, str] | None = None) -> None:
+        self.values = dict(values or {})
+
+    def get_setting(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:
+        self.values[key] = value
+
+
+_CHOICES = SetupChoices(catalog="main", prefix="dqx_studio", audience_group="data-team")
+_LOCKED = {
+    "setup_catalog": "main",
+    "setup_prefix": "dqx_studio",
+    "setup_audience_group": "other",
+    "setup_storage_locked": "true",
+}
+
+
+@pytest.mark.asyncio
+async def test_save_configuration_persists_when_unlocked() -> None:
+    settings = _MemorySettings()
+
+    outcome = await _harness().orchestrator.save_configuration(
+        SetupConfigurationStore(settings), _CHOICES, user_email="a@example.com"
+    )
+
+    assert outcome == "saved"
+    assert settings.values["setup_audience_group"] == "data-team"
+
+
+@pytest.mark.asyncio
+async def test_save_configuration_refuses_different_choices_when_locked() -> None:
+    settings = _MemorySettings(_LOCKED)
+
+    outcome = await _harness().orchestrator.save_configuration(
+        SetupConfigurationStore(settings), _CHOICES, user_email=None
+    )
+
+    assert outcome == "locked"
+    assert settings.values["setup_audience_group"] == "other"
+
+
+@pytest.mark.asyncio
+async def test_save_configuration_is_unchanged_for_identical_locked_choices() -> None:
+    settings = _MemorySettings({**_LOCKED, "setup_audience_group": "data-team"})
+
+    outcome = await _harness().orchestrator.save_configuration(
+        SetupConfigurationStore(settings), _CHOICES, user_email=None
+    )
+
+    assert outcome == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_save_configuration_rechecks_lock_after_waiting_for_activation_lock() -> None:
+    harness = _harness()
+    settings = _MemorySettings()
+    await harness.runtime.activation_lock.acquire()
+    pending = asyncio.create_task(
+        harness.orchestrator.save_configuration(SetupConfigurationStore(settings), _CHOICES, user_email=None)
+    )
+    await asyncio.sleep(0)
+    settings.values.update(_LOCKED)  # a concurrent reconcile provisions storage and locks
+    harness.runtime.activation_lock.release()
+
+    assert await pending == "locked"
+    assert settings.values["setup_audience_group"] == "other"
