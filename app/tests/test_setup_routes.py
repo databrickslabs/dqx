@@ -16,7 +16,12 @@ from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.runtime import rt
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+from databricks_labs_dqx_app.backend.setup.resources import (
+    ActiveResources,
+    BootstrapResources,
+    LakebaseConnection,
+    VolumeLocation,
+)
 
 
 def user_in_groups(*groups: str, user_name: str = "admin@example.com") -> MagicMock:
@@ -62,7 +67,10 @@ def orchestrator(resources: ActiveResources) -> MagicMock:
     """Return the setup transition boundary without external collaborators."""
     setup_orchestrator = create_autospec(SetupOrchestrator, instance=True)
     setup_orchestrator.reconcile = AsyncMock(return_value=SetupReport(state=SetupState.SETUP_REQUIRED, steps=()))
-    setup_orchestrator.resources = resources
+    setup_orchestrator.bootstrap = BootstrapResources(
+        lakebase=resources.lakebase, warehouse_id=resources.warehouse_id, job_id=resources.job_id
+    )
+    setup_orchestrator.bound = MagicMock(resources=resources)
     return setup_orchestrator
 
 
@@ -170,6 +178,17 @@ def test_reconcile_sql_reader_does_not_require_activated_resources(client: TestC
         assert rt.resources is None
     finally:
         rt.resources = previous_resources
+
+
+def test_reconcile_requires_bound_storage_for_sql_reader(client: TestClient, orchestrator: MagicMock) -> None:
+    app.dependency_overrides.pop(get_setup_sql_executor)
+    orchestrator.bound = None
+
+    response = client.post("/api/v1/setup/reconcile")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "DQX Studio storage is not configured."
+    orchestrator.reconcile.assert_not_called()
 
 
 def test_reconcile_does_not_trust_cached_setup_access(client: TestClient, obo_ws: MagicMock) -> None:

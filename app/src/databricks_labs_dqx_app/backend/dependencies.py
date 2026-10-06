@@ -1341,12 +1341,16 @@ def get_setup_sql_executor(
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
 ) -> SqlExecutor:
     """Inspect setup grants with OBO SQL before application resources are activated."""
-    resources = orchestrator.resources
+    bound = orchestrator.bound
+    if bound is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio storage is not configured."
+        )
     return SqlExecutor(
         ws=obo_ws,
-        warehouse_id=resources.warehouse_id,
-        catalog=resources.volume.catalog,
-        schema=resources.tmp_schema,
+        warehouse_id=orchestrator.bootstrap.warehouse_id,
+        catalog=bound.resources.volume.catalog,
+        schema=bound.resources.tmp_schema,
     )
 
 

@@ -1,16 +1,23 @@
 """Ordered-transition tests for the DQX Studio setup orchestrator."""
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
-from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.configuration import (
+    ConfigurationSource,
+    ResolvedConfiguration,
+    SetupChoices,
+)
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
     SetupState,
@@ -18,9 +25,10 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStepId,
     StepState,
 )
-from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources, LakebaseConnection
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
+from databricks_labs_dqx_app.backend.setup.storage import derive_storage
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
@@ -38,26 +46,72 @@ def _action_required(step_id: SetupStepId, code: str) -> SetupStep:
     )
 
 
+SAVED = ResolvedConfiguration(
+    ConfigurationSource.SAVED,
+    SetupChoices("main", "studio", "data-team"),
+    derive_storage("main", "studio"),
+    resolve_audience(["data-team"], "admins", allow_broad=False),
+    locked=False,
+)
+
+BOOTSTRAP = BootstrapResources(
+    lakebase=LakebaseConnection(
+        endpoint="projects/p/branches/b/endpoints/primary",
+        host=None,
+        port=5432,
+        database="databricks_postgres",
+        username=None,
+        password=None,
+        schema="dqx_studio",
+    ),
+    warehouse_id="warehouse-id",
+    job_id="27",
+)
+
+
 @dataclass
-class FakeCheckers:
+class FakeBootstrap:
     events: list[str]
     results: dict[SetupStepId, SetupStep] = field(default_factory=dict)
+
+    def check_app_identity(self) -> SetupStep:
+        self.events.append("identity")
+        return self.results.get(SetupStepId.IDENTITY, _passed(SetupStepId.IDENTITY))
+
+    def check_lakebase(self) -> SetupStep:
+        self.events.append("lakebase")
+        return self.results.get(SetupStepId.LAKEBASE, _passed(SetupStepId.LAKEBASE))
+
+    def ensure_lakebase_schema(self) -> SetupStep:
+        self.events.append("lakebase_schema")
+        return _passed(SetupStepId.LAKEBASE)
+
+
+@dataclass
+class FakeBound:
+    events: list[str]
+    results: dict[SetupStepId, SetupStep] = field(default_factory=dict)
+    provisions: list[bool] = field(default_factory=list)
+    output_result: SetupStep | None = None
     runner_reader: WorkspaceClient | None = None
     runner_sql: SqlExecutor | None = None
-    output_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
+    catalog_reader_sql: SqlExecutor | None = None
+    access_observer: Callable[[], None] | None = None
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
         return self.results.get(step_id, _passed(step_id))
 
-    def check_app_identity(self) -> SetupStep:
-        return self._result(SetupStepId.IDENTITY)
-
-    def check_volume(self) -> SetupStep:
-        return self._result(SetupStepId.VOLUME)
-
-    def check_unity_catalog(self) -> SetupStep:
+    def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+        self.catalog_reader_sql = reader_sql
         return self._result(SetupStepId.UNITY_CATALOG)
+
+    def ensure_storage(self, *, provision: bool) -> SetupStep:
+        self.provisions.append(provision)
+        return self._result(SetupStepId.STORAGE)
+
+    def check_warehouse(self, warehouse_id: str | None = None, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+        return self._result(SetupStepId.WAREHOUSE)
 
     def check_runner_access(
         self,
@@ -67,29 +121,32 @@ class FakeCheckers:
         reader_sql: SqlExecutor | None = None,
         include_outputs: bool = False,
     ) -> SetupStep:
-        self.events.append(f"runner_outputs:{job_id}" if include_outputs else f"runner_volume:{job_id}")
+        self.events.append(f"runner_outputs:{job_id}" if include_outputs else f"runner:{job_id}")
         self.runner_reader = reader_ws
         self.runner_sql = reader_sql
-        if include_outputs:
+        if include_outputs and self.output_result is not None:
             return self.output_result
         return self.results.get(SetupStepId.TASK_RUNNER, _passed(SetupStepId.TASK_RUNNER))
 
-    def ensure_sibling_schemas(self) -> SetupStep:
-        return self._result(SetupStepId.SCHEMAS)
+    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+        if self.access_observer is not None:
+            self.access_observer()
+        return self._result(SetupStepId.ACCESS)
 
-    def check_lakebase(self) -> SetupStep:
-        return self._result(SetupStepId.LAKEBASE)
+    def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+        return self._result(SetupStepId.APP_SHARING)
 
-    def ensure_lakebase_schema(self) -> SetupStep:
-        self.events.append("lakebase_schema")
-        return self.results.get(SetupStepId.LAKEBASE, _passed(SetupStepId.LAKEBASE))
 
-    def check_warehouse(
-        self,
-        warehouse_id: str | None = None,
-        reader_ws: WorkspaceClient | None = None,
-    ) -> SetupStep:
-        return self._result(SetupStepId.WAREHOUSE)
+@dataclass
+class FakeConfiguration:
+    resolved: ResolvedConfiguration
+    locks: list[str | None] = field(default_factory=list)
+
+    def resolve(self) -> ResolvedConfiguration:
+        return self.resolved
+
+    def lock(self, *, user_email: str | None) -> None:
+        self.locks.append(user_email)
 
 
 @dataclass
@@ -133,7 +190,7 @@ class FakeMigrationRunner:
 class FakeAppSettings:
     events: list[str]
 
-    def record_setup_completion(self, job_id: int, completed_at, user_name: str | None) -> None:
+    def record_setup_completion(self, job_id: int, completed_at: datetime, user_name: str | None) -> None:
         assert completed_at.tzinfo is not None
         self.events.append(f"persist:{job_id}:{user_name or 'system'}")
 
@@ -158,363 +215,712 @@ class FakeActivation:
             raise RuntimeError("setup runtime is unavailable")
         if self.background_failure is not None:
             raise self.background_failure
-        self.events.append(f"start_background:{self.runtime.report().state.value}")
+        self.events.append(f"background:{self.runtime.report().state.value}")
 
 
 @dataclass
-class OrchestratorFixture:
+class FakeBinder:
+    bound: FakeBound
+    delta: FakeMigrationRunner
+    activation: FakeActivation
+    publish_wheels: Callable[[], Awaitable[list[str]]]
+    binds: list[ActiveResources] = field(default_factory=list)
+
+    def bind(self, resources: ActiveResources) -> BoundSetup:
+        self.binds.append(resources)
+        return BoundSetup(
+            resources=resources,
+            checkers=self.bound,
+            access=self.bound,
+            delta_migrations=self.delta,
+            publish_wheels=self.publish_wheels,
+            activation=self.activation,
+        )
+
+
+@dataclass
+class Harness:
     orchestrator: SetupOrchestrator
     runtime: SetupRuntime
-    checkers: FakeCheckers
+    bootstrap: FakeBootstrap
+    bound: FakeBound
+    binder: FakeBinder
+    configuration: FakeConfiguration
     jobs: FakeJobs
+    pg: FakeMigrationRunner
+    delta: FakeMigrationRunner
     events: list[str]
 
 
-@pytest.fixture
-def resources() -> ActiveResources:
-    return ActiveResources(
-        volume=VolumeLocation("main", "dqx_studio", "wheels", "/Volumes/main/dqx_studio/wheels"),
-        lakebase=LakebaseConnection(
-            endpoint="projects/p/branches/b/endpoints/primary",
-            host=None,
-            port=5432,
-            database="databricks_postgres",
-            username=None,
-            password=None,
-            schema="dqx_studio",
-        ),
-        warehouse_id="warehouse-id",
-        job_id="27",
-        tmp_schema="dqx_studio_tmp",
-        genie_schema="genie",
-        demo_schema="studio_demo",
-        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
-    )
-
-
-def _make_orchestrator(
-    resources: ActiveResources,
+def _harness(
+    events: list[str] | None = None,
     *,
+    resolved: ResolvedConfiguration = SAVED,
+    bound_results: dict[SetupStepId, SetupStep] | None = None,
+    bootstrap: BootstrapResources = BOOTSTRAP,
     publish_wheels: Callable[[], Awaitable[list[str]]] | None = None,
     activation: FakeActivation | None = None,
-) -> OrchestratorFixture:
-    events: list[str] = []
+) -> Harness:
+    events = [] if events is None else events
     runtime = SetupRuntime()
-    checkers = FakeCheckers(events)
-    jobs = FakeJobs(events)
+    bound = FakeBound(events, results=dict(bound_results or {}))
 
     async def default_publish() -> list[str]:
         events.append("publish_wheels")
-        return [f"{resources.volume.path}/dqx.whl", f"{resources.volume.path}/task-runner.whl"]
+        return ["/Volumes/main/studio/wheels/dqx.whl", "/Volumes/main/studio/wheels/task-runner.whl"]
 
     activation_service = activation or FakeActivation(events)
     activation_service.events = events
     activation_service.runtime = runtime
+    delta = FakeMigrationRunner("delta", events)
+    pg = FakeMigrationRunner("postgres", events)
+    binder = FakeBinder(bound, delta, activation_service, publish_wheels or default_publish)
+    configuration = FakeConfiguration(resolved)
+    bootstrap_checks = FakeBootstrap(events)
+    jobs = FakeJobs(events)
     orchestrator = SetupOrchestrator(
         runtime=runtime,
-        resources=resources,
-        checkers=checkers,
+        bootstrap=bootstrap,
+        bootstrap_checks=bootstrap_checks,
+        pg_migrations=pg,
+        configuration=configuration,
+        binder=binder,
         jobs=jobs,
-        pg_migrations=FakeMigrationRunner("pg_migrations", events),
-        delta_migrations=FakeMigrationRunner("delta_migrations", events),
         app_settings=FakeAppSettings(events),
-        publish_wheels=publish_wheels or default_publish,
-        activation=activation_service,
         app_sp_id="app-service-principal",
     )
-    return OrchestratorFixture(orchestrator, runtime, checkers, jobs, events)
+    return Harness(orchestrator, runtime, bootstrap_checks, bound, binder, configuration, jobs, pg, delta, events)
+
+
+def _orchestrator(
+    events: list[str],
+    *,
+    resolved: ResolvedConfiguration,
+    bound_results: dict[SetupStepId, SetupStep] | None = None,
+) -> tuple[SetupOrchestrator, FakeBound]:
+    harness = _harness(events, resolved=resolved, bound_results=bound_results)
+    return harness.orchestrator, harness.bound
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap / bound split, configuration, access and app sharing
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_reconcile_stops_at_missing_catalog_grants(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    fixture.checkers.results[SetupStepId.UNITY_CATALOG] = _action_required(
-        SetupStepId.UNITY_CATALOG, "catalog_permissions_missing"
+async def test_fresh_install_without_configuration_stops_at_form_after_lakebase() -> None:
+    events: list[str] = []
+    orchestrator, _ = _orchestrator(
+        events, resolved=ResolvedConfiguration(ConfigurationSource.NONE, None, None, None, False)
     )
 
-    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.CONFIGURATION
+    assert report.step(SetupStepId.CONFIGURATION).actions == (SetupActionId.CONFIGURE,)
+    assert report.step(SetupStepId.CONFIGURATION).code == "configuration_required"
+    assert events == ["identity", "lakebase", "lakebase_schema", "postgres"]
+    assert orchestrator.bound is None
+
+
+@pytest.mark.asyncio
+async def test_saved_configuration_provisions_storage_and_locks_choices() -> None:
+    events: list[str] = []
+    orchestrator, bound = _orchestrator(events, resolved=SAVED)
+
+    report = await orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.READY
+    assert bound.provisions == [True]
+    assert orchestrator.configuration.locks == ["admin@example.com"]
+    assert [step.id for step in report.steps][-3:] == [
+        SetupStepId.ACTIVATION,
+        SetupStepId.ACCESS,
+        SetupStepId.APP_SHARING,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deployment_configuration_verifies_without_provisioning() -> None:
+    events: list[str] = []
+    deployment = dataclasses.replace(SAVED, source=ConfigurationSource.DEPLOYMENT, choices=None)
+    orchestrator, bound = _orchestrator(events, resolved=deployment)
+
+    await orchestrator.reconcile()
+
+    assert bound.provisions == [False]
+
+
+@pytest.mark.asyncio
+async def test_locked_configuration_is_not_locked_again() -> None:
+    harness = _harness(resolved=dataclasses.replace(SAVED, locked=True))
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.READY
+    assert harness.configuration.locks == []
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_does_not_lock_configuration() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.STORAGE: _action_required(SetupStepId.STORAGE, "storage_permissions_missing")}
+    )
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.current_step == SetupStepId.STORAGE
+    assert harness.configuration.locks == []
+
+
+@pytest.mark.asyncio
+async def test_full_setup_runs_steps_in_documented_order() -> None:
+    harness = _harness()
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert [step.id for step in report.steps] == [
+        SetupStepId.IDENTITY,
+        SetupStepId.LAKEBASE,
+        SetupStepId.CONFIGURATION,
+        SetupStepId.UNITY_CATALOG,
+        SetupStepId.STORAGE,
+        SetupStepId.WAREHOUSE,
+        SetupStepId.TASK_RUNNER,
+        SetupStepId.WHEELS,
+        SetupStepId.MIGRATIONS,
+        SetupStepId.ACTIVATION,
+        SetupStepId.ACCESS,
+        SetupStepId.APP_SHARING,
+    ]
+    assert harness.events == [
+        "identity",
+        "lakebase",
+        "lakebase_schema",
+        "postgres",
+        "unity_catalog",
+        "storage",
+        "warehouse",
+        "resolve_job:27",
+        "validate_run_as:27:app-service-principal",
+        "runner:27",
+        "publish_wheels",
+        "configure_job:27:2",
+        "delta",
+        "runner_outputs:27",
+        "persist:27:system",
+        "activate",
+        "access",
+        "app_sharing",
+        "background:ready",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_configuration_binds_resources_built_from_bootstrap_and_storage() -> None:
+    harness = _harness()
+
+    await harness.orchestrator.reconcile()
+
+    assert len(harness.binder.binds) == 1
+    bound = harness.orchestrator.bound
+    assert bound is not None
+    assert bound.resources.volume.catalog == "main"
+    assert bound.resources.volume.schema == "studio"
+    assert bound.resources.tmp_schema == "studio_tmp"
+    assert bound.resources.warehouse_id == BOOTSTRAP.warehouse_id
+    assert bound.resources.lakebase == BOOTSTRAP.lakebase
+    assert bound.resources.audience == SAVED.audience
+
+
+@pytest.mark.asyncio
+async def test_unchanged_configuration_is_not_rebound() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.WAREHOUSE: _action_required(SetupStepId.WAREHOUSE, "warehouse_permissions_missing")}
+    )
+
+    await harness.orchestrator.reconcile()
+    await harness.orchestrator.reconcile()
+
+    assert len(harness.binder.binds) == 1
+
+
+@pytest.mark.asyncio
+async def test_changed_configuration_is_rebound() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.WAREHOUSE: _action_required(SetupStepId.WAREHOUSE, "warehouse_permissions_missing")}
+    )
+    await harness.orchestrator.reconcile()
+
+    harness.configuration.resolved = dataclasses.replace(
+        SAVED, choices=SetupChoices("other", "studio", "data-team"), storage=derive_storage("other", "studio")
+    )
+    await harness.orchestrator.reconcile()
+
+    assert [resources.volume.catalog for resources in harness.binder.binds] == ["main", "other"]
+
+
+@pytest.mark.asyncio
+async def test_unity_catalog_check_receives_request_scoped_reader_sql() -> None:
+    harness = _harness()
+    reader_sql = create_autospec(SqlExecutor, instance=True)
+
+    await harness.orchestrator.reconcile(setup_user="admin@example.com", reader_sql=reader_sql)
+
+    assert harness.bound.catalog_reader_sql is reader_sql
+
+
+@pytest.mark.asyncio
+async def test_missing_access_blocks_ready_after_activation() -> None:
+    events: list[str] = []
+    orchestrator, _ = _orchestrator(
+        events,
+        resolved=SAVED,
+        bound_results={SetupStepId.ACCESS: _action_required(SetupStepId.ACCESS, "audience_grants_missing")},
+    )
+
+    report = await orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.ACCESS
+    assert "activate" in events
+    assert not any(event.startswith("background") for event in events)
+
+
+@pytest.mark.asyncio
+async def test_app_sharing_warning_does_not_block_ready() -> None:
+    events: list[str] = []
+    warning = SetupStep(id=SetupStepId.APP_SHARING, state=StepState.WARNING, code="app_sharing_unverified")
+    orchestrator, _ = _orchestrator(events, resolved=SAVED, bound_results={SetupStepId.APP_SHARING: warning})
+
+    report = await orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.APP_SHARING).state == StepState.WARNING
+
+
+@pytest.mark.asyncio
+async def test_warning_in_middle_step_does_not_stop_setup() -> None:
+    warning = SetupStep(id=SetupStepId.WAREHOUSE, state=StepState.WARNING, code="warehouse_unverified")
+    harness = _harness(bound_results={SetupStepId.WAREHOUSE: warning})
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.WAREHOUSE).state == StepState.WARNING
+
+
+@pytest.mark.asyncio
+async def test_ready_admin_recheck_reports_missing_grant() -> None:
+    events: list[str] = []
+    orchestrator, bound = _orchestrator(events, resolved=SAVED)
+    assert (await orchestrator.reconcile()).state == SetupState.READY
+
+    bound.results[SetupStepId.ACCESS] = _action_required(SetupStepId.ACCESS, "audience_grants_missing")
+    report = await orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.ACCESS
+
+
+@pytest.mark.asyncio
+async def test_ready_admin_recheck_keeps_ready_visible_while_running() -> None:
+    harness = _harness()
+    ready = await harness.orchestrator.reconcile()
+    observed: list[SetupState] = []
+    harness.bound.access_observer = lambda: observed.append(harness.runtime.report().state)
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert ready.state == report.state == SetupState.READY
+    assert observed == [SetupState.READY]
+    assert harness.runtime.report() is report
+
+
+@pytest.mark.asyncio
+async def test_ready_unattended_reconcile_returns_cached_report() -> None:
+    events: list[str] = []
+    orchestrator, _ = _orchestrator(events, resolved=SAVED)
+    ready = await orchestrator.reconcile()
+    events.clear()
+
+    assert await orchestrator.reconcile() is ready
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_saved_configuration_is_action_required() -> None:
+    events: list[str] = []
+    invalid = ResolvedConfiguration(
+        ConfigurationSource.SAVED, SAVED.choices, None, None, False, "saved_configuration_invalid"
+    )
+    orchestrator, _ = _orchestrator(events, resolved=invalid)
+
+    report = await orchestrator.reconcile()
+
+    assert report.step(SetupStepId.CONFIGURATION).code == "saved_configuration_invalid"
+    assert report.step(SetupStepId.CONFIGURATION).state == StepState.ACTION_REQUIRED
+    assert report.step(SetupStepId.CONFIGURATION).actions == (SetupActionId.CONFIGURE,)
+
+
+@pytest.mark.asyncio
+async def test_invalid_deployment_configuration_does_not_advertise_form() -> None:
+    invalid = ResolvedConfiguration(
+        ConfigurationSource.DEPLOYMENT, None, None, None, False, "deployment_configuration_invalid"
+    )
+    harness = _harness(resolved=invalid)
+
+    report = await harness.orchestrator.reconcile()
+
+    step = report.step(SetupStepId.CONFIGURATION)
+    assert step.code == "deployment_configuration_invalid"
+    assert SetupActionId.CONFIGURE not in step.actions
+
+
+@pytest.mark.asyncio
+async def test_identity_failure_stops_before_lakebase() -> None:
+    harness = _harness()
+    harness.bootstrap.results[SetupStepId.IDENTITY] = _action_required(SetupStepId.IDENTITY, "app_identity_unresolved")
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.current_step == SetupStepId.IDENTITY
+    assert harness.events == ["identity"]
+
+
+@pytest.mark.asyncio
+async def test_lakebase_failure_stops_before_configuration() -> None:
+    harness = _harness()
+    harness.bootstrap.results[SetupStepId.LAKEBASE] = _action_required(
+        SetupStepId.LAKEBASE, "lakebase_connectivity_failed"
+    )
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.current_step == SetupStepId.LAKEBASE
+    assert harness.events == ["identity", "lakebase"]
+    assert harness.orchestrator.bound is None
+
+
+def test_configuration_view_before_resolution_reports_none() -> None:
+    harness = _harness()
+
+    view = harness.orchestrator.configuration_view()
+
+    assert view.source == "none"
+    assert view.catalog == ""
+    assert view.locked is False
+
+
+@pytest.mark.asyncio
+async def test_configuration_view_reflects_saved_choices() -> None:
+    harness = _harness(resolved=dataclasses.replace(SAVED, locked=True))
+
+    await harness.orchestrator.reconcile()
+    view = harness.orchestrator.configuration_view()
+
+    assert view.source == "saved"
+    assert view.catalog == "main"
+    assert view.prefix == "studio"
+    assert view.audience_group == "data-team"
+    assert view.schemas == ("studio", "studio_tmp", "studio_genie", "studio_demo")
+    assert view.broad_audience is False
+    assert view.locked is True
+
+
+@pytest.mark.asyncio
+async def test_configuration_view_sanitizes_control_characters() -> None:
+    choices = SetupChoices("main\nforged", "studio", "data\x1bteam")
+    invalid = ResolvedConfiguration(
+        ConfigurationSource.SAVED, choices, None, None, False, "saved_configuration_invalid"
+    )
+    harness = _harness(resolved=invalid)
+
+    await harness.orchestrator.reconcile()
+    view = harness.orchestrator.configuration_view()
+
+    assert "\n" not in view.catalog
+    assert "\x1b" not in view.audience_group
+
+
+# ---------------------------------------------------------------------------
+# Ported behaviour: job resolution, wheels, migrations, activation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stops_at_missing_catalog_grants() -> None:
+    harness = _harness(
+        bound_results={
+            SetupStepId.UNITY_CATALOG: _action_required(SetupStepId.UNITY_CATALOG, "catalog_permissions_missing")
+        }
+    )
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.state == SetupState.SETUP_REQUIRED
     assert report.current_step == SetupStepId.UNITY_CATALOG
-    assert fixture.events == ["identity", "volume", "unity_catalog"]
+    assert harness.events == ["identity", "lakebase", "lakebase_schema", "postgres", "unity_catalog"]
 
 
 @pytest.mark.asyncio
-async def test_reconcile_creates_sibling_schemas_in_order(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
+async def test_reconcile_provisions_storage_after_catalog_check() -> None:
+    harness = _harness()
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
-    assert fixture.events.index("schemas") > fixture.events.index("unity_catalog")
-    assert fixture.events.index("schemas") < fixture.events.index("lakebase")
+    assert harness.events.index("storage") > harness.events.index("unity_catalog")
+    assert harness.events.index("storage") < harness.events.index("warehouse")
 
 
 @pytest.mark.asyncio
-async def test_reconcile_stops_at_external_run_as_action(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    fixture.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "run_as_required")
+async def test_reconcile_stops_at_external_run_as_action() -> None:
+    harness = _harness()
+    harness.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "run_as_required")
 
-    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.state == SetupState.SETUP_REQUIRED
     assert report.current_step == SetupStepId.TASK_RUNNER
-    assert "publish_wheels" not in fixture.events
-    assert "pg_migrations" not in fixture.events
-    assert "delta_migrations" not in fixture.events
+    assert "publish_wheels" not in harness.events
+    assert "delta" not in harness.events
 
 
 @pytest.mark.asyncio
-async def test_reconcile_blocks_wheel_publication_until_runner_can_read_volume(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    fixture.checkers.results[SetupStepId.TASK_RUNNER] = _action_required(
+async def test_reconcile_blocks_wheel_publication_until_runner_can_read_volume() -> None:
+    harness = _harness()
+    harness.bound.results[SetupStepId.TASK_RUNNER] = _action_required(
         SetupStepId.TASK_RUNNER, "task_runner_permissions_missing"
     )
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.SETUP_REQUIRED
     assert report.current_step == SetupStepId.TASK_RUNNER
     assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_permissions_missing"
-    assert "publish_wheels" not in fixture.events
-    assert "pg_migrations" not in fixture.events
-    assert "activate" not in fixture.events
+    assert "publish_wheels" not in harness.events
+    assert "delta" not in harness.events
+    assert "activate" not in harness.events
 
-    del fixture.checkers.results[SetupStepId.TASK_RUNNER]
-    report = await fixture.orchestrator.reconcile()
+    del harness.bound.results[SetupStepId.TASK_RUNNER]
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
-    assert fixture.events.index("runner_volume:27") < fixture.events.index("publish_wheels")
+    assert harness.events.index("runner:27") < harness.events.index("publish_wheels")
 
 
 @pytest.mark.asyncio
-async def test_runner_output_permissions_block_activation_after_migrations(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    fixture.checkers.output_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_permissions_missing")
+async def test_runner_output_permissions_block_activation_after_migrations() -> None:
+    harness = _harness()
+    harness.bound.output_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_permissions_missing")
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.SETUP_REQUIRED
     assert report.current_step == SetupStepId.TASK_RUNNER
-    assert "delta_migrations" in fixture.events
-    assert "activate" not in fixture.events
-    assert not any(event.startswith("persist:") for event in fixture.events)
+    assert "delta" in harness.events
+    assert "activate" not in harness.events
+    assert not any(event.startswith("persist:") for event in harness.events)
 
-    fixture.checkers.output_result = _passed(SetupStepId.TASK_RUNNER)
-    report = await fixture.orchestrator.reconcile()
+    harness.bound.output_result = _passed(SetupStepId.TASK_RUNNER)
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
-    assert fixture.events.index("runner_outputs:27") > fixture.events.index("delta_migrations")
+    assert harness.events.index("runner_outputs:27") > harness.events.index("delta")
     assert sum(step.id == SetupStepId.TASK_RUNNER for step in report.steps) == 1
 
 
 @pytest.mark.asyncio
-async def test_reconcile_passes_request_scoped_admin_reader_to_runner_check(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
+async def test_reconcile_passes_request_scoped_admin_reader_to_runner_check() -> None:
+    harness = _harness()
     reader = create_autospec(WorkspaceClient, instance=True)
     reader_sql = create_autospec(SqlExecutor, instance=True)
 
-    report = await fixture.orchestrator.reconcile(
+    report = await harness.orchestrator.reconcile(
         setup_user="admin@example.com", reader_ws=reader, reader_sql=reader_sql
     )
 
     assert report.state == SetupState.READY
-    assert fixture.checkers.runner_reader is reader
-    assert fixture.checkers.runner_sql is reader_sql
+    assert harness.bound.runner_reader is reader
+    assert harness.bound.runner_sql is reader_sql
 
 
 @pytest.mark.asyncio
-async def test_discovered_job_becomes_runtime_state_before_external_action(resources: ActiveResources) -> None:
-    unresolved_resources = ActiveResources(
-        volume=resources.volume,
-        lakebase=resources.lakebase,
-        warehouse_id=resources.warehouse_id,
-        job_id=None,
-        tmp_schema=resources.tmp_schema,
-        genie_schema=resources.genie_schema,
-        demo_schema=resources.demo_schema,
-        audience=resources.audience,
-    )
-    fixture = _make_orchestrator(unresolved_resources)
-    fixture.jobs.resolved = ResolvedJob(job_id=81, created=True)
-    fixture.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_run_as_missing")
+async def test_discovered_job_becomes_runtime_state_before_external_action() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+    harness.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_run_as_missing")
 
-    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.current_step == SetupStepId.TASK_RUNNER
-    assert fixture.runtime.require_job_id() == 81
-    assert "resolve_job:discover" in fixture.events
-    assert "grant_admin:81:admin@example.com" in fixture.events
-    assert not any(event.startswith("persist:") for event in fixture.events)
+    assert harness.runtime.require_job_id() == 81
+    assert "resolve_job:discover" in harness.events
+    assert "grant_admin:81:admin@example.com" in harness.events
+    assert not any(event.startswith("persist:") for event in harness.events)
 
 
 @pytest.mark.asyncio
-async def test_later_setup_admin_can_manage_job_created_during_startup(resources: ActiveResources) -> None:
-    unresolved_resources = ActiveResources(
-        volume=resources.volume,
-        lakebase=resources.lakebase,
-        warehouse_id=resources.warehouse_id,
-        job_id=None,
-        tmp_schema=resources.tmp_schema,
-        genie_schema=resources.genie_schema,
-        demo_schema=resources.demo_schema,
-        audience=resources.audience,
-    )
-    fixture = _make_orchestrator(unresolved_resources)
-    fixture.jobs.resolved = ResolvedJob(job_id=81, created=True)
-    fixture.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_run_as_missing")
+async def test_later_setup_admin_can_manage_job_created_during_startup() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+    harness.jobs.run_as_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_run_as_missing")
 
-    await fixture.orchestrator.reconcile()
-    fixture.jobs.resolved = ResolvedJob(job_id=81, created=False)
-    await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    await harness.orchestrator.reconcile()
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=False)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
-    assert "grant_admin:81:admin@example.com" in fixture.events
+    assert "grant_admin:81:admin@example.com" in harness.events
 
 
 @pytest.mark.asyncio
-async def test_ready_reconcile_grants_later_setup_admin_without_reinitializing(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    ready_report = await fixture.orchestrator.reconcile()
-    fixture.events.clear()
+async def test_ready_admin_reconcile_grants_job_admin_before_full_recheck() -> None:
+    harness = _harness()
+    await harness.orchestrator.reconcile()
+    harness.events.clear()
 
-    repeated_report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
-    assert repeated_report is ready_report
-    assert fixture.events == ["grant_admin:27:admin@example.com"]
+    assert report.state == SetupState.READY
+    assert harness.events[0] == "grant_admin:27:admin@example.com"
+    assert harness.events.count("grant_admin:27:admin@example.com") == 1
+    assert harness.events[1:5] == ["identity", "lakebase", "lakebase_schema", "postgres"]
+    assert "access" in harness.events
+    assert "app_sharing" in harness.events
 
 
 @pytest.mark.asyncio
-async def test_wheel_publication_failure_blocks_migrations(resources: ActiveResources) -> None:
+async def test_wheel_publication_failure_blocks_migrations() -> None:
     async def fail_publish() -> list[str]:
         raise RuntimeError("raw storage payload")
 
-    fixture = _make_orchestrator(resources, publish_wheels=fail_publish)
+    harness = _harness(publish_wheels=fail_publish)
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.current_step == SetupStepId.WHEELS
     assert report.step(SetupStepId.WHEELS).state == StepState.FAILED
     assert "raw storage payload" not in report.step(SetupStepId.WHEELS).summary
-    assert "pg_migrations" not in fixture.events
+    assert "delta" not in harness.events
 
 
 @pytest.mark.asyncio
-async def test_lakebase_migration_failure_reports_stage_without_secret(
-    resources: ActiveResources, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_lakebase_migration_failure_reports_stage_without_secret(caplog: pytest.LogCaptureFixture) -> None:
     class PrivilegeError(RuntimeError):
         sqlstate = "42501"
 
-    fixture = _make_orchestrator(resources)
-    fixture.orchestrator.pg_migrations.failure = PrivilegeError("credential=secret")
+    harness = _harness()
+    harness.pg.failure = PrivilegeError("credential=secret")
 
-    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
-    assert report.current_step == SetupStepId.MIGRATIONS
-    assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
-    assert report.step(SetupStepId.MIGRATIONS).code == "lakebase_migration_failed"
-    assert "credential=secret" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert report.current_step == SetupStepId.LAKEBASE
+    assert report.step(SetupStepId.LAKEBASE).state == StepState.FAILED
+    assert report.step(SetupStepId.LAKEBASE).code == "lakebase_migration_failed"
+    assert "credential=secret" not in report.step(SetupStepId.LAKEBASE).summary
     assert "Lakebase migration failed" in caplog.text
     assert "SQLSTATE 42501" in caplog.text
     assert "credential=secret" not in caplog.text
-    assert not any(event.startswith("persist:") for event in fixture.events)
-    assert "activate" not in fixture.events
+    assert not any(event.startswith("persist:") for event in harness.events)
+    assert "activate" not in harness.events
+    assert harness.orchestrator.bound is None
 
 
 @pytest.mark.asyncio
-async def test_delta_migration_failure_reports_stage(
-    resources: ActiveResources, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_delta_migration_failure_reports_stage(caplog: pytest.LogCaptureFixture) -> None:
     class PrivilegeError(RuntimeError):
         sqlstate = "42501"
 
-    fixture = _make_orchestrator(resources)
-    fixture.orchestrator.delta_migrations.failure = PrivilegeError("SQL: sensitive statement")
+    harness = _harness()
+    harness.delta.failure = PrivilegeError("SQL: sensitive statement")
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
+    assert report.current_step == SetupStepId.MIGRATIONS
     assert report.step(SetupStepId.MIGRATIONS).code == "delta_migration_failed"
     assert "SQL: sensitive statement" not in report.step(SetupStepId.MIGRATIONS).summary
-    assert "pg_migrations" in fixture.events
-    assert "delta_migrations" in fixture.events
-    assert "activate" not in fixture.events
+    assert "postgres" in harness.events
+    assert "delta" in harness.events
+    assert "activate" not in harness.events
     assert "SQLSTATE 42501" in caplog.text
     assert "sensitive statement" not in caplog.text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stage", ["pg_migrations", "delta_migrations"])
-async def test_migration_log_rejects_untrusted_sqlstate(
-    resources: ActiveResources, caplog: pytest.LogCaptureFixture, stage: str
-) -> None:
+@pytest.mark.parametrize("stage", ["pg", "delta"])
+async def test_migration_log_rejects_untrusted_sqlstate(caplog: pytest.LogCaptureFixture, stage: str) -> None:
     class InvalidDiagnosticError(RuntimeError):
         sqlstate = "42501\nforged diagnostic"
 
-    fixture = _make_orchestrator(resources)
-    getattr(fixture.orchestrator, stage).failure = InvalidDiagnosticError("sensitive statement")
+    harness = _harness()
+    runner = harness.pg if stage == "pg" else harness.delta
+    runner.failure = InvalidDiagnosticError("sensitive statement")
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
-    assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    step_id = SetupStepId.LAKEBASE if stage == "pg" else SetupStepId.MIGRATIONS
+    assert report.step(step_id).state == StepState.FAILED
     assert "SQLSTATE" not in caplog.text
     assert "forged diagnostic" not in caplog.text
     assert "sensitive statement" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_completion_is_persisted_only_after_both_migrations(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
+async def test_completion_is_persisted_only_after_both_migrations() -> None:
+    harness = _harness()
 
-    await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
-    persist_index = fixture.events.index("persist:27:admin@example.com")
-    assert fixture.events.index("pg_migrations") < persist_index
-    assert fixture.events.index("delta_migrations") < persist_index
-    assert persist_index < fixture.events.index("activate")
+    persist_index = harness.events.index("persist:27:admin@example.com")
+    assert harness.events.index("postgres") < persist_index
+    assert harness.events.index("delta") < persist_index
+    assert persist_index < harness.events.index("activate")
 
 
 @pytest.mark.asyncio
-async def test_complete_resources_activate_without_wizard(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
+async def test_complete_resources_activate_without_wizard() -> None:
+    harness = _harness()
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
     assert report.current_step is None
-    assert fixture.runtime.report() is report
-    assert fixture.runtime.require_job_id() == 27
+    assert harness.runtime.report() is report
+    assert harness.runtime.require_job_id() == 27
 
 
 @pytest.mark.asyncio
-async def test_background_services_start_only_after_ready_is_published(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
+async def test_background_services_start_only_after_ready_is_published() -> None:
+    harness = _harness()
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
-    assert fixture.events[-2:] == ["activate", "start_background:ready"]
+    assert harness.events[-1] == "background:ready"
+    assert harness.events.index("activate") < harness.events.index("access")
 
 
 @pytest.mark.asyncio
-async def test_background_start_failure_keeps_activated_app_ready(resources: ActiveResources) -> None:
+async def test_background_start_failure_keeps_activated_app_ready() -> None:
     """A background-service failure must not re-gate an activated application."""
     activation = FakeActivation([], background_failure=RuntimeError("background unavailable"))
-    fixture = _make_orchestrator(resources, activation=activation)
+    harness = _harness(activation=activation)
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.READY
-    assert fixture.runtime.report() is report
+    assert harness.runtime.report() is report
 
 
 @pytest.mark.asyncio
-async def test_required_view_failure_reports_uc_setup_instead_of_background_services(
-    resources: ActiveResources,
-) -> None:
+async def test_required_view_failure_reports_uc_setup_instead_of_background_services() -> None:
     activation = FakeActivation([], activation_failure=RequiredViewSetupError())
-    fixture = _make_orchestrator(resources, activation=activation)
+    harness = _harness(activation=activation)
 
-    report = await fixture.orchestrator.reconcile()
+    report = await harness.orchestrator.reconcile()
 
     assert report.state == SetupState.SETUP_REQUIRED
     assert report.current_step == SetupStepId.ACTIVATION
@@ -523,39 +929,82 @@ async def test_required_view_failure_reports_uc_setup_instead_of_background_serv
     assert step.code == "required_views_creation_failed"
     assert "CREATE TABLE" in " ".join(step.instructions)
     assert "Genie schema" in step.summary
-    assert not any(event.startswith("start_background:") for event in fixture.events)
+    assert not any(event.startswith("background:") for event in harness.events)
+    assert "access" not in harness.events
 
 
 @pytest.mark.asyncio
-async def test_concurrent_and_repeated_reconcile_activate_once(resources: ActiveResources) -> None:
+async def test_generic_activation_failure_is_reported() -> None:
+    activation = FakeActivation([], activation_failure=RuntimeError("raw failure"))
+    harness = _harness(activation=activation)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.current_step == SetupStepId.ACTIVATION
+    assert report.step(SetupStepId.ACTIVATION).code == "studio_activation_failed"
+
+
+@pytest.mark.asyncio
+async def test_completion_persistence_failure_stops_before_activation() -> None:
+    class FailingAppSettings:
+        def record_setup_completion(self, job_id: int, completed_at: datetime, user_name: str | None) -> None:
+            raise RuntimeError("database detail")
+
+    harness = _harness()
+    harness.orchestrator.app_settings = FailingAppSettings()
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.current_step == SetupStepId.MIGRATIONS
+    assert report.step(SetupStepId.MIGRATIONS).code == "setup_completion_persistence_failed"
+    assert "activate" not in harness.events
+
+
+@pytest.mark.asyncio
+async def test_concurrent_and_repeated_reconcile_activate_once() -> None:
     release_activation = asyncio.Event()
     events: list[str] = []
     activation = FakeActivation(events, wait_until=release_activation)
-    fixture = _make_orchestrator(resources, activation=activation)
-    activation.events = fixture.events
+    harness = _harness(events, activation=activation)
 
-    first = asyncio.create_task(fixture.orchestrator.reconcile())
-    while "activate" not in fixture.events:
+    first = asyncio.create_task(harness.orchestrator.reconcile())
+    while "activate" not in harness.events:
         await asyncio.sleep(0)
-    second = asyncio.create_task(fixture.orchestrator.reconcile())
+    second = asyncio.create_task(harness.orchestrator.reconcile())
     release_activation.set()
 
     first_report, second_report = await asyncio.gather(first, second)
-    third_report = await fixture.orchestrator.reconcile()
+    third_report = await harness.orchestrator.reconcile()
 
     assert first_report.state == second_report.state == third_report.state == SetupState.READY
-    assert fixture.events.count("activate") == 1
-    assert fixture.events.count("pg_migrations") == 1
+    assert harness.events.count("activate") == 1
+    assert harness.events.count("postgres") == 1
 
 
 @pytest.mark.asyncio
-async def test_ready_reconcile_keeps_app_available_when_admin_grant_fails(resources: ActiveResources) -> None:
-    fixture = _make_orchestrator(resources)
-    ready_report = await fixture.orchestrator.reconcile()
-    fixture.jobs.grant_failure = RuntimeError("transient permissions failure")
+async def test_ready_reconcile_keeps_app_available_when_admin_grant_fails() -> None:
+    harness = _harness()
+    await harness.orchestrator.reconcile()
+    harness.jobs.grant_failure = RuntimeError("transient permissions failure")
 
-    report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
-    assert report is ready_report
     assert report.state == SetupState.READY
-    assert fixture.runtime.report() is ready_report
+    assert harness.runtime.report() is report
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reconcile_propagates_cancellation() -> None:
+    release_activation = asyncio.Event()
+    events: list[str] = []
+    activation = FakeActivation(events, wait_until=release_activation)
+    harness = _harness(events, activation=activation)
+
+    task = asyncio.create_task(harness.orchestrator.reconcile())
+    while "activate" not in harness.events:
+        await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert harness.runtime.report().state != SetupState.READY

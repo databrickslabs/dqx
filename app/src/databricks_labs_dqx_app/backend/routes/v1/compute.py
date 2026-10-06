@@ -267,7 +267,10 @@ async def save_compute_settings(
     if body.sql_warehouse_id is not None:
         warehouse_id = body.sql_warehouse_id.strip()
         if warehouse_id:
-            step = await asyncio.to_thread(orchestrator.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
+            bound = orchestrator.bound
+            if bound is None:
+                raise HTTPException(status_code=503, detail="DQX Studio storage is not configured.")
+            step = await asyncio.to_thread(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
             if step.state != StepState.PASSED and step.code != "warehouse_permission_unknown":
                 raise HTTPException(
                     status_code=409,

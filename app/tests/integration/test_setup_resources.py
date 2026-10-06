@@ -59,12 +59,11 @@ def test_bound_volume_derives_location_and_creates_siblings(live_resources: Live
     assert resources.volume.catalog == volume.catalog
     assert resources.volume.schema == volume.schema
     assert resources.volume.volume == volume.volume
-    assert live_resources.checkers.check_app_identity().state == StepState.PASSED
-    assert live_resources.checkers.check_volume().state == StepState.PASSED
+    assert live_resources.bootstrap.check_app_identity().state == StepState.PASSED
+    assert live_resources.bootstrap.check_lakebase().state == StepState.PASSED
+    assert live_resources.bootstrap.ensure_lakebase_schema().state == StepState.PASSED
     assert live_resources.checkers.check_unity_catalog().state == StepState.PASSED
-    assert live_resources.checkers.ensure_sibling_schemas().state == StepState.PASSED
-    assert live_resources.checkers.check_lakebase().state == StepState.PASSED
-    assert live_resources.checkers.ensure_lakebase_schema().state == StepState.PASSED
+    assert live_resources.checkers.ensure_storage(provision=False).state == StepState.PASSED
 
     assert live_resources.workspace.schemas.get(f"{volume.catalog}.{resources.tmp_schema}").name == resources.tmp_schema
     assert (
@@ -206,9 +205,9 @@ def test_reconcile_applies_real_setup_actions(app_live_setup: AppLiveSetup) -> N
 
     assert report.state == SetupState.READY
     for step_id in (
-        SetupStepId.VOLUME,
-        SetupStepId.SCHEMAS,
         SetupStepId.LAKEBASE,
+        SetupStepId.CONFIGURATION,
+        SetupStepId.STORAGE,
         SetupStepId.TASK_RUNNER,
         SetupStepId.WHEELS,
         SetupStepId.MIGRATIONS,

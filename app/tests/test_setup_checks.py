@@ -14,7 +14,6 @@ from databricks.sdk.service.catalog import (
 from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
-from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers, required_catalog_grants
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
@@ -76,13 +75,6 @@ def sql() -> MagicMock:
 
 
 @pytest.fixture
-def pg() -> MagicMock:
-    executor = create_autospec(PgExecutor, instance=True)
-    executor.q.side_effect = lambda identifier: '"' + identifier.replace('"', '""') + '"'
-    return executor
-
-
-@pytest.fixture
 def compute() -> MagicMock:
     service = create_autospec(ComputeService, instance=True)
     service.warehouse_access_status.return_value = "granted"
@@ -94,45 +86,9 @@ def checkers(
     resources: ActiveResources,
     workspace: MagicMock,
     sql: MagicMock,
-    pg: MagicMock,
     compute: MagicMock,
 ) -> ResourceCheckers:
-    return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, pg=pg, compute=compute)
-
-
-def test_app_identity_resolves_service_principal_once(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """Removing cached SP resolution would make this identity capability fail."""
-    first = checkers.check_app_identity()
-    second = checkers.check_app_identity()
-
-    assert first.id == SetupStepId.IDENTITY
-    assert first.state == StepState.PASSED
-    assert second.state == StepState.PASSED
-    workspace.current_user.me.assert_called_once_with()
-
-
-def test_app_identity_resolution_failure_requires_action(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """Swallowing an unresolved app identity would falsely pass setup."""
-    workspace.current_user.me.side_effect = RuntimeError("platform detail\nthat must not escape")
-
-    result = checkers.check_app_identity()
-
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "app_identity_unresolved"
-    assert "platform detail" not in result.summary
-    assert "\n" not in result.summary
-
-
-def test_app_identity_with_c1_control_character_requires_action(
-    checkers: ResourceCheckers, workspace: MagicMock
-) -> None:
-    """Accepting a C1 control character could inject terminal controls into setup output."""
-    workspace.current_user.me.return_value = SimpleNamespace(user_name="app-sp\u0085id", id=None)
-
-    result = checkers.check_app_identity()
-
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "app_identity_unresolved"
+    return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute)
 
 
 @pytest.mark.parametrize(
@@ -151,7 +107,7 @@ def test_volume_missing_required_privilege_requires_action(
 
     result = checkers.check_volume()
 
-    assert result.id == SetupStepId.VOLUME
+    assert result.id == SetupStepId.STORAGE
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "volume_permissions_missing"
     assert grant_privilege in "\n".join(result.instructions)
@@ -198,7 +154,9 @@ def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> Resourc
     workspace.grants.get_effective.side_effect = lambda securable_type, full_name, *, principal: (
         _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT, Privilege.MODIFY, principal=principal)
         if principal == "runner-sp-id" and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio")
-        else permissions[securable_type] if principal == "runner-sp-id" else _effective_permissions()
+        else permissions[securable_type]
+        if principal == "runner-sp-id"
+        else _effective_permissions()
     )
     return checkers
 
@@ -258,28 +216,6 @@ def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceChecker
     assert result.instructions == ("GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp-id`;",)
 
 
-@pytest.mark.parametrize("role_exists", [False, True])
-def test_runner_setup_does_not_require_lakebase_role(
-    runner_checkers: ResourceCheckers, pg: MagicMock, role_exists: bool
-) -> None:
-    pg.query_dicts.return_value = [{"can_login": "false"}] if role_exists else []
-
-    result = runner_checkers.check_runner_access(42, include_outputs=True)
-
-    assert result.state == StepState.PASSED
-    pg.query_dicts.assert_not_called()
-
-
-def test_runner_setup_does_not_inspect_lakebase_permissions(runner_checkers: ResourceCheckers, pg: MagicMock) -> None:
-    pg.query_dicts.side_effect = PermissionError("sensitive database error")
-
-    result = runner_checkers.check_runner_access(42, include_outputs=True)
-
-    assert result.state == StepState.PASSED
-    assert "sensitive" not in str(result)
-    pg.query_dicts.assert_not_called()
-
-
 @pytest.mark.parametrize("missing", [Privilege.SELECT, Privilege.MODIFY])
 def test_runner_missing_schema_data_permission_blocks_readiness(
     runner_checkers: ResourceCheckers, workspace: MagicMock, missing: Privilege
@@ -305,7 +241,7 @@ def test_runner_missing_schema_data_permission_blocks_readiness(
 
 
 def test_runner_schema_permissions_pass_without_individual_table_inspection(
-    runner_checkers: ResourceCheckers, workspace: MagicMock, pg: MagicMock
+    runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
     available_permissions = workspace.grants.get_effective.side_effect
 
@@ -315,7 +251,6 @@ def test_runner_schema_permissions_pass_without_individual_table_inspection(
         return available_permissions(kind, name, principal=principal)
 
     workspace.grants.get_effective.side_effect = permissions
-    pg.query_dicts.side_effect = PermissionError("runner database access is not part of setup")
 
     assert runner_checkers.check_runner_access(42, include_outputs=True).state == StepState.PASSED
     assert all(call.args[0] != "TABLE" for call in workspace.grants.get_effective.call_args_list)
@@ -763,7 +698,7 @@ def test_sibling_schema_creation_is_idempotent(
     workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
     result = checkers.ensure_sibling_schemas()
 
-    assert result.id == SetupStepId.SCHEMAS
+    assert result.id == SetupStepId.STORAGE
     assert result.state == StepState.PASSED
     assert sql.execute_no_schema.call_count == 2
     assert all("CREATE SCHEMA IF NOT EXISTS" in call.args[0] for call in sql.execute_no_schema.call_args_list)
@@ -780,7 +715,7 @@ def test_existing_genie_schema_without_create_privilege_blocks_setup(
 
     result = checkers.ensure_sibling_schemas()
 
-    assert result.id == SetupStepId.SCHEMAS
+    assert result.id == SetupStepId.STORAGE
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "sibling_schema_permissions_missing"
     assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`genie` TO `app-sp-id`;" in result.instructions
@@ -840,35 +775,51 @@ def test_existing_sibling_schema_without_user_grant_authority_still_passes(
     assert result.instructions == ()
 
 
-def test_lakebase_connectivity_failure_is_sanitized(checkers: ResourceCheckers, pg: MagicMock) -> None:
-    """Returning database exceptions would disclose secrets and permit log injection."""
-    pg.query.side_effect = RuntimeError("password=secret\nforged")
+@pytest.mark.parametrize("provision", [True, False])
+def test_storage_passes_when_volume_and_sibling_schemas_are_available(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock, provision: bool
+) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
 
-    result = checkers.check_lakebase()
+    result = checkers.ensure_storage(provision=provision)
 
-    assert result.id == SetupStepId.LAKEBASE
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "lakebase_connectivity_failed"
-    assert "secret" not in result.summary
-    assert "\n" not in result.summary
+    assert result.id == SetupStepId.STORAGE
+    assert result.state == StepState.PASSED
+    assert all("CREATE SCHEMA IF NOT EXISTS" in call.args[0] for call in sql.execute_no_schema.call_args_list)
 
 
-def test_lakebase_connectivity_passes_after_non_mutating_probe(checkers: ResourceCheckers, pg: MagicMock) -> None:
-    """Replacing the health probe with a mutating statement would violate readiness checks."""
-    pg.query.return_value = [["1"]]
+def test_storage_reports_volume_failure_before_creating_schemas(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.READ_VOLUME)
 
-    result = checkers.check_lakebase()
+    result = checkers.ensure_storage(provision=True)
+
+    assert result.id == SetupStepId.STORAGE
+    assert result.code == "volume_permissions_missing"
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_reports_sibling_schema_failure(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+    sql.execute_no_schema.side_effect = RuntimeError("permission denied")
+
+    result = checkers.ensure_storage(provision=True)
+
+    assert result.id == SetupStepId.STORAGE
+    assert result.code == "sibling_schema_creation_failed"
+
+
+def test_catalog_check_accepts_request_scoped_reader_sql(
+    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    result = checkers.check_unity_catalog(reader_sql=sql)
 
     assert result.state == StepState.PASSED
-    pg.query.assert_called_once_with("SELECT 1")
-
-
-def test_lakebase_schema_creation_is_idempotent(checkers: ResourceCheckers, pg: MagicMock) -> None:
-    """Removing IF NOT EXISTS would make a repeated schema reconciliation fail."""
-    result = checkers.ensure_lakebase_schema()
-
-    assert result.state == StepState.PASSED
-    pg.execute_no_schema.assert_called_once_with('CREATE SCHEMA IF NOT EXISTS "dqx_studio"')
 
 
 def test_missing_warehouse_can_use_requires_action(checkers: ResourceCheckers, compute: MagicMock) -> None:
