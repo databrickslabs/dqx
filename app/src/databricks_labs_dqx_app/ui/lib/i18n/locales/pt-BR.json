@@ -3012,42 +3012,69 @@
     "whyNeeded": "Por que isso é necessário",
     "purposes": {
       "identity": "Uma entidade de serviço usada pelo DQX Studio para gerenciar recursos do aplicativo e executar operações de configuração.",
-      "volume": "Armazena a biblioteca DQX Core e o aplicativo executor de tarefas usados pelos jobs de perfilamento e qualidade de dados.",
       "unity_catalog": "Permite que o Studio crie e consulte seus esquemas, tabelas, visualizações temporárias e resultados de execução.",
-      "schemas": "Separa o estado do aplicativo, as visualizações temporárias e os objetos voltados ao Genie no Unity Catalog.",
       "lakebase": "Armazena o estado transacional do Studio, como regras, funções, configurações e agendamentos.",
       "warehouse": "Executa as consultas SQL do Studio para configuração, metadados, resultados e verificações interativas.",
       "task_runner": "Executa cargas de perfilamento e qualidade de dados baseadas em Spark fora do aplicativo web.",
       "wheels": "Mantém o executor de tarefas nas mesmas versões do DQX e do Studio usadas pelo aplicativo.",
       "migrations": "Cria e atualiza as tabelas Delta e Lakebase necessárias para esta versão do Studio.",
-      "activation": "Inicia as APIs e os serviços em segundo plano do Studio somente quando todas as dependências estão prontas."
+      "activation": "Inicia as APIs e os serviços em segundo plano do Studio somente quando todas as dependências estão prontas.",
+      "configuration": "O catálogo, o prefixo de armazenamento e o grupo de público que o Studio usa para seus dados e acessos.",
+      "storage": "Cria os esquemas do Unity Catalog e o volume de wheels que guardam o estado do Studio, as views temporárias e os objetos para o Genie.",
+      "access": "Concede ao grupo de público e aos administradores o acesso ao workspace e aos dados de que precisam para usar o Studio.",
+      "app_sharing": "Confirma que o grupo de público pode abrir este aplicativo. O compartilhamento é gerenciado nas permissões do aplicativo."
     },
     "steps": {
       "identity": "Identidade do aplicativo",
-      "volume": "Volume de wheels",
       "unity_catalog": "Acesso ao Unity Catalog",
-      "schemas": "Esquemas do aplicativo",
       "lakebase": "Banco de dados Lakebase",
       "warehouse": "Armazém SQL",
       "task_runner": "Job do executor de tarefas",
       "wheels": "Wheels do aplicativo",
       "migrations": "Migrações do banco de dados",
-      "activation": "Ativar o Studio"
+      "activation": "Ativar o Studio",
+      "configuration": "Configuração do Studio",
+      "storage": "Esquemas e volume de armazenamento",
+      "access": "Acesso do público",
+      "app_sharing": "Compartilhamento do aplicativo"
     },
     "states": {
       "pending": "Pendente",
       "running": "Em andamento",
       "passed": "Pronto",
       "action_required": "Ação necessária",
-      "failed": "Precisa de atenção"
+      "failed": "Precisa de atenção",
+      "warning": "Requer atenção"
     },
     "actions": {
       "reconcile": "Executar configuração",
       "verify_again": "Verificar novamente",
-      "openJobs": "Abrir jobs"
+      "openJobs": "Abrir jobs",
+      "configure": "Salvar configuração"
     },
     "instructions": "Como resolver",
-    "diagnosticCode": "Código: {{code}}"
+    "diagnosticCode": "Código: {{code}}",
+    "configuration": {
+      "catalog": "Catálogo",
+      "catalogHelp": "Um catálogo do Unity Catalog existente. O Studio cria seus esquemas aqui.",
+      "prefix": "Prefixo de armazenamento",
+      "prefixHelp": "Letras minúsculas, dígitos e sublinhados. Esquemas: <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
+      "audience_group": "Grupo de público",
+      "audience_groupHelp": "Um grupo de conta existente atribuído a este workspace. Os membros podem usar o Studio; as funções são atribuídas separadamente.",
+      "schemas": "Esquemas",
+      "submit": "Salvar e continuar",
+      "broadAudience": "Público amplo: todos os usuários do workspace",
+      "errors": {
+        "configuration_invalid": "Verifique o catálogo, o prefixo e o nome do grupo.",
+        "catalog_not_found": "O catálogo não existe ou você não tem acesso a ele.",
+        "audience_group_not_found": "O grupo não existe neste workspace.",
+        "configuration_locked": "O armazenamento já foi provisionado; a configuração não pode mais ser alterada.",
+        "configuration_managed_by_deployment": "Esta configuração é gerenciada pela implantação.",
+        "catalog_check_failed": "Não foi possível verificar o catálogo. Tente novamente.",
+        "group_check_failed": "Não foi possível verificar o grupo. Tente novamente.",
+        "default": "Não foi possível salvar a configuração."
+      }
+    }
   },
   "schedules": {
     "title": "Agendamentos",
