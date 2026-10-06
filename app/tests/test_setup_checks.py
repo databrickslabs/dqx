@@ -1,5 +1,6 @@
 """Behavior tests for deployment-agnostic setup resource capability checks."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
@@ -90,6 +91,29 @@ def checkers(
     compute: MagicMock,
 ) -> ResourceCheckers:
     return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id="app-sp-id")
+
+
+def _simulate_creation(workspace: MagicMock, sql: MagicMock, owner: str = "app-sp-id") -> None:
+    """Make schemas and the volume appear, owned by *owner*, once their CREATE statement runs."""
+    created: set[str] = set()
+
+    def execute(statement: str) -> None:
+        created.add(statement.split(" EXISTS ")[1].replace("`", ""))
+
+    def get_schema(full_name: str) -> SimpleNamespace:
+        if full_name not in created:
+            raise NotFound("missing")
+        return SimpleNamespace(owner=owner)
+
+    def read_volume(full_name: str) -> SimpleNamespace:
+        if full_name not in created:
+            raise NotFound("missing")
+        return SimpleNamespace(owner=owner)
+
+    sql.execute_no_schema.side_effect = execute
+    workspace.schemas.get.side_effect = get_schema
+    workspace.volumes.read.side_effect = read_volume
+    workspace.grants.get_effective.return_value = _effective_permissions()
 
 
 @pytest.fixture
@@ -609,8 +633,7 @@ def test_catalog_check_accepts_request_scoped_reader_sql(
 def test_storage_provisions_missing_schemas_and_volume(
     checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
 ) -> None:
-    workspace.schemas.get.side_effect = NotFound("missing")
-    workspace.volumes.read.side_effect = NotFound("missing")
+    _simulate_creation(workspace, sql)
 
     step = checkers.ensure_storage(provision=True)
 
@@ -649,6 +672,100 @@ def test_storage_refuses_unmanaged_existing_schema(
 
     assert step.code == "storage_collision"
     assert "`main`.`dqx_studio_tmp`" in "\n".join(step.instructions)
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_schema_with_manage_only_requires_usage_grants(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="deployer@example.com")
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.MANAGE)
+
+    step = checkers.ensure_storage(provision=False)
+
+    assert step.code == "storage_permissions_missing"
+    assert step.instructions[0] == "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio` TO `app-sp-id`;"
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_schema_with_all_privileges_but_no_manage_is_a_collision(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    assert checkers.ensure_storage(provision=True).code == "storage_collision"
+
+
+def test_storage_schema_with_owner_unknown_relies_on_manage(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner=None)
+    workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    assert checkers.ensure_storage(provision=False).code == "storage_collision"
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES, Privilege.MANAGE)
+    assert checkers.ensure_storage(provision=False).state == StepState.PASSED
+
+
+def test_storage_schema_lookup_error_is_unknown(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.side_effect = PermissionError("denied")
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_permission_check_failed"
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_volume_lookup_error_is_unknown(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.volumes.read.side_effect = PermissionError("denied")
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_permission_check_failed"
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_partial_provisioning_still_verifies_existing_volume_access(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    def get_schema(full_name: str) -> SimpleNamespace:
+        if full_name == "main.dqx_studio_tmp" and not sql.execute_no_schema.called:
+            raise NotFound("missing")
+        return SimpleNamespace(owner="app-sp-id")
+
+    workspace.schemas.get.side_effect = get_schema
+    workspace.volumes.read.return_value = SimpleNamespace(owner="foreign")
+    workspace.grants.get_effective.return_value = _effective_permissions()
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "volume_permissions_missing"
+
+
+def test_created_schema_that_is_not_studio_managed_is_a_collision(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    _simulate_creation(workspace, sql, owner="someone-else")
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_collision"
+
+
+def test_catalog_with_unsafe_name_skips_best_effort_grants(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock
+) -> None:
+    unsafe = replace(resources, volume=replace(resources.volume, catalog="bad`name"))
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+    checkers = ResourceCheckers(resources=unsafe, workspace=workspace, sql=sql, compute=compute, app_sp_id="app-sp-id")
+
+    checkers.check_unity_catalog()
+
     sql.execute_no_schema.assert_not_called()
 
 

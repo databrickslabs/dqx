@@ -15,6 +15,10 @@ from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
+_CATALOG_PRIVILEGE_ORDER = ("USE_CATALOG", "CREATE_SCHEMA")
+_SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
+_SCHEMA_PRIVILEGE_ORDER = ("USE_SCHEMA", "CREATE_TABLE")
+_VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
 logger = logging.getLogger(__name__)
 
 
@@ -237,38 +241,23 @@ class ResourceCheckers:
             self._resources.genie_schema,
             self._resources.demo_schema,
         )
-        collisions: list[str] = []
         missing_schemas: list[str] = []
+        collisions: list[str] = []
+        incomplete: list[tuple[str, frozenset[str]]] = []
         for schema in schemas:
-            full_name = f"{catalog}.{schema}"
-            try:
-                existing = self._workspace.schemas.get(full_name)
-            except NotFound:
+            status, missing = self._schema_status(schema, app_sp)
+            if status == "failed":
+                return _storage_check_failed()
+            if status == "missing":
                 missing_schemas.append(schema)
-                continue
-            except Exception:
-                return _storage_check_failed()
-            owner = getattr(existing, "owner", None)
-            if isinstance(owner, str) and owner.casefold() == app_sp.casefold():
-                continue
-            privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=frozenset({"MANAGE"}))
-            if privileges is None:
-                return _storage_check_failed()
-            if "MANAGE" not in privileges:
-                collisions.append(f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}")
+            elif status == "collision":
+                collisions.append(schema)
+            elif status == "incomplete":
+                incomplete.append((schema, missing))
         if collisions:
-            return SetupStep(
-                id=SetupStepId.STORAGE,
-                state=StepState.ACTION_REQUIRED,
-                code="storage_collision",
-                summary="A schema with a Studio storage name already exists and is not managed by DQX Studio.",
-                instructions=tuple(
-                    f"Schema {name} already exists. Choose a different storage prefix, or drop or rename the "
-                    "existing schema, then verify again."
-                    for name in collisions
-                ),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
+            return self._collision_step(collisions)
+        if incomplete:
+            return self._schema_permissions_step(incomplete, app_sp)
 
         try:
             volume_exists = self._volume_exists()
@@ -284,9 +273,78 @@ class ResourceCheckers:
                     instructions=("Run make app-deploy again to create the Studio schemas and wheels volume.",),
                     actions=(SetupActionId.VERIFY_AGAIN,),
                 )
-            return self._create_storage(missing_schemas, volume_exists)
-
+            created = self._create_storage(missing_schemas, volume_exists)
+            if created is not None:
+                return created
+            # Creation is idempotent, so a pre-existing object may have been adopted by mistake.
+            recheck_collisions: list[str] = []
+            for schema in missing_schemas:
+                status, _ = self._schema_status(schema, app_sp)
+                if status == "failed":
+                    return _storage_check_failed()
+                if status == "missing":
+                    return _creation_failed()
+                if status != "ok":
+                    recheck_collisions.append(schema)
+            if recheck_collisions:
+                return self._collision_step(recheck_collisions)
         return self._check_volume_access(app_sp)
+
+    def _schema_status(self, schema: str, app_sp: str) -> tuple[str, frozenset[str]]:
+        """Classify a storage schema as missing, ok, collision, incomplete or failed.
+
+        A schema is Studio-managed when the app service principal owns it, or holds
+        MANAGE together with USE SCHEMA and CREATE TABLE.
+        """
+        full_name = f"{self._resources.volume.catalog}.{schema}"
+        try:
+            existing = self._workspace.schemas.get(full_name)
+        except NotFound:
+            return "missing", frozenset()
+        except Exception:
+            return "failed", frozenset()
+        owner = getattr(existing, "owner", None)
+        if isinstance(owner, str) and owner.casefold() == app_sp.casefold():
+            return "ok", frozenset()
+        privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES)
+        if privileges is None:
+            return "failed", frozenset()
+        if "MANAGE" not in privileges:
+            return "collision", frozenset()
+        missing = frozenset(name for name in _SCHEMA_PRIVILEGES if not has_privilege(privileges, name))
+        return ("incomplete", missing) if missing else ("ok", frozenset())
+
+    def _collision_step(self, schemas: list[str]) -> SetupStep:
+        catalog = _instruction_identifier(self._resources.volume.catalog)
+        return SetupStep(
+            id=SetupStepId.STORAGE,
+            state=StepState.ACTION_REQUIRED,
+            code="storage_collision",
+            summary="A schema with a Studio storage name already exists and is not managed by DQX Studio.",
+            instructions=tuple(
+                f"Schema {catalog}.{_instruction_identifier(schema)} already exists. Choose a different storage "
+                "prefix, or drop or rename the existing schema, then verify again."
+                for schema in schemas
+            ),
+            actions=(SetupActionId.VERIFY_AGAIN,),
+        )
+
+    def _schema_permissions_step(self, incomplete: list[tuple[str, frozenset[str]]], app_sp: str) -> SetupStep:
+        catalog = _instruction_identifier(self._resources.volume.catalog)
+        principal = _instruction_identifier(app_sp)
+        return SetupStep(
+            id=SetupStepId.STORAGE,
+            state=StepState.ACTION_REQUIRED,
+            code="storage_permissions_missing",
+            summary="The app service principal needs additional permissions on a Studio schema.",
+            instructions=tuple(
+                "GRANT "
+                + ", ".join(name.replace("_", " ") for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
+                + f" ON SCHEMA {catalog}.{_instruction_identifier(schema)} TO {principal};"
+                for schema, missing in incomplete
+            ),
+            actions=(SetupActionId.VERIFY_AGAIN,),
+        )
 
     def _volume_exists(self) -> bool:
         try:
@@ -295,7 +353,8 @@ class ResourceCheckers:
             return False
         return True
 
-    def _create_storage(self, missing_schemas: list[str], volume_exists: bool) -> SetupStep:
+    def _create_storage(self, missing_schemas: list[str], volume_exists: bool) -> SetupStep | None:
+        """Create missing storage; return a failure step, or None on success."""
         try:
             catalog = self._sql.q(_validated_identifier(self._resources.volume.catalog))
             for schema in missing_schemas:
@@ -310,20 +369,15 @@ class ResourceCheckers:
                     f"{self._sql.q(_validated_identifier(volume.volume))}"
                 )
         except Exception:
-            return _action_required(
-                SetupStepId.STORAGE,
-                "storage_creation_failed",
-                "Could not create the required Studio schemas and wheels volume.",
-                action=SetupActionId.RECONCILE,
-            )
-        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+            return _creation_failed()
+        return None
 
     def _check_volume_access(self, app_sp: str) -> SetupStep:
         full_name = self._volume_full_name()
         privileges = self._inspector.privileges("VOLUME", full_name, app_sp, required=_VOLUME_PRIVILEGES)
         if privileges is None:
             return _storage_check_failed()
-        missing = [privilege for privilege in sorted(_VOLUME_PRIVILEGES) if not has_privilege(privileges, privilege)]
+        missing = [name for name in _VOLUME_PRIVILEGE_ORDER if not has_privilege(privileges, name)]
         if missing and not self._is_owner("VOLUME", full_name, app_sp):
             volume = self._resources.volume
             quoted_volume = ".".join(
@@ -343,7 +397,11 @@ class ResourceCheckers:
         return _passed(SetupStepId.STORAGE, "Studio storage is available.")
 
     def _grant_catalog_usage_to_audience(self) -> None:
-        catalog = self._sql.q(self._resources.volume.catalog)
+        try:
+            catalog = self._sql.q(_validated_identifier(self._resources.volume.catalog))
+        except Exception:
+            logger.warning("Could not grant audience principals USE CATALOG; verifying their access instead.")
+            return
         for principal in self._resources.audience.uc_principals:
             try:
                 self._sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG {catalog} TO {self._sql.q(principal)}")
@@ -435,9 +493,18 @@ def required_catalog_grants(app_sp: str, resources: ActiveResources) -> tuple[st
 def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
     quoted_catalog = _instruction_identifier(catalog)
     return tuple(
-        f"GRANT {', '.join(name.replace('_', ' ') for name in sorted(privileges, reverse=True))} "
+        f"GRANT {', '.join(name.replace('_', ' ') for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
         f"ON CATALOG {quoted_catalog} TO {_instruction_identifier(principal)};"
         for principal, privileges in missing
+    )
+
+
+def _creation_failed() -> SetupStep:
+    return _action_required(
+        SetupStepId.STORAGE,
+        "storage_creation_failed",
+        "Could not create the required Studio schemas and wheels volume.",
+        action=SetupActionId.RECONCILE,
     )
 
 
