@@ -1,8 +1,9 @@
-"""Live verification of Marketplace-bound Studio setup resources."""
+"""Live verification of Studio setup resources for bundle and Marketplace installs."""
 
 import asyncio
 import os
 from collections.abc import Callable
+from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
@@ -13,8 +14,19 @@ from databricks.sdk.service.jobs import JobRunAs
 from tests.integration.conftest import AppLiveSetup, LiveJob, LiveResources, grant_runner_wheel_privileges
 
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
+from databricks_labs_dqx_app.backend.setup.access import GENIE_ALLOWLIST, AudienceAccess
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
+from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import SetupState, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.resources import (
+    BootstrapResources,
+    LakebaseConnection,
+    build_active_resources,
+)
+from databricks_labs_dqx_app.backend.setup.storage import StudioStorage
 from databricks_labs_dqx_app.backend.startup import publish_wheels_to_volume
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -52,8 +64,8 @@ _EXPECTED_OLTP_TABLES = (
 )
 
 
-def test_bound_volume_derives_location_and_creates_siblings(live_resources: LiveResources) -> None:
-    """A bound volume selects the actual catalog/schema and publishes setup wheels."""
+def test_deployment_storage_is_verified_and_receives_wheels(live_resources: LiveResources) -> None:
+    """Deployment-provided storage is verified without provisioning and receives setup wheels."""
     resources = live_resources.resources
     volume = live_resources.volume
 
@@ -77,6 +89,83 @@ def test_bound_volume_derives_location_and_creates_siblings(live_resources: Live
     uploaded = live_resources.workspace.files.download(wheel_paths[0]).contents
     assert uploaded is not None
     assert uploaded.read() == live_resources.wheel.read_bytes()
+
+
+class _NoGenieSpaceSettings:
+    """Settings without a provisioned Genie space, so Genie sharing is not applicable."""
+
+    def get_setting(self, key: str) -> str | None:
+        """Return no stored value."""
+        return None
+
+    def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:
+        """Ignore writes; the test never persists settings."""
+
+
+def test_marketplace_setup_provisions_prefix_storage(
+    ws: WorkspaceClient,
+    make_marketplace_storage: Callable[[], StudioStorage],
+    live_warehouse: object,
+) -> None:
+    """Marketplace setup creates every prefix-derived schema and the wheels volume, then verifies access.
+
+    The test profile acts as the app service principal and owns the factory catalog. Audience
+    grant verification runs only when DQX_TEST_AUDIENCE_GROUP names an existing account group
+    assigned to the workspace; otherwise only storage is verified.
+    """
+    warehouse_id = getattr(getattr(live_warehouse, "response", None), "id", None)
+    if not isinstance(warehouse_id, str) or not warehouse_id:
+        raise RuntimeError("The test warehouse did not return an ID.")
+    audience_group = os.environ.get("DQX_TEST_AUDIENCE_GROUP", "").strip()
+    storage = make_marketplace_storage()
+    lakebase = LakebaseConnection(
+        "projects/unused/branches/unused/endpoints/unused", None, 5432, "databricks_postgres", None, None, "dqx_studio"
+    )
+    resources = build_active_resources(
+        BootstrapResources(lakebase, warehouse_id, None),
+        storage,
+        resolve_audience([audience_group or "dqx-integration-audience"], "admins", allow_broad=False),
+    )
+    sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=storage.catalog, schema=storage.schema)
+    app_identity = (ws.current_user.me().user_name or "").strip()
+    if not app_identity:
+        raise RuntimeError("The test profile did not return a workspace user name.")
+    checkers = ResourceCheckers(
+        resources=resources,
+        workspace=ws,
+        sql=sql,
+        compute=ComputeService(sp_ws=ws, app_settings=create_autospec(AppSettingsService, instance=True)),
+        app_sp_id=app_identity,
+    )
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.id == SetupStepId.STORAGE
+    assert step.state == StepState.PASSED
+    for schema in storage.schemas:
+        assert ws.schemas.get(f"{storage.catalog}.{schema}").name == schema
+    assert ws.volumes.read(f"{storage.catalog}.{storage.schema}.{storage.volume}").name == storage.volume
+    assert checkers.ensure_storage(provision=False).state == StepState.PASSED
+
+    if not audience_group:
+        return
+    assert checkers.check_unity_catalog().state == StepState.PASSED
+    # Activation creates the Genie allowlist views; stand-in tables let grants be applied and verified.
+    genie_schema = f"{sql.q(storage.catalog)}.{sql.q(storage.genie_schema)}"
+    for name in GENIE_ALLOWLIST:
+        sql.execute_no_schema(f"CREATE TABLE IF NOT EXISTS {genie_schema}.{sql.q(name)} (id INT)")
+    access = AudienceAccess(
+        resources=resources,
+        workspace=ws,
+        sql=sql,
+        settings=_NoGenieSpaceSettings(),
+        app_name="dqx-studio-integration",
+        dashboard_id="",
+    )
+
+    result = access.reconcile_access()
+
+    assert result.state == StepState.PASSED, result.instructions
 
 
 def test_job_update_preserves_runner_identity(live_job: LiveJob) -> None:

@@ -44,7 +44,7 @@ from databricks_labs_dqx_app.backend.setup.resources import (
     LakebaseConnection,
     parse_volume_path,
 )
-from databricks_labs_dqx_app.backend.setup.storage import StudioStorage
+from databricks_labs_dqx_app.backend.setup.storage import StudioStorage, derive_storage
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
@@ -225,6 +225,39 @@ def make_setup_schema(ws: WorkspaceClient) -> Generator[Callable[..., str], None
             pass
 
     yield from factory("setup temporary schema", create, delete)
+
+
+@pytest.fixture
+def make_marketplace_storage(
+    ws: WorkspaceClient,
+    make_catalog: Callable[[], object],
+    make_random: Callable[[int], str],
+) -> Generator[Callable[[], StudioStorage], None, None]:
+    """Reserve prefix-derived Marketplace storage in a test catalog; setup provisions it.
+
+    The factory creates nothing itself: Studio setup creates the schemas and wheels
+    volume under a random prefix, and the factory guarantees they are dropped.
+    """
+
+    def create() -> StudioStorage:
+        catalog = make_catalog()
+        catalog_name = getattr(catalog, "name", None)
+        if not isinstance(catalog_name, str) or not catalog_name:
+            raise RuntimeError("The test catalog did not return a name.")
+        return derive_storage(catalog_name, f"dqx_mkt_{make_random(10).lower()}")
+
+    def delete(storage: StudioStorage) -> None:
+        try:
+            ws.volumes.delete(f"{storage.catalog}.{storage.schema}.{storage.volume}")
+        except NotFound:
+            pass
+        for schema in storage.schemas:
+            try:
+                ws.schemas.delete(f"{storage.catalog}.{schema}", force=True)
+            except NotFound:
+                pass
+
+    yield from factory("Marketplace storage", create, delete)
 
 
 @pytest.fixture
