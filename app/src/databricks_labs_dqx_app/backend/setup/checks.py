@@ -5,7 +5,6 @@ import logging
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import EffectivePermissionsList
 
-from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege, missing_privileges
@@ -29,60 +28,51 @@ class ResourceCheckers:
         resources: ActiveResources,
         workspace: WorkspaceClient,
         sql: SqlExecutor,
-        pg: PgExecutor,
         compute: ComputeService,
         audience_groups: tuple[str, ...] = (),
     ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._sql = sql
-        self._pg = pg
         self._compute = compute
         self._audience_groups = audience_groups
         self._inspector = GrantInspector(workspace)
         self._app_sp: str | None = None
         self._app_sp_resolved = False
 
-    def check_app_identity(self) -> SetupStep:
-        """Verify that the app service principal identity can be resolved."""
-        if self._app_sp_id():
-            return _passed(SetupStepId.IDENTITY, "The app service principal identity is available.")
-        return SetupStep(
-            id=SetupStepId.IDENTITY,
-            state=StepState.ACTION_REQUIRED,
-            code="app_identity_unresolved",
-            summary="Could not resolve the app service principal identity.",
-            instructions=("Verify the Databricks App service principal binding.",),
-            actions=(SetupActionId.VERIFY_AGAIN,),
-        )
-
     def check_volume(self) -> SetupStep:
         """Verify that the app SP can read and write the wheels volume."""
         app_sp = self._app_sp_id()
         if not app_sp:
-            return _identity_required(SetupStepId.VOLUME)
+            return _identity_required(SetupStepId.STORAGE)
 
         response = self._effective_permissions("VOLUME", self._volume_full_name(), app_sp)
         if response is None:
             return _action_required(
-                SetupStepId.VOLUME,
+                SetupStepId.STORAGE,
                 "volume_permission_check_failed",
                 "Could not verify app service principal access to the wheels volume.",
             )
         missing = missing_privileges(response, _VOLUME_PRIVILEGES)
         if missing and not self._is_owner("VOLUME", self._volume_full_name(), app_sp):
             return SetupStep(
-                id=SetupStepId.VOLUME,
+                id=SetupStepId.STORAGE,
                 state=StepState.ACTION_REQUIRED,
                 code="volume_permissions_missing",
                 summary="The app service principal needs access to the wheels volume.",
                 instructions=_required_volume_grants(app_sp, self._resources),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
-        return _passed(SetupStepId.VOLUME, "The app service principal can access the wheels volume.")
+        return _passed(SetupStepId.STORAGE, "The app service principal can access the wheels volume.")
 
-    def check_unity_catalog(self) -> SetupStep:
-        """Verify catalog and main-schema privileges needed by DQX Studio."""
+    def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+        """Verify catalog and main-schema privileges needed by DQX Studio.
+
+        Args:
+            reader_sql: Administrator SQL executor for grant inspection. Accepted for
+                interface compatibility; the app service principal's own effective
+                permissions are inspected.
+        """
         app_sp = self._app_sp_id()
         if not app_sp:
             return _identity_required(SetupStepId.UNITY_CATALOG)
@@ -224,11 +214,27 @@ class ResourceCheckers:
             )
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
 
+    def ensure_storage(self, *, provision: bool) -> SetupStep:
+        """Verify the wheels volume, then create and verify the sibling schemas.
+
+        Args:
+            provision: Whether Studio owns provisioning of the storage. Accepted for
+                interface compatibility; sibling schemas are always created idempotently.
+
+        Returns:
+            The first step that did not pass, or a passed storage step.
+        """
+        for check in (self.check_volume, self.ensure_sibling_schemas):
+            step = check()
+            if step.state != StepState.PASSED:
+                return step
+        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+
     def ensure_sibling_schemas(self) -> SetupStep:
         """Create sibling schemas and verify the app can create views in them."""
         app_sp = self._app_sp_id()
         if not app_sp:
-            return _identity_required(SetupStepId.SCHEMAS)
+            return _identity_required(SetupStepId.STORAGE)
         try:
             catalog = _validated_identifier(self._resources.volume.catalog)
             schemas = (
@@ -239,7 +245,7 @@ class ResourceCheckers:
                 self._sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {self._sql.q(catalog)}.{self._sql.q(schema)}")
         except Exception:
             return _action_required(
-                SetupStepId.SCHEMAS,
+                SetupStepId.STORAGE,
                 "sibling_schema_creation_failed",
                 "Could not create the required application schemas.",
                 action=SetupActionId.RECONCILE,
@@ -249,7 +255,7 @@ class ResourceCheckers:
             response = self._effective_permissions("SCHEMA", full_name, app_sp)
             if response is None:
                 return _action_required(
-                    SetupStepId.SCHEMAS,
+                    SetupStepId.STORAGE,
                     "sibling_schema_permission_check_failed",
                     "Could not verify the app service principal's sibling-schema permissions.",
                 )
@@ -258,7 +264,7 @@ class ResourceCheckers:
                 quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
                 principal = _instruction_identifier(app_sp)
                 return SetupStep(
-                    id=SetupStepId.SCHEMAS,
+                    id=SetupStepId.STORAGE,
                     state=StepState.ACTION_REQUIRED,
                     code="sibling_schema_permissions_missing",
                     summary="The app service principal needs permission to create views in a sibling schema.",
@@ -273,33 +279,7 @@ class ResourceCheckers:
                 )
             except Exception:
                 logger.warning("Could not grant a configured audience group access to the temporary schema.")
-        return _passed(SetupStepId.SCHEMAS, "Required application schemas are available.")
-
-    def check_lakebase(self) -> SetupStep:
-        """Verify non-mutating connectivity to the configured Lakebase database."""
-        try:
-            self._pg.query("SELECT 1")
-        except Exception:
-            return _action_required(
-                SetupStepId.LAKEBASE,
-                "lakebase_connectivity_failed",
-                "Could not connect to the configured Lakebase database.",
-            )
-        return _passed(SetupStepId.LAKEBASE, "Lakebase connectivity is available.")
-
-    def ensure_lakebase_schema(self) -> SetupStep:
-        """Create the validated Lakebase schema if it is absent before migrations run."""
-        try:
-            schema = _validated_identifier(self._resources.lakebase.schema)
-            self._pg.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {self._pg.q(schema)}")
-        except Exception:
-            return _action_required(
-                SetupStepId.LAKEBASE,
-                "lakebase_schema_creation_failed",
-                "Could not create the required Lakebase schema.",
-                action=SetupActionId.RECONCILE,
-            )
-        return _passed(SetupStepId.LAKEBASE, "The required Lakebase schema is available.")
+        return _passed(SetupStepId.STORAGE, "Required application schemas are available.")
 
     def check_warehouse(
         self,

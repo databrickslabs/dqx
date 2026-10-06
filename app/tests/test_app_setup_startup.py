@@ -542,3 +542,60 @@ async def test_startup_reports_invalid_audience_configuration_and_does_not_activ
     assert report.current_step is SetupStepId.UNITY_CATALOG
     assert report.steps[0].code == "audience_configuration_invalid"
     assert report.steps[0].summary == "A valid Studio audience group is required."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("volume_name", ["wheels", "studio_wheels"])
+async def test_startup_configuration_reproduces_deployment_resources(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, volume_name: str
+) -> None:
+    """The interim deployment configuration must bind exactly the resources startup resolved."""
+    import dataclasses
+
+    from databricks_labs_dqx_app.backend import startup
+    from databricks_labs_dqx_app.backend.setup.configuration import ConfigurationSource
+    from databricks_labs_dqx_app.backend.setup.resources import build_active_resources
+
+    deployment = dataclasses.replace(
+        resources,
+        volume=VolumeLocation("main", "studio", volume_name, f"/Volumes/main/studio/{volume_name}"),
+    )
+    captured: dict[str, MagicMock] = {}
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+
+    def capture(**kwargs: MagicMock) -> MagicMock:
+        captured.update(kwargs)
+        return orchestrator
+
+    async def get_workspace() -> MagicMock:
+        return MagicMock()
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: deployment)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", capture)
+
+    context = await startup.start_studio(FastAPI())
+    assert context is not None
+
+    resolved = captured["configuration"].resolve()
+    assert resolved.source is ConfigurationSource.DEPLOYMENT
+    assert resolved.locked is True
+    assert resolved.error is None
+    assert build_active_resources(captured["bootstrap"], resolved.storage, resolved.audience) == deployment
+
+    bound = captured["binder"].bind(deployment)
+    assert bound.resources == deployment
+    for step in (bound.access.reconcile_access(), bound.access.check_app_sharing()):
+        assert step.state is StepState.PASSED
+        assert step.summary == "Audience access is verified in a later setup step."

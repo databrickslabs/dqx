@@ -70,7 +70,7 @@ def client(route_app_settings: MagicMock, checkers: MagicMock, obo_ws: MagicMock
     app.include_router(router, prefix="/api/v1/compute")
     app.dependency_overrides[get_app_settings_service] = lambda: route_app_settings
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws
-    app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(checkers=checkers)
+    app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(bound=SimpleNamespace(checkers=checkers))
     app.dependency_overrides[get_user_email] = lambda: "admin@x"
     app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
     return TestClient(app)
@@ -169,7 +169,9 @@ class TestSettings:
         sql_executor_mock.query.side_effect = _query
 
         orchestrator = MagicMock()
-        orchestrator.checkers.check_warehouse.return_value = SetupStep(id=SetupStepId.WAREHOUSE, state=StepState.PASSED)
+        orchestrator.bound.checkers.check_warehouse.return_value = SetupStep(
+            id=SetupStepId.WAREHOUSE, state=StepState.PASSED
+        )
         result = await save_compute_settings(
             ComputeSettingsIn(
                 sql_warehouse_id="wh-9",
@@ -242,6 +244,22 @@ class TestSettings:
         assert response.json()["warehouse_is_override"] is False
         checkers.check_warehouse.assert_not_called()
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("", user_email="admin@x")
+
+    def test_save_warehouse_requires_bound_storage(self, route_app_settings: MagicMock, obo_ws: MagicMock) -> None:
+        """Validating a warehouse needs storage-bound checkers; unconfigured storage is a curated 503."""
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1/compute")
+        app.dependency_overrides[get_app_settings_service] = lambda: route_app_settings
+        app.dependency_overrides[get_obo_ws] = lambda: obo_ws
+        app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(bound=None)
+        app.dependency_overrides[get_user_email] = lambda: "admin@x"
+        app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
+
+        response = TestClient(app).put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DQX Studio storage is not configured."
+        route_app_settings.save_sql_warehouse_id.assert_not_called()
 
     def test_save_warehouse_returns_curated_unavailable_response_without_setup_orchestrator(
         self, unavailable_client: TestClient

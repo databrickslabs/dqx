@@ -1,6 +1,7 @@
 """Post-migration activation and shutdown boundary for DQX Studio."""
 
 import asyncio
+import dataclasses
 import hashlib
 import io
 import inspect
@@ -71,8 +72,10 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 )
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
-from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
+from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
+from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.configuration import ConfigurationSource, ResolvedConfiguration
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import (
@@ -83,9 +86,10 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStepId,
     StepState,
 )
-from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator, StudioActivation
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
+from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator, StudioActivation
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources
 from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
+from databricks_labs_dqx_app.backend.setup.storage import DEFAULT_PREFIX, derive_storage
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -193,6 +197,82 @@ class _Activation(StudioActivation):
         await start_studio_background(self.context)
 
 
+@dataclass(frozen=True)
+class _LegacyConfiguration:
+    """Interim resolver exposing the deployment-bound volume as the Studio configuration."""
+
+    resolved: ResolvedConfiguration
+
+    def resolve(self) -> ResolvedConfiguration:
+        return self.resolved
+
+    def lock(self, *, user_email: str | None) -> None:
+        """Deployment-bound storage is always locked."""
+
+
+def _legacy_configuration(resources: ActiveResources) -> ResolvedConfiguration:
+    volume = resources.volume
+    try:
+        storage = derive_storage(
+            volume.catalog,
+            DEFAULT_PREFIX,
+            schema=volume.schema,
+            tmp_schema=resources.tmp_schema,
+            genie_schema=resources.genie_schema,
+            demo_schema=resources.demo_schema,
+        )
+    except InvalidParameterError:
+        return ResolvedConfiguration(
+            ConfigurationSource.DEPLOYMENT, None, None, None, True, "deployment_configuration_invalid"
+        )
+    storage = dataclasses.replace(storage, volume=volume.volume)
+    return ResolvedConfiguration(ConfigurationSource.DEPLOYMENT, None, storage, resources.audience, True)
+
+
+@dataclass(frozen=True)
+class _PendingAccess:
+    """Interim access checks until audience access verification is implemented."""
+
+    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+        return _pending_access_step(SetupStepId.ACCESS)
+
+    def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+        return _pending_access_step(SetupStepId.APP_SHARING)
+
+
+def _pending_access_step(step_id: SetupStepId) -> SetupStep:
+    return SetupStep(id=step_id, state=StepState.PASSED, summary="Audience access is verified in a later setup step.")
+
+
+@dataclass(frozen=True)
+class _Binder:
+    """Interim binder that builds storage-dependent collaborators for the deployment volume."""
+
+    sp_ws: WorkspaceClient
+    sp_sql: SqlExecutor
+    compute: ComputeService
+    activation: StudioActivation
+
+    def bind(self, resources: ActiveResources) -> BoundSetup:
+        async def publish_wheels() -> list[str]:
+            return await publish_wheels_to_volume(self.sp_ws, resources.volume.path)
+
+        return BoundSetup(
+            resources=resources,
+            checkers=ResourceCheckers(
+                resources=resources,
+                workspace=self.sp_ws,
+                sql=self.sp_sql,
+                compute=self.compute,
+                audience_groups=resources.audience.uc_principals,
+            ),
+            access=_PendingAccess(),
+            delta_migrations=MigrationRunner(self.sp_sql),
+            publish_wheels=publish_wheels,
+            activation=self.activation,
+        )
+
+
 async def start_studio(app: FastAPI) -> StartupContext | None:
     """Construct setup collaborators, reconcile readiness, and never abort lifespan."""
     setup_runtime.publish(SetupReport(state=SetupState.CHECKING, steps=()))
@@ -250,27 +330,23 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
     try:
         app_settings = AppSettingsService(sql=pg_executor)
         compute = ComputeService(sp_ws=sp_ws, app_settings=app_settings)
-
-        async def publish_wheels() -> list[str]:
-            return await publish_wheels_to_volume(sp_ws, resources.volume.path)
-
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
-            resources=resources,
-            checkers=ResourceCheckers(
-                resources=resources,
-                workspace=sp_ws,
-                sql=sp_sql,
-                pg=pg_executor,
-                compute=compute,
-                audience_groups=resources.audience.uc_principals,
+            bootstrap=BootstrapResources(
+                lakebase=resources.lakebase,
+                warehouse_id=resources.warehouse_id,
+                job_id=resources.job_id,
             ),
-            jobs=TaskRunnerJobManager(sp_ws),
+            bootstrap_checks=BootstrapCheckers(
+                workspace=sp_ws,
+                pg=pg_executor,
+                lakebase_schema=resources.lakebase.schema,
+            ),
             pg_migrations=PgMigrationRunner(pg_executor),
-            delta_migrations=MigrationRunner(sp_sql),
+            configuration=_LegacyConfiguration(_legacy_configuration(resources)),
+            binder=_Binder(sp_ws=sp_ws, sp_sql=sp_sql, compute=compute, activation=_Activation(context)),
+            jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
-            publish_wheels=publish_wheels,
-            activation=_Activation(context),
             app_sp_id=compute.sp_application_id(),
         )
         app.state.setup_orchestrator = orchestrator
@@ -300,7 +376,7 @@ def _resolve_resources() -> ActiveResources | None:
         volume = parse_volume_path(conf.wheels_volume)
     except Exception:
         _publish_unavailable(
-            SetupStepId.VOLUME,
+            SetupStepId.STORAGE,
             "wheels_volume_invalid",
             "A valid bound Unity Catalog wheels volume is required.",
         )
