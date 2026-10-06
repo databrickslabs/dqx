@@ -143,9 +143,13 @@ class BoundSetup:
 
 
 class StorageBinder(Protocol):
-    """Build storage-bound collaborators for resolved resources."""
+    """Build storage-bound collaborators for resolved resources.
 
-    def bind(self, resources: ActiveResources) -> BoundSetup: ...
+    Binding is asynchronous so an implementation can release collaborators bound to
+    previously resolved resources (for example, deactivate a running Studio) first.
+    """
+
+    async def bind(self, resources: ActiveResources) -> BoundSetup: ...
 
 
 class ConfigurationResolver(Protocol):
@@ -367,7 +371,7 @@ class SetupOrchestrator:
             )
         self._resolved = resolved
         try:
-            return resolved, self._configuration_step(resolved)
+            return resolved, await self._configuration_step(resolved)
         except Exception as error:
             logger.warning(f"Could not bind Studio setup collaborators ({type(error).__name__})")
             return None, _failed(
@@ -376,7 +380,7 @@ class SetupOrchestrator:
                 "Could not prepare Studio collaborators for the configured storage.",
             )
 
-    def _configuration_step(self, resolved: ResolvedConfiguration) -> SetupStep:
+    async def _configuration_step(self, resolved: ResolvedConfiguration) -> SetupStep:
         if resolved.error is not None:
             return SetupStep(
                 id=SetupStepId.CONFIGURATION,
@@ -395,7 +399,7 @@ class SetupOrchestrator:
             )
         resources = build_active_resources(self.bootstrap, resolved.storage, resolved.audience)
         if self.bound is None or self.bound.resources != resources:
-            self.bound = self.binder.bind(resources)
+            self.bound = await self.binder.bind(resources)
         return _passed(SetupStepId.CONFIGURATION, "Studio storage and audience are configured.")
 
     async def _ensure_storage(self, bound: BoundSetup, resolved: ResolvedConfiguration, actor: str | None) -> SetupStep:

@@ -132,7 +132,6 @@ def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
     assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
 
 
-
 def test_users_is_accepted_as_deployment_broad_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     from databricks_labs_dqx_app.backend.config import AppConfig
 
@@ -152,3 +151,10 @@ def test_deployment_storage_requires_explicit_catalog(monkeypatch: pytest.Monkey
     config = AppConfig()
     assert config.has_deployment_storage is True
     assert config.prefix == "studio"
+
+
+def test_no_volume_setting_is_required_at_startup() -> None:
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    assert not any("volume" in name for name in AppConfig.model_fields)
+    assert "VOLUME" not in (AppConfig.model_fields["require_task_runner"].description or "").upper()

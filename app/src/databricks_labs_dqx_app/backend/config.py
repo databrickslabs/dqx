@@ -37,7 +37,6 @@ class AppConfig(BaseSettings):
     demo_schema_name: str = Field(default="", validation_alias="DQX_DEMO_SCHEMA")
     default_dashboard_id: str = Field(default="", validation_alias="DQX_DEFAULT_DASHBOARD_ID")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
-    wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
 
     @property
     def has_deployment_storage(self) -> bool:
@@ -49,7 +48,7 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",
         description="Tag DAB-created main schema, demo schema, and wheels volume as Studio-owned.",
     )
-    # Production deploys bind ``job_id`` and ``wheels_volume`` from
+    # Production deploys bind ``job_id`` from
     # bundle resources, so missing values there indicate a misconfigured
     # deploy that would otherwise silently break profiler / dry-run /
     # schedules at first use. Setting ``DQX_REQUIRE_TASK_RUNNER=1``
@@ -59,7 +58,7 @@ class AppConfig(BaseSettings):
     require_task_runner: bool = Field(
         default=False,
         validation_alias="DQX_REQUIRE_TASK_RUNNER",
-        description="Require DQX_JOB_ID and DQX_WHEELS_VOLUME at startup (production deploys).",
+        description="Require DQX_JOB_ID at startup (production deploys).",
     )
     llm_endpoint: str = Field(default="databricks-claude-sonnet-4-5", validation_alias="DQX_LLM_ENDPOINT")
     # Hard cap on tokens generated per LLM call. Bounds cost/latency and
@@ -108,11 +107,7 @@ class AppConfig(BaseSettings):
         groups: list[str] = []
         for value in values:
             group = value.strip()
-            if (
-                not group
-                or "`" in group
-                or replace_control_characters(value) != value
-            ):
+            if not group or "`" in group or replace_control_characters(value) != value:
                 raise ValueError("DQX_USER_GROUPS must contain group names without backticks or control characters.")
             if group not in groups:
                 groups.append(group)

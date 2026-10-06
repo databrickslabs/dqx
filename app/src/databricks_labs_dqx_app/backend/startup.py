@@ -1,7 +1,6 @@
 """Post-migration activation and shutdown boundary for DQX Studio."""
 
 import asyncio
-import dataclasses
 import hashlib
 import io
 import inspect
@@ -10,12 +9,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend._scheduler_registry import get_scheduler, set_scheduler
-from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.config import AppConfig, conf
 from databricks_labs_dqx_app.backend.dependencies import (
     _build_column_reader,
     get_app_settings_service,
@@ -63,13 +61,12 @@ from databricks_labs_dqx_app.backend.services.score_view_service import ScoreVie
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
-from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.configuration import (
-    ConfigurationSource,
     ResolvedConfiguration,
-    SetupSettings,
+    SetupConfigurationStore,
+    resolve_configuration,
 )
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
@@ -83,8 +80,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator, StudioActivation
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources
-from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
-from databricks_labs_dqx_app.backend.setup.storage import DEFAULT_PREFIX, derive_storage
+from databricks_labs_dqx_app.backend.setup.resources import resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -193,95 +189,144 @@ class _Activation(StudioActivation):
 
 
 @dataclass(frozen=True)
-class _LegacyConfiguration:
-    """Interim resolver exposing the deployment-bound volume as the Studio configuration."""
+class _ConfigurationResolver:
+    """Resolve Studio storage and audience from deployment config or saved setup choices."""
 
-    resolved: ResolvedConfiguration
+    config: AppConfig
+    store: SetupConfigurationStore
 
     def resolve(self) -> ResolvedConfiguration:
-        return self.resolved
+        return resolve_configuration(self.config, self.store)
 
     def lock(self, *, user_email: str | None) -> None:
-        """Deployment-bound storage is always locked."""
+        self.store.lock(user_email=user_email)
 
 
-def _legacy_configuration(resources: ActiveResources) -> ResolvedConfiguration:
-    volume = resources.volume
-    try:
-        storage = derive_storage(
-            volume.catalog,
-            DEFAULT_PREFIX,
-            schema=volume.schema,
-            tmp_schema=resources.tmp_schema,
-            genie_schema=resources.genie_schema,
-            demo_schema=resources.demo_schema,
-        )
-    except InvalidParameterError:
-        return ResolvedConfiguration(
-            ConfigurationSource.DEPLOYMENT, None, None, None, True, "deployment_configuration_invalid"
-        )
-    storage = dataclasses.replace(storage, volume=volume.volume)
-    return ResolvedConfiguration(ConfigurationSource.DEPLOYMENT, None, storage, resources.audience, True)
-
-
-@dataclass(frozen=True)
+@dataclass
 class _Binder:
-    """Interim binder that builds storage-dependent collaborators for the deployment volume."""
+    """Build storage-dependent collaborators and the activation context for resolved resources."""
 
+    app: FastAPI
     sp_ws: WorkspaceClient
-    sp_sql: SqlExecutor
+    pg_executor: PgExecutor
     compute: ComputeService
     identity: BootstrapCheckers
-    activation: StudioActivation
-    settings: SetupSettings
+    settings: AppSettingsService
+    resource_tagger: ResourceTaggingService
+    context: StartupContext | None = None
 
-    def bind(self, resources: ActiveResources) -> BoundSetup:
+    async def bind(self, resources: ActiveResources) -> BoundSetup:
+        await self.release()
+        sp_sql = SqlExecutor(
+            ws=self.sp_ws,
+            warehouse_id=resources.warehouse_id,
+            catalog=resources.volume.catalog,
+            schema=resources.volume.schema,
+        )
+        app, sp_ws, pg_executor, resource_tagger = self.app, self.sp_ws, self.pg_executor, self.resource_tagger
+        context = StartupContext(
+            resources=resources,
+            runtime=application_runtime,
+            oltp_executor=pg_executor,
+            register_oltp=set_oltp_executor,
+            activation_hooks=(
+                lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
+            ),
+            background_hooks=(
+                lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
+                lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
+            ),
+            shutdown_hooks=(lambda: _stop_background_services(app),),
+        )
+        self.context = context
+
         async def publish_wheels() -> list[str]:
-            return await publish_wheels_to_volume(self.sp_ws, resources.volume.path)
+            return await publish_wheels_to_volume(sp_ws, resources.volume.path)
 
         return BoundSetup(
             resources=resources,
             checkers=ResourceCheckers(
                 resources=resources,
-                workspace=self.sp_ws,
-                sql=self.sp_sql,
+                workspace=sp_ws,
+                sql=sp_sql,
                 compute=self.compute,
                 app_sp_id=self.identity.app_sp_id(),
             ),
             access=AudienceAccess(
                 resources=resources,
-                workspace=self.sp_ws,
-                sql=self.sp_sql,
+                workspace=sp_ws,
+                sql=sp_sql,
                 settings=self.settings,
                 app_name=conf.app_slug_name,
                 dashboard_id=conf.default_dashboard_id,
             ),
-            delta_migrations=MigrationRunner(self.sp_sql),
+            delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
-            activation=self.activation,
+            activation=_Activation(context),
         )
 
+    async def release(self) -> None:
+        """Deactivate the context bound to the previously resolved resources, if any."""
+        context, self.context = self.context, None
+        if context is not None:
+            await deactivate_studio(context)
 
-async def start_studio(app: FastAPI) -> StartupContext | None:
-    """Construct setup collaborators, reconcile readiness, and never abort lifespan."""
+
+@dataclass
+class StudioLifecycle:
+    """Resources opened by *start_studio* that *stop_studio* must release.
+
+    Args:
+        pg_executor: Lakebase executor shared by every bound Studio context.
+        binder: Binder owning the currently bound Studio context, once constructed.
+    """
+
+    pg_executor: PgExecutor
+    binder: _Binder | None = None
+    closed: bool = False
+
+    async def stop(self) -> None:
+        """Deactivate the bound Studio context and close Lakebase exactly once."""
+        failures: list[BaseException] = []
+        if self.binder is not None:
+            try:
+                await self.binder.release()
+            except BaseException as error:
+                failures.append(error)
+        if not self.closed:
+            self.closed = True
+            try:
+                await asyncio.to_thread(self.pg_executor.close)
+            except BaseException as error:
+                failures.append(error)
+        _raise_cleanup_failures(failures)
+
+
+async def start_studio(app: FastAPI) -> StudioLifecycle | None:
+    """Open Lakebase, construct setup collaborators, reconcile readiness, and never abort lifespan.
+
+    Studio storage is not required at startup: it is resolved from deployment configuration
+    or saved setup choices and bound lazily by the setup orchestrator.
+
+    Args:
+        app: FastAPI application receiving the setup orchestrator on its state.
+
+    Returns:
+        The lifecycle to pass to *stop_studio*, or *None* when the Lakebase or warehouse
+        bindings are unavailable.
+    """
     setup_runtime.publish(SetupReport(state=SetupState.CHECKING, steps=()))
-    resources = _resolve_resources()
-    if resources is None:
+    bootstrap = _resolve_bootstrap()
+    if bootstrap is None:
         return None
 
     pg_executor: PgExecutor | None = None
     try:
         sp_ws = await get_sp_ws()
-        sp_sql = SqlExecutor(
-            ws=sp_ws,
-            warehouse_id=resources.warehouse_id,
-            catalog=resources.volume.catalog,
-            schema=resources.volume.schema,
-        )
         pg_executor = await asyncio.to_thread(
             build_pg_executor_from_connection,
             sp_ws,
-            resources.lakebase,
+            bootstrap.lakebase,
             token_refresh_minutes=conf.lakebase_token_refresh_minutes,
             token_refresh_retry_seconds=conf.lakebase_token_refresh_retry_seconds,
             token_refresh_retry_jitter=conf.lakebase_token_refresh_retry_jitter,
@@ -300,59 +345,43 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         )
         return None
 
-    resource_tagger = ResourceTaggingService(sp_ws)
-    context = StartupContext(
-        resources=resources,
-        runtime=application_runtime,
-        oltp_executor=pg_executor,
-        register_oltp=set_oltp_executor,
-        activation_hooks=(
-            lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
-        ),
-        background_hooks=(
-            lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
-            lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
-        ),
-        shutdown_hooks=(lambda: _stop_background_services(app, pg_executor),),
-        opened=True,
-    )
+    lifecycle = StudioLifecycle(pg_executor=pg_executor)
     try:
         app_settings = AppSettingsService(sql=pg_executor)
         compute = ComputeService(sp_ws=sp_ws, app_settings=app_settings)
         bootstrap_checks = BootstrapCheckers(
             workspace=sp_ws,
             pg=pg_executor,
-            lakebase_schema=resources.lakebase.schema,
+            lakebase_schema=bootstrap.lakebase.schema,
         )
+        binder = _Binder(
+            app=app,
+            sp_ws=sp_ws,
+            pg_executor=pg_executor,
+            compute=compute,
+            identity=bootstrap_checks,
+            settings=app_settings,
+            resource_tagger=ResourceTaggingService(sp_ws),
+        )
+        lifecycle.binder = binder
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
-            bootstrap=BootstrapResources(
-                lakebase=resources.lakebase,
-                warehouse_id=resources.warehouse_id,
-                job_id=resources.job_id,
-            ),
+            bootstrap=bootstrap,
             bootstrap_checks=bootstrap_checks,
             pg_migrations=PgMigrationRunner(pg_executor),
-            configuration=_LegacyConfiguration(_legacy_configuration(resources)),
-            binder=_Binder(
-                sp_ws=sp_ws,
-                sp_sql=sp_sql,
-                compute=compute,
-                identity=bootstrap_checks,
-                activation=_Activation(context),
-                settings=app_settings,
-            ),
+            configuration=_ConfigurationResolver(conf, SetupConfigurationStore(app_settings)),
+            binder=binder,
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
             app_sp_id=compute.sp_application_id(),
         )
         app.state.setup_orchestrator = orchestrator
         await orchestrator.reconcile()
-        return context
+        return lifecycle
     except BaseException as startup_error:
         cleanup_error: BaseException | None = None
         try:
-            await deactivate_studio(context)
+            await lifecycle.stop()
         except BaseException as error:
             cleanup_error = error
         if isinstance(startup_error, asyncio.CancelledError):
@@ -362,23 +391,17 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         raise
 
 
-async def stop_studio(context: StartupContext | None) -> None:
-    """Clean up every resource opened by *start_studio*."""
-    if context is not None:
-        await deactivate_studio(context)
+async def stop_studio(lifecycle: StudioLifecycle | None) -> None:
+    """Clean up every resource opened by *start_studio*.
+
+    Args:
+        lifecycle: Lifecycle returned by *start_studio*, or *None* when startup opened nothing.
+    """
+    if lifecycle is not None:
+        await lifecycle.stop()
 
 
-def _resolve_resources() -> ActiveResources | None:
-    try:
-        volume = parse_volume_path(conf.wheels_volume)
-    except Exception:
-        _publish_unavailable(
-            SetupStepId.STORAGE,
-            "wheels_volume_invalid",
-            "A valid bound Unity Catalog wheels volume is required.",
-        )
-        return None
-
+def _resolve_bootstrap() -> BootstrapResources | None:
     try:
         lakebase = resolve_lakebase_connection(conf, os.environ)
     except Exception:
@@ -402,26 +425,7 @@ def _resolve_resources() -> ActiveResources | None:
         )
         return None
 
-    try:
-        audience = resolve_audience(conf.user_groups, conf.admin_group, allow_broad=True)
-    except InvalidParameterError:
-        _publish_unavailable(
-            SetupStepId.UNITY_CATALOG,
-            "audience_configuration_invalid",
-            "A valid Studio audience group is required.",
-        )
-        return None
-
-    return ActiveResources(
-        volume=volume,
-        lakebase=lakebase,
-        warehouse_id=warehouse_id,
-        job_id=conf.job_id.strip() or None,
-        tmp_schema=conf.tmp_schema_name or f"{volume.schema}_tmp",
-        genie_schema=conf.genie_schema_name or f"{volume.schema}_genie",
-        demo_schema=conf.demo_schema_name or f"{volume.schema}_demo",
-        audience=audience,
-    )
+    return BootstrapResources(lakebase=lakebase, warehouse_id=warehouse_id, job_id=conf.job_id.strip() or None)
 
 
 def _publish_unavailable(step_id: SetupStepId, code: str, summary: str) -> None:
@@ -762,7 +766,7 @@ def _maybe_start_ai_bootstrap(
         logger.warning("Could not start the Studio AI bootstrap")
 
 
-async def _stop_background_services(app: FastAPI, pg_executor: PgExecutor) -> None:
+async def _stop_background_services(app: FastAPI) -> None:
     failures: list[BaseException] = []
     scheduler = get_scheduler()
     if scheduler is not None:
@@ -782,9 +786,4 @@ async def _stop_background_services(app: FastAPI, pg_executor: PgExecutor) -> No
             pass
         except BaseException as error:
             failures.append(error)
-
-    try:
-        await asyncio.to_thread(pg_executor.close)
-    except BaseException as error:
-        failures.append(error)
     _raise_cleanup_failures(failures)
