@@ -3044,13 +3044,18 @@
       "passed": "Pronto",
       "action_required": "Azione richiesta",
       "failed": "Richiede attenzione",
-      "warning": "Richiede attenzione"
+      "warning": "Avviso"
     },
     "actions": {
       "reconcile": "Esegui configurazione",
       "verify_again": "Verifica di nuovo",
       "openJobs": "Apri job",
       "configure": "Salva configurazione"
+    },
+    "warningsBanner": {
+      "title": "La configurazione di Studio presenta avvisi",
+      "description": "Studio è disponibile, ma un amministratore deve verificare quanto segue.",
+      "dismiss": "Ignora"
     },
     "instructions": "Come risolvere",
     "diagnosticCode": "Codice: {{code}}",

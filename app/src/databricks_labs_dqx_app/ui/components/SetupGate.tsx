@@ -20,6 +20,7 @@ import {
   SetupWizard,
 } from "@/components/setup/SetupWizard";
 import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
+import { SetupWarningsBanner } from "@/components/setup/SetupWarningsBanner";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -107,7 +108,14 @@ export function SetupGate({ children }: SetupGateProps) {
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
   const view = setupView(setupStatus.data.data);
-  if (view.kind === "ready") return <>{children}</>;
+  if (view.kind === "ready") {
+    return (
+      <>
+        <SetupWarningsBanner view={view} />
+        {children}
+      </>
+    );
+  }
 
   return (
     <SetupWizard
