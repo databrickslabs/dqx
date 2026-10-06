@@ -24,11 +24,7 @@ user_api_scopes:
 resource_specs:
   - name: dqx-sql-warehouse
     sql_warehouse_spec:
-      permission: CAN_USE
+      permission: CAN_MANAGE
   - name: dqx-lakebase
     postgres_spec:
       permission: CAN_CONNECT_AND_CREATE
-  - name: dqx-wheels-volume
-    uc_securable_spec:
-      securable_type: VOLUME
-      permission: WRITE_VOLUME
