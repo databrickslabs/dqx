@@ -107,7 +107,11 @@ class AppConfig(BaseSettings):
         groups: list[str] = []
         for value in values:
             group = value.strip()
-            if not group or "`" in group or replace_control_characters(value) != value:
+            if (
+                not group
+                or "`" in group
+                or replace_control_characters(value) != value
+            ):
                 raise ValueError("DQX_USER_GROUPS must contain group names without backticks or control characters.")
             if group not in groups:
                 groups.append(group)

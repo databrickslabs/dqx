@@ -399,6 +399,8 @@ class SetupOrchestrator:
             )
         resources = build_active_resources(self.bootstrap, resolved.storage, resolved.audience)
         if self.bound is None or self.bound.resources != resources:
+            # Clear first so a failed bind never leaves collaborators whose activation was released.
+            self.bound = None
             self.bound = await self.binder.bind(resources)
         return _passed(SetupStepId.CONFIGURATION, "Studio storage and audience are configured.")
 
