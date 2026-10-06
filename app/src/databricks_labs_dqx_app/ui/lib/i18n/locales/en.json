@@ -3044,13 +3044,18 @@
       "passed": "Ready",
       "action_required": "Action required",
       "failed": "Needs attention",
-      "warning": "Needs attention"
+      "warning": "Warning"
     },
     "actions": {
       "reconcile": "Run setup",
       "verify_again": "Verify again",
       "openJobs": "Open Jobs",
       "configure": "Save configuration"
+    },
+    "warningsBanner": {
+      "title": "Studio setup has warnings",
+      "description": "Studio is available, but an administrator should review the following.",
+      "dismiss": "Dismiss"
     },
     "instructions": "How to resolve this",
     "diagnosticCode": "Code: {{code}}",

@@ -15,6 +15,8 @@ type SetupConfigurationFormProps = {
   isSubmitting: boolean;
   errorCode?: string;
   onSubmit: (values: SetupConfigurationValues) => void;
+  /** Previously saved choices to edit; empty fields fall back to the defaults. */
+  initialValues?: Partial<SetupConfigurationValues>;
 };
 
 const FIELDS = ["catalog", "prefix", "audience_group"] as const;
@@ -23,13 +25,14 @@ export function SetupConfigurationForm({
   isSubmitting,
   errorCode,
   onSubmit,
+  initialValues,
 }: SetupConfigurationFormProps) {
   const { t } = useTranslation();
-  const [values, setValues] = useState<SetupConfigurationValues>({
-    catalog: "",
-    prefix: "dqx_studio",
-    audience_group: "",
-  });
+  const [values, setValues] = useState<SetupConfigurationValues>(() => ({
+    catalog: initialValues?.catalog || "",
+    prefix: initialValues?.prefix || "dqx_studio",
+    audience_group: initialValues?.audience_group || "",
+  }));
   const update =
     (key: keyof SetupConfigurationValues) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>

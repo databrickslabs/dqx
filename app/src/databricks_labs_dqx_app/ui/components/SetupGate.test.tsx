@@ -349,3 +349,106 @@ describe("setup configuration", () => {
     expect(html).toContain(en.setup.states.warning);
   });
 });
+
+function readyWithWarning(canManage: boolean): SetupStatusResponse {
+  return {
+    can_manage: canManage,
+    admin_group: "dqx-admins",
+    report: {
+      state: "ready",
+      steps: [
+        { id: "access", state: "passed" },
+        {
+          id: "app_sharing",
+          state: "warning",
+          code: "app_sharing_unverified",
+          summary: "Could not verify that Studio users can open the app.",
+          instructions: ["Share the app dqx-studio with group data-team."],
+          actions: ["verify_again"],
+        },
+      ],
+    },
+  };
+}
+
+describe("setup warnings banner", () => {
+  test("shows warning steps to administrators above Studio content", () => {
+    const markup = renderGate(readyWithWarning(true));
+
+    expect(markup).toContain("Studio content");
+    expect(markup).toContain(en.setup.warningsBanner.title);
+    expect(markup).toContain(en.setup.steps.app_sharing);
+    expect(markup).toContain(
+      "Could not verify that Studio users can open the app.",
+    );
+    expect(markup).toContain("Share the app dqx-studio with group data-team.");
+    expect(markup).toContain(en.setup.warningsBanner.dismiss);
+    expect(markup.indexOf(en.setup.warningsBanner.title)).toBeLessThan(
+      markup.indexOf("Studio content"),
+    );
+  });
+
+  test("never shows setup warnings to non-administrators", () => {
+    const markup = renderGate(readyWithWarning(false));
+
+    expect(markup).toContain("Studio content");
+    expect(markup).not.toContain(en.setup.warningsBanner.title);
+    expect(markup).not.toContain("Share the app");
+  });
+
+  test("is absent when the ready report has no warnings", () => {
+    const status = readyWithWarning(true);
+    status.report.steps = [{ id: "app_sharing", state: "passed" }];
+
+    expect(renderGate(status)).not.toContain(en.setup.warningsBanner.title);
+  });
+
+  test("warning state has its own label", () => {
+    expect(en.setup.states.warning).not.toBe(en.setup.states.failed);
+    expect(en.setup.states.warning).toBe("Warning");
+  });
+});
+
+describe("editable saved configuration", () => {
+  function savedStatus(): SetupStatusResponse {
+    const status = configurationStatus(true);
+    status.configuration = {
+      source: "saved",
+      catalog: "main",
+      prefix: "custom_prefix",
+      audience_group: "data-team",
+      schemas: ["custom_prefix", "custom_prefix_tmp"],
+      broad_audience: false,
+      locked: false,
+    };
+    status.report.current_step = "storage";
+    status.report.steps = [
+      { id: "identity", state: "passed" },
+      { id: "configuration", state: "passed", actions: ["configure"] },
+      {
+        id: "storage",
+        state: "action_required",
+        code: "storage_collision",
+        actions: ["verify_again"],
+      },
+    ];
+    return status;
+  }
+
+  test("a passed configuration step that advertises configure shows a prefilled form", () => {
+    const html = renderWizard(savedStatus());
+
+    expect(html).toContain('name="catalog"');
+    expect(html).toContain('value="main"');
+    expect(html).toContain('value="custom_prefix"');
+    expect(html).toContain('value="data-team"');
+    expect(html).toContain("custom_prefix_tmp");
+  });
+
+  test("a saved configuration without configure stays read-only", () => {
+    const status = savedStatus();
+    status.report.steps[1] = { id: "configuration", state: "passed" };
+
+    expect(renderWizard(status)).not.toContain('name="catalog"');
+  });
+});

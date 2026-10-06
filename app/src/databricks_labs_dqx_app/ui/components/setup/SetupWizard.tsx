@@ -256,6 +256,9 @@ function StepCard({
             )}
             {showForm && (
               <SetupConfigurationForm
+                initialValues={
+                  configuration?.source === "saved" ? configuration : undefined
+                }
                 isSubmitting={isConfiguring}
                 errorCode={configurationError}
                 onSubmit={(values) => onConfigure?.(values)}

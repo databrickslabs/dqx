@@ -3044,13 +3044,18 @@
       "passed": "Prêt",
       "action_required": "Action requise",
       "failed": "Attention requise",
-      "warning": "Attention requise"
+      "warning": "Avertissement"
     },
     "actions": {
       "reconcile": "Lancer la configuration",
       "verify_again": "Vérifier à nouveau",
       "openJobs": "Ouvrir les jobs",
       "configure": "Enregistrer la configuration"
+    },
+    "warningsBanner": {
+      "title": "La configuration de Studio comporte des avertissements",
+      "description": "Studio est disponible, mais un administrateur doit vérifier les points suivants.",
+      "dismiss": "Ignorer"
     },
     "instructions": "Comment résoudre ce problème",
     "diagnosticCode": "Code : {{code}}",
