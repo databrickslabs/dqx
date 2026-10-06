@@ -524,6 +524,37 @@ async def test_changed_configuration_is_rebound() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_rebind_clears_the_previous_bound_setup() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.WAREHOUSE: _action_required(SetupStepId.WAREHOUSE, "warehouse_permissions_missing")}
+    )
+    await harness.orchestrator.reconcile()
+    original_bind = harness.binder.bind
+
+    async def fail_bind(resources: ActiveResources) -> BoundSetup:
+        raise RuntimeError("previous context cleanup failed")
+
+    harness.orchestrator.binder = SimpleNamespace(bind=fail_bind)
+    harness.configuration.resolved = dataclasses.replace(
+        SAVED, choices=SetupChoices("other", "studio", "data-team"), storage=derive_storage("other", "studio")
+    )
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.CONFIGURATION).code == "configuration_binding_failed"
+    assert harness.orchestrator.bound is None
+
+    harness.orchestrator.binder = SimpleNamespace(bind=original_bind)
+    harness.configuration.resolved = SAVED
+    await harness.orchestrator.reconcile()
+
+    bound = harness.orchestrator.bound
+    assert bound is not None
+    assert bound.resources.volume.catalog == "main"
+    assert [resources.volume.catalog for resources in harness.binder.binds] == ["main", "main"]
+
+
+@pytest.mark.asyncio
 async def test_unity_catalog_check_receives_request_scoped_reader_sql() -> None:
     harness = _harness()
     reader_sql = create_autospec(SqlExecutor, instance=True)

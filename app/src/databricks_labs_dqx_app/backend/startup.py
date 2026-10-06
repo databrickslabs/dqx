@@ -238,12 +238,11 @@ class _Binder:
             ),
             shutdown_hooks=(lambda: _stop_background_services(app),),
         )
-        self.context = context
 
         async def publish_wheels() -> list[str]:
             return await publish_wheels_to_volume(sp_ws, resources.volume.path)
 
-        return BoundSetup(
+        bound = BoundSetup(
             resources=resources,
             checkers=ResourceCheckers(
                 resources=resources,
@@ -264,6 +263,9 @@ class _Binder:
             publish_wheels=publish_wheels,
             activation=_Activation(context),
         )
+        # Track the context only once every collaborator exists, so a failed bind leaves nothing behind.
+        self.context = context
+        return bound
 
     async def release(self) -> None:
         """Deactivate the context bound to the previously resolved resources, if any."""

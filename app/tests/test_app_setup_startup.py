@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from types import SimpleNamespace
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
@@ -405,6 +406,8 @@ async def test_startup_without_storage_configuration_opens_lakebase_and_waits_fo
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    sql_executor = MagicMock()
+    monkeypatch.setattr(startup, "SqlExecutor", sql_executor)
 
     lifecycle = await startup.start_studio(app)
 
@@ -415,6 +418,8 @@ async def test_startup_without_storage_configuration_opens_lakebase_and_waits_fo
     assert app.state.setup_orchestrator.bound is None
     await startup.stop_studio(lifecycle)
     pg_executor.close.assert_called_once()
+    sql_executor.assert_not_called()
+    workspace.statement_execution.execute_statement.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -692,3 +697,127 @@ async def test_configuration_resolver_reads_and_locks_saved_choices(
     assert resolved.audience is not None
     assert resolved.audience.groups == ("data-team",)
     app_settings.save_setting.assert_called_once_with("setup_storage_locked", "true", user_email="admin@example.com")
+
+
+_DEPLOYMENT_ENVIRONMENT = ("DQX_PREFIX", "DQX_SCHEMA", "DQX_TMP_SCHEMA", "DQX_GENIE_SCHEMA", "DQX_DEMO_SCHEMA")
+
+
+@dataclass
+class _DeploymentStartup:
+    """Real orchestrator, resolver and binder with stubbed workspace-facing collaborators."""
+
+    app: FastAPI
+    config: AppConfig
+    pg_executor: MagicMock
+    stop_background: AsyncMock
+    migration_failures: list[Exception]
+
+
+def _deployment_startup(monkeypatch: pytest.MonkeyPatch, catalog: str) -> _DeploymentStartup:
+    from databricks_labs_dqx_app.backend import startup
+
+    for name in _DEPLOYMENT_ENVIRONMENT:
+        monkeypatch.delenv(name, raising=False)
+    workspace = MagicMock()
+    workspace.current_user.me.return_value = SimpleNamespace(user_name="app-sp", id=None)
+    pg_executor = MagicMock()
+    app_settings = MagicMock()
+    app_settings.get_setting.return_value = None
+    lakebase = LakebaseConnection(
+        "projects/p/branches/b/endpoints/e", None, 5432, "databricks_postgres", None, None, "studio"
+    )
+    checkers = MagicMock()
+    checkers.check_unity_catalog.return_value = SetupStep(
+        id=SetupStepId.UNITY_CATALOG, state=StepState.ACTION_REQUIRED, code="catalog_access_missing"
+    )
+    stop_background = AsyncMock()
+    migration_failures: list[Exception] = []
+
+    def build_migrations(*_args: object) -> MagicMock:
+        if migration_failures:
+            raise migration_failures.pop()
+        return MagicMock()
+
+    async def get_workspace() -> MagicMock:
+        return workspace
+
+    config = AppConfig.model_validate({"catalog": catalog, "user_groups": ["data-team"]})
+    monkeypatch.setattr(startup, "_resolve_bootstrap", lambda: BootstrapResources(lakebase, "warehouse-id", None))
+    monkeypatch.setattr(startup, "conf", config)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: pg_executor)
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: checkers)
+    monkeypatch.setattr(startup, "MigrationRunner", build_migrations)
+    monkeypatch.setattr(startup, "_run_post_migration_startup", AsyncMock())
+    monkeypatch.setattr(startup, "_stop_background_services", stop_background)
+    return _DeploymentStartup(FastAPI(), config, pg_executor, stop_background, migration_failures)
+
+
+@pytest.mark.asyncio
+async def test_deployment_storage_binds_lazily_through_the_real_resolver_and_binder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    harness = _deployment_startup(monkeypatch, "main")
+
+    lifecycle = await startup.start_studio(harness.app)
+
+    report = setup_runtime.report()
+    bound = harness.app.state.setup_orchestrator.bound
+    assert lifecycle is not None
+    assert report.step(SetupStepId.CONFIGURATION).state is StepState.PASSED
+    assert report.current_step == SetupStepId.UNITY_CATALOG
+    assert bound is not None
+    assert bound.resources.volume.path == "/Volumes/main/dqx_studio/wheels"
+    assert bound.resources.tmp_schema == "dqx_studio_tmp"
+    assert bound.resources.audience.groups == ("data-team",)
+    await startup.stop_studio(lifecycle)
+    harness.pg_executor.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["deactivation", "collaborators"])
+async def test_failed_rebind_leaves_no_stale_binding_and_recovers(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    harness = _deployment_startup(monkeypatch, "main")
+    lifecycle = await startup.start_studio(harness.app)
+    assert lifecycle is not None
+    orchestrator = harness.app.state.setup_orchestrator
+    await orchestrator.bound.activation.activate()
+    assert startup.application_runtime.require_resources().volume.catalog == "main"
+
+    if failure == "deactivation":
+        harness.stop_background.side_effect = [RuntimeError("scheduler stop failed"), None, None]
+    else:
+        harness.migration_failures.append(RuntimeError("collaborator construction failed"))
+    monkeypatch.setattr(harness.config, "catalog", "other")
+
+    report = await orchestrator.reconcile()
+
+    assert report.step(SetupStepId.CONFIGURATION).code == "configuration_binding_failed"
+    assert orchestrator.bound is None
+    with pytest.raises(RuntimeError, match="resources are not ready"):
+        startup.application_runtime.require_resources()
+
+    await orchestrator.reconcile()
+    bound = orchestrator.bound
+    assert bound is not None
+    assert bound.resources.volume.path == "/Volumes/other/dqx_studio/wheels"
+    await bound.activation.activate()
+    assert startup.application_runtime.require_resources().volume.catalog == "other"
+    stops_before_shutdown = harness.stop_background.await_count
+
+    await startup.stop_studio(lifecycle)
+
+    assert harness.stop_background.await_count == stops_before_shutdown + 1
+    with pytest.raises(RuntimeError, match="resources are not ready"):
+        startup.application_runtime.require_resources()
+    harness.pg_executor.close.assert_called_once_with()
