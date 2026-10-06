@@ -40,6 +40,17 @@ def test_catalog_must_be_a_single_safe_identifier() -> None:
         derive_storage("", DEFAULT_PREFIX)
 
 
+def test_dotted_catalog_is_rejected() -> None:
+    with pytest.raises(InvalidParameterError):
+        derive_storage("a.b", DEFAULT_PREFIX)
+
+
+@pytest.mark.parametrize("override", ["schema", "tmp_schema", "genie_schema", "demo_schema"])
+def test_dotted_schema_override_is_rejected(override: str) -> None:
+    with pytest.raises(InvalidParameterError):
+        derive_storage("main", DEFAULT_PREFIX, **{override: "x.y"})
+
+
 def test_duplicate_schema_names_are_rejected() -> None:
     with pytest.raises(InvalidParameterError):
         derive_storage("main", "studio", tmp_schema="studio")

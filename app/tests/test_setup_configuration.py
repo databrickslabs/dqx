@@ -32,7 +32,7 @@ def test_no_inputs_requires_setup_form(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
     monkeypatch.delenv("DQX_ADMIN_GROUP", raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, SetupConfigurationStore(MemorySettings()))
 
     assert resolved.source == ConfigurationSource.NONE
@@ -50,7 +50,7 @@ def test_saved_choices_are_resolved_after_restart(monkeypatch: pytest.MonkeyPatc
     store = SetupConfigurationStore(MemorySettings())
     store.save(SetupChoices("main", "studio", "data-team"), user_email="admin@example.com")
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, store)
 
     assert resolved.source == ConfigurationSource.SAVED
@@ -70,7 +70,7 @@ def test_deployment_configuration_wins_over_saved_choices(monkeypatch: pytest.Mo
     monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, store)
 
     assert resolved.source == ConfigurationSource.DEPLOYMENT
@@ -88,7 +88,7 @@ def test_invalid_deployment_configuration_is_reported_not_raised(
     monkeypatch.delenv("DQX_TMP_SCHEMA", raising=False)
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, SetupConfigurationStore(MemorySettings()))
 
     assert resolved.source == ConfigurationSource.DEPLOYMENT
@@ -120,7 +120,7 @@ def test_deployment_derives_correct_tmp_schema_from_prefix(monkeypatch: pytest.M
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
     monkeypatch.delenv("DQX_DEMO_SCHEMA", raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, SetupConfigurationStore(MemorySettings()))
 
     assert resolved.source == ConfigurationSource.DEPLOYMENT
@@ -141,7 +141,7 @@ def test_deployment_respects_explicit_tmp_schema_override(monkeypatch: pytest.Mo
     monkeypatch.delenv("DQX_GENIE_SCHEMA", raising=False)
     monkeypatch.delenv("DQX_DEMO_SCHEMA", raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     resolved = resolve_configuration(config, SetupConfigurationStore(MemorySettings()))
 
     assert resolved.source == ConfigurationSource.DEPLOYMENT

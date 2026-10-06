@@ -425,6 +425,15 @@ studio_group_var = $(if $(STUDIO_USER_GROUP),$(if $(findstring studio_user_group
 studio_uc_var = $(if $(filter users,$(STUDIO_USER_GROUP)),$(if $(findstring studio_uc_principal,$(BUNDLE_VARS))$(findstring studio_user_group,$(BUNDLE_VARS)),,--var "studio_uc_principal=account users"))
 STUDIO_BUNDLE_VARS = $(studio_prefix_var) $(studio_group_var) $(studio_uc_var) $(BUNDLE_VARS)
 
+# The broad-mode keyword is exactly lowercase `users`; any other casing would be
+# deployed as a (non-existent) dedicated group, so reject it before deploying.
+studio_group_lower = $(subst U,u,$(subst S,s,$(subst E,e,$(subst R,r,$(STUDIO_USER_GROUP)))))
+ifneq ($(filter app-deploy,$(MAKECMDGOALS)),)
+ifneq ($(and $(filter users,$(studio_group_lower)),$(filter-out users,$(STUDIO_USER_GROUP))),)
+$(error Broad mode requires lowercase STUDIO_USER_GROUP=users)
+endif
+endif
+
 ##@ Build & lockfiles
 
 build: ## Build sdist + wheel (with --require-hashes against build-constraints)

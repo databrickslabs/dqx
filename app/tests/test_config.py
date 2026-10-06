@@ -138,18 +138,18 @@ def test_users_is_accepted_as_deployment_broad_mode(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setenv("DQX_USER_GROUPS", '["users"]')
 
-    assert AppConfig().user_groups == ["users"]
+    assert AppConfig(_env_file=None).user_groups == ["users"]
 
 
 def test_deployment_storage_requires_explicit_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     from databricks_labs_dqx_app.backend.config import AppConfig
 
     monkeypatch.delenv("DQX_CATALOG", raising=False)
-    assert AppConfig().has_deployment_storage is False
+    assert AppConfig(_env_file=None).has_deployment_storage is False
 
     monkeypatch.setenv("DQX_CATALOG", "main")
     monkeypatch.setenv("DQX_PREFIX", "studio")
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     assert config.has_deployment_storage is True
     assert config.prefix == "studio"
 

@@ -10,7 +10,6 @@ from databricks_labs_dqx_app.backend.volume import VolumeLocation
 DEFAULT_PREFIX = "dqx_studio"
 WHEELS_VOLUME_NAME = "wheels"
 _PREFIX_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
-_MAX_IDENTIFIER_LENGTH = 255
 
 
 @dataclass(frozen=True)
@@ -107,6 +106,6 @@ def _identifier(value: str, label: str) -> str:
         validate_identifier(value)
     except ValueError:
         raise InvalidParameterError(f"The {label} name is not a valid identifier.") from None
-    if "." in value or len(value) > _MAX_IDENTIFIER_LENGTH:
+    if "." in value:
         raise InvalidParameterError(f"The {label} name is not a valid identifier.")
     return value
