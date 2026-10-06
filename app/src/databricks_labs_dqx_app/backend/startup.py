@@ -266,7 +266,6 @@ class _Binder:
                 sql=self.sp_sql,
                 compute=self.compute,
                 app_sp_id=self.identity.app_sp_id(),
-                audience_groups=resources.audience.uc_principals,
             ),
             access=_PendingAccess(),
             delta_migrations=MigrationRunner(self.sp_sql),

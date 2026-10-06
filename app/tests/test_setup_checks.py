@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import (
     EffectivePermissionsList,
     EffectivePrivilege,
@@ -89,57 +90,6 @@ def checkers(
     compute: MagicMock,
 ) -> ResourceCheckers:
     return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id="app-sp-id")
-
-
-@pytest.mark.parametrize(
-    ("missing_privilege", "grant_privilege"),
-    [(Privilege.READ_VOLUME, "READ VOLUME"), (Privilege.WRITE_VOLUME, "WRITE VOLUME")],
-)
-def test_volume_missing_required_privilege_requires_action(
-    checkers: ResourceCheckers,
-    workspace: MagicMock,
-    missing_privilege: Privilege,
-    grant_privilege: str,
-) -> None:
-    """Dropping either required volume permission must make wheel storage unavailable."""
-    granted = {Privilege.READ_VOLUME, Privilege.WRITE_VOLUME} - {missing_privilege}
-    workspace.grants.get_effective.return_value = _effective_permissions(*granted)
-
-    result = checkers.check_volume()
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "volume_permissions_missing"
-    assert grant_privilege in "\n".join(result.instructions)
-
-
-def test_volume_with_read_and_write_privileges_passes(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """Changing complete volume access to a failure would block a usable installation."""
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.READ_VOLUME, Privilege.WRITE_VOLUME)
-
-    result = checkers.check_volume()
-
-    assert result.state == StepState.PASSED
-    assert result.code == ""
-
-
-def test_volume_with_all_privileges_passes(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """Treating ALL_PRIVILEGES literally would reject a fully authorized app identity."""
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
-
-    result = checkers.check_volume()
-
-    assert result.state == StepState.PASSED
-    assert result.code == ""
-
-
-def test_volume_owner_passes_without_explicit_privileges(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    workspace.grants.get_effective.return_value = _effective_permissions()
-    workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
-
-    result = checkers.check_volume()
-
-    assert result.state == StepState.PASSED
 
 
 @pytest.fixture
@@ -586,228 +536,66 @@ def test_runner_volume_check_rejects_invalid_identity(
     workspace.grants.get_effective.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("missing_privilege", "grant_privilege"),
-    [(Privilege.USE_CATALOG, "USE CATALOG"), (Privilege.CREATE_SCHEMA, "CREATE SCHEMA")],
-)
-def test_catalog_missing_required_privilege_requires_action(
-    checkers: ResourceCheckers,
-    workspace: MagicMock,
-    missing_privilege: Privilege,
-    grant_privilege: str,
+def test_catalog_check_requires_app_sp_catalog_privileges(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions(Privilege.USE_CATALOG)
+        return _effective_permissions(Privilege.USE_CATALOG, principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+
+    step = checkers.check_unity_catalog()
+
+    assert step.id == SetupStepId.UNITY_CATALOG
+    assert step.code == "catalog_permissions_missing"
+    assert step.instructions == ("GRANT CREATE SCHEMA ON CATALOG `main` TO `app-sp-id`;",)
+
+
+def test_catalog_check_reports_missing_audience_usage(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+        return _effective_permissions(principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+
+    step = checkers.check_unity_catalog()
+
+    assert step.code == "catalog_permissions_missing"
+    assert step.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `data-team`;",)
+
+
+def test_catalog_check_grants_audience_usage_best_effort(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
 ) -> None:
-    """Omitting a catalog capability must not permit schema reconciliation."""
-    granted = {Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA} - {missing_privilege}
-    workspace.grants.get_effective.return_value = _effective_permissions(*granted)
-
-    result = checkers.check_unity_catalog()
-
-    assert result.id == SetupStepId.UNITY_CATALOG
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "catalog_permissions_missing"
-    assert grant_privilege in "\n".join(result.instructions)
-
-
-def test_catalog_and_schema_with_all_privileges_passes(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """A full effective grant must imply each required catalog and schema capability."""
     workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+    sql.execute_no_schema.side_effect = RuntimeError("denied")
 
-    result = checkers.check_unity_catalog()
+    step = checkers.check_unity_catalog()
 
-    assert result.state == StepState.PASSED
-    assert result.code == ""
+    assert step.state == StepState.PASSED
+    sql.execute_no_schema.assert_called_once_with("GRANT USE CATALOG ON CATALOG `main` TO `data-team`")
 
 
-def test_catalog_and_schema_owners_pass_without_explicit_privileges(
-    checkers: ResourceCheckers, workspace: MagicMock
-) -> None:
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(),
-        _effective_permissions(),
-        _effective_permissions(Privilege.USE_CATALOG),
-    ]
+def test_catalog_owner_passes_without_explicit_privileges(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions()
+        return _effective_permissions(Privilege.USE_CATALOG, principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
     workspace.catalogs.get.return_value = SimpleNamespace(owner="app-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
 
-    result = checkers.check_unity_catalog()
-
-    assert result.state == StepState.PASSED
+    assert checkers.check_unity_catalog().state == StepState.PASSED
 
 
-@pytest.mark.parametrize(
-    ("missing_privilege", "grant_privilege"),
-    [(Privilege.USE_SCHEMA, "USE SCHEMA"), (Privilege.CREATE_TABLE, "CREATE TABLE")],
-)
-def test_main_schema_missing_required_privilege_requires_action(
-    checkers: ResourceCheckers,
-    workspace: MagicMock,
-    missing_privilege: Privilege,
-    grant_privilege: str,
-) -> None:
-    """Removing a main-schema capability must keep migrations from starting."""
-    granted = {Privilege.USE_SCHEMA, Privilege.CREATE_TABLE} - {missing_privilege}
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
-        _effective_permissions(*granted),
-    ]
+def test_catalog_check_unknown_when_grants_unreadable(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
 
-    result = checkers.check_unity_catalog()
+    step = checkers.check_unity_catalog()
 
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "catalog_permissions_missing"
-    assert grant_privilege in "\n".join(result.instructions)
-
-
-def test_catalog_and_main_schema_capabilities_pass(checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    """A fully capable app SP must be able to proceed to schema reconciliation."""
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
-        _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
-        _effective_permissions(Privilege.USE_CATALOG),
-    ]
-
-    result = checkers.check_unity_catalog()
-
-    assert result.state == StepState.PASSED
-    assert result.code == ""
-
-
-@pytest.mark.parametrize("user_permissions", [_effective_permissions(), RuntimeError("permission denied")])
-def test_catalog_readiness_does_not_require_account_users_access(
-    checkers: ResourceCheckers, workspace: MagicMock, user_permissions: EffectivePermissionsList | Exception
-) -> None:
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA),
-        _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
-        user_permissions,
-    ]
-
-    result = checkers.check_unity_catalog()
-
-    assert result.state == StepState.PASSED
-    assert result.instructions == ()
-    assert all(call.kwargs["principal"] == "app-sp-id" for call in workspace.grants.get_effective.call_args_list)
-
-
-def test_sibling_schema_creation_is_idempotent(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
-) -> None:
-    """Removing IF NOT EXISTS would make a second setup reconciliation fail."""
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
-    result = checkers.ensure_sibling_schemas()
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.state == StepState.PASSED
-    assert sql.execute_no_schema.call_count == 2
-    assert all("CREATE SCHEMA IF NOT EXISTS" in call.args[0] for call in sql.execute_no_schema.call_args_list)
-
-
-def test_existing_genie_schema_without_create_privilege_blocks_setup(
-    checkers: ResourceCheckers, workspace: MagicMock
-) -> None:
-    """A shared Genie schema must not let setup claim views can be created."""
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.ALL_PRIVILEGES),
-        _effective_permissions(Privilege.USE_SCHEMA),
-    ]
-
-    result = checkers.ensure_sibling_schemas()
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "sibling_schema_permissions_missing"
-    assert "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`genie` TO `app-sp-id`;" in result.instructions
-
-
-def test_app_owned_sibling_schemas_pass_without_explicit_grants(
-    checkers: ResourceCheckers, workspace: MagicMock
-) -> None:
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(),
-        _effective_permissions(),
-        _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE),
-        _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT),
-    ]
-    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
-
-    result = checkers.ensure_sibling_schemas()
-
-    assert result.state == StepState.PASSED
-
-
-def test_sibling_schemas_do_not_grant_schema_wide_genie_select(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
-) -> None:
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.ALL_PRIVILEGES),
-        _effective_permissions(Privilege.ALL_PRIVILEGES),
-        _effective_permissions(),
-        _effective_permissions(),
-    ]
-
-    result = checkers.ensure_sibling_schemas()
-
-    assert result.state == StepState.PASSED
-    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
-    assert not any("account users" in statement for statement in statements)
-    assert not any("SELECT ON SCHEMA" in statement for statement in statements)
-
-
-@pytest.mark.parametrize("user_permissions", [_effective_permissions(), RuntimeError("permission denied")])
-def test_existing_sibling_schema_without_user_grant_authority_still_passes(
-    checkers: ResourceCheckers,
-    sql: MagicMock,
-    workspace: MagicMock,
-    user_permissions: EffectivePermissionsList | Exception,
-) -> None:
-    workspace.grants.get_effective.side_effect = [
-        _effective_permissions(Privilege.ALL_PRIVILEGES),
-        _effective_permissions(Privilege.ALL_PRIVILEGES),
-        user_permissions,
-    ]
-    sql.execute_no_schema.side_effect = [None, None, RuntimeError("permission denied")]
-
-    result = checkers.ensure_sibling_schemas()
-
-    assert result.state == StepState.PASSED
-    assert result.instructions == ()
-
-
-@pytest.mark.parametrize("provision", [True, False])
-def test_storage_passes_when_volume_and_sibling_schemas_are_available(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock, provision: bool
-) -> None:
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
-
-    result = checkers.ensure_storage(provision=provision)
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.state == StepState.PASSED
-    assert all("CREATE SCHEMA IF NOT EXISTS" in call.args[0] for call in sql.execute_no_schema.call_args_list)
-
-
-def test_storage_reports_volume_failure_before_creating_schemas(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
-) -> None:
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.READ_VOLUME)
-
-    result = checkers.ensure_storage(provision=True)
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.code == "volume_permissions_missing"
-    sql.execute_no_schema.assert_not_called()
-
-
-def test_storage_reports_sibling_schema_failure(
-    checkers: ResourceCheckers, sql: MagicMock, workspace: MagicMock
-) -> None:
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
-    sql.execute_no_schema.side_effect = RuntimeError("permission denied")
-
-    result = checkers.ensure_storage(provision=True)
-
-    assert result.id == SetupStepId.STORAGE
-    assert result.code == "sibling_schema_creation_failed"
+    assert step.code == "catalog_permission_check_failed"
+    assert "READ METADATA" in "\n".join(step.instructions)
 
 
 def test_catalog_check_accepts_request_scoped_reader_sql(
@@ -815,9 +603,109 @@ def test_catalog_check_accepts_request_scoped_reader_sql(
 ) -> None:
     workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
 
-    result = checkers.check_unity_catalog(reader_sql=sql)
+    assert checkers.check_unity_catalog(reader_sql=sql).state == StepState.PASSED
 
-    assert result.state == StepState.PASSED
+
+def test_storage_provisions_missing_schemas_and_volume(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.side_effect = NotFound("missing")
+    workspace.volumes.read.side_effect = NotFound("missing")
+
+    step = checkers.ensure_storage(provision=True)
+
+    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
+    assert step.state == StepState.PASSED
+    assert statements == [
+        "CREATE SCHEMA IF NOT EXISTS `main`.`dqx_studio`",
+        "CREATE SCHEMA IF NOT EXISTS `main`.`dqx_studio_tmp`",
+        "CREATE SCHEMA IF NOT EXISTS `main`.`genie`",
+        "CREATE SCHEMA IF NOT EXISTS `main`.`studio_demo`",
+        "CREATE VOLUME IF NOT EXISTS `main`.`dqx_studio`.`wheels`",
+    ]
+
+
+def test_storage_creation_failure_requests_reconcile(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.side_effect = NotFound("missing")
+    workspace.volumes.read.side_effect = NotFound("missing")
+    sql.execute_no_schema.side_effect = RuntimeError("permission denied")
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_creation_failed"
+    assert step.actions == (SetupActionId.RECONCILE,)
+    assert "permission denied" not in step.summary
+
+
+def test_storage_refuses_unmanaged_existing_schema(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.USE_SCHEMA)
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_collision"
+    assert "`main`.`dqx_studio_tmp`" in "\n".join(step.instructions)
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_accepts_owned_existing_schemas_and_volume(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.grants.get_effective.return_value = _effective_permissions()
+
+    assert checkers.ensure_storage(provision=True).state == StepState.PASSED
+
+
+def test_dab_storage_is_verified_not_created(checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock) -> None:
+    workspace.schemas.get.side_effect = NotFound("missing")
+
+    step = checkers.ensure_storage(provision=False)
+
+    assert step.code == "storage_missing"
+    assert "make app-deploy" in "\n".join(step.instructions)
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_dab_schema_with_manage_is_accepted(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="deployer@example.com")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="deployer@example.com")
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES, Privilege.MANAGE)
+
+    assert checkers.ensure_storage(provision=False).state == StepState.PASSED
+
+
+def test_storage_reports_unknown_when_schema_grants_unreadable(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+
+    step = checkers.ensure_storage(provision=True)
+
+    assert step.code == "storage_permission_check_failed"
+    sql.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("missing_privilege", "grant_privilege"),
+    [(Privilege.READ_VOLUME, "READ VOLUME"), (Privilege.WRITE_VOLUME, "WRITE VOLUME")],
+)
+def test_existing_volume_requires_read_and_write(
+    checkers: ResourceCheckers, workspace: MagicMock, missing_privilege: Privilege, grant_privilege: str
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="app-sp-id")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="someone-else")
+    granted = {Privilege.READ_VOLUME, Privilege.WRITE_VOLUME} - {missing_privilege}
+    workspace.grants.get_effective.return_value = _effective_permissions(*granted)
+
+    step = checkers.ensure_storage(provision=False)
+
+    assert step.code == "volume_permissions_missing"
+    assert step.instructions == (f"GRANT {grant_privilege} ON VOLUME `main`.`dqx_studio`.`wheels` TO `app-sp-id`;",)
 
 
 @pytest.mark.parametrize("app_sp_id", ["", "   ", "app-sp\nid"])
@@ -830,12 +718,7 @@ def test_unresolved_app_identity_requires_action_for_storage_checks(
 ) -> None:
     checkers = ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id=app_sp_id)
 
-    for result in (
-        checkers.check_volume(),
-        checkers.check_unity_catalog(),
-        checkers.ensure_sibling_schemas(),
-        checkers.ensure_storage(provision=True),
-    ):
+    for result in (checkers.check_unity_catalog(), checkers.ensure_storage(provision=True)):
         assert result.state == StepState.ACTION_REQUIRED
         assert result.code == "app_identity_unresolved"
     workspace.current_user.me.assert_not_called()
@@ -847,7 +730,7 @@ def test_storage_checks_use_injected_identity_without_scim_lookup(
 ) -> None:
     workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
 
-    assert checkers.check_volume().state == StepState.PASSED
+    assert checkers.check_unity_catalog().state == StepState.PASSED
     workspace.current_user.me.assert_not_called()
 
 

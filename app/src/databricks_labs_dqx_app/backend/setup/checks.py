@@ -3,11 +3,11 @@
 import logging
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.catalog import EffectivePermissionsList
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
-from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege, missing_privileges
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -15,7 +15,6 @@ from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
-_SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +28,6 @@ class ResourceCheckers:
         compute: Warehouse access inspection service.
         app_sp_id: Resolved app service principal name; an empty string means the
             identity is unresolved and identity-dependent checks require action.
-        audience_groups: Unity Catalog audience principals.
     """
 
     def __init__(
@@ -40,74 +38,65 @@ class ResourceCheckers:
         sql: SqlExecutor,
         compute: ComputeService,
         app_sp_id: str,
-        audience_groups: tuple[str, ...] = (),
     ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._sql = sql
         self._compute = compute
-        self._audience_groups = audience_groups
         self._inspector = GrantInspector(workspace)
         self._app_sp = "" if _has_control_characters(app_sp_id) else app_sp_id.strip()
 
-    def check_volume(self) -> SetupStep:
-        """Verify that the app SP can read and write the wheels volume."""
-        app_sp = self._app_sp
-        if not app_sp:
-            return _identity_required(SetupStepId.STORAGE)
-
-        response = self._effective_permissions("VOLUME", self._volume_full_name(), app_sp)
-        if response is None:
-            return _action_required(
-                SetupStepId.STORAGE,
-                "volume_permission_check_failed",
-                "Could not verify app service principal access to the wheels volume.",
-            )
-        missing = missing_privileges(response, _VOLUME_PRIVILEGES)
-        if missing and not self._is_owner("VOLUME", self._volume_full_name(), app_sp):
-            return SetupStep(
-                id=SetupStepId.STORAGE,
-                state=StepState.ACTION_REQUIRED,
-                code="volume_permissions_missing",
-                summary="The app service principal needs access to the wheels volume.",
-                instructions=_required_volume_grants(app_sp, self._resources),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
-        return _passed(SetupStepId.STORAGE, "The app service principal can access the wheels volume.")
-
     def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
-        """Verify catalog and main-schema privileges needed by DQX Studio.
+        """Verify catalog access for the app service principal and every audience principal.
+
+        Audience principals are first granted USE CATALOG on a best-effort basis; the
+        result is then verified from effective privileges, whatever the grant outcome.
 
         Args:
-            reader_sql: Administrator SQL executor for grant inspection. Accepted for
-                interface compatibility; the app service principal's own effective
-                permissions are inspected.
+            reader_sql: Administrator SQL executor enabling the SHOW GRANTS fallback
+                when effective permissions cannot be read.
         """
         app_sp = self._app_sp
         if not app_sp:
             return _identity_required(SetupStepId.UNITY_CATALOG)
 
-        catalog_response = self._effective_permissions("CATALOG", self._resources.volume.catalog, app_sp)
-        schema_response = self._effective_permissions("SCHEMA", self._main_schema_full_name(), app_sp)
-        if catalog_response is None or schema_response is None:
-            return _action_required(
-                SetupStepId.UNITY_CATALOG,
-                "catalog_permission_check_failed",
-                "Could not verify the required Unity Catalog permissions.",
-            )
-        missing_catalog = missing_privileges(catalog_response, _CATALOG_PRIVILEGES)
-        missing_schema = missing_privileges(schema_response, _SCHEMA_PRIVILEGES)
-        if missing_catalog and self._is_owner("CATALOG", self._resources.volume.catalog, app_sp):
-            missing_catalog = frozenset()
-        if missing_schema and self._is_owner("SCHEMA", self._main_schema_full_name(), app_sp):
-            missing_schema = frozenset()
-        if missing_catalog or missing_schema:
+        catalog = self._resources.volume.catalog
+        self._grant_catalog_usage_to_audience()
+        inspector = GrantInspector(self._workspace, reader_sql)
+        requirements = [(app_sp, _CATALOG_PRIVILEGES)]
+        requirements.extend(
+            (principal, frozenset({"USE_CATALOG"})) for principal in self._resources.audience.uc_principals
+        )
+        missing_by_principal: list[tuple[str, frozenset[str]]] = []
+        for principal, required in requirements:
+            privileges = inspector.privileges("CATALOG", catalog, principal, required=required)
+            if privileges is None:
+                return SetupStep(
+                    id=SetupStepId.UNITY_CATALOG,
+                    state=StepState.ACTION_REQUIRED,
+                    code="catalog_permission_check_failed",
+                    summary="Could not verify the required Unity Catalog permissions.",
+                    instructions=(
+                        "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
+                        f"{_instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
+                        "catalog grants.",
+                    ),
+                    actions=(SetupActionId.VERIFY_AGAIN,),
+                )
+            missing = frozenset(privilege for privilege in required if not has_privilege(privileges, privilege))
+            if missing and principal == app_sp:
+                owner = inspector.owner("CATALOG", catalog)
+                if owner is not None and owner.casefold() == app_sp.casefold():
+                    missing = frozenset()
+            if missing:
+                missing_by_principal.append((principal, missing))
+        if missing_by_principal:
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permissions_missing",
-                summary="The app service principal needs additional Unity Catalog permissions.",
-                instructions=required_catalog_grants(app_sp, self._resources),
+                summary="The app service principal or an audience principal needs additional catalog permissions.",
+                instructions=_catalog_grant_instructions(catalog, missing_by_principal),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
         return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
@@ -225,71 +214,141 @@ class ResourceCheckers:
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
 
     def ensure_storage(self, *, provision: bool) -> SetupStep:
-        """Verify the wheels volume, then create and verify the sibling schemas.
+        """Provision or verify the prefix-derived schemas and the wheels volume.
+
+        Existing schemas are only accepted when the app service principal owns or can
+        manage them, so Studio never adopts a schema it does not manage.
 
         Args:
-            provision: Whether Studio owns provisioning of the storage. Accepted for
-                interface compatibility; sibling schemas are always created idempotently.
+            provision: Create missing storage (Marketplace). When false (bundle
+                deployments) missing storage is reported instead of created.
 
         Returns:
-            The first step that did not pass, or a passed storage step.
+            A passed storage step, or the first blocking step.
         """
-        for check in (self.check_volume, self.ensure_sibling_schemas):
-            step = check()
-            if step.state != StepState.PASSED:
-                return step
-        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
-
-    def ensure_sibling_schemas(self) -> SetupStep:
-        """Create sibling schemas and verify the app can create views in them."""
         app_sp = self._app_sp
         if not app_sp:
             return _identity_required(SetupStepId.STORAGE)
-        try:
-            catalog = _validated_identifier(self._resources.volume.catalog)
-            schemas = (
-                _validated_identifier(self._resources.tmp_schema),
-                _validated_identifier(self._resources.genie_schema),
-            )
-            for schema in schemas:
-                self._sql.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {self._sql.q(catalog)}.{self._sql.q(schema)}")
-        except Exception:
-            return _action_required(
-                SetupStepId.STORAGE,
-                "sibling_schema_creation_failed",
-                "Could not create the required application schemas.",
-                action=SetupActionId.RECONCILE,
-            )
+        volume = self._resources.volume
+        catalog = volume.catalog
+        schemas = (
+            volume.schema,
+            self._resources.tmp_schema,
+            self._resources.genie_schema,
+            self._resources.demo_schema,
+        )
+        collisions: list[str] = []
+        missing_schemas: list[str] = []
         for schema in schemas:
             full_name = f"{catalog}.{schema}"
-            response = self._effective_permissions("SCHEMA", full_name, app_sp)
-            if response is None:
-                return _action_required(
-                    SetupStepId.STORAGE,
-                    "sibling_schema_permission_check_failed",
-                    "Could not verify the app service principal's sibling-schema permissions.",
-                )
-            missing = missing_privileges(response, _SCHEMA_PRIVILEGES)
-            if missing and not self._is_owner("SCHEMA", full_name, app_sp):
-                quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
-                principal = _instruction_identifier(app_sp)
+            try:
+                existing = self._workspace.schemas.get(full_name)
+            except NotFound:
+                missing_schemas.append(schema)
+                continue
+            except Exception:
+                return _storage_check_failed()
+            owner = getattr(existing, "owner", None)
+            if isinstance(owner, str) and owner.casefold() == app_sp.casefold():
+                continue
+            privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=frozenset({"MANAGE"}))
+            if privileges is None:
+                return _storage_check_failed()
+            if "MANAGE" not in privileges:
+                collisions.append(f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}")
+        if collisions:
+            return SetupStep(
+                id=SetupStepId.STORAGE,
+                state=StepState.ACTION_REQUIRED,
+                code="storage_collision",
+                summary="A schema with a Studio storage name already exists and is not managed by DQX Studio.",
+                instructions=tuple(
+                    f"Schema {name} already exists. Choose a different storage prefix, or drop or rename the "
+                    "existing schema, then verify again."
+                    for name in collisions
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+
+        try:
+            volume_exists = self._volume_exists()
+        except Exception:
+            return _storage_check_failed()
+        if missing_schemas or not volume_exists:
+            if not provision:
                 return SetupStep(
                     id=SetupStepId.STORAGE,
                     state=StepState.ACTION_REQUIRED,
-                    code="sibling_schema_permissions_missing",
-                    summary="The app service principal needs permission to create views in a sibling schema.",
-                    instructions=(f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {principal};",),
+                    code="storage_missing",
+                    summary="Required Studio storage has not been deployed.",
+                    instructions=("Run make app-deploy again to create the Studio schemas and wheels volume.",),
                     actions=(SetupActionId.VERIFY_AGAIN,),
                 )
-        for group in self._audience_groups:
-            quoted_schema = f"{self._sql.q(catalog)}.{self._sql.q(schemas[0])}"
-            try:
+            return self._create_storage(missing_schemas, volume_exists)
+
+        return self._check_volume_access(app_sp)
+
+    def _volume_exists(self) -> bool:
+        try:
+            self._workspace.volumes.read(self._volume_full_name())
+        except NotFound:
+            return False
+        return True
+
+    def _create_storage(self, missing_schemas: list[str], volume_exists: bool) -> SetupStep:
+        try:
+            catalog = self._sql.q(_validated_identifier(self._resources.volume.catalog))
+            for schema in missing_schemas:
                 self._sql.execute_no_schema(
-                    f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {_instruction_identifier(group)}"
+                    f"CREATE SCHEMA IF NOT EXISTS {catalog}.{self._sql.q(_validated_identifier(schema))}"
                 )
+            if not volume_exists:
+                volume = self._resources.volume
+                self._sql.execute_no_schema(
+                    "CREATE VOLUME IF NOT EXISTS "
+                    f"{catalog}.{self._sql.q(_validated_identifier(volume.schema))}."
+                    f"{self._sql.q(_validated_identifier(volume.volume))}"
+                )
+        except Exception:
+            return _action_required(
+                SetupStepId.STORAGE,
+                "storage_creation_failed",
+                "Could not create the required Studio schemas and wheels volume.",
+                action=SetupActionId.RECONCILE,
+            )
+        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+
+    def _check_volume_access(self, app_sp: str) -> SetupStep:
+        full_name = self._volume_full_name()
+        privileges = self._inspector.privileges("VOLUME", full_name, app_sp, required=_VOLUME_PRIVILEGES)
+        if privileges is None:
+            return _storage_check_failed()
+        missing = [privilege for privilege in sorted(_VOLUME_PRIVILEGES) if not has_privilege(privileges, privilege)]
+        if missing and not self._is_owner("VOLUME", full_name, app_sp):
+            volume = self._resources.volume
+            quoted_volume = ".".join(
+                _instruction_identifier(part) for part in (volume.catalog, volume.schema, volume.volume)
+            )
+            return SetupStep(
+                id=SetupStepId.STORAGE,
+                state=StepState.ACTION_REQUIRED,
+                code="volume_permissions_missing",
+                summary="The app service principal needs access to the wheels volume.",
+                instructions=(
+                    f"GRANT {', '.join(p.replace('_', ' ') for p in missing)} ON VOLUME {quoted_volume} "
+                    f"TO {_instruction_identifier(app_sp)};",
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+
+    def _grant_catalog_usage_to_audience(self) -> None:
+        catalog = self._sql.q(self._resources.volume.catalog)
+        for principal in self._resources.audience.uc_principals:
+            try:
+                self._sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG {catalog} TO {self._sql.q(principal)}")
             except Exception:
-                logger.warning("Could not grant a configured audience group access to the temporary schema.")
-        return _passed(SetupStepId.STORAGE, "Required application schemas are available.")
+                logger.warning("Could not grant an audience principal USE CATALOG; verifying its access instead.")
 
     def check_warehouse(
         self,
@@ -338,14 +397,6 @@ class ResourceCheckers:
             "Could not determine app service principal access to the SQL warehouse.",
         )
 
-    def _effective_permissions(
-        self,
-        securable_type: str,
-        full_name: str,
-        app_sp: str,
-    ) -> EffectivePermissionsList | None:
-        return self._inspector.effective_permissions(securable_type, full_name, app_sp)
-
     def _is_owner(
         self,
         securable_type: str,
@@ -366,27 +417,36 @@ class ResourceCheckers:
 
 
 def required_catalog_grants(app_sp: str, resources: ActiveResources) -> tuple[str, ...]:
-    """Return safe, administrator-run grants for the required catalog capabilities."""
-    catalog = _instruction_identifier(resources.volume.catalog)
-    schema = _instruction_identifier(resources.volume.schema)
-    principal = _instruction_identifier(app_sp)
-    return (
-        f"GRANT USE CATALOG, CREATE SCHEMA ON CATALOG {catalog} TO {principal};",
-        f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {catalog}.{schema} TO {principal};",
+    """Return safe, administrator-run catalog grants for the app service principal and audience.
+
+    Args:
+        app_sp: Resolved app service principal name.
+        resources: Resolved Studio resources.
+
+    Returns:
+        GRANT statements: the app service principal needs USE CATALOG and CREATE SCHEMA,
+        each Unity Catalog audience principal USE CATALOG.
+    """
+    missing = [(app_sp, _CATALOG_PRIVILEGES)]
+    missing.extend((principal, frozenset({"USE_CATALOG"})) for principal in resources.audience.uc_principals)
+    return _catalog_grant_instructions(resources.volume.catalog, missing)
+
+
+def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
+    quoted_catalog = _instruction_identifier(catalog)
+    return tuple(
+        f"GRANT {', '.join(name.replace('_', ' ') for name in sorted(privileges, reverse=True))} "
+        f"ON CATALOG {quoted_catalog} TO {_instruction_identifier(principal)};"
+        for principal, privileges in missing
     )
 
 
-def _required_volume_grants(app_sp: str, resources: ActiveResources) -> tuple[str, ...]:
-    volume = resources.volume
-    full_name = ".".join(
-        (
-            _instruction_identifier(volume.catalog),
-            _instruction_identifier(volume.schema),
-            _instruction_identifier(volume.volume),
-        )
+def _storage_check_failed() -> SetupStep:
+    return _action_required(
+        SetupStepId.STORAGE,
+        "storage_permission_check_failed",
+        "Could not verify ownership or access of the Studio storage.",
     )
-    principal = _instruction_identifier(app_sp)
-    return (f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME {full_name} TO {principal};",)
 
 
 def _passed(step_id: SetupStepId, summary: str) -> SetupStep:
