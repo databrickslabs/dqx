@@ -21,20 +21,20 @@ Split-auth, mirroring the rest of the app:
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.setup.acl import AccessStatus, group_levels, missing_principals
 
 logger = logging.getLogger(__name__)
 
-# The app SP's warehouse permission is "sufficient" if it holds any of these
-# levels — CAN_USE is the minimum to run queries; CAN_MANAGE / IS_OWNER imply it.
-_SUFFICIENT_WAREHOUSE_LEVELS = {"CAN_USE", "CAN_MANAGE", "IS_OWNER"}
-
-AccessStatus = Literal["granted", "missing", "unknown"]
+# The app SP must manage its warehouse (to grant the audience access); IS_OWNER implies it.
+_MANAGE_LEVELS = frozenset({"CAN_MANAGE", "IS_OWNER"})
+# Audience principals only need to run queries; CAN_MANAGE / IS_OWNER imply it.
+WAREHOUSE_USE_LEVELS = frozenset({"CAN_USE", "CAN_MANAGE", "IS_OWNER"})
 
 
 @dataclass
@@ -142,15 +142,25 @@ class ComputeService:
             logger.warning("Could not resolve app SP identity via current_user.me()", exc_info=True)
             return ""
 
-    def warehouse_access_status(self, warehouse_id: str, reader_ws: WorkspaceClient) -> AccessStatus:
-        """Return whether the app SP has a sufficient permission on *warehouse_id*.
+    def warehouse_access_status(
+        self,
+        warehouse_id: str,
+        reader_ws: WorkspaceClient,
+        *,
+        sufficient: frozenset[str] = _MANAGE_LEVELS,
+    ) -> AccessStatus:
+        """Return whether the app SP holds a sufficient permission on *warehouse_id*.
 
-        Tries to read the warehouse's permission ACL — first self-inspecting
-        with the app SP, then falling back to *reader_ws* (the admin OBO
-        client) when the SP cannot read the ACL (it usually lacks CAN_MANAGE).
-        Returns ``"granted"``/``"missing"`` when the ACL could be read, and
-        ``"unknown"`` when neither client could read it (so the UI shows no
-        false alarm).
+        Reads the warehouse ACL, first as the app SP and then through *reader_ws*
+        (the admin OBO client) when the SP cannot read it.
+
+        Args:
+            warehouse_id: Warehouse to inspect.
+            reader_ws: Fallback client permitted to read the ACL.
+            sufficient: Permission levels that satisfy the requirement.
+
+        Returns:
+            "granted" or "missing" when the ACL could be read, otherwise "unknown".
         """
         sp_id = self.sp_application_id()
         if not sp_id:
@@ -161,17 +171,7 @@ class ComputeService:
             acl = self._read_warehouse_acl(warehouse_id, reader_ws)
         if acl is None:
             return "unknown"
-
-        for ace in acl:
-            principal = getattr(ace, "service_principal_name", None)
-            if principal != sp_id:
-                continue
-            for perm in getattr(ace, "all_permissions", None) or []:
-                level = getattr(perm, "permission_level", None)
-                level_str = getattr(level, "value", None) or str(level)
-                if level_str in _SUFFICIENT_WAREHOUSE_LEVELS:
-                    return "granted"
-        return "missing"
+        return "missing" if missing_principals(group_levels(acl), [sp_id], sufficient) else "granted"
 
     @staticmethod
     def _read_warehouse_acl(warehouse_id: str, ws: WorkspaceClient) -> list | None:
@@ -181,8 +181,8 @@ class ComputeService:
             return None
         return list(getattr(perms, "access_control_list", None) or [])
 
-    def grant_warehouse_can_use(self, warehouse_id: str, grantor_ws: WorkspaceClient) -> None:
-        """Grant the app SP ``CAN_USE`` on *warehouse_id* via *grantor_ws* (admin OBO).
+    def grant_warehouse_manage(self, warehouse_id: str, grantor_ws: WorkspaceClient) -> None:
+        """Grant the app SP ``CAN_MANAGE`` on *warehouse_id* via *grantor_ws* (admin OBO).
 
         Uses ``update_permissions`` (additive PATCH) so existing grants on the
         warehouse are preserved. Raises on failure so the route surfaces an
@@ -199,11 +199,53 @@ class ComputeService:
             access_control_list=[
                 WarehouseAccessControlRequest(
                     service_principal_name=sp_id,
-                    permission_level=WarehousePermissionLevel.CAN_USE,
+                    permission_level=WarehousePermissionLevel.CAN_MANAGE,
                 )
             ],
         )
-        logger.info("Granted CAN_USE on warehouse %s to app SP", warehouse_id)
+        logger.info("Granted CAN_MANAGE on warehouse %s to app SP", warehouse_id)
+
+    def reconcile_warehouse_audience(self, warehouse_id: str, principals: Sequence[str]) -> AccessStatus:
+        """Additively grant ``CAN_USE`` on *warehouse_id* to each audience group, then verify.
+
+        Runs as the app SP, which needs ``CAN_MANAGE``. Never replaces the ACL.
+
+        Args:
+            warehouse_id: Warehouse to update.
+            principals: Workspace groups that must be able to use the warehouse.
+
+        Returns:
+            "granted" when every principal holds a sufficient level afterwards, "missing"
+            when some still do not, and "unknown" when the ACL could not be read or updated.
+        """
+        from databricks.sdk.service.sql import WarehouseAccessControlRequest, WarehousePermissionLevel
+
+        acl = self._read_warehouse_acl(warehouse_id, self._sp_ws)
+        if acl is None:
+            return "unknown"
+        absent = missing_principals(group_levels(acl), principals, WAREHOUSE_USE_LEVELS)
+        if absent:
+            try:
+                self._sp_ws.warehouses.update_permissions(
+                    warehouse_id,
+                    access_control_list=[
+                        WarehouseAccessControlRequest(
+                            group_name=group,
+                            permission_level=WarehousePermissionLevel.CAN_USE,
+                        )
+                        for group in absent
+                    ],
+                )
+            except Exception:
+                logger.warning("Could not grant the audience CAN_USE on the SQL warehouse.", exc_info=True)
+                return "unknown"
+            acl = self._read_warehouse_acl(warehouse_id, self._sp_ws)
+            if acl is None:
+                return "unknown"
+        return "missing" if missing_principals(group_levels(acl), principals, WAREHOUSE_USE_LEVELS) else "granted"
+
+    async def reconcile_warehouse_audience_async(self, warehouse_id: str, principals: Sequence[str]) -> AccessStatus:
+        return await asyncio.to_thread(self.reconcile_warehouse_audience, warehouse_id, principals)
 
     # ------------------------------------------------------------------
     # Async wrappers (SDK calls are blocking)
@@ -218,8 +260,8 @@ class ComputeService:
     async def warehouse_access_status_async(self, warehouse_id: str, reader_ws: WorkspaceClient) -> AccessStatus:
         return await asyncio.to_thread(self.warehouse_access_status, warehouse_id, reader_ws)
 
-    async def grant_warehouse_can_use_async(self, warehouse_id: str, grantor_ws: WorkspaceClient) -> None:
-        return await asyncio.to_thread(self.grant_warehouse_can_use, warehouse_id, grantor_ws)
+    async def grant_warehouse_manage_async(self, warehouse_id: str, grantor_ws: WorkspaceClient) -> None:
+        return await asyncio.to_thread(self.grant_warehouse_manage, warehouse_id, grantor_ws)
 
 
 def resolve_warehouse_id(app_settings: AppSettingsService) -> str:

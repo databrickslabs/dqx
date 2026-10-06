@@ -215,10 +215,10 @@ class TestSettings:
         checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
 
-    def test_save_warehouse_accepts_candidate_when_acl_is_unreadable(
+    def test_save_warehouse_rejects_candidate_when_access_is_unverifiable(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
     ) -> None:
-        """An inconclusive ACL read must not reject a potentially usable warehouse."""
+        """An unverifiable warehouse cannot be bound: the app needs CAN_MANAGE and the audience CAN_USE."""
         checkers.check_warehouse.return_value = SetupStep(
             id=SetupStepId.WAREHOUSE,
             state=StepState.ACTION_REQUIRED,
@@ -228,8 +228,9 @@ class TestSettings:
 
         response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
 
-        assert response.status_code == 200
-        route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "warehouse_permission_unknown"
+        route_app_settings.save_sql_warehouse_id.assert_not_called()
 
     def test_clear_warehouse_override_skips_validation_and_returns_to_bound_default(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
@@ -299,7 +300,7 @@ class TestWarehouseAccess:
         async def _status(wid, reader_ws):
             return "granted"
 
-        compute_svc.grant_warehouse_can_use_async.side_effect = _grant
+        compute_svc.grant_warehouse_manage_async.side_effect = _grant
         compute_svc.warehouse_access_status_async.side_effect = _status
         compute_svc.sp_application_id.return_value = "sp-1"
 
@@ -311,7 +312,7 @@ class TestWarehouseAccess:
         async def _boom(wid, grantor_ws):
             raise PermissionError("no manage")
 
-        compute_svc.grant_warehouse_can_use_async.side_effect = _boom
+        compute_svc.grant_warehouse_manage_async.side_effect = _boom
         with pytest.raises(HTTPException) as exc:
             await grant_warehouse_access(GrantWarehouseAccessIn(warehouse_id="wh-1"), compute_svc, MagicMock())
         assert exc.value.status_code == 502

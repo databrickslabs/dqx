@@ -271,7 +271,7 @@ async def save_compute_settings(
             if bound is None:
                 raise HTTPException(status_code=503, detail="DQX Studio storage is not configured.")
             step = await asyncio.to_thread(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
-            if step.state != StepState.PASSED and step.code != "warehouse_permission_unknown":
+            if step.state != StepState.PASSED:
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -303,7 +303,7 @@ async def get_warehouse_access(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     warehouse_id: Annotated[str, Query(description="Warehouse id to check")],
 ) -> WarehouseAccessOut:
-    """Check whether the app SP has CAN_USE on *warehouse_id*.
+    """Check whether the app SP has CAN_MANAGE on *warehouse_id*.
 
     Never raises for the access-read itself — returns ``"unknown"`` when the ACL
     can't be read so the UI shows no false warning.
@@ -326,12 +326,12 @@ async def grant_warehouse_access(
     svc: Annotated[ComputeService, Depends(get_compute_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> WarehouseAccessOut:
-    """Grant the app SP CAN_USE on the warehouse via the admin's OBO client."""
+    """Grant the app SP CAN_MANAGE on the warehouse via the admin's OBO client."""
     wid = (body.warehouse_id or "").strip()
     if not wid:
         raise HTTPException(status_code=400, detail="warehouse_id is required.")
     try:
-        await svc.grant_warehouse_can_use_async(wid, grantor_ws=obo_ws)
+        await svc.grant_warehouse_manage_async(wid, grantor_ws=obo_ws)
     except Exception as e:
         logger.warning("Failed to grant warehouse access on %s: %s", wid, e, exc_info=True)
         raise HTTPException(

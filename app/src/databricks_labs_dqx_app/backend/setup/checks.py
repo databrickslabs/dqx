@@ -306,7 +306,7 @@ class ResourceCheckers:
         owner = getattr(existing, "owner", None)
         if isinstance(owner, str) and owner.casefold() == app_sp.casefold():
             return "ok", frozenset()
-        privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES)
+        privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES | {"MANAGE"})
         if privileges is None:
             return "failed", frozenset()
         if "MANAGE" not in privileges:
@@ -413,7 +413,7 @@ class ResourceCheckers:
         warehouse_id: str | None = None,
         reader_ws: WorkspaceClient | None = None,
     ) -> SetupStep:
-        """Verify that the app SP has CAN_USE on a configured SQL warehouse.
+        """Verify the app SP holds CAN_MANAGE on the SQL warehouse and the audience CAN_USE.
 
         Args:
             warehouse_id: Candidate warehouse ID, or the bound warehouse when omitted.
@@ -422,37 +422,46 @@ class ResourceCheckers:
         """
         effective_warehouse_id = (warehouse_id or self._resources.warehouse_id).strip()
         effective_reader_ws = reader_ws or self._workspace
+        warehouse = _instruction_identifier(effective_warehouse_id)
         try:
             status = self._compute.warehouse_access_status(effective_warehouse_id, reader_ws=effective_reader_ws)
+            if status == "granted":
+                status = self._compute.reconcile_warehouse_audience(
+                    effective_warehouse_id, self._resources.audience.workspace_principals
+                )
+                if status == "missing":
+                    return SetupStep(
+                        id=SetupStepId.WAREHOUSE,
+                        state=StepState.ACTION_REQUIRED,
+                        code="warehouse_audience_missing",
+                        summary="Some Studio users cannot use the SQL warehouse.",
+                        instructions=tuple(
+                            f"Grant CAN USE on SQL warehouse {warehouse} to group {_instruction_identifier(group)}."
+                            for group in self._resources.audience.workspace_principals
+                        ),
+                        actions=(SetupActionId.VERIFY_AGAIN,),
+                    )
+                if status == "granted":
+                    return _passed(SetupStepId.WAREHOUSE, "The SQL warehouse is ready for the app and its users.")
+            elif status == "missing":
+                return SetupStep(
+                    id=SetupStepId.WAREHOUSE,
+                    state=StepState.ACTION_REQUIRED,
+                    code="warehouse_permissions_missing",
+                    summary="The app service principal needs CAN MANAGE on the SQL warehouse.",
+                    instructions=(f"Grant CAN MANAGE on SQL warehouse {warehouse} to the app service principal.",),
+                    actions=(SetupActionId.VERIFY_AGAIN,),
+                )
         except Exception:
             return _action_required(
                 SetupStepId.WAREHOUSE,
                 "warehouse_permission_check_failed",
-                "Could not verify app service principal access to the SQL warehouse.",
+                "Could not verify SQL warehouse access.",
             )
-        if status == "granted":
-            return _passed(SetupStepId.WAREHOUSE, "The app service principal can use the SQL warehouse.")
-        if status == "missing":
-            warehouse = _instruction_identifier(effective_warehouse_id)
-            return SetupStep(
-                id=SetupStepId.WAREHOUSE,
-                state=StepState.ACTION_REQUIRED,
-                code="warehouse_permissions_missing",
-                summary="The app service principal needs CAN_USE on the SQL warehouse.",
-                instructions=(f"Grant CAN_USE on SQL warehouse {warehouse} to the app service principal.",),
-                actions=(SetupActionId.VERIFY_AGAIN,),
-            )
-        if warehouse_id is None:
-            try:
-                self._sql.query("SELECT 1")
-            except Exception:
-                pass
-            else:
-                return _passed(SetupStepId.WAREHOUSE, "The app service principal can use the SQL warehouse.")
         return _action_required(
             SetupStepId.WAREHOUSE,
             "warehouse_permission_unknown",
-            "Could not determine app service principal access to the SQL warehouse.",
+            "Could not determine SQL warehouse access.",
         )
 
     def _is_owner(

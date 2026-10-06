@@ -69,7 +69,7 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
+from databricks_labs_dqx_app.backend.services.compute_service import WAREHOUSE_USE_LEVELS, ComputeService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
     DIM_MONITORED_TABLES_TABLE_NAME,
@@ -1883,7 +1883,9 @@ def ensure_dq_genie_space(
         if content_changed:
             body["serialized_space"] = json.dumps(build_serialized_space(catalog, schema))
         if detail.get("warehouse_id") != warehouse_id:
-            access = ComputeService(ws, settings).warehouse_access_status(warehouse_id, reader_ws=ws)
+            access = ComputeService(ws, settings).warehouse_access_status(
+                warehouse_id, reader_ws=ws, sufficient=WAREHOUSE_USE_LEVELS
+            )
             can_use = access == "granted"
             if not can_use:
                 try:
