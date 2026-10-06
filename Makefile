@@ -393,9 +393,14 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
 #        make app-deploy PROFILE=my-profile TARGET=dev \
 #                        BUNDLE_VARS='--var=catalog_name=foo'
+#        make app-deploy PROFILE=my-profile TARGET=dev \
+#                        STUDIO_PREFIX=dqx_studio_acme STUDIO_USER_GROUP=data-team
+#        make app-deploy PROFILE=my-profile TARGET=dev STUDIO_USER_GROUP=users  # broad mode
 #
 # BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to ``bundle
-# deploy`` and ``bundle run``.
+# deploy`` and ``bundle run``. STUDIO_PREFIX sets the ``prefix`` variable (storage
+# names) and STUDIO_USER_GROUP sets ``studio_user_group``; an explicit --var in
+# BUNDLE_VARS always wins.
 #
 # FORCE=1 appends ``--force`` to ``bundle deploy``. Use it when the deploy
 # aborts because a resource was modified in the workspace UI since the last
@@ -406,10 +411,17 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 app-deploy: app-check-cli $(if $(filter release,$(TARGET)),,app-build) ## Deploy and start app; release target uses prebuilt tag (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
-	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(STUDIO_BUNDLE_VARS)
+	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(STUDIO_BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
+
+# Studio storage prefix / audience. STUDIO_USER_GROUP=users selects broad mode:
+# workspace ACLs use `users`, UC grants use `account users`.
+studio_prefix_var = $(if $(STUDIO_PREFIX),$(if $(findstring prefix=,$(BUNDLE_VARS)),,--var prefix=$(STUDIO_PREFIX)))
+studio_group_var = $(if $(STUDIO_USER_GROUP),$(if $(findstring studio_user_group,$(BUNDLE_VARS)),,--var studio_user_group=$(STUDIO_USER_GROUP)))
+studio_uc_var = $(if $(filter users,$(STUDIO_USER_GROUP)),$(if $(findstring studio_uc_principal,$(BUNDLE_VARS)),,--var "studio_uc_principal=account users"))
+STUDIO_BUNDLE_VARS = $(studio_prefix_var) $(studio_group_var) $(studio_uc_var) $(BUNDLE_VARS)
 
 ##@ Build & lockfiles
 

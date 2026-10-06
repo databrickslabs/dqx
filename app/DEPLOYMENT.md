@@ -215,7 +215,8 @@ All target-level variables, their defaults, and what they control:
 | `schema_name` | `dqx_studio` | No | Main schema — holds run history, profiling, metrics, and quarantine tables. Declared as `resources.schemas.main_schema` in the bundle with `lifecycle.prevent_destroy: true`. |
 | `tmp_schema_name` | `dqx_studio_tmp` | No | Per-user temp-view schema. Declared as `resources.schemas.tmp_schema` with `lifecycle.prevent_destroy: true`. |
 | `genie_schema_name` | `genie` | No | Genie-facing derived views and dimensions. Declared as `resources.schemas.genie_schema` with `lifecycle.prevent_destroy: true`. Existing DAB targets retain this default to avoid replacing a protected schema; for new targets, set it to a dedicated name such as `dqx_studio_genie`. |
-| `wheels_volume_name` | `wheels` | No | UC volume under `<catalog>.<schema_name>` for the DQX + task-runner wheels. Declared as `resources.volumes.wheels` with `lifecycle.prevent_destroy: true`. |
+| `prefix` | `dqx_studio` | No | Storage prefix: main schema `<prefix>`, plus `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_demo`. The wheels volume is always `<schema_name>.wheels` (`resources.volumes.wheels`, `lifecycle.prevent_destroy: true`). |
+| `studio_uc_principal` | `${var.studio_user_group}` | No | UC grantee for the audience; set to `account users` in broad mode (`studio_user_group=users`). |
 | `lakebase_project_id` | `dqx-studio-db` | No | Lakebase Postgres project id for OLTP state. Declared as `resources.postgres_projects.dqx_studio` with `lifecycle.prevent_destroy: true`. Autoscaling + scale-to-zero per [Lakebase Autoscaling](https://docs.databricks.com/aws/en/oltp/upgrade-to-autoscaling). |
 | `lakebase_branch` | `dqx` | No | Project branch the app uses; auto-created with a `primary` endpoint on first deploy. |
 | `lakebase_endpoint` | `projects/<project>/branches/<branch>/endpoints/primary` | No | Required endpoint resource path (`DQX_LAKEBASE_ENDPOINT`) driving host resolution + OAuth. Derived from project + branch. |
@@ -454,7 +455,7 @@ The app deliberately refuses to start when Lakebase initialization fails — it 
 6. Recheck that the Lakebase endpoint and the caller's Postgres role are valid. DQX Studio requires Lakebase; there is no Delta-only mode or migration from the removed Delta-backed application state.
 
 **`databricks bundle deploy` fails with `"already exists"` on the first deploy of a target:**
-A schema, volume, or Lakebase project of the same name was created out-of-band. Either rename it via the corresponding variable (`schema_name`, `wheels_volume_name`, `lakebase_project_id`) or `databricks bundle deployment bind <key> <existing-id> -t <target>` to adopt the existing resource, then redeploy.
+A schema, volume, or Lakebase project of the same name was created out-of-band. Either rename it via the corresponding variable (`prefix`, `lakebase_project_id`) or `databricks bundle deployment bind <key> <existing-id> -t <target>` to adopt the existing resource, then redeploy.
 
 **`databricks bundle destroy` fails with `"cannot destroy resource: prevent_destroy is set"`:**
 This is the safety guard doing its job — see [Step 3](#step-3-stateful-storage-and-destroy-protection). To intentionally tear down a stateful resource, remove `lifecycle.prevent_destroy: true` from the relevant block in `databricks.yml`, run `databricks bundle deployment unbind <key> -t <target>` to detach it from bundle state, then destroy it manually (`databricks schemas delete` / `databricks volumes delete`, and delete the Lakebase project from the workspace UI).
