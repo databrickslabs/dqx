@@ -5,6 +5,7 @@ import dataclasses
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 import pytest
@@ -372,6 +373,66 @@ async def test_storage_failure_does_not_lock_configuration() -> None:
 
     assert report.current_step == SetupStepId.STORAGE
     assert harness.configuration.locks == []
+
+
+@pytest.mark.asyncio
+async def test_storage_warning_does_not_lock_configuration() -> None:
+    warning = SetupStep(id=SetupStepId.STORAGE, state=StepState.WARNING, code="storage_unverified")
+    harness = _harness(bound_results={SetupStepId.STORAGE: warning})
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.READY
+    assert harness.configuration.locks == []
+
+
+@pytest.mark.asyncio
+async def test_configuration_resolution_failure_is_logged_without_details(caplog: pytest.LogCaptureFixture) -> None:
+    class FailingConfiguration(FakeConfiguration):
+        def resolve(self) -> ResolvedConfiguration:
+            raise RuntimeError("catalog=secret\nforged")
+
+    harness = _harness()
+    harness.orchestrator.configuration = FailingConfiguration(SAVED)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.CONFIGURATION).code == "configuration_resolution_failed"
+    assert "Could not resolve the Studio setup configuration (RuntimeError)" in caplog.text
+    assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_binding_failure_is_logged_without_details(caplog: pytest.LogCaptureFixture) -> None:
+    harness = _harness()
+
+    def fail_bind(resources: ActiveResources) -> BoundSetup:
+        raise ValueError("catalog=secret")
+
+    harness.orchestrator.binder = SimpleNamespace(bind=fail_bind)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.CONFIGURATION).code == "configuration_binding_failed"
+    assert "Could not bind Studio setup collaborators (ValueError)" in caplog.text
+    assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_configuration_lock_failure_is_reported_and_logged(caplog: pytest.LogCaptureFixture) -> None:
+    class FailingLock(FakeConfiguration):
+        def lock(self, *, user_email: str | None) -> None:
+            raise RuntimeError("user=secret")
+
+    harness = _harness()
+    harness.orchestrator.configuration = FailingLock(SAVED)
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.current_step == SetupStepId.STORAGE
+    assert report.step(SetupStepId.STORAGE).code == "configuration_lock_failed"
+    assert "Could not lock the Studio setup configuration (RuntimeError)" in caplog.text
+    assert "secret" not in caplog.text
 
 
 @pytest.mark.asyncio

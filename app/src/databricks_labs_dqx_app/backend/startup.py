@@ -251,6 +251,7 @@ class _Binder:
     sp_ws: WorkspaceClient
     sp_sql: SqlExecutor
     compute: ComputeService
+    identity: BootstrapCheckers
     activation: StudioActivation
 
     def bind(self, resources: ActiveResources) -> BoundSetup:
@@ -264,6 +265,7 @@ class _Binder:
                 workspace=self.sp_ws,
                 sql=self.sp_sql,
                 compute=self.compute,
+                app_sp_id=self.identity.app_sp_id(),
                 audience_groups=resources.audience.uc_principals,
             ),
             access=_PendingAccess(),
@@ -330,6 +332,11 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
     try:
         app_settings = AppSettingsService(sql=pg_executor)
         compute = ComputeService(sp_ws=sp_ws, app_settings=app_settings)
+        bootstrap_checks = BootstrapCheckers(
+            workspace=sp_ws,
+            pg=pg_executor,
+            lakebase_schema=resources.lakebase.schema,
+        )
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
             bootstrap=BootstrapResources(
@@ -337,14 +344,16 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
                 warehouse_id=resources.warehouse_id,
                 job_id=resources.job_id,
             ),
-            bootstrap_checks=BootstrapCheckers(
-                workspace=sp_ws,
-                pg=pg_executor,
-                lakebase_schema=resources.lakebase.schema,
-            ),
+            bootstrap_checks=bootstrap_checks,
             pg_migrations=PgMigrationRunner(pg_executor),
             configuration=_LegacyConfiguration(_legacy_configuration(resources)),
-            binder=_Binder(sp_ws=sp_ws, sp_sql=sp_sql, compute=compute, activation=_Activation(context)),
+            binder=_Binder(
+                sp_ws=sp_ws,
+                sp_sql=sp_sql,
+                compute=compute,
+                identity=bootstrap_checks,
+                activation=_Activation(context),
+            ),
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
             app_sp_id=compute.sp_application_id(),

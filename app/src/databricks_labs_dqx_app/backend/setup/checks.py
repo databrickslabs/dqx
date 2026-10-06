@@ -20,7 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 class ResourceCheckers:
-    """Check and reconcile capabilities of already-resolved setup resources."""
+    """Check and reconcile capabilities of already-resolved setup resources.
+
+    Args:
+        resources: Resolved Studio resources to check.
+        workspace: App service principal workspace client.
+        sql: App service principal SQL executor.
+        compute: Warehouse access inspection service.
+        app_sp_id: Resolved app service principal name; an empty string means the
+            identity is unresolved and identity-dependent checks require action.
+        audience_groups: Unity Catalog audience principals.
+    """
 
     def __init__(
         self,
@@ -29,6 +39,7 @@ class ResourceCheckers:
         workspace: WorkspaceClient,
         sql: SqlExecutor,
         compute: ComputeService,
+        app_sp_id: str,
         audience_groups: tuple[str, ...] = (),
     ) -> None:
         self._resources = resources
@@ -37,12 +48,11 @@ class ResourceCheckers:
         self._compute = compute
         self._audience_groups = audience_groups
         self._inspector = GrantInspector(workspace)
-        self._app_sp: str | None = None
-        self._app_sp_resolved = False
+        self._app_sp = "" if _has_control_characters(app_sp_id) else app_sp_id.strip()
 
     def check_volume(self) -> SetupStep:
         """Verify that the app SP can read and write the wheels volume."""
-        app_sp = self._app_sp_id()
+        app_sp = self._app_sp
         if not app_sp:
             return _identity_required(SetupStepId.STORAGE)
 
@@ -73,7 +83,7 @@ class ResourceCheckers:
                 interface compatibility; the app service principal's own effective
                 permissions are inspected.
         """
-        app_sp = self._app_sp_id()
+        app_sp = self._app_sp
         if not app_sp:
             return _identity_required(SetupStepId.UNITY_CATALOG)
 
@@ -125,7 +135,7 @@ class ResourceCheckers:
                 Schema grants cover current and future outputs; source access
                 remains run-specific. Runner Lakebase access is not checked.
         """
-        app_sp = self._app_sp_id()
+        app_sp = self._app_sp
         try:
             job = self._workspace.jobs.get(job_id)
             run_as = getattr(getattr(job, "settings", None), "run_as", None)
@@ -232,7 +242,7 @@ class ResourceCheckers:
 
     def ensure_sibling_schemas(self) -> SetupStep:
         """Create sibling schemas and verify the app can create views in them."""
-        app_sp = self._app_sp_id()
+        app_sp = self._app_sp
         if not app_sp:
             return _identity_required(SetupStepId.STORAGE)
         try:
@@ -327,20 +337,6 @@ class ResourceCheckers:
             "warehouse_permission_unknown",
             "Could not determine app service principal access to the SQL warehouse.",
         )
-
-    def _app_sp_id(self) -> str:
-        if self._app_sp_resolved:
-            return self._app_sp or ""
-        self._app_sp_resolved = True
-        try:
-            identity = self._workspace.current_user.me()
-            candidate = (identity.user_name or identity.id or "").strip()
-        except Exception:
-            return ""
-        if _has_control_characters(candidate):
-            return ""
-        self._app_sp = candidate
-        return candidate
 
     def _effective_permissions(
         self,

@@ -358,7 +358,8 @@ class SetupOrchestrator:
     async def _resolve_configuration(self) -> tuple[ResolvedConfiguration | None, SetupStep]:
         try:
             resolved = await asyncio.to_thread(self.configuration.resolve)
-        except Exception:
+        except Exception as error:
+            logger.warning(f"Could not resolve the Studio setup configuration ({type(error).__name__})")
             return None, _failed(
                 SetupStepId.CONFIGURATION,
                 "configuration_resolution_failed",
@@ -367,7 +368,8 @@ class SetupOrchestrator:
         self._resolved = resolved
         try:
             return resolved, self._configuration_step(resolved)
-        except Exception:
+        except Exception as error:
+            logger.warning(f"Could not bind Studio setup collaborators ({type(error).__name__})")
             return None, _failed(
                 SetupStepId.CONFIGURATION,
                 "configuration_binding_failed",
@@ -400,11 +402,12 @@ class SetupOrchestrator:
         step = await asyncio.to_thread(
             partial(bound.checkers.ensure_storage, provision=resolved.source == ConfigurationSource.SAVED)
         )
-        if step.state in _BLOCKING_STATES or resolved.locked:
+        if step.state != StepState.PASSED or resolved.locked:
             return step
         try:
             await asyncio.to_thread(partial(self.configuration.lock, user_email=actor))
-        except Exception:
+        except Exception as error:
+            logger.warning(f"Could not lock the Studio setup configuration ({type(error).__name__})")
             return _failed(
                 SetupStepId.STORAGE,
                 "configuration_lock_failed",

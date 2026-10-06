@@ -12,7 +12,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_setup_access,
     get_setup_orchestrator,
-    get_setup_sql_executor,
+    get_optional_setup_sql_executor,
     require_setup_admin,
     sanitize_setup_display,
 )
@@ -42,7 +42,7 @@ async def reconcile_setup(
     access: Annotated[SetupAccess, require_setup_admin()],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
     reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    reader_sql: Annotated[SqlExecutor, Depends(get_setup_sql_executor)],
+    reader_sql: Annotated[SqlExecutor | None, Depends(get_optional_setup_sql_executor)],
 ) -> SetupReport:
     """Run the serialized setup workflow as a bootstrap administrator."""
     return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=reader_sql)

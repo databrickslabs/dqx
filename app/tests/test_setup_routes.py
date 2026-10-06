@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.app import app
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.dependencies import get_conf, get_setup_sql_executor, get_obo_ws
+from databricks_labs_dqx_app.backend.dependencies import get_conf, get_obo_ws, get_optional_setup_sql_executor
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -86,7 +86,7 @@ def client(obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock) ->
     had_orchestrator = hasattr(app.state, "setup_orchestrator")
     previous_orchestrator = getattr(app.state, "setup_orchestrator", None)
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws
-    app.dependency_overrides[get_setup_sql_executor] = lambda: reader_sql
+    app.dependency_overrides[get_optional_setup_sql_executor] = lambda: reader_sql
     app.dependency_overrides[get_conf] = lambda: AppConfig(admin_group="admins")
     app.state.setup_orchestrator = orchestrator
     setup_runtime.publish(
@@ -106,7 +106,7 @@ def client(obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock) ->
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_obo_ws, None)
-        app.dependency_overrides.pop(get_setup_sql_executor, None)
+        app.dependency_overrides.pop(get_optional_setup_sql_executor, None)
         app.dependency_overrides.pop(get_conf, None)
         if had_orchestrator:
             app.state.setup_orchestrator = previous_orchestrator
@@ -168,7 +168,7 @@ def test_reconcile_requires_bootstrap_admin_group(client: TestClient, obo_ws: Ma
 
 
 def test_reconcile_sql_reader_does_not_require_activated_resources(client: TestClient, orchestrator: MagicMock) -> None:
-    app.dependency_overrides.pop(get_setup_sql_executor)
+    app.dependency_overrides.pop(get_optional_setup_sql_executor)
     previous_resources = rt.resources
     rt.resources = None
     try:
@@ -180,15 +180,16 @@ def test_reconcile_sql_reader_does_not_require_activated_resources(client: TestC
         rt.resources = previous_resources
 
 
-def test_reconcile_requires_bound_storage_for_sql_reader(client: TestClient, orchestrator: MagicMock) -> None:
-    app.dependency_overrides.pop(get_setup_sql_executor)
+def test_unbound_reconcile_reaches_orchestrator_without_sql_reader(client: TestClient, orchestrator: MagicMock) -> None:
+    """A pre-bind bootstrap failure must not lock administrators out of retrying setup."""
+    app.dependency_overrides.pop(get_optional_setup_sql_executor)
     orchestrator.bound = None
 
     response = client.post("/api/v1/setup/reconcile")
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "DQX Studio storage is not configured."
-    orchestrator.reconcile.assert_not_called()
+    assert response.status_code == 200
+    orchestrator.reconcile.assert_awaited_once()
+    assert orchestrator.reconcile.call_args.kwargs["reader_sql"] is None
 
 
 def test_reconcile_does_not_trust_cached_setup_access(client: TestClient, obo_ws: MagicMock) -> None:

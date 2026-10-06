@@ -330,6 +330,7 @@ def live_resources(
         workspace=ws,
         sql=sql,
         compute=ComputeService(sp_ws=ws, app_settings=app_settings),
+        app_sp_id=_workspace_identity(ws),
     )
     try:
         yield LiveResources(
@@ -490,6 +491,7 @@ def app_live_setup(
         workspace=app_workspace,
         sql=sql,
         compute=ComputeService(sp_ws=app_workspace, app_settings=app_settings),
+        app_sp_id=app_identity,
     )
     warehouse = checkers.check_warehouse()
     if warehouse.state != StepState.PASSED:
