@@ -88,7 +88,7 @@ def checkers(
     sql: MagicMock,
     compute: MagicMock,
 ) -> ResourceCheckers:
-    return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute)
+    return ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id="app-sp-id")
 
 
 @pytest.mark.parametrize(
@@ -154,9 +154,7 @@ def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> Resourc
     workspace.grants.get_effective.side_effect = lambda securable_type, full_name, *, principal: (
         _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT, Privilege.MODIFY, principal=principal)
         if principal == "runner-sp-id" and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio")
-        else permissions[securable_type]
-        if principal == "runner-sp-id"
-        else _effective_permissions()
+        else permissions[securable_type] if principal == "runner-sp-id" else _effective_permissions()
     )
     return checkers
 
@@ -820,6 +818,37 @@ def test_catalog_check_accepts_request_scoped_reader_sql(
     result = checkers.check_unity_catalog(reader_sql=sql)
 
     assert result.state == StepState.PASSED
+
+
+@pytest.mark.parametrize("app_sp_id", ["", "   ", "app-sp\nid"])
+def test_unresolved_app_identity_requires_action_for_storage_checks(
+    resources: ActiveResources,
+    workspace: MagicMock,
+    sql: MagicMock,
+    compute: MagicMock,
+    app_sp_id: str,
+) -> None:
+    checkers = ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id=app_sp_id)
+
+    for result in (
+        checkers.check_volume(),
+        checkers.check_unity_catalog(),
+        checkers.ensure_sibling_schemas(),
+        checkers.ensure_storage(provision=True),
+    ):
+        assert result.state == StepState.ACTION_REQUIRED
+        assert result.code == "app_identity_unresolved"
+    workspace.current_user.me.assert_not_called()
+    sql.execute_no_schema.assert_not_called()
+
+
+def test_storage_checks_use_injected_identity_without_scim_lookup(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    assert checkers.check_volume().state == StepState.PASSED
+    workspace.current_user.me.assert_not_called()
 
 
 def test_missing_warehouse_can_use_requires_action(checkers: ResourceCheckers, compute: MagicMock) -> None:

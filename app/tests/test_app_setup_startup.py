@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
@@ -566,12 +567,21 @@ async def test_startup_configuration_reproduces_deployment_resources(
     compute = MagicMock()
     compute.sp_application_id.return_value = "app-sp"
 
+    checker_kwargs: dict[str, object] = {}
+
     def capture(**kwargs: MagicMock) -> MagicMock:
         captured.update(kwargs)
         return orchestrator
 
-    async def get_workspace() -> MagicMock:
+    def capture_checkers(**kwargs: object) -> MagicMock:
+        checker_kwargs.update(kwargs)
         return MagicMock()
+
+    workspace = MagicMock()
+    workspace.current_user.me.return_value = SimpleNamespace(user_name="app-sp-name", id=None)
+
+    async def get_workspace() -> MagicMock:
+        return workspace
 
     monkeypatch.setattr(startup, "_resolve_resources", lambda: deployment)
     monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
@@ -579,7 +589,7 @@ async def test_startup_configuration_reproduces_deployment_resources(
     monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
-    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ResourceCheckers", capture_checkers)
     monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
@@ -596,6 +606,7 @@ async def test_startup_configuration_reproduces_deployment_resources(
 
     bound = captured["binder"].bind(deployment)
     assert bound.resources == deployment
+    assert checker_kwargs["app_sp_id"] == "app-sp-name"
     for step in (bound.access.reconcile_access(), bound.access.check_app_sharing()):
         assert step.state is StepState.PASSED
         assert step.summary == "Audience access is verified in a later setup step."

@@ -1336,16 +1336,18 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     return orchestrator
 
 
-def get_setup_sql_executor(
+def get_optional_setup_sql_executor(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
-) -> SqlExecutor:
-    """Inspect setup grants with OBO SQL before application resources are activated."""
+) -> SqlExecutor | None:
+    """Return an OBO SQL executor for setup grant inspection, or *None* before storage is bound.
+
+    Reconciliation must always reach the orchestrator so an administrator can retry
+    bootstrap steps (identity, Lakebase, configuration) that run before storage exists.
+    """
     bound = orchestrator.bound
     if bound is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio storage is not configured."
-        )
+        return None
     return SqlExecutor(
         ws=obo_ws,
         warehouse_id=orchestrator.bootstrap.warehouse_id,
