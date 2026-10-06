@@ -69,12 +69,12 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
 | `_tmp` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
 | `_genie` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
-| `_demo` schema | Owner / `ALL_PRIVILEGES` | None | `USE SCHEMA`, `SELECT` | Same as audience |
+| `_demo` schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
 | Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
-| Dashboard (if configured) | Publisher | None | `CAN_READ` | `CAN_READ` |
+| Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
@@ -277,7 +277,7 @@ targets:
 
 ### SQL warehouse
 
-The bundle **always** creates and manages a dedicated serverless warehouse (`resources.sql_warehouses.dqx_sql_warehouse`) — there is no "bring your own warehouse" mode. Its `permissions:` block grants `CAN_MANAGE` to the app SP and `CAN_USE` to `studio_user_group` and `admin_group` for end-user OBO queries. Tune it per target with `sql_warehouse_name` and `sql_warehouse_size`; `bundle destroy` deletes it. Marketplace binds an existing warehouse with `CAN_MANAGE` for the app SP, and setup adds the audience and administrator `CAN_USE` ACLs additively.
+The bundle **always** creates and manages a dedicated serverless warehouse (`resources.sql_warehouses.dqx_sql_warehouse`) — there is no "bring your own warehouse" mode. Its `permissions:` block grants `CAN_MANAGE` to the app SP and `CAN_USE` to `studio_user_group` and `admin_group` for end-user OBO queries; the app's `sql_warehouse` resource binding also requests `CAN_MANAGE`, matching Marketplace. Tune it per target with `sql_warehouse_name` and `sql_warehouse_size`; `bundle destroy` deletes it. Marketplace binds an existing warehouse with `CAN_MANAGE` for the app SP, and setup adds the audience and administrator `CAN_USE` ACLs additively.
 
 ### Lakebase
 
@@ -553,7 +553,7 @@ Raise `lakebase_max_cu` in `databricks.yml` and redeploy. You can also raise `DQ
 
 ## Insights dashboard
 
-The bundle ships a starter AI/BI dashboard (`dashboards/dqx_quality_overview.lvdash.json`) declared as `resources.dashboards.dqx_quality_overview` in `databricks.yml`. It's automatically created on deploy and pinned to the app's **Insights** page via the `DQX_DEFAULT_DASHBOARD_ID` env var, so the page works out-of-the-box.
+The bundle ships a starter AI/BI dashboard (`dashboards/dqx_quality_overview.lvdash.json`) declared as `resources.dashboards.dqx_quality_overview` in `databricks.yml`. It's automatically created on deploy and pinned to the app's **Insights** page via the `DQX_DEFAULT_DASHBOARD_ID` env var, so the page works out-of-the-box. Its `permissions:` block (which replaces the dashboard ACL on every deploy) gives the app SP `CAN_MANAGE` and the audience and admin group `CAN_READ`; setup's access step must read this ACL to reach ready, and falls back to the setup administrator's credentials when the app SP cannot read it.
 
 **What you get**: a four-row layout with KPI counters (total runs, monitored tables, total errors, pass rate), trend charts (runs over time by status; errors & warnings over time), drilldowns (top failing tables; quarantined rows over time), and a recent-runs table.
 
