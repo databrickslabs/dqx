@@ -82,6 +82,17 @@ def test_dashboard_is_readable_by_audience_and_admins(bundle: dict) -> None:
     assert {"level": "CAN_READ", "group_name": "${var.admin_group}"} in permissions
 
 
+def test_app_sp_can_manage_bundle_dashboard(bundle: dict) -> None:
+    permissions = next(iter(bundle["resources"]["dashboards"].values()))["permissions"]
+    assert {"level": "CAN_MANAGE", "service_principal_name": _APP_SP} in permissions
+
+
+def test_app_warehouse_binding_grants_can_manage(bundle: dict) -> None:
+    resources = bundle["resources"]["apps"]["dqx-studio"]["resources"]
+    warehouse = next(item for item in resources if "sql_warehouse" in item)
+    assert warehouse["sql_warehouse"]["permission"] == "CAN_MANAGE"
+
+
 def test_app_env_has_no_volume_binding(bundle: dict) -> None:
     env = {item["name"] for item in bundle["variables"]["app_config"]["default"]["env"]}
     assert "DQX_WHEELS_VOLUME" not in env

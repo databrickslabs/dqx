@@ -84,7 +84,11 @@ class BoundChecks(Protocol):
 class AccessChecks(Protocol):
     """Audience access and app-sharing checks that run after activation."""
 
-    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep: ...
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep: ...
 
     def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep: ...
 
@@ -364,7 +368,7 @@ class SetupOrchestrator:
         if stopped := advance(await self._activate(bound)):
             return stopped
 
-        step = await asyncio.to_thread(bound.access.reconcile_access, reader_sql)
+        step = await asyncio.to_thread(bound.access.reconcile_access, reader_sql, reader_ws)
         if stopped := advance(step):
             return stopped
 

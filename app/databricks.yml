@@ -217,12 +217,13 @@ resources:
         - serving.serving-endpoints
 
       resources:
-        # Binding the bundle-managed warehouse to the app grants the app SP CAN_USE.
+        # Binding the bundle-managed warehouse to the app grants the app SP CAN_MANAGE
+        # (parity with Marketplace) so setup can share it with the audience.
         - name: "dqx-sql-warehouse"
           description: "SQL Warehouse for DQX Studio queries"
           sql_warehouse:
             id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
-            permission: "CAN_USE"
+            permission: "CAN_MANAGE"
         - name: "dqx-task-runner-job"
           description: "Job for async profiler and dry-run tasks"
           job:
@@ -440,8 +441,12 @@ resources:
       dataset_catalog: ${var.catalog_name}
       dataset_schema: ${var.schema_name}
       embed_credentials: true
-      # Share the aggregate dashboard only with the configured audience.
+      # Share the aggregate dashboard only with the configured audience. The app SP
+      # keeps CAN_MANAGE: the bundle replaces the ACL on deploy and setup's access
+      # step must read (and additively share) the dashboard to reach READY.
       permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
         - level: CAN_READ
           group_name: ${var.studio_user_group}
         - level: CAN_READ

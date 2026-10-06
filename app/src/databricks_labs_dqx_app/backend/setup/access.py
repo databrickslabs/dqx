@@ -10,7 +10,7 @@ import logging
 from collections.abc import Sequence
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
+from databricks.sdk.service.iam import AccessControlRequest, ObjectPermissions, PermissionLevel
 
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
@@ -100,15 +100,22 @@ class AudienceAccess:
             ("SCHEMA", demo, "SELECT"),
         )
 
-    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep:
         """Apply, then verify, audience grants and shared-resource ACLs.
 
-        Grants and ACL updates are best effort; the re-read state decides the result.
-        Uninspectable state takes precedence over missing state.
+        Grants and ACL updates are best effort and always run as the app service
+        principal; the re-read state decides the result. Uninspectable state takes
+        precedence over missing state.
 
         Args:
             reader_sql: Administrator SQL executor enabling the SHOW GRANTS fallback
                 when effective permissions cannot be read.
+            reader_ws: Setup administrator's client used only to read the Genie space
+                and dashboard ACLs when the app service principal cannot read them.
 
         Returns:
             A passed access step, or an action-required step describing what is missing.
@@ -128,7 +135,9 @@ class AudienceAccess:
         elif not genie_space_id:
             not_applicable.append("Genie space sharing")
         else:
-            status, missing = self._reconcile_acl("genie", genie_space_id, PermissionLevel.CAN_RUN, _GENIE_RUN_LEVELS)
+            status, missing = self._reconcile_acl(
+                "genie", genie_space_id, PermissionLevel.CAN_RUN, _GENIE_RUN_LEVELS, reader_ws
+            )
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("Genie space", genie_space_id))
             genie_missing.extend(_acl_instruction("CAN RUN", "Genie space", genie_space_id, group) for group in missing)
@@ -136,7 +145,7 @@ class AudienceAccess:
             not_applicable.append("dashboard sharing")
         else:
             status, missing = self._reconcile_acl(
-                "dashboards", self._dashboard_id, PermissionLevel.CAN_READ, _DASHBOARD_READ_LEVELS
+                "dashboards", self._dashboard_id, PermissionLevel.CAN_READ, _DASHBOARD_READ_LEVELS, reader_ws
             )
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("dashboard", self._dashboard_id))
@@ -279,12 +288,13 @@ class AudienceAccess:
         object_id: str,
         level: PermissionLevel,
         sufficient: frozenset[str],
+        reader_ws: WorkspaceClient | None,
     ) -> tuple[AccessStatus, tuple[str, ...]]:
         """Additively grant *level* to workspace principals lacking it, then re-read the ACL."""
         principals = self._resources.audience.workspace_principals
         if replace_control_characters(object_id) != object_id:
             return "unknown", ()
-        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient)
+        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient, reader_ws)
         if absent is None:
             return "unknown", ()
         if not absent:
@@ -299,7 +309,7 @@ class AudienceAccess:
             )
         except Exception:
             logger.warning("Could not share a Studio resource with the audience; verifying access instead.")
-        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient)
+        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient, reader_ws)
         if absent is None:
             return "unknown", ()
         return ("missing", absent) if absent else ("granted", ())
@@ -310,12 +320,21 @@ class AudienceAccess:
         object_id: str,
         principals: Sequence[str],
         sufficient: frozenset[str],
+        reader_ws: WorkspaceClient | None,
     ) -> tuple[str, ...] | None:
-        try:
-            permissions = self._workspace.permissions.get(object_type, object_id)
-        except Exception:
+        permissions = _read_acl(self._workspace, object_type, object_id)
+        if permissions is None and reader_ws is not None:
+            permissions = _read_acl(reader_ws, object_type, object_id)
+        if permissions is None:
             return None
         return missing_principals(group_levels(permissions.access_control_list or []), principals, sufficient)
+
+
+def _read_acl(client: WorkspaceClient, object_type: str, object_id: str) -> ObjectPermissions | None:
+    try:
+        return client.permissions.get(object_type, object_id)
+    except Exception:
+        return None
 
 
 def _blocked(code: str, summary: str, instructions: tuple[str, ...]) -> SetupStep:

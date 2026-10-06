@@ -586,7 +586,11 @@ class FixedBinder:
 class VerifiedAccess:
     """Audience access is not exercised by this live suite yet."""
 
-    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep:
         """Report audience access as verified."""
         return SetupStep(id=SetupStepId.ACCESS, state=StepState.PASSED)
 
