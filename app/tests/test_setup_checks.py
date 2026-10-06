@@ -18,6 +18,7 @@ from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers, required_catalog_grants
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -851,48 +852,88 @@ def test_storage_checks_use_injected_identity_without_scim_lookup(
     workspace.current_user.me.assert_not_called()
 
 
-def test_missing_warehouse_can_use_requires_action(checkers: ResourceCheckers, compute: MagicMock) -> None:
-    """Treating a missing warehouse grant as ready would fail later SQL operations."""
+def test_warehouse_requires_app_manage(checkers: ResourceCheckers, compute: MagicMock) -> None:
+    """CAN_USE alone would let the app run SQL but not manage the warehouse ACL."""
     compute.warehouse_access_status.return_value = "missing"
 
-    result = checkers.check_warehouse()
+    step = checkers.check_warehouse()
 
-    assert result.id == SetupStepId.WAREHOUSE
-    assert result.state == StepState.ACTION_REQUIRED
-    assert result.code == "warehouse_permissions_missing"
-    assert "CAN_USE" in "\n".join(result.instructions)
+    assert step.id == SetupStepId.WAREHOUSE
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "warehouse_permissions_missing"
+    assert "CAN MANAGE" in step.instructions[0]
+    compute.reconcile_warehouse_audience.assert_not_called()
 
 
-def test_warehouse_with_can_use_passes(checkers: ResourceCheckers, compute: MagicMock) -> None:
-    """Changing a granted warehouse status to failure would block a usable installation."""
+def test_warehouse_reconciles_audience_use(checkers: ResourceCheckers, compute: MagicMock) -> None:
     compute.warehouse_access_status.return_value = "granted"
+    compute.reconcile_warehouse_audience.return_value = "granted"
 
-    result = checkers.check_warehouse()
-
-    assert result.state == StepState.PASSED
-    assert result.code == ""
+    assert checkers.check_warehouse().state == StepState.PASSED
+    compute.reconcile_warehouse_audience.assert_called_once_with("warehouse-id", ("data-team",))
 
 
-def test_bound_warehouse_uses_query_when_acl_cannot_be_inspected(
+def test_warehouse_audience_missing_lists_each_group(
+    checkers: ResourceCheckers, compute: MagicMock, resources: ActiveResources
+) -> None:
+    compute.warehouse_access_status.return_value = "granted"
+    compute.reconcile_warehouse_audience.return_value = "missing"
+
+    step = checkers.check_warehouse()
+
+    assert step.code == "warehouse_audience_missing"
+    assert step.instructions == ("Grant CAN USE on SQL warehouse `warehouse-id` to group `data-team`.",)
+
+
+def test_warehouse_audience_unknown_requires_action(checkers: ResourceCheckers, compute: MagicMock) -> None:
+    compute.warehouse_access_status.return_value = "granted"
+    compute.reconcile_warehouse_audience.return_value = "unknown"
+
+    assert checkers.check_warehouse().code == "warehouse_permission_unknown"
+
+
+def test_warehouse_unreadable_acl_does_not_fall_back_to_query(
     checkers: ResourceCheckers, compute: MagicMock, sql: MagicMock
 ) -> None:
-    """An app SP with CAN_USE cannot necessarily inspect its own warehouse ACL."""
+    """SELECT 1 proves CAN_USE, not the CAN_MANAGE the app SP needs."""
     compute.warehouse_access_status.return_value = "unknown"
 
-    result = checkers.check_warehouse()
-
-    assert result.state == StepState.PASSED
-    sql.query.assert_called_once_with("SELECT 1")
+    assert checkers.check_warehouse().code == "warehouse_permission_unknown"
+    sql.query.assert_not_called()
 
 
 def test_warehouse_candidate_uses_supplied_obo_reader(checkers: ResourceCheckers, compute: MagicMock) -> None:
     """Ignoring the caller's OBO reader could report the wrong warehouse access result."""
     obo_workspace = MagicMock(name="obo_workspace")
+    compute.reconcile_warehouse_audience.return_value = "granted"
 
     result = checkers.check_warehouse("candidate-warehouse", reader_ws=obo_workspace)
 
     assert result.state == StepState.PASSED
     compute.warehouse_access_status.assert_called_once_with("candidate-warehouse", reader_ws=obo_workspace)
+    compute.reconcile_warehouse_audience.assert_called_once_with("candidate-warehouse", ("data-team",))
+
+
+def test_schema_privilege_inspection_requests_manage(
+    checkers: ResourceCheckers, workspace: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting MANAGE lets the SHOW GRANTS fallback skip group expansion for a group-held MANAGE."""
+    requested: list[frozenset[str]] = []
+
+    def spy(
+        _self: GrantInspector, kind: str, full_name: str, principal: str, *, required: frozenset[str] = frozenset()
+    ) -> frozenset[str]:
+        if kind == "SCHEMA":
+            requested.append(required)
+        return frozenset({"MANAGE", "USE_SCHEMA", "CREATE_TABLE"})
+
+    monkeypatch.setattr(GrantInspector, "privileges", spy)
+    workspace.schemas.get.return_value = SimpleNamespace(owner="deployer@example.com")
+
+    checkers.ensure_storage(provision=False)
+
+    assert requested
+    assert all("MANAGE" in required for required in requested)
 
 
 def test_catalog_grant_instructions_strip_control_characters(resources: ActiveResources) -> None:
