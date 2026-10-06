@@ -82,7 +82,7 @@ class ResourceCheckers:
                     summary="Could not verify the required Unity Catalog permissions.",
                     instructions=(
                         "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
-                        f"{_instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
+                        f"{instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
                         "catalog grants.",
                     ),
                     actions=(SetupActionId.VERIFY_AGAIN,),
@@ -113,10 +113,12 @@ class ResourceCheckers:
         reader_sql: SqlExecutor | None = None,
         include_outputs: bool = False,
     ) -> SetupStep:
-        """Verify wheel access, schema usage, and main-schema data access.
+        """Grant, then verify, wheel access, schema usage, and main-schema data access.
 
-        Missing grants are reported for an administrator to apply; this check
-        never grants the runner write or administrative privileges.
+        Least-privilege grants on Studio-managed objects are applied best effort
+        before inspection; anything still missing is reported for an administrator
+        to apply. The runner never receives ALL PRIVILEGES, catalog privileges, or
+        Genie or demo schema access.
 
         Args:
             job_id: Resolved task-runner job whose run-as identity is checked.
@@ -148,11 +150,12 @@ class ResourceCheckers:
                 "task_runner_identity_unresolved",
                 "Could not resolve a task-runner service principal distinct from the app identity.",
             )
+        self._grant_runner_access(principal, include_outputs=include_outputs)
         volume = self._resources.volume
-        catalog = _instruction_identifier(volume.catalog)
-        schema = f"{catalog}.{_instruction_identifier(volume.schema)}"
-        quoted_volume = f"{schema}.{_instruction_identifier(volume.volume)}"
-        quoted_principal = _instruction_identifier(principal)
+        catalog = instruction_identifier(volume.catalog)
+        schema = f"{catalog}.{instruction_identifier(volume.schema)}"
+        quoted_volume = f"{schema}.{instruction_identifier(volume.volume)}"
+        quoted_principal = instruction_identifier(principal)
         requirements = [
             ("CATALOG", volume.catalog, "USE_CATALOG", "USE CATALOG", catalog),
             ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE SCHEMA", schema),
@@ -161,7 +164,7 @@ class ResourceCheckers:
                 f"{volume.catalog}.{self._resources.tmp_schema}",
                 "USE_SCHEMA",
                 "USE SCHEMA",
-                f"{catalog}.{_instruction_identifier(self._resources.tmp_schema)}",
+                f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
             ),
             ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ VOLUME", quoted_volume),
         ]
@@ -234,7 +237,6 @@ class ResourceCheckers:
         if not app_sp:
             return _identity_required(SetupStepId.STORAGE)
         volume = self._resources.volume
-        catalog = volume.catalog
         schemas = (
             volume.schema,
             self._resources.tmp_schema,
@@ -315,14 +317,14 @@ class ResourceCheckers:
         return ("incomplete", missing) if missing else ("ok", frozenset())
 
     def _collision_step(self, schemas: list[str]) -> SetupStep:
-        catalog = _instruction_identifier(self._resources.volume.catalog)
+        catalog = instruction_identifier(self._resources.volume.catalog)
         return SetupStep(
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
             code="storage_collision",
             summary="A schema with a Studio storage name already exists and is not managed by DQX Studio.",
             instructions=tuple(
-                f"Schema {catalog}.{_instruction_identifier(schema)} already exists. Choose a different storage "
+                f"Schema {catalog}.{instruction_identifier(schema)} already exists. Choose a different storage "
                 "prefix, or drop or rename the existing schema, then verify again."
                 for schema in schemas
             ),
@@ -330,8 +332,8 @@ class ResourceCheckers:
         )
 
     def _schema_permissions_step(self, incomplete: list[tuple[str, frozenset[str]]], app_sp: str) -> SetupStep:
-        catalog = _instruction_identifier(self._resources.volume.catalog)
-        principal = _instruction_identifier(app_sp)
+        catalog = instruction_identifier(self._resources.volume.catalog)
+        principal = instruction_identifier(app_sp)
         return SetupStep(
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
@@ -340,7 +342,7 @@ class ResourceCheckers:
             instructions=tuple(
                 "GRANT "
                 + ", ".join(name.replace("_", " ") for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
-                + f" ON SCHEMA {catalog}.{_instruction_identifier(schema)} TO {principal};"
+                + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
                 for schema, missing in incomplete
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
@@ -381,7 +383,7 @@ class ResourceCheckers:
         if missing and not self._is_owner("VOLUME", full_name, app_sp):
             volume = self._resources.volume
             quoted_volume = ".".join(
-                _instruction_identifier(part) for part in (volume.catalog, volume.schema, volume.volume)
+                instruction_identifier(part) for part in (volume.catalog, volume.schema, volume.volume)
             )
             return SetupStep(
                 id=SetupStepId.STORAGE,
@@ -390,11 +392,37 @@ class ResourceCheckers:
                 summary="The app service principal needs access to the wheels volume.",
                 instructions=(
                     f"GRANT {', '.join(p.replace('_', ' ') for p in missing)} ON VOLUME {quoted_volume} "
-                    f"TO {_instruction_identifier(app_sp)};",
+                    f"TO {instruction_identifier(app_sp)};",
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
         return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+
+    def _grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
+        """Best-effort least-privilege grants for the task runner on Studio-managed objects.
+
+        Never grants ALL PRIVILEGES, catalog privileges, or access to the Genie or demo schemas.
+        """
+        volume = self._resources.volume
+        try:
+            catalog = self._sql.q(_validated_identifier(volume.catalog))
+            main = f"{catalog}.{self._sql.q(_validated_identifier(volume.schema))}"
+            tmp = f"{catalog}.{self._sql.q(_validated_identifier(self._resources.tmp_schema))}"
+            wheels = f"{main}.{self._sql.q(_validated_identifier(volume.volume))}"
+            grantee = self._sql.q(principal)
+        except Exception:
+            logger.warning("Could not grant the task runner access to Studio resources; verifying its access instead.")
+            return
+        statements = [f"GRANT USE SCHEMA ON SCHEMA {main} TO {grantee}"]
+        if include_outputs:
+            statements.append(f"GRANT SELECT, MODIFY ON SCHEMA {main} TO {grantee}")
+        statements.append(f"GRANT USE SCHEMA ON SCHEMA {tmp} TO {grantee}")
+        statements.append(f"GRANT READ VOLUME ON VOLUME {wheels} TO {grantee}")
+        for statement in statements:
+            try:
+                self._sql.execute_no_schema(statement)
+            except Exception:
+                logger.warning("Could not grant the task runner a Studio privilege; verifying its access instead.")
 
     def _grant_catalog_usage_to_audience(self) -> None:
         try:
@@ -422,7 +450,7 @@ class ResourceCheckers:
         """
         effective_warehouse_id = (warehouse_id or self._resources.warehouse_id).strip()
         effective_reader_ws = reader_ws or self._workspace
-        warehouse = _instruction_identifier(effective_warehouse_id)
+        warehouse = instruction_identifier(effective_warehouse_id)
         try:
             status = self._compute.warehouse_access_status(effective_warehouse_id, reader_ws=effective_reader_ws)
             if status == "granted":
@@ -436,7 +464,7 @@ class ResourceCheckers:
                         code="warehouse_audience_missing",
                         summary="Some Studio users cannot use the SQL warehouse.",
                         instructions=tuple(
-                            f"Grant CAN USE on SQL warehouse {warehouse} to group {_instruction_identifier(group)}."
+                            f"Grant CAN USE on SQL warehouse {warehouse} to group {instruction_identifier(group)}."
                             for group in self._resources.audience.workspace_principals
                         ),
                         actions=(SetupActionId.VERIFY_AGAIN,),
@@ -500,10 +528,10 @@ def required_catalog_grants(app_sp: str, resources: ActiveResources) -> tuple[st
 
 
 def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
-    quoted_catalog = _instruction_identifier(catalog)
+    quoted_catalog = instruction_identifier(catalog)
     return tuple(
         f"GRANT {', '.join(name.replace('_', ' ') for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
-        f"ON CATALOG {quoted_catalog} TO {_instruction_identifier(principal)};"
+        f"ON CATALOG {quoted_catalog} TO {instruction_identifier(principal)};"
         for principal, privileges in missing
     )
 
@@ -557,7 +585,15 @@ def _validated_identifier(value: str) -> str:
     return validate_identifier(value)
 
 
-def _instruction_identifier(value: str) -> str:
+def instruction_identifier(value: str) -> str:
+    """Quote *value* for display in administrator instructions, replacing control characters.
+
+    Args:
+        value: Identifier to display.
+
+    Returns:
+        The backtick-quoted, sanitized identifier.
+    """
     sanitized = replace_control_characters(value)
     return "`" + sanitized.replace("`", "``") + "`"
 

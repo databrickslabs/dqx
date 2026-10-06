@@ -950,3 +950,47 @@ def test_catalog_grant_instructions_strip_c1_control_characters(resources: Activ
     instructions = required_catalog_grants("app-sp\u0085GRANT ALL", resources)
 
     assert all("\u0085" not in instruction for instruction in instructions)
+
+
+def test_runner_grants_are_least_privilege(checkers, workspace, sql) -> None:
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp")))
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    checkers.check_runner_access(27, include_outputs=True)
+
+    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
+    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
+    assert "GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
+    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
+    assert "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner-sp`" in statements
+    assert not any("ALL PRIVILEGES" in s or "genie" in s or "_demo" in s or "ON CATALOG" in s for s in statements)
+
+
+def test_runner_data_grants_wait_for_outputs(checkers, workspace, sql) -> None:
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp")))
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+    checkers.check_runner_access(27)
+
+    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
+    assert statements
+    assert not any("SELECT" in s or "MODIFY" in s for s in statements)
+
+
+def test_runner_grant_failures_are_ignored_and_verification_decides(checkers, workspace, sql) -> None:
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp")))
+    workspace.grants.get_effective.return_value = _effective_permissions()
+    sql.execute_no_schema.side_effect = RuntimeError("denied")
+
+    step = checkers.check_runner_access(27, include_outputs=True)
+
+    assert step.code == "task_runner_permissions_missing"
+    assert "denied" not in " ".join(step.instructions)
+
+
+def test_unresolved_runner_receives_no_grants(checkers, workspace, sql) -> None:
+    workspace.jobs.get.side_effect = PermissionError("denied")
+
+    checkers.check_runner_access(27, include_outputs=True)
+
+    sql.execute_no_schema.assert_not_called()

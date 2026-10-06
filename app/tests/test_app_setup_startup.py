@@ -4,14 +4,14 @@ import asyncio
 import logging
 from types import SimpleNamespace
 from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 
+from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.runtime import Runtime
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -189,72 +189,6 @@ async def test_fastapi_lifespan_yields_restricted_app_and_always_cleans_up(
     assert events == ["start", "served", "stop"]
 
 
-@pytest.mark.parametrize("groups", [(), ("studio-authors",)])
-def test_startup_warns_when_audience_access_is_administrator_managed(
-    resources: ActiveResources, caplog: pytest.LogCaptureFixture, groups: tuple[str, ...]
-) -> None:
-    from databricks_labs_dqx_app.backend import startup
-
-    delta_sql = create_autospec(SqlExecutor, instance=True)
-    delta_sql.q.side_effect = lambda value: f"`{value}`"
-    startup.logger.addHandler(caplog.handler)
-    try:
-        with caplog.at_level(logging.WARNING, logger=startup.logger.name):
-            startup.grant_user_view_access(delta_sql, resources, audience_groups=groups)
-    finally:
-        startup.logger.removeHandler(caplog.handler)
-
-    warnings = [record.message for record in caplog.records if "DQX_USER_GROUPS" in record.message]
-    assert bool(warnings) is (not groups)
-    if not groups:
-        assert "administrator-managed" in warnings[0]
-        delta_sql.execute_no_schema.assert_not_called()
-
-
-def test_user_view_grants_are_limited_to_approved_genie_objects(resources: ActiveResources) -> None:
-    from databricks_labs_dqx_app.backend import startup
-
-    delta_sql = create_autospec(SqlExecutor, instance=True)
-    delta_sql.q.side_effect = lambda value: f"`{value}`"
-
-    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
-
-    statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
-    assert statements == [
-        "GRANT USE SCHEMA ON SCHEMA `main`.`genie` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`mv_dq_scores` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results_asof` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_attribution` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_rules` TO `studio-authors`",
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
-    ]
-
-
-def test_user_view_grant_failure_does_not_block_other_grants(resources: ActiveResources) -> None:
-    from databricks_labs_dqx_app.backend import startup
-
-    delta_sql = create_autospec(SqlExecutor, instance=True)
-    delta_sql.q.side_effect = lambda value: f"`{value}`"
-    delta_sql.execute_no_schema.side_effect = [
-        RuntimeError("permission denied"),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ]
-
-    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
-
-    assert delta_sql.execute_no_schema.call_args_list[-1].args == (
-        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
-    )
-
-
 @pytest.mark.asyncio
 async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
@@ -308,14 +242,6 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     request_metadata_dims.refresh.assert_not_called()
     grant_statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
     assert not any("account users" in statement for statement in grant_statements)
-
-
-def test_user_view_grants_default_to_administrator_managed(resources: ActiveResources) -> None:
-    from databricks_labs_dqx_app.backend import startup
-
-    delta_sql = create_autospec(SqlExecutor, instance=True)
-    startup.grant_user_view_access(delta_sql, resources)
-    delta_sql.execute_no_schema.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -607,6 +533,7 @@ async def test_startup_configuration_reproduces_deployment_resources(
     bound = captured["binder"].bind(deployment)
     assert bound.resources == deployment
     assert checker_kwargs["app_sp_id"] == "app-sp-name"
-    for step in (bound.access.reconcile_access(), bound.access.check_app_sharing()):
-        assert step.state is StepState.PASSED
-        assert step.summary == "Audience access is verified in a later setup step."
+    assert isinstance(bound.access, AudienceAccess)
+    sharing = bound.access.check_app_sharing()
+    assert sharing.state is StepState.PASSED
+    assert sharing.summary == "Audience access is verified in a later setup step."
