@@ -222,7 +222,7 @@ def test_access_reapplies_missing_admin_grant_on_recheck(workspace, sql) -> None
 
     access.reconcile_access()
 
-    assert sql.execute_no_schema.call_count > 0
+    assert any(statement.endswith("TO `dqx-admins`") for statement in _statements(sql))
 
 
 def test_configured_genie_space_requires_can_run(workspace, sql) -> None:

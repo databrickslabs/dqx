@@ -995,6 +995,25 @@ async def test_required_view_failure_reports_uc_setup_instead_of_background_serv
 
 
 @pytest.mark.asyncio
+async def test_required_view_failure_mentions_metadata_dimensions_and_recovers_on_reconcile() -> None:
+    activation = FakeActivation([], activation_failure=RequiredViewSetupError())
+    harness = _harness(activation=activation)
+
+    failed = await harness.orchestrator.reconcile()
+
+    step = failed.step(SetupStepId.ACTIVATION)
+    assert step.code == "required_views_creation_failed"
+    assert step.actions == (SetupActionId.RECONCILE,)
+    assert "metadata dimension" in step.summary
+
+    activation.activation_failure = None
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.ACTIVATION).state == StepState.PASSED
+
+
+@pytest.mark.asyncio
 async def test_generic_activation_failure_is_reported() -> None:
     activation = FakeActivation([], activation_failure=RuntimeError("raw failure"))
     harness = _harness(activation=activation)
