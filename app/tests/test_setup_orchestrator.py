@@ -99,6 +99,7 @@ class FakeBound:
     runner_sql: SqlExecutor | None = None
     catalog_reader_sql: SqlExecutor | None = None
     access_observer: Callable[[], None] | None = None
+    access_reader: WorkspaceClient | None = None
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
@@ -130,7 +131,12 @@ class FakeBound:
             return self.output_result
         return self.results.get(SetupStepId.TASK_RUNNER, _passed(SetupStepId.TASK_RUNNER))
 
-    def reconcile_access(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep:
+        self.access_reader = reader_ws
         if self.access_observer is not None:
             self.access_observer()
         return self._result(SetupStepId.ACCESS)
@@ -839,6 +845,7 @@ async def test_reconcile_passes_request_scoped_admin_reader_to_runner_check() ->
     assert report.state == SetupState.READY
     assert harness.bound.runner_reader is reader
     assert harness.bound.runner_sql is reader_sql
+    assert harness.bound.access_reader is reader
 
 
 @pytest.mark.asyncio

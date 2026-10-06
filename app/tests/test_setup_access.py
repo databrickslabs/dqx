@@ -286,6 +286,46 @@ def test_unreadable_shared_resource_acl_fails_closed(workspace, sql) -> None:
     assert "denied" not in step.summary + " ".join(step.instructions)
 
 
+def test_dashboard_acl_read_falls_back_to_the_setup_administrator(workspace, sql) -> None:
+    workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
+    workspace.permissions.get.side_effect = PermissionError("denied")
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.permissions.get.return_value = _acl(("data-team", PermissionLevel.CAN_READ))
+
+    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access(reader_ws=reader)
+
+    assert step.state == StepState.PASSED
+    reader.permissions.get.assert_called_with("dashboards", "dash-1")
+    reader.permissions.update.assert_not_called()
+
+
+def test_acl_fallback_reader_never_writes_the_acl(workspace, sql) -> None:
+    workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
+    workspace.permissions.get.side_effect = PermissionError("denied")
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.permissions.get.return_value = _acl()
+
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(
+        reader_ws=reader
+    )
+
+    assert step.code == "genie_space_sharing_missing"
+    reader.permissions.update.assert_not_called()
+    object_type, object_id = workspace.permissions.update.call_args.args
+    assert (object_type, object_id) == ("genie", "space-1")
+
+
+def test_acl_unreadable_by_every_identity_fails_closed(workspace, sql) -> None:
+    workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
+    workspace.permissions.get.side_effect = PermissionError("denied")
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.permissions.get.side_effect = PermissionError("denied")
+
+    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access(reader_ws=reader)
+
+    assert step.code == "shared_resource_check_failed"
+
+
 def test_unconfigured_shared_resources_are_not_applicable(workspace, sql) -> None:
     workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
 
