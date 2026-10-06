@@ -113,23 +113,23 @@ def resolve_configuration(config: AppConfig, store: SetupConfigurationStore) -> 
     locked = store.is_locked()
     if config.has_deployment_storage:
         try:
-            # Only pass explicitly-set schema overrides to avoid breaking derive_storage
-            # when the validator auto-fills tmp_schema_name/genie_schema_name
-            storage_kwargs = {
-                "schema": config.schema_name if "schema_name" in config.model_fields_set else "",
-                "tmp_schema": config.tmp_schema_name if "tmp_schema_name" in config.model_fields_set else "",
-                "genie_schema": config.genie_schema_name if "genie_schema_name" in config.model_fields_set else "",
-                "demo_schema": config.demo_schema_name if "demo_schema_name" in config.model_fields_set else "",
-            }
             storage = derive_storage(
                 config.catalog,
                 config.prefix.strip() or DEFAULT_PREFIX,
-                **storage_kwargs,
+                schema=config.schema_name,
+                tmp_schema=config.tmp_schema_name,
+                genie_schema=config.genie_schema_name,
+                demo_schema=config.demo_schema_name,
             )
             audience = resolve_audience(config.user_groups, config.admin_group, allow_broad=True)
         except InvalidParameterError:
             return ResolvedConfiguration(
-                ConfigurationSource.DEPLOYMENT, None, None, None, locked, "deployment_configuration_invalid"
+                ConfigurationSource.DEPLOYMENT,
+                None,
+                None,
+                None,
+                locked,
+                "deployment_configuration_invalid",
             )
         return ResolvedConfiguration(ConfigurationSource.DEPLOYMENT, None, storage, audience, locked)
 
@@ -140,6 +140,11 @@ def resolve_configuration(config: AppConfig, store: SetupConfigurationStore) -> 
         storage, audience = validate_choices(choices, config.admin_group)
     except InvalidParameterError:
         return ResolvedConfiguration(
-            ConfigurationSource.SAVED, choices, None, None, locked, "saved_configuration_invalid"
+            ConfigurationSource.SAVED,
+            choices,
+            None,
+            None,
+            locked,
+            "saved_configuration_invalid",
         )
     return ResolvedConfiguration(ConfigurationSource.SAVED, choices, storage, audience, locked)

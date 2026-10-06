@@ -332,8 +332,8 @@ def _resolve_resources() -> ActiveResources | None:
         lakebase=lakebase,
         warehouse_id=warehouse_id,
         job_id=conf.job_id.strip() or None,
-        tmp_schema=conf.tmp_schema_name,
-        genie_schema=conf.genie_schema_name,
+        tmp_schema=conf.tmp_schema_name or f"{volume.schema}_tmp",
+        genie_schema=conf.genie_schema_name or f"{volume.schema}_genie",
     )
 
 

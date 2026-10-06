@@ -49,21 +49,6 @@ class AppConfig(BaseSettings):
         """Whether the deployment supplies Studio storage (bundle deployments)."""
         return bool(self.catalog.strip())
 
-    @model_validator(mode="after")
-    def derive_sibling_schema_names(self) -> "AppConfig":
-        """Name app-owned sibling schemas after the bound volume's schema."""
-        try:
-            schema = parse_volume_path(self.wheels_volume).schema
-        except InvalidParameterError:
-            schema = self.schema_name or "dqx_studio"
-        if "schema_name" in self.model_fields_set and self.schema_name != schema:
-            logger.warning(
-                "DQX_SCHEMA differs from the bound volume schema; the bound volume determines application storage."
-            )
-        self.tmp_schema_name = self.tmp_schema_name or f"{schema}_tmp"
-        self.genie_schema_name = self.genie_schema_name or f"{schema}_genie"
-        return self
-
     tag_bundle_owned_resources: bool = Field(
         default=False,
         validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",
