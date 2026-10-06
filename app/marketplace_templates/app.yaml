@@ -9,8 +9,6 @@ command:
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: dqx-sql-warehouse
-  - name: DQX_WHEELS_VOLUME
-    valueFrom: dqx-wheels-volume
   - name: DQX_LAKEBASE_SCHEMA
     value: dqx_studio
   - name: DQX_ADMIN_GROUP
