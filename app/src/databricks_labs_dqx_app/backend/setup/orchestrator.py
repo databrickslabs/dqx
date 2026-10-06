@@ -11,7 +11,12 @@ from typing import Literal, Protocol
 
 from databricks.sdk import WorkspaceClient
 
-from databricks_labs_dqx_app.backend.setup.configuration import ConfigurationSource, ResolvedConfiguration
+from databricks_labs_dqx_app.backend.setup.configuration import (
+    ConfigurationSource,
+    ResolvedConfiguration,
+    SetupChoices,
+    SetupConfigurationStore,
+)
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.models import (
@@ -216,6 +221,34 @@ class SetupOrchestrator:
             broad_audience=audience.broad if audience is not None else False,
             locked=resolved.locked,
         )
+
+    async def save_configuration(
+        self,
+        store: SetupConfigurationStore,
+        choices: SetupChoices,
+        *,
+        user_email: str | None,
+    ) -> Literal["saved", "unchanged", "locked"]:
+        """Persist setup choices unless storage was already provisioned.
+
+        The lock state is re-checked under the activation lock so a concurrent
+        reconcile cannot provision storage for different choices than the ones saved.
+
+        Args:
+            store: Persistence for the setup choices.
+            choices: Validated, normalized choices to save.
+            user_email: Administrator performing the change.
+
+        Returns:
+            *saved* when written, *unchanged* when locked with identical choices,
+            *locked* when locked with different choices.
+        """
+        async with self.runtime.activation_lock:
+            if await asyncio.to_thread(store.is_locked):
+                saved = await asyncio.to_thread(store.load)
+                return "unchanged" if saved == choices else "locked"
+            await asyncio.to_thread(partial(store.save, choices, user_email=user_email))
+            return "saved"
 
     async def reconcile(
         self,

@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import logging
 from typing import Annotated
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
+from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from databricks_labs_dqx_app.backend.config import AppConfig
@@ -26,6 +29,8 @@ from databricks_labs_dqx_app.backend.setup.models import SetupConfigurationReque
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,19 +57,31 @@ def _error(status_code: int, code: str, detail: str | None = None) -> HTTPExcept
 
 
 def _catalog_exists(reader_ws: WorkspaceClient, catalog: str) -> bool:
+    """Whether the caller can see *catalog*; unexpected SDK failures raise HTTP 502."""
     try:
         reader_ws.catalogs.get(catalog)
-    except Exception:
+    except (NotFound, PermissionDenied):
         return False
+    except DatabricksError as error:
+        logger.warning(f"Catalog existence check failed: {type(error).__name__}")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "catalog_check_failed") from None
     return True
 
 
 def _group_exists(sp_ws: WorkspaceClient, group: str) -> bool:
+    """Whether a workspace group named *group* exists; unexpected SDK failures raise HTTP 502."""
     try:
-        matches = sp_ws.groups.list(filter=f"displayName eq {json.dumps(group)}", attributes="id,displayName")
-        return any((match.display_name or "").casefold() == group.casefold() for match in matches)
-    except Exception:
+        matches = list(
+            sp_ws.groups.list(
+                filter=f"displayName eq {json.dumps(group, ensure_ascii=False)}", attributes="id,displayName"
+            )
+        )
+    except NotFound:
         return False
+    except DatabricksError as error:
+        logger.warning(f"Group existence check failed: {type(error).__name__}")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "group_check_failed") from None
+    return any((match.display_name or "").casefold() == group.casefold() for match in matches)
 
 
 @router.post("/configuration", response_model=SetupReport, operation_id="configureSetup")
@@ -78,22 +95,23 @@ async def configure_setup(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> SetupReport:
     """Validate and save catalog, prefix and audience group, then run the setup workflow."""
-    if orchestrator.configuration_view().source == "deployment":
+    if config.has_deployment_storage:
         raise _error(status.HTTP_409_CONFLICT, "configuration_managed_by_deployment")
-    choices = SetupChoices(catalog=body.catalog, prefix=body.prefix, audience_group=body.audience_group)
-    locked, saved = await asyncio.to_thread(lambda: (store.is_locked(), store.load()))
-    if locked and saved != choices:
+    try:
+        storage, audience = validate_choices(
+            SetupChoices(catalog=body.catalog, prefix=body.prefix, audience_group=body.audience_group),
+            config.admin_group,
+        )
+    except InvalidParameterError as error:
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "configuration_invalid", str(error)) from None
+    choices = SetupChoices(catalog=storage.catalog, prefix=storage.schema, audience_group=audience.groups[0])
+    if not await asyncio.to_thread(_catalog_exists, reader_ws, choices.catalog):
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "catalog_not_found")
+    if not await asyncio.to_thread(_group_exists, sp_ws, choices.audience_group):
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_not_found")
+    outcome = await orchestrator.save_configuration(store, choices, user_email=access.user_name)
+    if outcome == "locked":
         raise _error(status.HTTP_409_CONFLICT, "configuration_locked")
-    if not (locked and saved == choices):
-        try:
-            validate_choices(choices, config.admin_group)
-        except InvalidParameterError as error:
-            raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "configuration_invalid", str(error)) from None
-        if not await asyncio.to_thread(_catalog_exists, reader_ws, choices.catalog):
-            raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "catalog_not_found")
-        if not await asyncio.to_thread(_group_exists, sp_ws, choices.audience_group):
-            raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_not_found")
-        await asyncio.to_thread(lambda: store.save(choices, user_email=access.user_name))
     return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=None)
 
 
