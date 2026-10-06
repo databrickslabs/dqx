@@ -318,7 +318,7 @@
     "computeWarehouseDefaultSuffix": "(par défaut)",
     "computeWarehouseCustomOption": "enregistré",
     "computeNoWarehouses": "Aucun warehouse trouvé",
-    "computeSpAccessMissing": "Le service principal de l'application ne peut pas encore utiliser ce warehouse.",
+    "computeSpAccessMissing": "Le service principal de l'application a besoin de CAN MANAGE sur ce warehouse.",
     "computeGrantButton": "Accorder l'accès",
     "computeGrantAdminOnly": "Seuls les administrateurs peuvent accorder l'accès.",
     "computeJobsLabel": "Compute des jobs",

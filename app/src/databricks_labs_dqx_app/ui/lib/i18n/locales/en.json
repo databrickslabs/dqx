@@ -318,7 +318,7 @@
     "computeWarehouseDefaultSuffix": "(default)",
     "computeWarehouseCustomOption": "saved",
     "computeNoWarehouses": "No warehouses found",
-    "computeSpAccessMissing": "The app service principal can't use this warehouse yet.",
+    "computeSpAccessMissing": "The app service principal needs CAN MANAGE on this warehouse.",
     "computeGrantButton": "Grant access",
     "computeGrantAdminOnly": "Only admins can grant access.",
     "computeJobsLabel": "Jobs compute",

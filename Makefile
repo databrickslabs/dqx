@@ -387,8 +387,9 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 #
 # ONE-TIME prerequisite per catalog (the bundle does not manage the pre-existing
 # catalog, so it cannot grant catalog-level access): grant USE CATALOG on the
-# chosen catalog to the app SP, the task-runner SP, and ``account users``.
-# See app/DEPLOYMENT.md.
+# chosen catalog to the app SP (plus CREATE SCHEMA), the task-runner SP, and the
+# configured UC audience principal (the studio_user_group, or ``account users`` in
+# broad mode). See app/DEPLOYMENT.md.
 #
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
 #        make app-deploy PROFILE=my-profile TARGET=dev \
