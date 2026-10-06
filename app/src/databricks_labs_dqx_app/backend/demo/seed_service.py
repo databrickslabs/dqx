@@ -214,7 +214,7 @@ class DemoSeedService:
         schedule_config: ScheduleConfigService | None = None,
         schedule_grants: ScheduleGrantService | None = None,
         catalog: str = "dqx",
-        schema: str = "dqx_studio_demo",
+        schema: str,
     ) -> None:
         self._demo_sql = demo_sql
         self._app_sql = app_sql
