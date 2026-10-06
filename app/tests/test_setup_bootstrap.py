@@ -63,6 +63,19 @@ def test_app_identity_resolution_failure_requires_action(checkers: BootstrapChec
     assert checkers.app_sp_id() == ""
 
 
+def test_transient_identity_failure_is_retried(checkers: BootstrapCheckers, workspace: MagicMock) -> None:
+    """Caching a failed lookup would block setup until the app restarts."""
+    workspace.current_user.me.side_effect = [
+        RuntimeError("transient"),
+        SimpleNamespace(user_name="app-sp-id", id=None),
+    ]
+
+    assert checkers.check_app_identity().state == StepState.ACTION_REQUIRED
+    assert checkers.check_app_identity().state == StepState.PASSED
+    assert checkers.app_sp_id() == "app-sp-id"
+    assert workspace.current_user.me.call_count == 2
+
+
 def test_app_identity_with_c1_control_character_requires_action(
     checkers: BootstrapCheckers, workspace: MagicMock
 ) -> None:

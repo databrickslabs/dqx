@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 _STEP_ORDER = tuple(SetupStepId)
 _BLOCKING_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.FAILED})
+_CONFIGURED_SUMMARY = "Studio storage and audience are configured."
 _SOURCE_VIEWS: dict[ConfigurationSource, Literal["deployment", "saved", "none"]] = {
     ConfigurationSource.DEPLOYMENT: "deployment",
     ConfigurationSource.SAVED: "saved",
@@ -322,7 +323,11 @@ class SetupOrchestrator:
         if stopped := advance(step):
             return stopped
 
-        if stopped := advance(await self._ensure_storage(bound, resolved, actor)):
+        step = await self._ensure_storage(bound, resolved, actor)
+        if step.state == StepState.PASSED and not resolved.locked:
+            # Storage is now locked, so the saved choices can no longer be edited.
+            self._record(steps, _passed(SetupStepId.CONFIGURATION, _CONFIGURED_SUMMARY), progress=False)
+        if stopped := advance(step):
             return stopped
 
         step = await asyncio.to_thread(bound.checkers.check_warehouse)
@@ -439,7 +444,16 @@ class SetupOrchestrator:
             # Clear first so a failed bind never leaves collaborators whose activation was released.
             self.bound = None
             self.bound = await self.binder.bind(resources)
-        return _passed(SetupStepId.CONFIGURATION, "Studio storage and audience are configured.")
+        if resolved.source == ConfigurationSource.SAVED and not resolved.locked:
+            # Saved choices stay editable until storage is provisioned and locked, so a
+            # storage collision or missing catalog privilege is never a dead end.
+            return SetupStep(
+                id=SetupStepId.CONFIGURATION,
+                state=StepState.PASSED,
+                summary=_CONFIGURED_SUMMARY,
+                actions=(SetupActionId.CONFIGURE,),
+            )
+        return _passed(SetupStepId.CONFIGURATION, _CONFIGURED_SUMMARY)
 
     async def _ensure_storage(self, bound: BoundSetup, resolved: ResolvedConfiguration, actor: str | None) -> SetupStep:
         step = await asyncio.to_thread(

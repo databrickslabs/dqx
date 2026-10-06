@@ -22,7 +22,6 @@ class BootstrapCheckers:
         self._pg = pg
         self._lakebase_schema = lakebase_schema
         self._app_sp: str = ""
-        self._app_sp_resolved = False
 
     def check_app_identity(self) -> SetupStep:
         """Verify that the app service principal identity can be resolved."""
@@ -44,11 +43,11 @@ class BootstrapCheckers:
     def app_sp_id(self) -> str:
         """Return the resolved app service principal name, or an empty string when unresolved.
 
-        The identity is resolved once per instance; later calls reuse the first result.
+        A successful resolution is cached for the instance; a failed or invalid lookup is
+        retried on the next call.
         """
-        if self._app_sp_resolved:
+        if self._app_sp:
             return self._app_sp
-        self._app_sp_resolved = True
         try:
             identity = self._workspace.current_user.me()
             candidate = (identity.user_name or identity.id or "").strip()
