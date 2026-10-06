@@ -294,6 +294,56 @@ async def test_startup_does_not_activate_when_required_view_fails(
 
 
 @pytest.mark.asyncio
+async def test_metadata_dimension_failure_blocks_activation_until_retry(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed metadata-dimension refresh keeps Studio inactive so the next reconcile retries it."""
+    from databricks_labs_dqx_app.backend import startup
+    from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    metadata_dims = MagicMock()
+    metadata_dims.refresh.side_effect = [RuntimeError("SQLSTATE 42501"), None]
+
+    async def get_workspace() -> MagicMock:
+        return MagicMock()
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "MetadataDimService", lambda **_kwargs: metadata_dims)
+    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+
+    context = await startup.start_studio(FastAPI())
+    assert context is not None
+    try:
+        with pytest.raises(RequiredViewSetupError):
+            await activate_studio(context)
+        assert context.active is False
+
+        await activate_studio(context)
+        assert context.active is True
+        assert metadata_dims.refresh.call_count == 2
+    finally:
+        await deactivate_studio(context)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("include_bundle_resources", [False, True])
 async def test_startup_reconciles_studio_resource_tags(
     resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, include_bundle_resources: bool

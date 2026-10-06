@@ -423,10 +423,14 @@ class SetupOrchestrator:
                 id=SetupStepId.ACTIVATION,
                 state=StepState.FAILED,
                 code="required_views_creation_failed",
-                summary="Could not create the required score or entitlement objects in the main and Genie schemas.",
+                summary=(
+                    "Could not create the required score, entitlement or metadata dimension objects "
+                    "in the main and Genie schemas."
+                ),
                 instructions=(
                     "Verify the app service principal has USE CATALOG, USE SCHEMA, and CREATE TABLE "
-                    "on the application and Genie schemas, and can replace existing Studio views.",
+                    "on the application and Genie schemas, and can replace existing Studio views "
+                    "and metadata dimension tables.",
                 ),
                 actions=(SetupActionId.RECONCILE,),
             )
