@@ -62,7 +62,7 @@ Catalog and prefix cannot be changed once storage exists. The Lakebase schema do
 
 ### Who gets what
 
-Setup applies the access below, then **re-reads it to verify**. A missing grant, or one that cannot be inspected, blocks readiness. The only exception is sharing the app itself: if Studio cannot read the app's sharing it shows a warning rather than blocking, and you share the app manually. ACL changes are additive, so unrelated principals on shared resources are preserved.
+Setup applies the access below, then **re-reads it to verify**. A missing grant, or one that cannot be inspected, blocks readiness. The only exception is sharing the app itself: if Studio cannot read the app's sharing it shows a warning rather than blocking (administrators see it in a dismissible banner once Studio is ready), and you share the app manually. ACL changes are additive, so unrelated principals on shared resources are preserved.
 
 | Resource | App SP | Runner SP | Audience | Admin group |
 | --- | --- | --- | --- | --- |
@@ -71,12 +71,12 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
 | `_tmp` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
 | `_genie` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
-| `_demo` schema | Owner / `ALL_PRIVILEGES` | None | `USE SCHEMA`, `SELECT` | Same as audience |
+| `_demo` schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
 | Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
-| Dashboard (if configured) | Publisher | None | `CAN_READ` | `CAN_READ` |
+| Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
