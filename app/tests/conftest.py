@@ -40,6 +40,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 os.environ.setdefault("DQX_CATALOG", "dqx_test")
 os.environ.setdefault("DQX_SCHEMA", "dqx_app_test")
 os.environ.setdefault("DQX_TMP_SCHEMA", "dqx_app_test_tmp")
+os.environ.setdefault("DQX_GENIE_SCHEMA", "dqx_app_test_genie")
+os.environ.setdefault("DQX_DEMO_SCHEMA", "dqx_app_test_demo")
 os.environ.setdefault("DQX_ADMIN_GROUP", "test-admins")
 os.environ.setdefault("DQX_JOB_ID", "")
 os.environ.setdefault("DATABRICKS_WAREHOUSE_ID", "test-warehouse")
