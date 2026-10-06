@@ -356,7 +356,7 @@ resources:
       # `bundle deploy` creates it owned by the app SP with ALL_PRIVILEGES — the
       # app SP lacks catalog-level CREATE SCHEMA on the user catalog, so the
       # seeder's `CREATE SCHEMA IF NOT EXISTS` is a no-op inside a schema it
-      # already fully owns. Kept separate from the app's own dqx_studio schema so
+      # already fully owns. Kept separate from the app's own <prefix> schema so
       # a demo re-seed never touches app state.
       catalog_name: ${var.catalog_name}
       name: ${var.demo_schema_name}

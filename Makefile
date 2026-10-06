@@ -417,10 +417,11 @@ app-deploy: app-check-cli $(if $(filter release,$(TARGET)),,app-build) ## Deploy
 APP_NAME ?= dqx-studio
 
 # Studio storage prefix / audience. STUDIO_USER_GROUP=users selects broad mode:
-# workspace ACLs use `users`, UC grants use `account users`.
+# workspace ACLs use `users`, UC grants use `account users`. An explicit
+# studio_user_group in BUNDLE_VARS also suppresses the broad UC principal.
 studio_prefix_var = $(if $(STUDIO_PREFIX),$(if $(findstring prefix=,$(BUNDLE_VARS)),,--var prefix=$(STUDIO_PREFIX)))
 studio_group_var = $(if $(STUDIO_USER_GROUP),$(if $(findstring studio_user_group,$(BUNDLE_VARS)),,--var studio_user_group=$(STUDIO_USER_GROUP)))
-studio_uc_var = $(if $(filter users,$(STUDIO_USER_GROUP)),$(if $(findstring studio_uc_principal,$(BUNDLE_VARS)),,--var "studio_uc_principal=account users"))
+studio_uc_var = $(if $(filter users,$(STUDIO_USER_GROUP)),$(if $(findstring studio_uc_principal,$(BUNDLE_VARS))$(findstring studio_user_group,$(BUNDLE_VARS)),,--var "studio_uc_principal=account users"))
 STUDIO_BUNDLE_VARS = $(studio_prefix_var) $(studio_group_var) $(studio_uc_var) $(BUNDLE_VARS)
 
 ##@ Build & lockfiles

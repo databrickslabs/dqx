@@ -1,5 +1,7 @@
 """Permission contracts for the bundle-managed Studio deployment."""
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -84,3 +86,33 @@ def test_app_env_has_no_volume_binding(bundle: dict) -> None:
     env = {item["name"] for item in bundle["variables"]["app_config"]["default"]["env"]}
     assert "DQX_WHEELS_VOLUME" not in env
     assert {"DQX_CATALOG", "DQX_PREFIX", "DQX_DEMO_SCHEMA", "DQX_USER_GROUPS"} <= env
+
+
+def _deploy_command(*make_args: str) -> str:
+    repo_root = _BUNDLE.parents[1]
+    result = subprocess.run(
+        ["make", "-n", "app-deploy", "PROFILE=x", "TARGET=dev", *make_args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return next(line for line in result.stdout.splitlines() if "bundle deploy" in line)
+
+
+@pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
+class TestMakeDeployVariables:
+    def test_broad_mode_sets_account_users_uc_principal(self) -> None:
+        command = _deploy_command("STUDIO_USER_GROUP=users")
+        assert "--var studio_user_group=users" in command
+        assert '--var "studio_uc_principal=account users"' in command
+
+    def test_explicit_scoped_group_never_widens_uc_grants(self) -> None:
+        command = _deploy_command("STUDIO_USER_GROUP=users", "BUNDLE_VARS=--var=studio_user_group=data-team")
+        assert "studio_uc_principal" not in command
+        assert "--var=studio_user_group=data-team" in command
+
+    def test_no_inputs_adds_no_studio_variables(self) -> None:
+        command = _deploy_command()
+        assert "studio_" not in command
+        assert "prefix" not in command
