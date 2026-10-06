@@ -244,9 +244,6 @@ class ComputeService:
                 return "unknown"
         return "missing" if missing_principals(group_levels(acl), principals, WAREHOUSE_USE_LEVELS) else "granted"
 
-    async def reconcile_warehouse_audience_async(self, warehouse_id: str, principals: Sequence[str]) -> AccessStatus:
-        return await asyncio.to_thread(self.reconcile_warehouse_audience, warehouse_id, principals)
-
     # ------------------------------------------------------------------
     # Async wrappers (SDK calls are blocking)
     # ------------------------------------------------------------------

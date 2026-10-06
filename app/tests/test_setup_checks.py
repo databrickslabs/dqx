@@ -17,7 +17,7 @@ from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
-from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers, required_catalog_grants
+from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
@@ -936,20 +936,20 @@ def test_schema_privilege_inspection_requests_manage(
     assert all("MANAGE" in required for required in requested)
 
 
-def test_catalog_grant_instructions_strip_control_characters(resources: ActiveResources) -> None:
+@pytest.mark.parametrize("app_sp_id", ["app-sp\nGRANT ALL", "app-sp\u0085GRANT ALL"])
+def test_catalog_grant_instructions_never_carry_control_characters(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock, app_sp_id: str
+) -> None:
     """Interpolating an unsafe principal in instructions would enable administrator-command injection."""
-    instructions = required_catalog_grants("app-sp\nGRANT ALL", resources)
+    workspace.grants.get_effective.return_value = _effective_permissions()
+    checkers = ResourceCheckers(resources=resources, workspace=workspace, sql=sql, compute=compute, app_sp_id=app_sp_id)
 
-    assert instructions
-    assert all("\n" not in instruction and "\r" not in instruction for instruction in instructions)
-    assert any("CREATE SCHEMA" in instruction for instruction in instructions)
+    step = checkers.check_unity_catalog()
 
-
-def test_catalog_grant_instructions_strip_c1_control_characters(resources: ActiveResources) -> None:
-    """Leaving C1 controls in grant instructions could inject terminal control sequences."""
-    instructions = required_catalog_grants("app-sp\u0085GRANT ALL", resources)
-
-    assert all("\u0085" not in instruction for instruction in instructions)
+    assert step.state == StepState.ACTION_REQUIRED
+    text = step.summary + "".join(step.instructions)
+    assert not any(char in text for char in ("\n", "\r", "\u0085"))
+    assert "GRANT ALL" not in text
 
 
 def test_runner_grants_are_least_privilege(checkers, workspace, sql) -> None:

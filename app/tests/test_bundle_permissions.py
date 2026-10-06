@@ -123,6 +123,19 @@ class TestMakeDeployVariables:
         assert "studio_uc_principal" not in command
         assert "--var=studio_user_group=data-team" in command
 
+    @pytest.mark.parametrize("group", ["Users", "USERS", "uSeRs"])
+    def test_non_lowercase_broad_keyword_fails_clearly(self, group: str) -> None:
+        result = subprocess.run(
+            ["make", "-n", "app-deploy", "PROFILE=x", "TARGET=dev", f"STUDIO_USER_GROUP={group}"],
+            cwd=_BUNDLE.parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert "STUDIO_USER_GROUP=users" in result.stderr
+        assert "bundle deploy" not in result.stdout
+
     def test_no_inputs_adds_no_studio_variables(self) -> None:
         command = _deploy_command()
         assert "studio_" not in command

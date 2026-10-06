@@ -511,22 +511,6 @@ class ResourceCheckers:
         return f"{volume.catalog}.{volume.schema}"
 
 
-def required_catalog_grants(app_sp: str, resources: ActiveResources) -> tuple[str, ...]:
-    """Return safe, administrator-run catalog grants for the app service principal and audience.
-
-    Args:
-        app_sp: Resolved app service principal name.
-        resources: Resolved Studio resources.
-
-    Returns:
-        GRANT statements: the app service principal needs USE CATALOG and CREATE SCHEMA,
-        each Unity Catalog audience principal USE CATALOG.
-    """
-    missing = [(app_sp, _CATALOG_PRIVILEGES)]
-    missing.extend((principal, frozenset({"USE_CATALOG"})) for principal in resources.audience.uc_principals)
-    return _catalog_grant_instructions(resources.volume.catalog, missing)
-
-
 def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
     quoted_catalog = instruction_identifier(catalog)
     return tuple(

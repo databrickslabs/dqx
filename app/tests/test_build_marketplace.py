@@ -185,10 +185,13 @@ def test_app_yaml_has_single_worker_and_resource_bindings() -> None:
     app_yaml = yaml.safe_load(APP_YAML.read_text(encoding="utf-8"))
     env = {item["name"]: item for item in app_yaml["env"]}
 
-    assert env["DATABRICKS_WAREHOUSE_ID"] == {"name": "DATABRICKS_WAREHOUSE_ID", "valueFrom": "dqx-sql-warehouse"}
-    assert "DQX_WHEELS_VOLUME" not in env
-    assert "DQX_CATALOG" not in env
-    assert "DQX_USER_GROUPS" not in env
+    assert env == {
+        "DATABRICKS_WAREHOUSE_ID": {"name": "DATABRICKS_WAREHOUSE_ID", "valueFrom": "dqx-sql-warehouse"},
+        "DQX_LAKEBASE_SCHEMA": {"name": "DQX_LAKEBASE_SCHEMA", "value": "dqx_studio"},
+        "DQX_ADMIN_GROUP": {"name": "DQX_ADMIN_GROUP", "value": "admins"},
+    }
+    assert len(app_yaml["env"]) == len(env)
+    assert not {"DQX_WHEELS_VOLUME", "DQX_CATALOG", "DQX_PREFIX", "DQX_USER_GROUPS"} & env.keys()
     assert app_yaml["command"][-2:] == ["--workers", "1"]
 
 
