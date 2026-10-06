@@ -371,6 +371,54 @@ async def test_locked_configuration_is_not_locked_again() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("step_id", "code"),
+    [(SetupStepId.STORAGE, "storage_collision"), (SetupStepId.UNITY_CATALOG, "catalog_permissions_missing")],
+)
+async def test_unlocked_saved_configuration_stays_editable(step_id: SetupStepId, code: str) -> None:
+    harness = _harness(bound_results={step_id: _action_required(step_id, code)})
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.current_step == step_id
+    configuration = report.step(SetupStepId.CONFIGURATION)
+    assert configuration.state == StepState.PASSED
+    assert configuration.actions == (SetupActionId.CONFIGURE,)
+
+
+@pytest.mark.asyncio
+async def test_configuration_stops_being_editable_once_storage_is_locked() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.WAREHOUSE: _action_required(SetupStepId.WAREHOUSE, "warehouse_access_missing")}
+    )
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.current_step == SetupStepId.WAREHOUSE
+    assert harness.configuration.locks == ["admin@example.com"]
+    assert report.step(SetupStepId.CONFIGURATION).actions == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        dataclasses.replace(SAVED, locked=True),
+        dataclasses.replace(SAVED, source=ConfigurationSource.DEPLOYMENT, choices=None),
+    ],
+)
+async def test_locked_or_deployment_configuration_is_not_editable(resolved: ResolvedConfiguration) -> None:
+    harness = _harness(
+        resolved=resolved,
+        bound_results={SetupStepId.STORAGE: _action_required(SetupStepId.STORAGE, "storage_collision")},
+    )
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.CONFIGURATION).actions == ()
+
+
+@pytest.mark.asyncio
 async def test_storage_failure_does_not_lock_configuration() -> None:
     harness = _harness(
         bound_results={SetupStepId.STORAGE: _action_required(SetupStepId.STORAGE, "storage_permissions_missing")}

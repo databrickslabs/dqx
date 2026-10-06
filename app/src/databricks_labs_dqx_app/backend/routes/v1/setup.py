@@ -112,6 +112,10 @@ async def configure_setup(
     outcome = await orchestrator.save_configuration(store, choices, user_email=access.user_name)
     if outcome == "locked":
         raise _error(status.HTTP_409_CONFLICT, "configuration_locked")
+    # The administrator SQL reader is scoped to the bound storage, which reconcile only
+    # binds for the choices just saved; any reader built now would target the previous
+    # storage. Grant checks that need it report how to proceed, and the next
+    # "Verify again" (POST /reconcile) supplies a reader for the bound storage.
     return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=None)
 
 
