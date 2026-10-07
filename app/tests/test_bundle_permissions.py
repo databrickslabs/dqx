@@ -11,6 +11,19 @@ _BUNDLE = Path(__file__).resolve().parents[1] / "databricks.yml"
 _APP_SP = "${resources.apps.dqx-studio.service_principal_client_id}"
 _RUNNER = "${var.dqx_service_principal_application_id}"
 _UC_AUDIENCE = "${var.studio_uc_principal}"
+_APP_SCHEMA_PRIVILEGES = {
+    "USE_SCHEMA",
+    "CREATE_TABLE",
+    "CREATE_FUNCTION",
+    "CREATE_VOLUME",
+    "SELECT",
+    "MODIFY",
+    "EXECUTE",
+    "READ_VOLUME",
+    "WRITE_VOLUME",
+    "APPLY_TAG",
+    "MANAGE",
+}
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +57,11 @@ def test_runner_has_least_privilege(bundle: dict) -> None:
 
 @pytest.mark.parametrize("schema", ["main_schema", "tmp_schema", "genie_schema", "demo_schema"])
 def test_app_can_manage_studio_schemas(bundle: dict, schema: str) -> None:
-    assert set(_grants(bundle, "schemas", schema)[_APP_SP]) == {"ALL_PRIVILEGES", "MANAGE"}
+    privileges = _grants(bundle, "schemas", schema)[_APP_SP]
+    # The bundle engine silently drops MANAGE when it is combined with ALL_PRIVILEGES.
+    assert "ALL_PRIVILEGES" not in privileges
+    assert set(privileges) == _APP_SCHEMA_PRIVILEGES
+    assert "MANAGE" in privileges
 
 
 def test_audience_never_gets_genie_select_or_main_access(bundle: dict) -> None:

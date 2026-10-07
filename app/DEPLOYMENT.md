@@ -65,11 +65,11 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | Resource | App SP | Runner SP | Audience | Admin group |
 | --- | --- | --- | --- | --- |
 | Catalog | `USE CATALOG`, `CREATE SCHEMA` | `USE CATALOG` | `USE CATALOG` | `USE CATALOG` |
-| Main schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
+| Main schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
-| `_tmp` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
-| `_genie` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
-| `_demo` schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
+| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
+| `_genie` schema | Owner / explicit list incl. `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
+| `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
@@ -78,7 +78,7 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
-DAB schemas are owned by the deploying identity (the bundle has no declarative owner override), so the app service principal gets `ALL_PRIVILEGES` plus `MANAGE` on the Studio schemas instead; `ALL_PRIVILEGES` alone does not confer permission management. The Genie allowlist is exactly five approved views (`mv_dq_scores`, `v_dq_check_results`, `v_dq_check_results_asof`, `v_dq_check_attribution`, `v_dq_failing_rows`) plus the `dim_dq_rules` and `dim_dq_monitored_tables` dimensions. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. In-app roles (Author, Approver, Viewer) are separate from these infrastructure permissions.
+DAB schemas are owned by the deploying identity (the bundle has no declarative owner override), so the app service principal gets an explicit privilege list (`USE_SCHEMA`, `CREATE_TABLE`, `CREATE_FUNCTION`, `CREATE_VOLUME`, `SELECT`, `MODIFY`, `EXECUTE`, `READ_VOLUME`, `WRITE_VOLUME`, `APPLY_TAG`, `MANAGE`) on the Studio schemas instead; it omits `ALL_PRIVILEGES` because the bundle engine drops `MANAGE` when combined with it. The Genie allowlist is exactly five approved views (`mv_dq_scores`, `v_dq_check_results`, `v_dq_check_results_asof`, `v_dq_check_attribution`, `v_dq_failing_rows`) plus the `dim_dq_rules` and `dim_dq_monitored_tables` dimensions. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. In-app roles (Author, Approver, Viewer) are separate from these infrastructure permissions.
 
 ## How setup applies and verifies access
 
