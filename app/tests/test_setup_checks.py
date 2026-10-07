@@ -1207,6 +1207,10 @@ def test_missing_catalog_privilege_blocks_despite_memo(
     step = checkers.check_unity_catalog()
 
     assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "catalog_permission_check_failed"
+    assert "verified by an administrator" not in step.summary
+    assert "GRANT CREATE SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
+    assert any("READ METADATA" in instruction for instruction in step.instructions)
 
 
 def test_unattended_catalog_check_with_failing_settings_store_requires_verification(
@@ -1340,3 +1344,30 @@ def test_missing_runner_privilege_blocks_despite_memo(
     step = checkers.check_runner_access(42, include_outputs=True)
 
     assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "task_runner_permission_check_failed"
+    assert "verified by an administrator" not in step.summary
+    assert any(instruction.startswith("GRANT SELECT ON SCHEMA") for instruction in step.instructions)
+
+
+@pytest.mark.parametrize(
+    ("unreadable_kind", "unreadable_name"),
+    [("SCHEMA", "main.dqx_studio"), ("SCHEMA", "main.dqx_studio_tmp"), ("VOLUME", "main.dqx_studio.wheels")],
+)
+def test_unreadable_studio_object_grants_never_reuse_memo(
+    resources, workspace, sql, compute, memo_settings, memo_clock, unreadable_kind, unreadable_name
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _runner_grants_readable(workspace)
+    checkers.check_runner_access(42, reader_sql=sql, include_outputs=True)
+
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if kind == "CATALOG" or (kind, name) == (unreadable_kind, unreadable_name):
+            raise PermissionError("unreadable")
+        return _effective_permissions(Privilege.ALL_PRIVILEGES, principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+    workspace.catalogs.get.side_effect = PermissionError("app cannot read the catalog")
+    step = checkers.check_runner_access(42, include_outputs=True)
+
+    assert step.code == "task_runner_permission_check_failed"
+    assert "verified by an administrator" not in step.summary
