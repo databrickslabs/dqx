@@ -679,6 +679,7 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
     _runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     return ViewService(sql=sql, sp_sql=sp_sql, cleanup_principal=cleanup)
 
@@ -1102,6 +1103,7 @@ async def get_demo_seed_service(
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
     _runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
