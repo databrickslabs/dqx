@@ -3052,10 +3052,10 @@
       "openJobs": "Apri job",
       "configure": "Salva configurazione"
     },
-    "warningsBanner": {
-      "title": "La configurazione di Studio presenta avvisi",
-      "description": "Studio è disponibile, ma un amministratore deve verificare quanto segue.",
-      "dismiss": "Ignora"
+    "warningsReview": {
+      "title": "La configurazione di Studio è terminata con avvisi",
+      "description": "Studio è pronto per l'uso. Esamina gli avvisi qui sotto, che puoi risolvere ora o in seguito, quindi continua. Usa Verifica di nuovo dopo averli risolti.",
+      "acknowledge": "Ho capito, continua su Studio"
     },
     "instructions": "Come risolvere",
     "diagnosticCode": "Codice: {{code}}",

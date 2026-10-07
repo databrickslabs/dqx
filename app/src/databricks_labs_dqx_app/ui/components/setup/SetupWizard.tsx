@@ -33,6 +33,7 @@ type SetupWizardProps = {
   isReconciling: boolean;
   onReconcile: () => void;
   reconciliationFailed: boolean;
+  onAcknowledgeWarnings?: () => void;
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring?: boolean;
   configurationError?: string;
@@ -335,12 +336,14 @@ export function SetupWizard({
   isReconciling,
   onReconcile,
   reconciliationFailed,
+  onAcknowledgeWarnings,
   onConfigure,
   isConfiguring = false,
   configurationError,
 }: SetupWizardProps) {
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
+  const isReview = view.kind === "review";
   const jobsUrl = workspaceJobsUrl(workspaceHost);
   const steps = progressSteps(view);
 
@@ -355,14 +358,18 @@ export function SetupWizard({
               ? t("setup.waitingTitle")
               : view.kind === "checking"
                 ? t("setup.checkingTitle")
-                : t("setup.title")}
+                : isReview
+                  ? t("setup.warningsReview.title")
+                  : t("setup.title")}
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
             {isWaiting
               ? t("setup.waitingDescription", { adminGroup: view.adminGroup })
               : view.kind === "checking"
                 ? t("setup.checkingDescription")
-                : t("setup.description")}
+                : isReview
+                  ? t("setup.warningsReview.description")
+                  : t("setup.description")}
           </p>
           {reconciliationFailed && (
             <p className="text-sm text-destructive">
@@ -388,6 +395,17 @@ export function SetupWizard({
             />
           ))}
         </ol>
+        {isReview && onAcknowledgeWarnings && (
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              disabled={isReconciling}
+              onClick={onAcknowledgeWarnings}
+            >
+              {t("setup.warningsReview.acknowledge")}
+            </Button>
+          </div>
+        )}
       </section>
     </SetupShell>
   );

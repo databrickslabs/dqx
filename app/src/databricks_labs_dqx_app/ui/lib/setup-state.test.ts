@@ -5,8 +5,8 @@ import es from "./i18n/locales/es.json";
 import fr from "./i18n/locales/fr.json";
 import it from "./i18n/locales/it.json";
 import ptBR from "./i18n/locales/pt-BR.json";
-import { setupView } from "./setup-state";
-import type { SetupActionId, SetupReport, SetupState, SetupStatusResponse } from "./api";
+import { setupView, unacknowledgedWarnings, warningKey } from "./setup-state";
+import type { SetupActionId, SetupReport, SetupState, SetupStatusResponse, SetupStep } from "./api";
 
 function report(state: SetupState): SetupReport {
   return {
@@ -59,6 +59,59 @@ describe("setupView", () => {
     const view = setupView(status(reportWithAction("verify_again"), true));
 
     expect(view.actions.map((action) => action.id)).toEqual(["verify_again"]);
+  });
+});
+
+function readyWithWarning(): SetupReport {
+  return {
+    state: "ready",
+    steps: [
+      { id: "access", state: "passed" },
+      {
+        id: "app_sharing",
+        state: "warning",
+        code: "app_sharing_unverified",
+        actions: ["verify_again"],
+      },
+    ],
+  };
+}
+
+describe("setup warnings review", () => {
+  test("admin reviews unacknowledged warnings with their actions", () => {
+    const view = setupView(status(readyWithWarning(), true));
+
+    expect(view.kind).toBe("review");
+    expect(view.actions).toEqual([{ id: "verify_again", stepId: "app_sharing" }]);
+  });
+
+  test("acknowledged warnings no longer hold the admin in setup", () => {
+    const view = setupView(
+      status(readyWithWarning(), true),
+      new Set(["app_sharing_unverified"]),
+    );
+
+    expect(view.kind).toBe("ready");
+    expect(view.actions).toEqual([]);
+  });
+
+  test("a warning with a different code is reviewed again", () => {
+    const view = setupView(status(readyWithWarning(), true), new Set(["other_warning"]));
+
+    expect(view.kind).toBe("review");
+  });
+
+  test("non-admin enters a ready Studio despite warnings", () => {
+    expect(setupView(status(readyWithWarning(), false)).kind).toBe("ready");
+  });
+
+  test("warnings without a code are keyed by their step", () => {
+    const step: SetupStep = { id: "app_sharing", state: "warning" };
+
+    expect(warningKey(step)).toBe("app_sharing");
+    expect(
+      unacknowledgedWarnings({ state: "ready", steps: [step] }, new Set(["app_sharing"])),
+    ).toEqual([]);
   });
 });
 

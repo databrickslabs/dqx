@@ -1,6 +1,7 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
 import logging
+from collections.abc import Callable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
@@ -53,8 +54,10 @@ class ResourceCheckers:
         compute: ComputeService,
         app_sp_id: str,
         verification_memo: VerificationMemo | None = None,
+        configured_warehouse_id: Callable[[], str | None] | None = None,
     ) -> None:
         self._resources = resources
+        self._configured_warehouse_id = configured_warehouse_id
         self._workspace = workspace
         self._sql = sql
         self._compute = compute
@@ -528,11 +531,12 @@ class ResourceCheckers:
         """Verify the app SP holds CAN_MANAGE on the SQL warehouse and the audience CAN_USE.
 
         Args:
-            warehouse_id: Candidate warehouse ID, or the bound warehouse when omitted.
+            warehouse_id: Candidate warehouse ID, or the warehouse Studio runs SQL on when
+                omitted (the administrator's override, else the bound warehouse).
             reader_ws: Client permitted to inspect the candidate's access controls,
                 or the app service principal client when omitted.
         """
-        effective_warehouse_id = (warehouse_id or self._resources.warehouse_id).strip()
+        effective_warehouse_id = (warehouse_id or self._effective_warehouse_id()).strip()
         effective_reader_ws = reader_ws or self._workspace
         warehouse = instruction_identifier(effective_warehouse_id)
         try:
@@ -575,6 +579,17 @@ class ResourceCheckers:
             "warehouse_permission_unknown",
             "Could not determine SQL warehouse access.",
         )
+
+    def _effective_warehouse_id(self) -> str:
+        if self._configured_warehouse_id is not None:
+            try:
+                configured = self._configured_warehouse_id()
+            except Exception:
+                logger.warning("Could not read the configured SQL warehouse; checking the bound warehouse instead.")
+                configured = None
+            if configured and configured.strip():
+                return configured
+        return self._resources.warehouse_id
 
     def _is_owner(
         self,

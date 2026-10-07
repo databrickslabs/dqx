@@ -252,6 +252,7 @@ class _Binder:
                 compute=self.compute,
                 app_sp_id=self.identity.app_sp_id(),
                 verification_memo=VerificationMemo(self.settings),
+                configured_warehouse_id=self.settings.get_sql_warehouse_id,
             ),
             access=AudienceAccess(
                 resources=resources,

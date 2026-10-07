@@ -1012,6 +1012,64 @@ def test_warehouse_candidate_uses_supplied_obo_reader(checkers: ResourceCheckers
     compute.reconcile_warehouse_audience.assert_called_once_with("candidate-warehouse", ("data-team",))
 
 
+def test_warehouse_checks_configured_override_instead_of_bound(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock
+) -> None:
+    """After an administrator swaps warehouses, setup must keep reconciling the one Studio uses."""
+    compute.reconcile_warehouse_audience.return_value = "granted"
+    checkers = ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+        configured_warehouse_id=lambda: "override-warehouse",
+    )
+
+    assert checkers.check_warehouse().state == StepState.PASSED
+    compute.warehouse_access_status.assert_called_once_with("override-warehouse", reader_ws=workspace)
+    compute.reconcile_warehouse_audience.assert_called_once_with("override-warehouse", ("data-team",))
+
+
+@pytest.mark.parametrize("configured", [None, "  "])
+def test_warehouse_without_override_checks_bound(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock, configured: str | None
+) -> None:
+    compute.reconcile_warehouse_audience.return_value = "granted"
+    checkers = ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+        configured_warehouse_id=lambda: configured,
+    )
+
+    checkers.check_warehouse()
+
+    compute.reconcile_warehouse_audience.assert_called_once_with("warehouse-id", ("data-team",))
+
+
+def test_warehouse_unreadable_override_falls_back_to_bound(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock
+) -> None:
+    def unreadable() -> str | None:
+        raise RuntimeError("settings table unavailable")
+
+    compute.reconcile_warehouse_audience.return_value = "granted"
+    checkers = ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+        configured_warehouse_id=unreadable,
+    )
+
+    assert checkers.check_warehouse().state == StepState.PASSED
+    compute.reconcile_warehouse_audience.assert_called_once_with("warehouse-id", ("data-team",))
+
+
 def test_schema_privilege_inspection_requests_manage(
     checkers: ResourceCheckers, workspace: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:

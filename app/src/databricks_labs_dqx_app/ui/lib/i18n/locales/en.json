@@ -3052,10 +3052,10 @@
       "openJobs": "Open Jobs",
       "configure": "Save configuration"
     },
-    "warningsBanner": {
-      "title": "Studio setup has warnings",
-      "description": "Studio is available, but an administrator should review the following.",
-      "dismiss": "Dismiss"
+    "warningsReview": {
+      "title": "Studio setup finished with warnings",
+      "description": "Studio is ready to use. Review the warnings below, which you can fix now or later, then continue. Use Verify again after fixing them.",
+      "acknowledge": "I understand, continue to Studio"
     },
     "instructions": "How to resolve this",
     "diagnosticCode": "Code: {{code}}",

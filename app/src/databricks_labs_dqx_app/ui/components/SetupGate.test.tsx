@@ -371,36 +371,37 @@ function readyWithWarning(canManage: boolean): SetupStatusResponse {
   };
 }
 
-describe("setup warnings banner", () => {
-  test("shows warning steps to administrators above Studio content", () => {
+describe("setup warnings review", () => {
+  test("administrators review unacknowledged warnings before entering Studio", () => {
     const markup = renderGate(readyWithWarning(true));
 
-    expect(markup).toContain("Studio content");
-    expect(markup).toContain(en.setup.warningsBanner.title);
+    expect(markup).not.toContain("Studio content");
+    expect(markup).toContain(en.setup.warningsReview.title);
     expect(markup).toContain(en.setup.steps.app_sharing);
     expect(markup).toContain(
       "Could not verify that Studio users can open the app.",
     );
     expect(markup).toContain("Share the app dqx-studio with group data-team.");
-    expect(markup).toContain(en.setup.warningsBanner.dismiss);
-    expect(markup.indexOf(en.setup.warningsBanner.title)).toBeLessThan(
-      markup.indexOf("Studio content"),
-    );
+    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).toContain(en.setup.warningsReview.acknowledge);
   });
 
   test("never shows setup warnings to non-administrators", () => {
     const markup = renderGate(readyWithWarning(false));
 
     expect(markup).toContain("Studio content");
-    expect(markup).not.toContain(en.setup.warningsBanner.title);
+    expect(markup).not.toContain(en.setup.warningsReview.title);
     expect(markup).not.toContain("Share the app");
   });
 
-  test("is absent when the ready report has no warnings", () => {
+  test("enters Studio directly when the ready report has no warnings", () => {
     const status = readyWithWarning(true);
     status.report.steps = [{ id: "app_sharing", state: "passed" }];
 
-    expect(renderGate(status)).not.toContain(en.setup.warningsBanner.title);
+    const markup = renderGate(status);
+
+    expect(markup).toContain("Studio content");
+    expect(markup).not.toContain(en.setup.warningsReview.title);
   });
 
   test("warning state has its own label", () => {
