@@ -132,8 +132,7 @@ def test_collect_upstream_table_lineage_finds_direct_predecessor(spark, stub_sys
     derived = f"{TEST_CATALOG}.{stub_system_tables.schema.name}.invoices_derived"
 
     spark.sql(
-        f"INSERT INTO {stub_system_tables.table_lineage} VALUES "
-        f"('{source}', '{derived}', current_timestamp())"
+        f"INSERT INTO {stub_system_tables.table_lineage} VALUES " f"('{source}', '{derived}', current_timestamp())"
     )
 
     config = ColumnUpstreamLineageConfig(depth=2, lookback_days=1, max_nodes=50)
