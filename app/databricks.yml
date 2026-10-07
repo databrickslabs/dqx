@@ -294,9 +294,22 @@ resources:
       name: ${var.schema_name}
       comment: "DQX Studio main schema (rules, run history, profiling, metrics, quarantine, OLTP fallback)"
       grants:
+        # App SP privileges are listed explicitly instead of ALL_PRIVILEGES: the bundle
+        # engine drops MANAGE when it is combined with ALL_PRIVILEGES (state and
+        # SHOW GRANTS keep only ALL PRIVILEGES), and setup's storage step needs MANAGE
+        # on these non-owned schemas. The same list is used on all four Studio schemas.
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
+            - CREATE_TABLE
+            - CREATE_FUNCTION
+            - CREATE_VOLUME
+            - SELECT
+            - MODIFY
+            - EXECUTE
+            - READ_VOLUME
+            - WRITE_VOLUME
+            - APPLY_TAG
             - MANAGE
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
@@ -319,7 +332,16 @@ resources:
       grants:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
+            - CREATE_TABLE
+            - CREATE_FUNCTION
+            - CREATE_VOLUME
+            - SELECT
+            - MODIFY
+            - EXECUTE
+            - READ_VOLUME
+            - WRITE_VOLUME
+            - APPLY_TAG
             - MANAGE
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
@@ -339,7 +361,16 @@ resources:
       grants:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
+            - CREATE_TABLE
+            - CREATE_FUNCTION
+            - CREATE_VOLUME
+            - SELECT
+            - MODIFY
+            - EXECUTE
+            - READ_VOLUME
+            - WRITE_VOLUME
+            - APPLY_TAG
             - MANAGE
         # Startup grants SELECT only on five Genie views and two metadata tables.
         - principal: ${var.studio_uc_principal}
@@ -361,7 +392,16 @@ resources:
       grants:
         - principal: ${resources.apps.dqx-studio.service_principal_client_id}
           privileges:
-            - ALL_PRIVILEGES
+            - USE_SCHEMA
+            - CREATE_TABLE
+            - CREATE_FUNCTION
+            - CREATE_VOLUME
+            - SELECT
+            - MODIFY
+            - EXECUTE
+            - READ_VOLUME
+            - WRITE_VOLUME
+            - APPLY_TAG
             - MANAGE
         # End users browse/preview the demo source tables via OBO, so they need
         # read access (the demo is meant to be explored).

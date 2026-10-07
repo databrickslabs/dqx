@@ -67,11 +67,11 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 | Resource | App SP | Runner SP | Audience | Admin group |
 | --- | --- | --- | --- | --- |
 | Catalog | `USE CATALOG`, `CREATE SCHEMA` | `USE CATALOG` | `USE CATALOG` | `USE CATALOG` |
-| Main schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
+| Main schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
-| `_tmp` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
-| `_genie` schema | Owner / `ALL_PRIVILEGES` + `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
-| `_demo` schema | Owner (Marketplace); `ALL_PRIVILEGES` + `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
+| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
+| `_genie` schema | Owner / explicit list incl. `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
+| `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
@@ -80,7 +80,7 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
-The Genie `SELECT` allowlist is exactly the five approved views plus `dim_dq_rules` and `dim_dq_monitored_tables`. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. On a bundle deployment the schemas are owned by the deploying identity, so the app service principal receives `ALL_PRIVILEGES` plus `MANAGE` instead. The bundle grants the administrator group only its workspace permissions; the app re-applies and verifies the administrator group's Unity Catalog grants after each deploy restart.
+The Genie `SELECT` allowlist is exactly the five approved views plus `dim_dq_rules` and `dim_dq_monitored_tables`. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. On a bundle deployment the schemas are owned by the deploying identity, so the app service principal receives an explicit privilege list that includes `MANAGE` (not `ALL_PRIVILEGES`, which makes the bundle engine drop `MANAGE`) instead. The bundle grants the administrator group only its workspace permissions; the app re-applies and verifies the administrator group's Unity Catalog grants after each deploy restart.
 
 ### Audience, broad mode, and administrators
 

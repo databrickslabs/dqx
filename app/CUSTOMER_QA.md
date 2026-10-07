@@ -155,7 +155,7 @@ Roles are resolved from **Databricks workspace-group membership** via the `dq_ro
 Scoped tight:
 
 - `USE CATALOG` + `CREATE SCHEMA` on the selected catalog (the one manual prerequisite)
-- Ownership (Marketplace) or `ALL PRIVILEGES` + `MANAGE` (DAB) on the four prefix-derived Studio schemas and the wheels volume only
+- Ownership (Marketplace) or an explicit privilege list incl. `MANAGE` (DAB) on the four prefix-derived Studio schemas and the wheels volume only
 - `CAN MANAGE` on the SQL warehouse the app is bound to, so setup can share it with the audience additively
 - `Service Principal: User` role on the task-runner SP (so the app can submit jobs as it)
 
