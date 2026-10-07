@@ -63,6 +63,7 @@ from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schem
 from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
 from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
 from databricks_labs_dqx_app.backend.setup.configuration import (
     ResolvedConfiguration,
     SetupConfigurationStore,
@@ -250,6 +251,7 @@ class _Binder:
                 sql=sp_sql,
                 compute=self.compute,
                 app_sp_id=self.identity.app_sp_id(),
+                verification_memo=VerificationMemo(self.settings),
             ),
             access=AudienceAccess(
                 resources=resources,

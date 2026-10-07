@@ -10,6 +10,11 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
+from databricks_labs_dqx_app.backend.setup.verification_memo import (
+    VerificationMemo,
+    VerifiedRequirement,
+    requirement_fingerprint,
+)
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 
@@ -19,6 +24,8 @@ _CATALOG_PRIVILEGE_ORDER = ("USE_CATALOG", "CREATE_SCHEMA")
 _SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
 _SCHEMA_PRIVILEGE_ORDER = ("USE_SCHEMA", "CREATE_TABLE")
 _VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
+_RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
+_ADMIN_VERIFIED_SUFFIX = " was verified by an administrator; use Verify again to re-check."
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +39,9 @@ class ResourceCheckers:
         compute: Warehouse access inspection service.
         app_sp_id: Resolved app service principal name; an empty string means the
             identity is unresolved and identity-dependent checks require action.
+        verification_memo: Store of the last fully verified catalog-level requirement
+            sets. Unattended checks (no administrator readers) reuse it for grants the
+            app service principal cannot inspect; without it they fail closed.
     """
 
     def __init__(
@@ -42,6 +52,7 @@ class ResourceCheckers:
         sql: SqlExecutor,
         compute: ComputeService,
         app_sp_id: str,
+        verification_memo: VerificationMemo | None = None,
     ) -> None:
         self._resources = resources
         self._workspace = workspace
@@ -49,16 +60,27 @@ class ResourceCheckers:
         self._compute = compute
         self._inspector = GrantInspector(workspace)
         self._app_sp = "" if _has_control_characters(app_sp_id) else app_sp_id.strip()
+        self._memo = verification_memo
 
-    def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+    def check_unity_catalog(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        *,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep:
         """Verify catalog access for the app service principal and every audience principal.
 
         Audience principals are first granted USE CATALOG on a best-effort basis; the
         result is then verified from effective privileges, whatever the grant outcome.
+        A full verification is remembered; an unattended check (no readers) whose only
+        gap is uninspectable grants passes when the requirement set is unchanged since
+        then. Any privilege observed missing always blocks.
 
         Args:
             reader_sql: Administrator SQL executor enabling the SHOW GRANTS fallback
                 when effective permissions cannot be read.
+            reader_ws: Administrator client; its presence marks an attended check that
+                never reuses a previous verification.
         """
         app_sp = self._app_sp
         if not app_sp:
@@ -71,22 +93,22 @@ class ResourceCheckers:
         requirements.extend(
             (principal, frozenset({"USE_CATALOG"})) for principal in self._resources.audience.uc_principals
         )
+        fingerprint = requirement_fingerprint(
+            SetupStepId.UNITY_CATALOG.value,
+            catalog,
+            (
+                VerifiedRequirement(principal, "CATALOG", catalog, privilege)
+                for principal, required in requirements
+                for privilege in required
+            ),
+        )
         missing_by_principal: list[tuple[str, frozenset[str]]] = []
+        uninspectable = False
         for principal, required in requirements:
             privileges = inspector.privileges("CATALOG", catalog, principal, required=required)
             if privileges is None:
-                return SetupStep(
-                    id=SetupStepId.UNITY_CATALOG,
-                    state=StepState.ACTION_REQUIRED,
-                    code="catalog_permission_check_failed",
-                    summary="Could not verify the required Unity Catalog permissions.",
-                    instructions=(
-                        "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
-                        f"{instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
-                        "catalog grants.",
-                    ),
-                    actions=(SetupActionId.VERIFY_AGAIN,),
-                )
+                uninspectable = True
+                continue
             missing = frozenset(privilege for privilege in required if not has_privilege(privileges, privilege))
             if missing and principal == app_sp:
                 owner = inspector.owner("CATALOG", catalog)
@@ -94,6 +116,23 @@ class ResourceCheckers:
                     missing = frozenset()
             if missing:
                 missing_by_principal.append((principal, missing))
+        if uninspectable:
+            if not missing_by_principal and self._reuses_verification(
+                SetupStepId.UNITY_CATALOG.value, fingerprint, reader_sql, reader_ws
+            ):
+                return _passed(SetupStepId.UNITY_CATALOG, "Catalog access" + _ADMIN_VERIFIED_SUFFIX)
+            return SetupStep(
+                id=SetupStepId.UNITY_CATALOG,
+                state=StepState.ACTION_REQUIRED,
+                code="catalog_permission_check_failed",
+                summary="Could not verify the required Unity Catalog permissions.",
+                instructions=(
+                    "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
+                    f"{instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
+                    "catalog grants.",
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
         if missing_by_principal:
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
@@ -103,6 +142,7 @@ class ResourceCheckers:
                 instructions=_catalog_grant_instructions(catalog, missing_by_principal),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
+        self._record_verification(SetupStepId.UNITY_CATALOG.value, fingerprint)
         return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
 
     def check_runner_access(
@@ -118,7 +158,9 @@ class ResourceCheckers:
         Least-privilege grants on Studio-managed objects are applied best effort
         before inspection; anything still missing is reported for an administrator
         to apply. The runner never receives ALL PRIVILEGES, catalog privileges, or
-        Genie or demo schema access.
+        Genie or demo schema access. A full verification is remembered; an unattended
+        check (no readers) whose only gap is uninspectable grants passes when the
+        requirement set is unchanged since then. Any privilege observed missing blocks.
 
         Args:
             job_id: Resolved task-runner job whose run-as identity is checked.
@@ -200,7 +242,18 @@ class ResourceCheckers:
                 )
                 continue
             instructions.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
+        scope = _RUNNER_OUTPUTS_SCOPE if include_outputs else SetupStepId.TASK_RUNNER.value
+        fingerprint = requirement_fingerprint(
+            scope,
+            volume.catalog,
+            (
+                VerifiedRequirement(principal, kind, full_name, privilege)
+                for kind, full_name, privilege, *_ in requirements
+            ),
+        )
         if unknown:
+            if not instructions and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws):
+                return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
@@ -218,7 +271,24 @@ class ResourceCheckers:
                 instructions=tuple(instructions),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
+        self._record_verification(scope, fingerprint)
         return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
+
+    def _reuses_verification(
+        self,
+        scope: str,
+        fingerprint: str,
+        reader_sql: SqlExecutor | None,
+        reader_ws: WorkspaceClient | None,
+    ) -> bool:
+        """Whether an unattended check may reuse the last full verification of *scope*."""
+        if reader_sql is not None or reader_ws is not None or self._memo is None:
+            return False
+        return self._memo.is_verified(scope, fingerprint)
+
+    def _record_verification(self, scope: str, fingerprint: str) -> None:
+        if self._memo is not None:
+            self._memo.record(scope, fingerprint)
 
     def ensure_storage(self, *, provision: bool) -> SetupStep:
         """Provision or verify the prefix-derived schemas and the wheels volume.

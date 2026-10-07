@@ -98,6 +98,7 @@ class FakeBound:
     runner_reader: WorkspaceClient | None = None
     runner_sql: SqlExecutor | None = None
     catalog_reader_sql: SqlExecutor | None = None
+    catalog_reader_ws: WorkspaceClient | None = None
     access_observer: Callable[[], None] | None = None
     access_reader: WorkspaceClient | None = None
 
@@ -105,8 +106,11 @@ class FakeBound:
         self.events.append(step_id.value)
         return self.results.get(step_id, _passed(step_id))
 
-    def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep:
+    def check_unity_catalog(
+        self, reader_sql: SqlExecutor | None = None, *, reader_ws: WorkspaceClient | None = None
+    ) -> SetupStep:
         self.catalog_reader_sql = reader_sql
+        self.catalog_reader_ws = reader_ws
         return self._result(SetupStepId.UNITY_CATALOG)
 
     def ensure_storage(self, *, provision: bool) -> SetupStep:
@@ -617,6 +621,26 @@ async def test_unity_catalog_check_receives_request_scoped_reader_sql() -> None:
     await harness.orchestrator.reconcile(setup_user="admin@example.com", reader_sql=reader_sql)
 
     assert harness.bound.catalog_reader_sql is reader_sql
+
+
+@pytest.mark.asyncio
+async def test_unity_catalog_check_receives_request_scoped_reader_ws() -> None:
+    harness = _harness()
+    reader = create_autospec(WorkspaceClient, instance=True)
+
+    await harness.orchestrator.reconcile(setup_user="admin@example.com", reader_ws=reader)
+
+    assert harness.bound.catalog_reader_ws is reader
+
+
+@pytest.mark.asyncio
+async def test_unattended_unity_catalog_check_receives_no_readers() -> None:
+    harness = _harness()
+
+    await harness.orchestrator.reconcile()
+
+    assert harness.bound.catalog_reader_sql is None
+    assert harness.bound.catalog_reader_ws is None
 
 
 @pytest.mark.asyncio
