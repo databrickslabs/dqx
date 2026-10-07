@@ -1,0 +1,57 @@
+id: codes-and-classifications
+title: Codes & Classifications
+icon: FileBadge
+description: >
+  Domain code-set checks — clinical codes, colour, and blood-type
+  classifications.
+rules:
+  - name: Valid ICD-10-CM code
+    description: Diagnosis code matches the ICD-10-CM alphanumeric structure.
+    industries: [healthcare]
+    dimension: Validity
+    severity: High
+    check:
+      function: regex_match
+      arguments:
+        column: "{{icd10}}"
+        regex: "^[A-TV-Z][0-9][0-9A-Za-z]([.][0-9A-Za-z]{1,4})?$"
+  - name: Valid CPT code
+    description: Procedure code is five characters consisting of four digits plus one alphanumeric.
+    industries: [healthcare]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: regex_match
+      arguments:
+        column: "{{cpt}}"
+        regex: "^[0-9]{4}[0-9A-Za-z]$"
+  - name: Valid FHIR administrative gender
+    description: Gender value is one of the four FHIR administrative gender codes.
+    industries: [healthcare]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{gender}}"
+        allowed: [male, female, other, unknown]
+  - name: Valid hex colour
+    description: Colour value is a six-digit hexadecimal code prefixed with a hash.
+    industries: [retail]
+    dimension: Validity
+    severity: Low
+    check:
+      function: regex_match
+      arguments:
+        column: "{{hex}}"
+        regex: "^#[0-9A-Fa-f]{6}$"
+  - name: Valid blood type
+    description: Blood type is one of the eight standard ABO/Rh combinations.
+    industries: [healthcare]
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{blood_type}}"
+        allowed: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
