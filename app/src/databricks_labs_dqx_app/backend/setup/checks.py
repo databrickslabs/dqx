@@ -130,6 +130,7 @@ class ResourceCheckers:
                     "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
                     f"{instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
                     "catalog grants.",
+                    *_catalog_grant_instructions(catalog, missing_by_principal),
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
@@ -217,6 +218,7 @@ class ResourceCheckers:
             )
         instructions: list[str] = []
         unknown: list[str] = []
+        unknown_kinds: set[str] = set()
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
         inspector = GrantInspector(self._workspace, reader_sql)
         for kind, full_name, privilege, grant, quoted_name in requirements:
@@ -234,6 +236,7 @@ class ResourceCheckers:
             ):
                 continue
             if privileges is None:
+                unknown_kinds.add(kind)
                 unknown.append(
                     f"Verify setup as an administrator with ownership or READ METADATA on {kind} {quoted_name}, "
                     "or as a metastore administrator, to inspect the runner's grants. "
@@ -252,7 +255,13 @@ class ResourceCheckers:
             ),
         )
         if unknown:
-            if not instructions and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws):
+            # Studio-managed schemas and the wheels volume must stay inspectable by the app;
+            # only the user-selected catalog may rely on a previous verification.
+            if (
+                not instructions
+                and unknown_kinds == {"CATALOG"}
+                and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws)
+            ):
                 return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
