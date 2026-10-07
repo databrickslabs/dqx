@@ -132,7 +132,6 @@ def test_bundle_resource_tagging_accepts_dab_opt_in(monkeypatch) -> None:
     assert AppConfig(_env_file=None).tag_bundle_owned_resources is True
 
 
-
 def test_users_is_accepted_as_deployment_broad_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     from databricks_labs_dqx_app.backend.config import AppConfig
 
