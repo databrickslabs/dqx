@@ -3052,10 +3052,10 @@
       "openJobs": "Abrir jobs",
       "configure": "Salvar configuração"
     },
-    "warningsBanner": {
-      "title": "A configuração do Studio tem avisos",
-      "description": "O Studio está disponível, mas um administrador deve revisar o seguinte.",
-      "dismiss": "Dispensar"
+    "warningsReview": {
+      "title": "A configuração do Studio terminou com avisos",
+      "description": "O Studio está pronto para uso. Revise os avisos abaixo, que você pode corrigir agora ou depois, e continue. Use Verificar novamente depois de corrigi-los.",
+      "acknowledge": "Entendi, continuar para o Studio"
     },
     "instructions": "Como resolver",
     "diagnosticCode": "Código: {{code}}",

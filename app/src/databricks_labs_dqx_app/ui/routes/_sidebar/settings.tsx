@@ -2511,6 +2511,11 @@ function ComputeSettingsCard() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
           toast.success(t("config.computeGrantSucceeded"));
+          // A pick rejected for missing app access was never saved; saving it now
+          // also grants Studio users CAN USE on the new warehouse.
+          if (warehouseId && warehouseId !== (settings?.sql_warehouse_id ?? "")) {
+            save({ warehouseId });
+          }
         },
         onError: (err: unknown) => {
           toast.error(extractApiError(err, t("config.computeGrantFailed")));

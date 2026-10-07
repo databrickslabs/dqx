@@ -6,6 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 
+import { useState } from "react";
 import axios from "axios";
 import {
   configureSetup,
@@ -13,14 +14,21 @@ import {
   getSetupStatus,
   reconcileSetup,
 } from "@/lib/api";
-import { setupView } from "@/lib/setup-state";
+import {
+  setupView,
+  unacknowledgedWarnings,
+  warningKey,
+} from "@/lib/setup-state";
+import {
+  acknowledgeWarnings,
+  readAcknowledgedWarnings,
+} from "@/lib/setup-acknowledgements";
 import { useWorkspaceHost } from "@/lib/api-custom";
 import {
   SetupStatusUnavailable,
   SetupWizard,
 } from "@/components/setup/SetupWizard";
 import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
-import { SetupWarningsBanner } from "@/components/setup/SetupWarningsBanner";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -94,6 +102,7 @@ export function SetupGate({ children }: SetupGateProps) {
       ),
     refetchIntervalInBackground: setupPollingInBackground(),
   });
+  const [acknowledged, setAcknowledged] = useState(readAcknowledgedWarnings);
   const workspaceHost = useWorkspaceHost({
     query: {
       enabled:
@@ -107,15 +116,16 @@ export function SetupGate({ children }: SetupGateProps) {
   if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
-  const view = setupView(setupStatus.data.data);
-  if (view.kind === "ready") {
-    return (
-      <>
-        <SetupWarningsBanner view={view} />
-        {children}
-      </>
+  const view = setupView(setupStatus.data.data, acknowledged);
+  if (view.kind === "ready") return <>{children}</>;
+
+  const onAcknowledgeWarnings = () =>
+    setAcknowledged((current) =>
+      acknowledgeWarnings(
+        current,
+        unacknowledgedWarnings(view.report, current).map(warningKey),
+      ),
     );
-  }
 
   return (
     <SetupWizard
@@ -124,6 +134,7 @@ export function SetupGate({ children }: SetupGateProps) {
       isReconciling={reconciliation.isPending}
       onReconcile={() => reconciliation.mutate()}
       reconciliationFailed={reconciliation.isError}
+      onAcknowledgeWarnings={onAcknowledgeWarnings}
       onConfigure={(values) => configuration.mutate(values)}
       isConfiguring={configuration.isPending}
       configurationError={

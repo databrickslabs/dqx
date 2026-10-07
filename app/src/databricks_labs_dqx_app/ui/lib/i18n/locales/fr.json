@@ -3052,10 +3052,10 @@
       "openJobs": "Ouvrir les jobs",
       "configure": "Enregistrer la configuration"
     },
-    "warningsBanner": {
-      "title": "La configuration de Studio comporte des avertissements",
-      "description": "Studio est disponible, mais un administrateur doit vérifier les points suivants.",
-      "dismiss": "Ignorer"
+    "warningsReview": {
+      "title": "La configuration de Studio s'est terminée avec des avertissements",
+      "description": "Studio est prêt à l'emploi. Examinez les avertissements ci-dessous, que vous pouvez corriger maintenant ou plus tard, puis continuez. Utilisez Vérifier à nouveau après les avoir corrigés.",
+      "acknowledge": "J'ai compris, continuer vers Studio"
     },
     "instructions": "Comment résoudre ce problème",
     "diagnosticCode": "Code : {{code}}",
