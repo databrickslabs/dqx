@@ -119,17 +119,26 @@ def _simulate_creation(workspace: MagicMock, sql: MagicMock, owner: str = "app-s
 
 @pytest.fixture
 def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> ResourceCheckers:
-    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp-id")))
+    workspace.jobs.get.return_value = Job(
+        settings=JobSettings(run_as=JobRunAs(service_principal_name="11111111-2222-3333-4444-555555555555"))
+    )
     permissions = {
-        "CATALOG": _effective_permissions(Privilege.USE_CATALOG, principal="runner-sp-id"),
-        "SCHEMA": _effective_permissions(Privilege.USE_SCHEMA, principal="runner-sp-id"),
-        "VOLUME": _effective_permissions(Privilege.READ_VOLUME, principal="runner-sp-id"),
-        "TABLE": _effective_permissions(Privilege.SELECT, Privilege.MODIFY, principal="runner-sp-id"),
+        "CATALOG": _effective_permissions(Privilege.USE_CATALOG, principal="11111111-2222-3333-4444-555555555555"),
+        "SCHEMA": _effective_permissions(Privilege.USE_SCHEMA, principal="11111111-2222-3333-4444-555555555555"),
+        "VOLUME": _effective_permissions(Privilege.READ_VOLUME, principal="11111111-2222-3333-4444-555555555555"),
+        "TABLE": _effective_permissions(
+            Privilege.SELECT, Privilege.MODIFY, principal="11111111-2222-3333-4444-555555555555"
+        ),
     }
     workspace.grants.get_effective.side_effect = lambda securable_type, full_name, *, principal: (
         _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT, Privilege.MODIFY, principal=principal)
-        if principal == "runner-sp-id" and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio")
-        else permissions[securable_type] if principal == "runner-sp-id" else _effective_permissions()
+        if principal == "11111111-2222-3333-4444-555555555555"
+        and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio")
+        else (
+            permissions[securable_type]
+            if principal == "11111111-2222-3333-4444-555555555555"
+            else _effective_permissions()
+        )
     )
     return checkers
 
@@ -137,12 +146,16 @@ def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> Resourc
 @pytest.mark.parametrize(
     ("securable_type", "full_name", "instruction"),
     [
-        ("CATALOG", "main", "GRANT USE CATALOG ON CATALOG `main` TO `runner-sp-id`;"),
-        ("SCHEMA", "main.dqx_studio", "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner-sp-id`;"),
+        ("CATALOG", "main", "GRANT USE CATALOG ON CATALOG `main` TO `11111111-2222-3333-4444-555555555555`;"),
+        (
+            "SCHEMA",
+            "main.dqx_studio",
+            "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
+        ),
         (
             "VOLUME",
             "main.dqx_studio.wheels",
-            "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner-sp-id`;",
+            "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `11111111-2222-3333-4444-555555555555`;",
         ),
     ],
 )
@@ -186,7 +199,9 @@ def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceChecker
     result = runner_checkers.check_runner_access(42)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == ("GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp-id`;",)
+    assert result.instructions == (
+        "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
+    )
 
 
 @pytest.mark.parametrize("missing", [Privilege.SELECT, Privilege.MODIFY])
@@ -210,7 +225,9 @@ def test_runner_missing_schema_data_permission_blocks_readiness(
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == (f"GRANT {missing.value} ON SCHEMA `main`.`dqx_studio` TO `runner-sp-id`;",)
+    assert result.instructions == (
+        f"GRANT {missing.value} ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
+    )
 
 
 def test_runner_schema_permissions_pass_without_individual_table_inspection(
@@ -255,7 +272,7 @@ def test_runner_all_privileges_passes(
 ) -> None:
     workspace.grants.get_effective.side_effect = None
     workspace.grants.get_effective.return_value = _effective_permissions(
-        Privilege.ALL_PRIVILEGES, principal="runner-sp-id"
+        Privilege.ALL_PRIVILEGES, principal="11111111-2222-3333-4444-555555555555"
     )
 
     assert runner_checkers.check_runner_access(42, include_outputs=include_outputs).state == StepState.PASSED
@@ -263,11 +280,13 @@ def test_runner_all_privileges_passes(
 
 def test_runner_owner_passes_without_explicit_grants(runner_checkers: ResourceCheckers, workspace: MagicMock) -> None:
     workspace.grants.get_effective.side_effect = None
-    workspace.grants.get_effective.return_value = _effective_permissions(principal="runner-sp-id")
-    workspace.catalogs.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.volumes.read.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.tables.get.return_value = SimpleNamespace(owner="runner-sp-id")
+    workspace.grants.get_effective.return_value = _effective_permissions(
+        principal="11111111-2222-3333-4444-555555555555"
+    )
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.tables.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
 
     assert runner_checkers.check_runner_access(42).state == StepState.PASSED
 
@@ -276,18 +295,20 @@ def test_runner_schema_owner_still_requires_data_grants(
     runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
     workspace.grants.get_effective.side_effect = None
-    workspace.grants.get_effective.return_value = _effective_permissions(principal="runner-sp-id")
-    workspace.catalogs.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.volumes.read.return_value = SimpleNamespace(owner="runner-sp-id")
+    workspace.grants.get_effective.return_value = _effective_permissions(
+        principal="11111111-2222-3333-4444-555555555555"
+    )
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
 
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
     assert result.instructions == (
-        "GRANT SELECT ON SCHEMA `main`.`dqx_studio` TO `runner-sp-id`;",
-        "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `runner-sp-id`;",
+        "GRANT SELECT ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
+        "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
 
@@ -295,9 +316,9 @@ def test_runner_schema_owner_cannot_bypass_uninspectable_data_grants(
     runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
     workspace.grants.get_effective.side_effect = PermissionError("grants unavailable")
-    workspace.catalogs.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.volumes.read.return_value = SimpleNamespace(owner="runner-sp-id")
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
 
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
@@ -309,9 +330,9 @@ def test_runner_ownership_can_verify_access_when_grants_are_unavailable(
     runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
     workspace.grants.get_effective.side_effect = RuntimeError("grants unavailable")
-    workspace.catalogs.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.volumes.read.return_value = SimpleNamespace(owner="runner-sp-id")
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
 
     assert runner_checkers.check_runner_access(42).state == StepState.PASSED
 
@@ -341,7 +362,9 @@ def runner_reader(workspace: MagicMock) -> MagicMock:
 @pytest.fixture
 def runner_sql(workspace: MagicMock, sql: MagicMock) -> MagicMock:
     workspace.grants.get_effective.side_effect = PermissionError("app cannot inspect another principal")
-    workspace.service_principals.list.return_value = [SimpleNamespace(application_id="runner-sp-id", groups=[])]
+    workspace.service_principals.list.return_value = [
+        SimpleNamespace(application_id="11111111-2222-3333-4444-555555555555", groups=[])
+    ]
     return sql
 
 
@@ -351,7 +374,12 @@ def test_runner_admin_inspection_uses_sql_scope_instead_of_grants_api(
     workspace.grants.get_effective.side_effect = PermissionError("app cannot inspect another principal")
     runner_reader.grants.get_effective.side_effect = PermissionError("unsupported OAuth scope")
     runner_sql.query_dicts.return_value = [
-        {"principal": "runner-sp-id", "actionType": "ALL PRIVILEGES", "objectType": "SCHEMA", "objectKey": "main"}
+        {
+            "principal": "11111111-2222-3333-4444-555555555555",
+            "actionType": "ALL PRIVILEGES",
+            "objectType": "SCHEMA",
+            "objectKey": "main",
+        }
     ]
 
     result = runner_checkers.check_runner_access(
@@ -373,7 +401,7 @@ def test_runner_sql_inspection_requires_complete_results(
     def grants(_query: str, *, require_complete: bool = False) -> list[dict[str, str]]:
         if not require_complete:
             return []
-        return [{"principal": "runner-sp-id", "actionType": "ALL PRIVILEGES"}]
+        return [{"principal": "11111111-2222-3333-4444-555555555555", "actionType": "ALL PRIVILEGES"}]
 
     runner_sql.query_dicts.side_effect = grants
 
@@ -389,7 +417,9 @@ def test_runner_sql_inspection_requires_complete_results(
 def test_runner_sql_grants_accept_column_casing(
     runner_checkers: ResourceCheckers, runner_sql: MagicMock, principal_column: str, action_column: str
 ) -> None:
-    runner_sql.query_dicts.return_value = [{principal_column: "runner-sp-id", action_column: "ALL PRIVILEGES"}]
+    runner_sql.query_dicts.return_value = [
+        {principal_column: "11111111-2222-3333-4444-555555555555", action_column: "ALL PRIVILEGES"}
+    ]
 
     result = runner_checkers.check_runner_access(42, reader_sql=runner_sql, include_outputs=True)
 
@@ -398,7 +428,7 @@ def test_runner_sql_grants_accept_column_casing(
 
 def test_runner_sql_grants_include_parent_inheritance(runner_checkers: ResourceCheckers, runner_sql: MagicMock) -> None:
     runner_sql.query_dicts.side_effect = lambda statement, require_complete: (
-        [{"Principal": "runner-sp-id", "ActionType": "ALL PRIVILEGES"}]
+        [{"Principal": "11111111-2222-3333-4444-555555555555", "ActionType": "ALL PRIVILEGES"}]
         if statement == "SHOW GRANTS ON CATALOG `main`"
         else []
     )
@@ -414,7 +444,8 @@ def test_runner_sql_grants_include_verified_group_inheritance(
 ) -> None:
     workspace.service_principals.list.return_value = [
         SimpleNamespace(
-            application_id="runner-sp-id", groups=[SimpleNamespace(display="runner-group", value="group-id")]
+            application_id="11111111-2222-3333-4444-555555555555",
+            groups=[SimpleNamespace(display="runner-group", value="group-id")],
         )
     ]
     runner_sql.query_dicts.side_effect = lambda statement, require_complete: (
@@ -431,7 +462,7 @@ def test_runner_sql_grants_include_verified_group_inheritance(
 def test_runner_sql_unknown_result_columns_do_not_report_missing_grants(
     runner_checkers: ResourceCheckers, runner_sql: MagicMock
 ) -> None:
-    runner_sql.query_dicts.return_value = [{"unexpected": "runner-sp-id"}]
+    runner_sql.query_dicts.return_value = [{"unexpected": "11111111-2222-3333-4444-555555555555"}]
 
     result = runner_checkers.check_runner_access(42, reader_sql=runner_sql, include_outputs=True)
 
@@ -454,7 +485,9 @@ def test_runner_schema_permissions_are_rechecked_after_success(
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == ("GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `runner-sp-id`;",)
+    assert result.instructions == (
+        "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
+    )
 
 
 def test_runner_sql_membership_is_rechecked_after_success(
@@ -462,14 +495,17 @@ def test_runner_sql_membership_is_rechecked_after_success(
 ) -> None:
     workspace.service_principals.list.return_value = [
         SimpleNamespace(
-            application_id="runner-sp-id", groups=[SimpleNamespace(display="runner-group", value="group-id")]
+            application_id="11111111-2222-3333-4444-555555555555",
+            groups=[SimpleNamespace(display="runner-group", value="group-id")],
         )
     ]
     runner_sql.query_dicts.return_value = [{"Principal": "runner-group", "ActionType": "ALL PRIVILEGES"}]
     assert (
         runner_checkers.check_runner_access(42, reader_sql=runner_sql, include_outputs=True).state == StepState.PASSED
     )
-    workspace.service_principals.list.return_value = [SimpleNamespace(application_id="runner-sp-id", groups=[])]
+    workspace.service_principals.list.return_value = [
+        SimpleNamespace(application_id="11111111-2222-3333-4444-555555555555", groups=[])
+    ]
 
     result = runner_checkers.check_runner_access(42, reader_sql=runner_sql, include_outputs=True)
 
@@ -480,8 +516,8 @@ def test_runner_sql_membership_is_rechecked_after_success(
 @pytest.mark.parametrize(
     "row",
     [
-        {"Principal": "other", "principal": "runner-sp-id", "ActionType": "ALL PRIVILEGES"},
-        {"Principal": "runner-sp-id", "ActionType": ""},
+        {"Principal": "other", "principal": "11111111-2222-3333-4444-555555555555", "ActionType": "ALL PRIVILEGES"},
+        {"Principal": "11111111-2222-3333-4444-555555555555", "ActionType": ""},
     ],
 )
 def test_runner_sql_ambiguous_grant_rows_are_unknown(
@@ -524,14 +560,14 @@ def test_runner_ownership_uses_app_metadata_when_obo_volume_scope_is_unavailable
     runner_checkers: ResourceCheckers, workspace: MagicMock, runner_reader: MagicMock, runner_sql: MagicMock
 ) -> None:
     runner_sql.query_dicts.return_value = [
-        {"principal": "runner-sp-id", "actionType": "SELECT"},
-        {"principal": "runner-sp-id", "actionType": "MODIFY"},
+        {"principal": "11111111-2222-3333-4444-555555555555", "actionType": "SELECT"},
+        {"principal": "11111111-2222-3333-4444-555555555555", "actionType": "MODIFY"},
     ]
     runner_reader.volumes.read.side_effect = PermissionError("unsupported OAuth scope")
-    workspace.catalogs.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.schemas.get.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.volumes.read.return_value = SimpleNamespace(owner="runner-sp-id")
-    workspace.tables.get.return_value = SimpleNamespace(owner="runner-sp-id")
+    workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
+    workspace.tables.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
 
     result = runner_checkers.check_runner_access(
         42, reader_ws=runner_reader, reader_sql=runner_sql, include_outputs=True
@@ -621,6 +657,22 @@ def test_catalog_check_unknown_when_grants_unreadable(checkers: ResourceCheckers
 
     assert step.code == "catalog_permission_check_failed"
     assert "READ METADATA" in "\n".join(step.instructions)
+
+
+def test_catalog_check_reports_missing_group_usage_when_only_show_grants_is_readable(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+    workspace.service_principals.list.return_value = []
+    sql.query_dicts.return_value = [
+        {"Principal": "app-sp-id", "ActionType": "USE CATALOG"},
+        {"Principal": "app-sp-id", "ActionType": "CREATE SCHEMA"},
+    ]
+
+    step = checkers.check_unity_catalog(reader_sql=sql)
+
+    assert step.code == "catalog_permissions_missing"
+    assert step.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `data-team`;",)
 
 
 def test_catalog_check_accepts_request_scoped_reader_sql(

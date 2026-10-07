@@ -778,6 +778,24 @@ async def test_configuration_view_reflects_saved_choices() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["dqx_studio", "custom"])
+async def test_configuration_view_reports_effective_deployment_prefix(prefix: str) -> None:
+    deployment = ResolvedConfiguration(
+        ConfigurationSource.DEPLOYMENT,
+        None,
+        derive_storage("main", prefix),
+        resolve_audience(["data-team"], "admins", allow_broad=True),
+        False,
+        deployment_prefix=prefix,
+    )
+    harness = _harness(resolved=deployment)
+
+    await harness.orchestrator.reconcile()
+
+    assert harness.orchestrator.configuration_view().prefix == prefix
+
+
+@pytest.mark.asyncio
 async def test_configuration_view_sanitizes_control_characters() -> None:
     choices = SetupChoices("main\nforged", "studio", "data\x1bteam")
     invalid = ResolvedConfiguration(

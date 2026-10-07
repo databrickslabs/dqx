@@ -215,7 +215,7 @@ class SetupOrchestrator:
             catalog, prefix, audience_group = choices.catalog, choices.prefix, choices.audience_group
         else:
             catalog = storage.catalog if storage is not None else ""
-            prefix = ""
+            prefix = resolved.deployment_prefix
             audience_group = ", ".join(audience.groups) if audience is not None else ""
         return SetupConfigurationView(
             source=_SOURCE_VIEWS[resolved.source],

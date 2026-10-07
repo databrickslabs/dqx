@@ -42,6 +42,7 @@ class ResolvedConfiguration:
     audience: StudioAudience | None
     locked: bool
     error: str | None = None
+    deployment_prefix: str = ""
 
 
 class SetupSettings(Protocol):
@@ -113,9 +114,10 @@ def resolve_configuration(config: AppConfig, store: SetupConfigurationStore) -> 
     locked = store.is_locked()
     if config.has_deployment_storage:
         try:
+            deployment_prefix = config.prefix.strip() or DEFAULT_PREFIX
             storage = derive_storage(
                 config.catalog,
-                config.prefix.strip() or DEFAULT_PREFIX,
+                deployment_prefix,
                 schema=config.schema_name,
                 tmp_schema=config.tmp_schema_name,
                 genie_schema=config.genie_schema_name,
@@ -131,7 +133,9 @@ def resolve_configuration(config: AppConfig, store: SetupConfigurationStore) -> 
                 locked,
                 "deployment_configuration_invalid",
             )
-        return ResolvedConfiguration(ConfigurationSource.DEPLOYMENT, None, storage, audience, locked)
+        return ResolvedConfiguration(
+            ConfigurationSource.DEPLOYMENT, None, storage, audience, locked, deployment_prefix=deployment_prefix
+        )
 
     choices = store.load()
     if choices is None:
