@@ -49,7 +49,7 @@ def test_storage_names_derive_from_prefix(bundle: dict) -> None:
 
 def test_runner_has_least_privilege(bundle: dict) -> None:
     assert _grants(bundle, "schemas", "main_schema")[_RUNNER] == ["USE_SCHEMA", "SELECT", "MODIFY"]
-    assert _grants(bundle, "schemas", "tmp_schema")[_RUNNER] == ["USE_SCHEMA"]
+    assert _grants(bundle, "schemas", "tmp_schema")[_RUNNER] == ["USE_SCHEMA", "SELECT"]
     assert _RUNNER not in _grants(bundle, "schemas", "genie_schema")
     assert _RUNNER not in _grants(bundle, "schemas", "demo_schema")
     assert _grants(bundle, "volumes", "wheels")[_RUNNER] == ["READ_VOLUME"]

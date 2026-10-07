@@ -343,9 +343,12 @@ resources:
             - WRITE_VOLUME
             - APPLY_TAG
             - MANAGE
+        # The task runner reads OBO temp views through schema-level SELECT
+        # (no per-view grants), so it can read any view in this schema.
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
             - USE_SCHEMA
+            - SELECT
         # End users create temp views here via their OBO token during dry-run /
         # preview, so they need USE SCHEMA + CREATE TABLE.
         - principal: ${var.studio_uc_principal}

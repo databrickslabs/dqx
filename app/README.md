@@ -30,7 +30,7 @@ The app uses a two-tier model — no admin-scoped REST calls are made by the app
 Operations that must respect the logged-in user's permissions use the `X-Forwarded-Access-Token` header, injected automatically by Databricks when running on the platform:
 
 - **Unity Catalog browsing** (catalogs, schemas, tables, columns)
-- **Temporary view creation** — source access is checked as the user; each view grants `SELECT` directly to the job's actual `run_as` runner and per-view `MANAGE` to the app SP for orphan cleanup. Failed grants block submission; no broad built-in audience grant is used.
+- **Temporary view creation** — source access is checked as the user; each view grants per-view `MANAGE` to the app SP for orphan cleanup, while the task runner reads views through schema-level `SELECT` on `<prefix>_tmp` (so it can read any view in that schema; no per-view runner grant). A failed `MANAGE` grant drops the view and blocks submission; no broad built-in audience grant is used.
 - **Schedule permission checks** — OBO SQL inspects grants and verifies source catalog/schema usage plus `SELECT` for the app scheduler and runner; failed runner grants block scheduling.
 
 #### SP (Service Principal) — app identity

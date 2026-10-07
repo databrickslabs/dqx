@@ -159,7 +159,7 @@ Scoped tight:
 - `CAN MANAGE` on the SQL warehouse the app is bound to, so setup can share it with the audience additively
 - `Service Principal: User` role on the task-runner SP (so the app can submit jobs as it)
 
-The task-runner SP is least privilege: `USE CATALOG`; `USE SCHEMA`, `SELECT`, `MODIFY` on the main schema; `USE SCHEMA` on `<prefix>_tmp`; `READ VOLUME` on the wheels volume; nothing on `<prefix>_genie` or `<prefix>_demo`.
+The task-runner SP is least privilege: `USE CATALOG`; `USE SCHEMA`, `SELECT`, `MODIFY` on the main schema; `USE SCHEMA` and `SELECT` on `<prefix>_tmp` (the runner reads OBO temporary views through this schema-level `SELECT`, so it can read any view in `_tmp`; no per-view grants); `READ VOLUME` on the wheels volume; nothing on `<prefix>_genie` or `<prefix>_demo`.
 
 It is **not** a workspace admin and **not** a metastore admin. If you remove the app, those grants are the only blast radius.
 
