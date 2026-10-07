@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.setup.resources import (
 )
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
+from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
 from databricks_labs_dqx_app.backend.startup import (
     StartupContext,
     activate_studio,
@@ -664,6 +665,7 @@ async def test_binder_builds_collaborators_for_bound_resources(
     }
     assert checker_kwargs["resources"] == resources
     assert checker_kwargs["app_sp_id"] == "app-sp-name"
+    assert isinstance(checker_kwargs["verification_memo"], VerificationMemo)
     assert isinstance(bound.access, AudienceAccess)
     assert bound.access.check_app_sharing().id is SetupStepId.APP_SHARING
 

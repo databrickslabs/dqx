@@ -44,6 +44,8 @@ There is no upgrade path from earlier Studio installations. Remove the previous 
 5. Run the `GRANT` statements that setup prints, then choose **Verify again**.
 6. In **Admin Settings → Entitlements**, assign roles to the audience groups.
 
+After the first successful administrator verification, app restarts reuse it for catalog grants the app service principal cannot inspect itself; a changed audience, catalog, or task runner requires an administrator to choose **Verify again**.
+
 **From a bundle (DAB).** Deploy with `make app-deploy PROFILE=<profile> TARGET=<target> STUDIO_PREFIX=<prefix> STUDIO_USER_GROUP=<group|users>`, grant the catalog prerequisites that setup prints, and assign roles. The bundle supplies catalog, prefix, and audience, so setup shows them read-only and skips the form. See the [installation guide](/docs/installation#dqx-studio-installation).
 
 ### Storage layout

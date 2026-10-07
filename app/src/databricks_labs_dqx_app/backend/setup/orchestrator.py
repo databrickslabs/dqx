@@ -62,7 +62,12 @@ class BootstrapChecks(Protocol):
 class BoundChecks(Protocol):
     """Checks that need resolved Studio storage."""
 
-    def check_unity_catalog(self, reader_sql: SqlExecutor | None = None) -> SetupStep: ...
+    def check_unity_catalog(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        *,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep: ...
 
     def ensure_storage(self, *, provision: bool) -> SetupStep: ...
 
@@ -319,7 +324,7 @@ class SetupOrchestrator:
         if resolved is None or bound is None:
             raise RuntimeError("Unreachable setup configuration state")
 
-        step = await asyncio.to_thread(bound.checkers.check_unity_catalog, reader_sql)
+        step = await asyncio.to_thread(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws)
         if stopped := advance(step):
             return stopped
 

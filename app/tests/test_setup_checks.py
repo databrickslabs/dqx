@@ -1,6 +1,8 @@
 """Behavior tests for deployment-agnostic setup resource capability checks."""
 
+import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
@@ -21,6 +23,7 @@ from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
@@ -1046,3 +1049,294 @@ def test_unresolved_runner_receives_no_grants(checkers, workspace, sql) -> None:
     checkers.check_runner_access(27, include_outputs=True)
 
     sql.execute_no_schema.assert_not_called()
+
+
+class _MemoSettings:
+    """In-memory application settings store."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get_setting(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:
+        self.values[key] = value
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+@pytest.fixture
+def memo_settings() -> _MemoSettings:
+    return _MemoSettings()
+
+
+@pytest.fixture
+def memo_clock() -> _Clock:
+    return _Clock()
+
+
+def _memo_checkers(
+    resources: ActiveResources,
+    workspace: MagicMock,
+    sql: MagicMock,
+    compute: MagicMock,
+    settings: _MemoSettings,
+    clock: _Clock,
+) -> ResourceCheckers:
+    return ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+        verification_memo=VerificationMemo(settings, clock=clock),
+    )
+
+
+def _catalog_grants_readable(workspace: MagicMock) -> None:
+    workspace.grants.get_effective.side_effect = None
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+
+
+def _audience_catalog_grants_unreadable(workspace: MagicMock, *app_privileges: Privilege) -> None:
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions(*app_privileges)
+        raise PermissionError("app cannot inspect another principal")
+
+    workspace.grants.get_effective.side_effect = effective
+
+
+def test_unattended_catalog_check_reuses_admin_verification(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _catalog_grants_readable(workspace)
+    assert checkers.check_unity_catalog(reader_sql=sql, reader_ws=workspace).state == StepState.PASSED
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+    step = checkers.check_unity_catalog()
+
+    assert step.state == StepState.PASSED
+    assert "verified by an administrator" in step.summary
+
+
+def test_unattended_catalog_check_without_memo_requires_verification(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+
+    step = checkers.check_unity_catalog()
+
+    assert step.code == "catalog_permission_check_failed"
+    assert memo_settings.values == {}
+
+
+def test_unattended_catalog_check_ignores_memo_after_audience_change(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    _catalog_grants_readable(workspace)
+    assert _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock).check_unity_catalog(
+        reader_sql=sql
+    ).state == (StepState.PASSED)
+    changed = replace(resources, audience=resolve_audience(["other-team"], "admins", allow_broad=False))
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+    step = _memo_checkers(changed, workspace, sql, compute, memo_settings, memo_clock).check_unity_catalog()
+
+    assert step.code == "catalog_permission_check_failed"
+
+
+def test_unattended_catalog_check_ignores_memo_after_catalog_change(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    _catalog_grants_readable(workspace)
+    _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock).check_unity_catalog(reader_sql=sql)
+    changed = replace(resources, volume=replace(resources.volume, catalog="other"))
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+    step = _memo_checkers(changed, workspace, sql, compute, memo_settings, memo_clock).check_unity_catalog()
+
+    assert step.code == "catalog_permission_check_failed"
+
+
+def test_admin_catalog_check_never_uses_memo(resources, workspace, sql, compute, memo_settings, memo_clock) -> None:
+    checkers = _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _catalog_grants_readable(workspace)
+    checkers.check_unity_catalog(reader_sql=sql)
+    reader = create_autospec(WorkspaceClient, instance=True)
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+    sql.query_dicts.side_effect = RuntimeError("show grants unavailable")
+
+    assert checkers.check_unity_catalog(reader_sql=sql).code == "catalog_permission_check_failed"
+    assert checkers.check_unity_catalog(reader_ws=reader).code == "catalog_permission_check_failed"
+
+
+def test_admin_catalog_success_refreshes_memo(resources, workspace, sql, compute, memo_settings, memo_clock) -> None:
+    checkers = _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _catalog_grants_readable(workspace)
+    checkers.check_unity_catalog(reader_sql=sql)
+    first = dict(memo_settings.values)
+    memo_clock.now = datetime(2026, 10, 8, 9, 30, tzinfo=timezone.utc)
+
+    assert checkers.check_unity_catalog(reader_sql=sql).state == StepState.PASSED
+
+    (stored,) = memo_settings.values.values()
+    assert stored != next(iter(first.values()))
+    assert json.loads(stored)["verified_at"] == memo_clock.now.isoformat()
+    assert "data-team" not in stored
+
+
+def test_missing_catalog_privilege_blocks_despite_memo(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _catalog_grants_readable(workspace)
+    checkers.check_unity_catalog(reader_sql=sql)
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG)
+    step = checkers.check_unity_catalog()
+
+    assert step.state == StepState.ACTION_REQUIRED
+
+
+def test_unattended_catalog_check_with_failing_settings_store_requires_verification(
+    resources, workspace, sql, compute
+) -> None:
+    settings = create_autospec(_MemoSettings, instance=True)
+    settings.get_setting.side_effect = RuntimeError("lakebase down")
+    settings.save_setting.side_effect = RuntimeError("lakebase down")
+    checkers = ResourceCheckers(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+        verification_memo=VerificationMemo(settings),
+    )
+    _catalog_grants_readable(workspace)
+    assert checkers.check_unity_catalog(reader_sql=sql).state == StepState.PASSED
+
+    _audience_catalog_grants_unreadable(workspace, Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+    assert checkers.check_unity_catalog().code == "catalog_permission_check_failed"
+
+
+_RUNNER = "11111111-2222-3333-4444-555555555555"
+
+
+def _runner_memo_checkers(
+    resources: ActiveResources,
+    workspace: MagicMock,
+    sql: MagicMock,
+    compute: MagicMock,
+    settings: _MemoSettings,
+    clock: _Clock,
+) -> ResourceCheckers:
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name=_RUNNER)))
+    return _memo_checkers(resources, workspace, sql, compute, settings, clock)
+
+
+def _runner_grants_readable(workspace: MagicMock) -> None:
+    workspace.grants.get_effective.side_effect = None
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES, principal=_RUNNER)
+
+
+def _runner_catalog_unreadable(workspace: MagicMock, *, schema_privileges: tuple[Privilege, ...] = ()) -> None:
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if kind == "CATALOG":
+            raise PermissionError("app cannot inspect the catalog")
+        if kind == "SCHEMA" and name == "main.dqx_studio" and schema_privileges:
+            return _effective_permissions(*schema_privileges, principal=principal)
+        return _effective_permissions(Privilege.ALL_PRIVILEGES, principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+    workspace.catalogs.get.side_effect = PermissionError("app cannot read the catalog")
+
+
+@pytest.mark.parametrize("include_outputs", [False, True])
+def test_unattended_runner_check_reuses_admin_verification(
+    resources, workspace, sql, compute, memo_settings, memo_clock, include_outputs
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    reader = create_autospec(WorkspaceClient, instance=True)
+    _runner_grants_readable(workspace)
+    assert checkers.check_runner_access(42, reader, reader_sql=sql, include_outputs=include_outputs).state == (
+        StepState.PASSED
+    )
+
+    _runner_catalog_unreadable(workspace)
+    step = checkers.check_runner_access(42, include_outputs=include_outputs)
+
+    assert step.state == StepState.PASSED
+    assert "verified by an administrator" in step.summary
+
+
+def test_runner_memo_is_scoped_to_output_requirements(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _runner_grants_readable(workspace)
+    checkers.check_runner_access(42, reader_sql=sql, include_outputs=False)
+
+    _runner_catalog_unreadable(workspace)
+
+    assert checkers.check_runner_access(42, include_outputs=True).code == "task_runner_permission_check_failed"
+
+
+def test_unattended_runner_check_without_memo_requires_verification(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _runner_catalog_unreadable(workspace)
+
+    assert checkers.check_runner_access(42, include_outputs=True).code == "task_runner_permission_check_failed"
+    assert memo_settings.values == {}
+
+
+def test_unattended_runner_check_ignores_memo_after_runner_change(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _runner_grants_readable(workspace)
+    checkers.check_runner_access(42, reader_sql=sql, include_outputs=True)
+    other = "99999999-2222-3333-4444-555555555555"
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name=other)))
+
+    _runner_catalog_unreadable(workspace)
+
+    assert checkers.check_runner_access(42, include_outputs=True).code == "task_runner_permission_check_failed"
+
+
+def test_admin_runner_check_never_uses_memo(resources, workspace, sql, compute, memo_settings, memo_clock) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.catalogs.get.side_effect = PermissionError("admin cannot read the catalog")
+    _runner_grants_readable(workspace)
+    checkers.check_runner_access(42, reader, reader_sql=sql, include_outputs=True)
+
+    _runner_catalog_unreadable(workspace)
+    sql.query_dicts.side_effect = RuntimeError("show grants unavailable")
+
+    assert checkers.check_runner_access(42, reader, include_outputs=True).code == "task_runner_permission_check_failed"
+
+
+def test_missing_runner_privilege_blocks_despite_memo(
+    resources, workspace, sql, compute, memo_settings, memo_clock
+) -> None:
+    checkers = _runner_memo_checkers(resources, workspace, sql, compute, memo_settings, memo_clock)
+    _runner_grants_readable(workspace)
+    checkers.check_runner_access(42, reader_sql=sql, include_outputs=True)
+
+    _runner_catalog_unreadable(workspace, schema_privileges=(Privilege.USE_SCHEMA,))
+    step = checkers.check_runner_access(42, include_outputs=True)
+
+    assert step.state == StepState.ACTION_REQUIRED
