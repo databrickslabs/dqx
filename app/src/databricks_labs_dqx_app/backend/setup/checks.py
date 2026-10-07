@@ -154,7 +154,7 @@ class ResourceCheckers:
         reader_sql: SqlExecutor | None = None,
         include_outputs: bool = False,
     ) -> SetupStep:
-        """Grant, then verify, wheel access, schema usage, and main-schema data access.
+        """Grant, then verify, wheel access, schema usage, temporary-schema SELECT, and main-schema data access.
 
         Least-privilege grants on Studio-managed objects are applied best effort
         before inspection; anything still missing is reported for an administrator
@@ -202,12 +202,15 @@ class ResourceCheckers:
         requirements = [
             ("CATALOG", volume.catalog, "USE_CATALOG", "USE CATALOG", catalog),
             ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE SCHEMA", schema),
-            (
-                "SCHEMA",
-                f"{volume.catalog}.{self._resources.tmp_schema}",
-                "USE_SCHEMA",
-                "USE SCHEMA",
-                f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
+            *(
+                (
+                    "SCHEMA",
+                    f"{volume.catalog}.{self._resources.tmp_schema}",
+                    privilege,
+                    grant,
+                    f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
+                )
+                for privilege, grant in (("USE_SCHEMA", "USE SCHEMA"), ("SELECT", "SELECT"))
             ),
             ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ VOLUME", quoted_volume),
         ]
@@ -480,7 +483,9 @@ class ResourceCheckers:
     def _grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
         """Best-effort least-privilege grants for the task runner on Studio-managed objects.
 
-        Never grants ALL PRIVILEGES, catalog privileges, or access to the Genie or demo schemas.
+        Grants USE SCHEMA and SELECT on the temporary-view schema (the runner reads OBO
+        temporary views through that schema-level SELECT, not per-view grants). Never grants
+        ALL PRIVILEGES, catalog privileges, or access to the Genie or demo schemas.
         """
         volume = self._resources.volume
         try:
@@ -495,7 +500,7 @@ class ResourceCheckers:
         statements = [f"GRANT USE SCHEMA ON SCHEMA {main} TO {grantee}"]
         if include_outputs:
             statements.append(f"GRANT SELECT, MODIFY ON SCHEMA {main} TO {grantee}")
-        statements.append(f"GRANT USE SCHEMA ON SCHEMA {tmp} TO {grantee}")
+        statements.append(f"GRANT USE SCHEMA, SELECT ON SCHEMA {tmp} TO {grantee}")
         statements.append(f"GRANT READ VOLUME ON VOLUME {wheels} TO {grantee}")
         for statement in statements:
             try:

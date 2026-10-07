@@ -2524,7 +2524,6 @@ class SchedulerService:
     def _create_view(self, source_table_fqn: str) -> str:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
-        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
@@ -2532,7 +2531,6 @@ class SchedulerService:
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
@@ -2547,51 +2545,15 @@ class SchedulerService:
                 "The SQL query contains prohibited statements and cannot be used to create a view."
             )
 
-        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
-
-    def _resolve_view_runner(self) -> str:
-        """Resolve the job's current run-as identity before creating a view."""
-        from databricks_labs_dqx_app.backend.services.view_service import quote_view_principal
-
-        try:
-            job = self._ws.jobs.get(job_id=int(self._job_id))
-            run_as = job.settings.run_as if job.settings else None
-            if run_as is None or run_as.group_name:
-                raise RuntimeError("Missing direct job run-as identity")
-            principals = [name for name in (run_as.service_principal_name, run_as.user_name) if name]
-            if len(principals) != 1:
-                raise RuntimeError("Ambiguous job run-as identity")
-            return quote_view_principal(principals[0])
-        except Exception:
-            raise RuntimeError(
-                "Cannot resolve a valid task-runner identity for temporary view permissions. "
-                "Verify the job run-as configuration and job read access."
-            ) from None
-
-    def _grant_view(self, view_name: str, runner: str) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
-
-        quoted_view = quote_fqn(view_name)
-        try:
-            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quoted_view} TO {runner}")
-        except Exception:
-            try:
-                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quoted_view}")
-            except Exception:
-                logger.warning("Scheduler temporary view cleanup failed after a permission failure")
-            raise RuntimeError(
-                "Cannot grant temporary view access to the task runner. View cleanup was attempted."
-            ) from None
 
     _tmp_schema_ensured = False
 

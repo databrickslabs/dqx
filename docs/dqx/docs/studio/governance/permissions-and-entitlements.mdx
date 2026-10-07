@@ -71,7 +71,7 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 | Catalog | `USE CATALOG`, `CREATE SCHEMA` | `USE CATALOG` | `USE CATALOG` | `USE CATALOG` |
 | Main schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
-| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
+| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`, `SELECT` (any view in `_tmp`) | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
 | `_genie` schema | Owner / explicit list incl. `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
 | `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
@@ -101,7 +101,7 @@ The **audience** is a dedicated, existing workspace group. Studio never creates 
 
 Some access cannot be proven for a whole group, so it is checked for the active user when they use the feature: their **Databricks SQL access entitlement**, their **OAuth consent** for Studio's scopes (sign in again if a scope changes), and their own **source-data privileges** on the tables they profile or validate. Studio never grants source data.
 
-Profiling and validation use your data permissions to create a temporary view, then grant `SELECT` directly to the job runner and `MANAGE` on that view to the app service principal for cleanup. Schedules verify source catalog/schema usage and `SELECT` for the app scheduler and runner; failed runner grants block scheduling. Ask Genie additionally requires space `CAN_RUN`, Consumer access or Databricks SQL access entitlement, and the approved-view grants above.
+Profiling and validation use your data permissions to create a temporary view, then grant `MANAGE` on that view to the app service principal for cleanup. The job runner reads the view through schema-level `SELECT` on the temporary schema, so it can read any view in that schema. Schedules verify source catalog/schema usage and `SELECT` for the app scheduler and runner; failed runner grants block scheduling. Ask Genie additionally requires space `CAN_RUN`, Consumer access or Databricks SQL access entitlement, and the approved-view grants above.
 
 ## Entitlements (your role)
 

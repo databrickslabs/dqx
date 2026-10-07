@@ -1,6 +1,7 @@
 """Behavior tests for deployment-agnostic setup resource capability checks."""
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -138,9 +139,14 @@ def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> Resourc
         if principal == "11111111-2222-3333-4444-555555555555"
         and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio")
         else (
-            permissions[securable_type]
+            _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT, principal=principal)
             if principal == "11111111-2222-3333-4444-555555555555"
-            else _effective_permissions()
+            and (securable_type, full_name) == ("SCHEMA", "main.dqx_studio_tmp")
+            else (
+                permissions[securable_type]
+                if principal == "11111111-2222-3333-4444-555555555555"
+                else _effective_permissions()
+            )
         )
     )
     return checkers
@@ -204,7 +210,31 @@ def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceChecker
     assert result.state == StepState.ACTION_REQUIRED
     assert result.instructions == (
         "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
+        "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
     )
+
+
+def test_runner_missing_temporary_schema_select_reports_schema_grant(
+    runner_checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    available = workspace.grants.get_effective.side_effect
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: (
+        _effective_permissions(Privilege.USE_SCHEMA, principal=principal)
+        if (kind, name) == ("SCHEMA", "main.dqx_studio_tmp")
+        else available(kind, name, principal=principal)
+    )
+
+    result = runner_checkers.check_runner_access(42)
+
+    assert result.state == StepState.ACTION_REQUIRED
+    assert result.code == "task_runner_permissions_missing"
+    assert result.instructions == (
+        "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
+    )
+
+
+def test_runner_with_temporary_schema_select_passes_without_outputs(runner_checkers: ResourceCheckers) -> None:
+    assert runner_checkers.check_runner_access(42).state == StepState.PASSED
 
 
 @pytest.mark.parametrize("missing", [Privilege.SELECT, Privilege.MODIFY])
@@ -281,10 +311,21 @@ def test_runner_all_privileges_passes(
     assert runner_checkers.check_runner_access(42, include_outputs=include_outputs).state == StepState.PASSED
 
 
+def _grant_runner_tmp_select_only(workspace: MagicMock, fallback: Callable[[], EffectivePermissionsList]) -> None:
+    """Report temporary-schema USE SCHEMA + SELECT for the runner and *fallback* elsewhere."""
+    runner = "11111111-2222-3333-4444-555555555555"
+
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if (kind, name) == ("SCHEMA", "main.dqx_studio_tmp"):
+            return _effective_permissions(Privilege.USE_SCHEMA, Privilege.SELECT, principal=runner)
+        return fallback()
+
+    workspace.grants.get_effective.side_effect = effective
+
+
 def test_runner_owner_passes_without_explicit_grants(runner_checkers: ResourceCheckers, workspace: MagicMock) -> None:
-    workspace.grants.get_effective.side_effect = None
-    workspace.grants.get_effective.return_value = _effective_permissions(
-        principal="11111111-2222-3333-4444-555555555555"
+    _grant_runner_tmp_select_only(
+        workspace, lambda: _effective_permissions(principal="11111111-2222-3333-4444-555555555555")
     )
     workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
     workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
@@ -297,9 +338,8 @@ def test_runner_owner_passes_without_explicit_grants(runner_checkers: ResourceCh
 def test_runner_schema_owner_still_requires_data_grants(
     runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
-    workspace.grants.get_effective.side_effect = None
-    workspace.grants.get_effective.return_value = _effective_permissions(
-        principal="11111111-2222-3333-4444-555555555555"
+    _grant_runner_tmp_select_only(
+        workspace, lambda: _effective_permissions(principal="11111111-2222-3333-4444-555555555555")
     )
     workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
     workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
@@ -332,7 +372,10 @@ def test_runner_schema_owner_cannot_bypass_uninspectable_data_grants(
 def test_runner_ownership_can_verify_access_when_grants_are_unavailable(
     runner_checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
-    workspace.grants.get_effective.side_effect = RuntimeError("grants unavailable")
+    def unavailable() -> EffectivePermissionsList:
+        raise RuntimeError("grants unavailable")
+
+    _grant_runner_tmp_select_only(workspace, unavailable)
     workspace.catalogs.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
     workspace.schemas.get.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
     workspace.volumes.read.return_value = SimpleNamespace(owner="11111111-2222-3333-4444-555555555555")
@@ -1016,7 +1059,7 @@ def test_runner_grants_are_least_privilege(checkers, workspace, sql) -> None:
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
     assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
     assert "GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
-    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
+    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
     assert "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner-sp`" in statements
     assert not any("ALL PRIVILEGES" in s or "genie" in s or "_demo" in s or "ON CATALOG" in s for s in statements)
 
@@ -1029,7 +1072,8 @@ def test_runner_data_grants_wait_for_outputs(checkers, workspace, sql) -> None:
 
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
     assert statements
-    assert not any("SELECT" in s or "MODIFY" in s for s in statements)
+    assert not any("MODIFY" in s for s in statements)
+    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
 
 
 def test_runner_grant_failures_are_ignored_and_verification_decides(checkers, workspace, sql) -> None:

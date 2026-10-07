@@ -45,7 +45,7 @@ async def test_scheduler_view_dependency_uses_temporary_schema() -> None:
     resources = rt.require_resources()
     assert view.startswith(f"{resources.volume.catalog}.{resources.tmp_schema}.tmp_view_")
     statements = [call.kwargs["statement"] for call in workspace.statement_execution.execute_statement.call_args_list]
-    assert any(statement.endswith("TO `runner-sp`") for statement in statements)
+    assert not any(statement.startswith("GRANT SELECT") for statement in statements)
     assert any(statement.endswith("TO `app-sp`") for statement in statements)
 
 

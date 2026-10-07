@@ -67,7 +67,7 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | Catalog | `USE CATALOG`, `CREATE SCHEMA` | `USE CATALOG` | `USE CATALOG` | `USE CATALOG` |
 | Main schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
 | Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
-| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`; per-view `SELECT` | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
+| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`, `SELECT` (any view in `_tmp`) | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
 | `_genie` schema | Owner / explicit list incl. `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
 | `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
@@ -93,7 +93,7 @@ Setup first tries effective UC grant inspection with app credentials. If unavail
 | Resource | Required runner access |
 |---|---|
 | Catalog | `USE CATALOG` (administrator grant) |
-| Main and temporary schemas | `USE SCHEMA` on both |
+| Main and temporary schemas | `USE SCHEMA` on both; schema-level `SELECT` on the temporary schema |
 | Wheels volume | `READ VOLUME` |
 | Main schema | Schema-level `SELECT` and `MODIFY`, covering current and future tables |
 
@@ -105,7 +105,7 @@ The audience and administrator groups need `CAN_USE` on the Databricks App itsel
 
 ## Per-user boundaries
 
-Some access cannot be proven for a group and is checked for the active user on the relevant workflow instead: the user's **Databricks SQL access entitlement**, their **OAuth consent** for the declared user scopes (sign in again after a scope change), and **source-data privileges** on the tables they profile or validate. Setup never grants source data. Per-view runner `SELECT` and app-SP cleanup `MANAGE` failures block run submission, and scheduled source-access checks verify the app scheduler and the runner.
+Some access cannot be proven for a group and is checked for the active user on the relevant workflow instead: the user's **Databricks SQL access entitlement**, their **OAuth consent** for the declared user scopes (sign in again after a scope change), and **source-data privileges** on the tables they profile or validate. Setup never grants source data. App-SP per-view cleanup `MANAGE` failures block run submission, and scheduled source-access checks verify the app scheduler and the runner.
 
 ## Removing a previous installation
 
@@ -405,7 +405,8 @@ GRANT ALL PRIVILEGES ON VOLUME <catalog>.<prefix>.wheels         TO `<app-sp-id>
 -- Runner (least privilege): schema-wide storage access.
 -- Use a dedicated Studio schema: SELECT/MODIFY cover its current and future tables.
 GRANT USE SCHEMA, SELECT, MODIFY ON SCHEMA <catalog>.<prefix> TO `<job-sp-id>`;
-GRANT USE SCHEMA ON SCHEMA <catalog>.<prefix>_tmp             TO `<job-sp-id>`;
+-- Schema-level SELECT on _tmp lets the runner read any OBO temp view there.
+GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_tmp     TO `<job-sp-id>`;
 GRANT READ VOLUME ON VOLUME <catalog>.<prefix>.wheels         TO `<job-sp-id>`;
 
 -- Audience: end users create dry-run / preview temp views (via their OBO token)
@@ -438,11 +439,10 @@ Warehouse ACLs (app SP `CAN_MANAGE`; audience and admin group `CAN_USE`) are app
 
 ### Temporary views and schedules
 
-User-initiated views are created under OBO. Each view grants `SELECT` directly to the job's resolved runner and `MANAGE` to the app SP for orphan cleanup. Grant failures block submission. Cleanup rights are **per view**, not schema-wide, and no `account users` grant is restored:
+User-initiated views are created under OBO. The task runner reads these views through schema-level `SELECT` on `<prefix>_tmp` (plus `USE SCHEMA`), so it can read any view in `_tmp`; there are no per-view runner grants. Each view grants `MANAGE` to the app SP for orphan cleanup. A failed `MANAGE` grant drops the view and blocks submission. Cleanup rights are **per view**, not schema-wide, and no `account users` grant is restored:
 
 ```sql
 -- Apply to an existing OBO-owned view only if these narrow grants are missing.
-GRANT SELECT ON VIEW <catalog>.<tmp_schema>.<view_name> TO `<job-sp-id>`;
 GRANT MANAGE ON VIEW <catalog>.<tmp_schema>.<view_name> TO `<app-sp-id>`;
 ```
 
@@ -539,7 +539,7 @@ This happens on a fresh workspace right after the Lakebase project is created (e
 1. Check `DQX_JOB_ID` is set (visible in the app's environment config in the UI)
 2. Confirm the job exists: `databricks jobs list -p <your-profile>`
 3. Confirm the app SP has `CAN_MANAGE` on the job (set automatically by DABs), and the actual `run_as` runner passes the cold-start UC checks.
-4. For OBO views, confirm runner `SELECT` and app-SP `MANAGE` were granted on the specific view; do not restore `account users` access.
+4. For OBO views, confirm the app-SP `MANAGE` was granted on the specific view and the runner holds `USE SCHEMA` + `SELECT` on the tmp schema; do not restore `account users` access.
 
 **An oversized-config run fails while reading staged Lakebase configuration:**
 Follow [Task-runner Lakebase access](#task-runner-lakebase-access) as a Lakebase administrator, using the actual Jobs `run_as` client ID. Check `LOGIN`, effective `CONNECT` / `USAGE`, and `SELECT` / `DELETE` on `dq_run_configs`. A legacy role override must match that client ID. Runner Lakebase access is not verified by setup, so a ready setup report does not establish these runtime permissions.

@@ -679,8 +679,8 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
-    runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
-    return ViewService(sql=sql, sp_sql=sp_sql, runner_principal=runner, cleanup_principal=cleanup)
+    _runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    return ViewService(sql=sql, sp_sql=sp_sql, cleanup_principal=cleanup)
 
 
 async def get_scheduler_view_service(sp_ws: WorkspaceClient, sp_sql: SqlExecutor) -> ViewService:
@@ -1130,7 +1130,7 @@ async def get_demo_seed_service(
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
-    runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    _runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
@@ -1145,7 +1145,6 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
-        runner_principal=runner_principal,
         cleanup_principal=cleanup_principal,
     )
     # Profiler temp views for the demo profiling phase are created on the tmp
@@ -1159,7 +1158,6 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
-        runner_principal=runner_principal,
         cleanup_principal=cleanup_principal,
     )
     binding_run = BindingRunService(

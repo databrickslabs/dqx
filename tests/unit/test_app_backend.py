@@ -1381,7 +1381,6 @@ class TestJobService:
 # Tests for ViewService
 # ============================================================================
 
-VIEW_RUNNER_PRINCIPAL = "11111111-1111-4111-8111-111111111111"
 VIEW_CLEANUP_PRINCIPAL = "22222222-2222-4222-8222-222222222222"
 
 
@@ -1402,7 +1401,7 @@ class TestViewService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return ViewService(sql=sql, runner_principal=VIEW_RUNNER_PRINCIPAL, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
+        return ViewService(sql=sql, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1413,7 +1412,7 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """Create the source view with only runner SELECT and app cleanup MANAGE grants."""
+        """Create the source view with only the app cleanup MANAGE grant."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
         view = svc.create_view("cat.sch.src_table")
@@ -1424,7 +1423,6 @@ class TestViewService:
         quoted_view = ".".join(f"`{part}`" for part in view.split("."))
         assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
             f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
-            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
         ]
         assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
@@ -1531,7 +1529,7 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """Embed the query and grant only runner SELECT and app cleanup MANAGE."""
+        """Embed the query and grant only app cleanup MANAGE."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
         query = "SELECT id FROM cat.sch.src_table"
 
@@ -1545,7 +1543,6 @@ class TestViewService:
         quoted_view = ".".join(f"`{part}`" for part in view.split("."))
         assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
             f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
-            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
         ]
         assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
