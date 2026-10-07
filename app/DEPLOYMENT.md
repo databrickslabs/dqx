@@ -510,6 +510,9 @@ rm -rf .databricks                                          # clean local bundle
 databricks bundle deploy -p <your-profile> --force          # or force deploy
 ```
 
+**First deploy fails with `cannot create resources.postgres_roles.task_runner_sp: Project with name 'projects/<id>' not found (404)`:**
+This happens on a fresh workspace right after the Lakebase project is created (eventual consistency). Re-run `make app-deploy`; the second run succeeds.
+
 **Profiler or dry-run not starting:**
 1. Check `DQX_JOB_ID` is set (visible in the app's environment config in the UI)
 2. Confirm the job exists: `databricks jobs list -p <your-profile>`
