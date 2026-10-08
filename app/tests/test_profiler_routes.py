@@ -207,9 +207,7 @@ def test_classify_returns_documented_status_codes(raw_error: str, expected_statu
 @pytest.fixture
 def job_service(sql_executor_mock: MagicMock, workspace_client_mock: MagicMock) -> JobService:
     """A ``JobService`` wired to the shared spec-bound mocks from conftest."""
-    return JobService(
-        ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql")
-    )
+    return JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
 
 
 class TestListRunRowsSourceTableFilter:
@@ -313,7 +311,6 @@ class TestSubmitRunWarehouseThreading:
             ws=workspace_client_mock,
             job_id="123",
             sql=sql_executor_mock,
-            oltp_sql=MagicMock(name="oltp_sql"),
             warehouse_id="cfg-wh-override",
         )
         svc.submit_run(
@@ -329,9 +326,7 @@ class TestSubmitRunWarehouseThreading:
         self, sql_executor_mock: MagicMock, workspace_client_mock: MagicMock
     ) -> None:
         # ``sql_executor_mock.warehouse_id`` is "test-warehouse" (conftest).
-        svc = JobService(
-            ws=workspace_client_mock, job_id="123", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql")
-        )
+        svc = JobService(ws=workspace_client_mock, job_id="123", sql=sql_executor_mock)
         svc.submit_run(
             task_type="profile",
             view_fqn="cat.sch.v",
@@ -348,7 +343,6 @@ class TestSubmitRunWarehouseThreading:
             ws=workspace_client_mock,
             job_id="123",
             sql=sql_executor_mock,
-            oltp_sql=MagicMock(name="oltp_sql"),
             warehouse_id="   ",
         )
         svc.submit_run(

@@ -7,12 +7,15 @@ app never re-applies a migration that already succeeded.
 
 Storage split
 -------------
-The Delta schema contains only the high-volume analytical tables:
+The Delta schema contains the tables the Spark task runner reads or writes:
 
 - **v1 — Delta analytical baseline.** Holds the
   Spark-written tables: ``dq_validation_runs``,
   ``dq_profiling_results``, ``dq_quarantine_records``,
   ``dq_metrics``.
+- **v2 — Staged run configs.** ``dq_run_configs`` holds run configs too
+  large for the 10,000-character job-parameter limit. The app writes a
+  row keyed by ``run_id`` and the runner reads it back with Spark.
 
 Transactional application state is always created by
 :mod:`backend.migrations.postgres` in Lakebase. There is no Delta OLTP
@@ -375,6 +378,17 @@ MIGRATIONS: list[Migration] = [
         version=1,
         description="Delta analytical baseline (validation, profiling, quarantine, metrics)",
         sql_template=_V1_ANALYTICAL_BASELINE,
+    ),
+    Migration(
+        version=2,
+        description="Staged run configs too large to inline in job parameters",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_run_configs ("
+            "  run_id STRING NOT NULL,"
+            "  config STRING NOT NULL,"
+            "  created_at TIMESTAMP NOT NULL"
+            ") CLUSTER BY (run_id)"
+        ),
     ),
 ]
 
