@@ -132,13 +132,13 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
             model_uri = ",".join(result.model_uris)
             hyperparams = result.hyperparams
             validation_metrics = result.aggregated_metrics
-            score_quantiles = result.score_quantiles
+            calibration = result.calibration
             feature_metadata = result.feature_metadata
             run_id = "ensemble"
         else:
             model, hyperparams, feature_metadata = fit_isolation_forest(train_df, columns, params)
             validation_metrics = compute_validation_metrics(model, val_df, columns, feature_metadata)
-            score_quantiles = compute_score_quantiles(model, train_df, columns, feature_metadata)
+            calibration = compute_score_quantiles(model, train_df, columns, feature_metadata)
 
             self._registry.ensure_registry_configured()
             train_pandas = prepare_engineered_pandas(train_df, feature_metadata)
@@ -152,7 +152,7 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
             run_id=run_id,
             hyperparams=hyperparams,
             validation_metrics=validation_metrics,
-            score_quantiles=score_quantiles,
+            calibration=calibration,
             feature_metadata=feature_metadata,
             ensemble_size=ensemble_size,
             algorithm=algorithm,
@@ -203,7 +203,7 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
         train_pandas, feature_metadata = prepare_training_features(train_df, columns, params)
         model, hyperparams = fit_mahalanobis_model(train_pandas, params)
         validation_metrics = compute_validation_metrics(model, val_df, columns, feature_metadata)
-        score_quantiles = compute_score_quantiles(model, train_df, columns, feature_metadata)
+        calibration = compute_score_quantiles(model, train_df, columns, feature_metadata)
 
         self._registry.ensure_registry_configured()
         train_pandas = prepare_engineered_pandas(train_df, feature_metadata)
@@ -216,7 +216,7 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
             run_id=run_id,
             hyperparams=hyperparams,
             validation_metrics=validation_metrics,
-            score_quantiles=score_quantiles,
+            calibration=calibration,
             feature_metadata=feature_metadata,
             ensemble_size=1,
             algorithm=MAHALANOBIS_ALGORITHM,

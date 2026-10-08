@@ -7,6 +7,7 @@ methods).
 
 import logging
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime
 
 import sklearn
@@ -38,8 +39,8 @@ from databricks.labs.dqx.anomaly.temporal_advisory import (
 from databricks.labs.dqx.anomaly.training_strategies import (
     DEFAULT_PROFILE,
     AnomalyTrainingStrategy,
-    resolve_training_profile,
     normalize_training_profile,
+    resolve_training_profile,
 )
 from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
@@ -152,8 +153,8 @@ class AnomalyTrainingService:
         df_filtered: DataFrame,
         columns: list[str] | None,
         declared_baseline_by: list[str] | None,
-    ) -> tuple[list[str], list[str] | None]:
         baseline_over_time: str | None,
+    ) -> tuple[list[str], list[str] | None]:
         """Fill in whichever of the feature columns and the grouping the caller left unspecified.
 
         Returns ``(columns, baseline_by)``.
@@ -309,8 +310,8 @@ class AnomalyTrainingService:
         baseline_over_time: str | None = None,
     ) -> AnomalyTrainingContext:
         """Build training context with all validated inputs."""
-        validate_spark_version(self._spark)
         profile = normalize_training_profile(profile)
+        validate_spark_version(self._spark)
 
         if not model_name:
             raise InvalidParameterError("model_name is required and must be fully qualified as 'catalog.schema.model'.")
@@ -329,7 +330,6 @@ class AnomalyTrainingService:
         params = AnomalyParams() if params is None else params
         validate_training_params(params)
         declared_baseline_by = baseline_by if baseline_by is not None else params.baseline_by
-
         resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
         basis_columns = (declared_baseline_by or []) + ([resolved_over_time] if resolved_over_time else [])
         excluded_basis = sorted(set(basis_columns).intersection(exclude_list))
@@ -339,6 +339,7 @@ class AnomalyTrainingService:
         # after discovery resolves the final list.
         validate_baseline_columns(df, declared_baseline_by, columns or [])
         validate_baseline_over_time(df, resolved_over_time, columns or [])
+
         columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
         auto_discovery_used = columns is None
         columns, baseline_by = self._discover_columns_and_grouping(
@@ -448,10 +449,10 @@ class AnomalyTrainingService:
 
     def _train_global(self, context: AnomalyTrainingContext) -> str:
         """Train a single model."""
-        sampled_df, _, truncated = sample_df(context.df_filtered, context.columns, context.params)
         # Validate even a directly supplied context before sampling. An injected strategy remains
         # authoritative, but does not make an invalid public profile valid.
         strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
+        sampled_df, _, truncated = sample_df(context.df_filtered, context.columns, context.params)
         if not sampled_df.head(1):
             raise InvalidParameterError(
                 "Sampling produced 0 rows. Provide more data or adjust sampling parameters "
@@ -489,7 +490,7 @@ class AnomalyTrainingService:
             hyperparams=result.hyperparams,
             training_rows=train_df.count(),
             validation_metrics=result.validation_metrics,
-            score_quantiles=result.score_quantiles,
+            calibration=result.calibration,
             baseline_stats=baseline_stats,
             algorithm=result.algorithm,
         )
@@ -506,7 +507,12 @@ class AnomalyTrainingService:
         # Must go through to_json() rather than hand-rolling the payload: it is the single
         # writer of this column, so any field added to SparkFeatureMetadata is persisted
         # here automatically instead of being silently dropped.
-        feature_metadata_json = artifacts.feature_metadata.to_json()
+        feature_metadata = replace(
+            artifacts.feature_metadata,
+            baseline_score_quantiles=artifacts.calibration.group_quantiles,
+            baseline_group_keys=list(artifacts.calibration.known_group_keys),
+        )
+        feature_metadata_json = feature_metadata.to_json()
 
         record = AnomalyModelRecord(
             identity=ModelIdentity(
@@ -521,7 +527,7 @@ class AnomalyTrainingService:
                 training_rows=artifacts.training_rows,
                 training_time=datetime.now(),
                 metrics=artifacts.validation_metrics,
-                score_quantiles=artifacts.score_quantiles,
+                score_quantiles=artifacts.calibration.global_quantiles,
                 baseline_stats=artifacts.baseline_stats,
             ),
             features=FeatureEngineering(

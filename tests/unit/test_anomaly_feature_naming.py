@@ -11,8 +11,23 @@ from databricks.labs.dqx.anomaly.feature_naming import (
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 
 
-@pytest.fixture
-def metadata() -> SparkFeatureMetadata:
+@pytest.mark.parametrize("value", ["OPEN", "open", "v1.0", "tick`value", "雪", "", "freq", "is_null"])
+def test_opaque_category_aliases_resolve_to_source_and_readable_value(value):
+    alias = "__dqx_onehot_9b385e94a6fa4b82943c09667bc248c1"
+    feature_metadata = SparkFeatureMetadata(
+        column_infos=[{"name": "status", "category": "categorical"}],
+        categorical_frequency_maps={},
+        onehot_categories={"status": {value: alias}},
+        engineered_feature_names=[alias],
+    )
+    restored = SparkFeatureMetadata.from_json(feature_metadata.to_json())
+    assert source_column(alias, restored) == "status"
+    assert human_label(alias, restored) == f"status = {value}"
+    assert engineered_from("status", restored) == frozenset([alias])
+
+
+@pytest.fixture(name="metadata")
+def fixture_metadata() -> SparkFeatureMetadata:
     """Covers every naming convention across distinct source columns.
 
     - amount: numeric identity + baseline-relative
@@ -32,7 +47,10 @@ def metadata() -> SparkFeatureMetadata:
             {"name": "signup", "category": "datetime"},
         ],
         categorical_frequency_maps={"channel": {"web": 0.6, "app": 0.4}},
-        onehot_categories={"country": ["US", "DE"], "region": ["north_america"]},
+        onehot_categories={
+            "country": {"US": "country_US", "DE": "country_DE"},
+            "region": {"north_america": "region_north_america"},
+        },
         engineered_feature_names=[
             "amount",
             "country_US",
@@ -118,7 +136,7 @@ def test_onehot_value_that_collides_with_a_suffix():
     meta = SparkFeatureMetadata(
         column_infos=[{"name": "status", "category": "categorical"}],
         categorical_frequency_maps={},
-        onehot_categories={"status": ["freq", "open"]},
+        onehot_categories={"status": {"freq": "status_freq", "open": "status_open"}},
         engineered_feature_names=["status_freq", "status_open"],
     )
     assert source_column("status_freq", meta) == "status"

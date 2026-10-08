@@ -1,7 +1,7 @@
 """Reverse mapping from an engineered feature name back to the source column it came from.
 
 Feature engineering (see *transformers.py*) expands each source column into one or more engineered
-features by a fixed set of naming conventions: one-hot ``{{col}}_{{value}}``, frequency ``{{col}}_freq``,
+features by a fixed set of naming conventions: persisted one-hot aliases, frequency ``{{col}}_freq``,
 null indicator ``{{col}}_is_null``, boolean ``{{col}}_bool``, the datetime cyclicals
 ``{{col}}_hour_sin`` / ``_hour_cos`` / ``_dow_sin`` / ``_dow_cos`` / ``_month_sin`` / ``_month_cos`` /
 ``_is_weekend``, numeric identity (the feature *is* the column), and baseline-relative
@@ -14,10 +14,8 @@ null indicator ``{{col}}_is_null``, boolean ``{{col}}_bool``, the datetime cycli
 
 Pure functions over *SparkFeatureMetadata*: no Spark, no I/O, deterministic.
 
-Resolution order is deliberate. One-hot names are matched first, against the recorded
-``onehot_categories``, because a category *value* may itself end in a fixed suffix (a column *status*
-with a value *freq* produces ``status_freq``, which a suffix-first scan would misread as frequency
-encoding of *status*).
+One-hot aliases are resolved through the recorded ``onehot_categories`` mapping. Raw category values
+are labels, not Spark identifiers, so punctuation and case-only differences cannot collide.
 
 **An exact source-column match comes next, before suffix decomposition.** Both can match the same name
 at once: a caller may pass their own ``amount_rel_baseline`` column alongside ``amount``, which feature
@@ -80,8 +78,8 @@ def _match_onehot(engineered_name: str, metadata: SparkFeatureMetadata) -> tuple
     contain an underscore and the column name may too, so no split point is reliable.
     """
     for col, values in metadata.onehot_categories.items():
-        for value in values:
-            if engineered_name == f"{col}_{value}":
+        for value, feature_name in values.items():
+            if engineered_name == feature_name:
                 return col, value
     return None
 
@@ -167,8 +165,6 @@ def human_label(engineered_name: str, metadata: SparkFeatureMetadata) -> str:
         col, template = suffix
         return template.format(col=col)
 
-    if engineered_name in source_names:
-        return engineered_name
     return engineered_name
 
 

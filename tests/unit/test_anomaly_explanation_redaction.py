@@ -58,7 +58,7 @@ def _metadata() -> SparkFeatureMetadata:
             {"name": "country", "category": "categorical"},
         ],
         categorical_frequency_maps={"country": {"US": 0.7, "DE": 0.3}},
-        onehot_categories={"country": ["US", "DE"]},
+        onehot_categories={"country": {"US": "country_US", "DE": "country_DE"}},
         engineered_feature_names=[
             "amount",
             "country_US",

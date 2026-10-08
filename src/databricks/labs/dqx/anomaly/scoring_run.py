@@ -50,14 +50,10 @@ logger = logging.getLogger(__name__)
 def _known_group_keys(parsed_metadata: SparkFeatureMetadata) -> list[str]:
     """Group keys the model actually saw in training.
 
-    Read from the persisted baselines rather than from the per-group quantiles, because the
-    baselines exist for every grouped model while the quantiles are dropped for groups whose
-    calibration was incomplete — a group with a baseline was seen, whatever its calibration.
+    Membership is independent of numeric features and quantile completeness. A categorical-only
+    group, or a group whose calibration is incomplete, was still seen during training.
     """
-    keys: set[str] = set()
-    for baselines in parsed_metadata.baseline_medians.values():
-        keys.update(baselines)
-    return sorted(keys)
+    return parsed_metadata.baseline_group_keys
 
 
 def _group_quantile_points(

@@ -2,7 +2,9 @@
 
 import collections.abc
 import uuid
+from typing import cast
 
+import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
@@ -13,6 +15,12 @@ from databricks.labs.dqx.anomaly.transformers import (
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
+
+
+def collect_feature_matrix(df: DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Collect literal feature columns in their model-defined order."""
+    return cast(pd.DataFrame, df.select(*[F.col(quote_column_name(name)) for name in columns]).toPandas())
 
 
 def prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTypeInfo], SparkFeatureMetadata]:
@@ -77,7 +85,7 @@ def apply_feature_engineering_for_scoring(
     cols_to_select = scoring_input_columns(feature_cols, merge_columns, feature_metadata, passthrough_columns)
 
     engineered_df, _ = apply_feature_engineering_from_metadata(
-        df.select(*cols_to_select), feature_metadata, column_infos=column_infos
+        df.select(*[F.col(quote_column_name(c)) for c in cols_to_select]), feature_metadata, column_infos=column_infos
     )
 
     return engineered_df
@@ -103,7 +111,7 @@ def apply_feature_engineering_with_row_passthrough(
         The engineered DataFrame and the name of the struct column holding the original row.
     """
     original_row_col = f"__dqx_orig_{uuid.uuid4().hex}"
-    packed = df.withColumn(original_row_col, F.struct(*[F.col(c) for c in df.columns]))
+    packed = df.withColumn(original_row_col, F.struct(*[F.col(quote_column_name(c)) for c in df.columns]))
     engineered_df = apply_feature_engineering_for_scoring(
         packed,
         feature_cols,

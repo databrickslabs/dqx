@@ -186,7 +186,7 @@ def test_human_labels_map_omits_identity_and_labels_derived_features():
             {"name": "country", "category": "categorical"},
         ],
         categorical_frequency_maps={"country": {"US": 0.7}},
-        onehot_categories={"country": ["US"]},
+        onehot_categories={"country": {"US": "country_US"}},
         engineered_feature_names=["amount", "amount_rel_baseline", "country_US", "country_freq"],
         # Recorded because suffix resolution is gated on it: without a basis, ``amount_rel_baseline``
         # would be a column in its own right rather than a derived feature, and would correctly label

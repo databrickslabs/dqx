@@ -12,6 +12,7 @@ import math
 import re
 import sys
 import threading
+import uuid
 from dataclasses import dataclass, field, fields
 from io import StringIO
 from typing import Any
@@ -40,12 +41,13 @@ from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis, fit_temporal, select_basis
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
-from databricks.labs.dqx.utils import get_table_primary_keys, sanitize_for_logging
+from databricks.labs.dqx.utils import get_table_primary_keys, quote_column_name, sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
 # Serialize stdout capture so concurrent column analysis is thread-safe
 _EXPLAIN_CAPTURE_LOCK = threading.Lock()
+FEATURE_METADATA_VERSION = 1
 
 
 @dataclass
@@ -74,13 +76,13 @@ class SparkFeatureMetadata:
 
     column_infos: list[dict[str, Any]]  # Serializable version of ColumnTypeInfo
     categorical_frequency_maps: dict[str, dict[str, float]]  # col_name -> (value -> frequency)
-    onehot_categories: dict[str, list[str]]  # col_name -> [distinct_values] for OneHot encoding
+    onehot_categories: dict[str, dict[str, str]]  # source -> (category value -> persisted safe feature alias)
     engineered_feature_names: list[str]  # Final feature names after engineering
     categorical_cardinality_threshold: int = 20  # Threshold used for categorical encoding
-    # Group conditioning. Every field defaults to empty, so a model trained before these existed
-    # deserializes with no grouping, the relative transform returns immediately, and
-    # engineered_feature_names is byte-identical to what it was — such models score exactly as
-    # they did before. See databrickslabs/dqx#1484.
+    metadata_version: int = FEATURE_METADATA_VERSION
+    # Membership is independent of numeric baselines: a categorical-only model, or a group with
+    # all-null numeric metrics, still needs to distinguish known from unseen comparison groups.
+    baseline_group_keys: list[str] = field(default_factory=list)
     baseline_by: list[str] = field(default_factory=list)  # Columns forming the group key
     baseline_medians: dict[str, dict[str, float]] = field(default_factory=dict)  # metric -> (group key -> median)
     global_medians: dict[str, float] = field(default_factory=dict)  # metric -> median, for unseen groups
@@ -110,21 +112,29 @@ class SparkFeatureMetadata:
 
     @classmethod
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
-        """Deserialize from JSON.
-
-        Unknown keys are ignored rather than raising, so a model trained by a newer DQX
-        version stays readable by an older one: the reader falls back to the defaults for
-        fields it does not know about instead of failing to load the model at all.
-        """
-        data = json.loads(json_str)
-        known_fields = {f.name for f in fields(cls)}
-        unknown = set(data) - known_fields
-        if unknown:
-            logger.debug(
-                f"Ignoring unknown feature metadata keys {sorted(unknown)}; "
-                "this model was likely trained by a newer version of DQX."
+        """Read supported metadata, requiring retraining for incompatible pre-release models."""
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError):
+            raise InvalidParameterError(
+                "Invalid anomaly feature metadata. Retrain the model with this DQX version."
+            ) from None
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("metadata_version"), int)
+            or isinstance(data["metadata_version"], bool)
+            or data["metadata_version"] != FEATURE_METADATA_VERSION
+        ):
+            raise InvalidParameterError(
+                "Unsupported anomaly feature metadata version. Retrain the model with this DQX version."
             )
-        return cls(**{k: v for k, v in data.items() if k in known_fields})
+        known_fields = {f.name for f in fields(cls)}
+        try:
+            return cls(**{k: v for k, v in data.items() if k in known_fields})
+        except TypeError:
+            raise InvalidParameterError(
+                "Invalid anomaly feature metadata. Retrain the model with this DQX version."
+            ) from None
 
 
 @dataclass
@@ -629,7 +639,9 @@ def _add_null_indicator(
     has_nulls = (null_count or 0) > 0
     if has_nulls:
         null_indicator_col = f"{col_name}{NULL_INDICATOR_SUFFIX}"
-        transformed_df = transformed_df.withColumn(null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0))
+        transformed_df = transformed_df.withColumn(
+            null_indicator_col, when(col(quote_column_name(col_name)).isNull(), 1.0).otherwise(0.0)
+        )
         engineered_features.append(null_indicator_col)
     return transformed_df
 
@@ -639,7 +651,7 @@ def _apply_onehot_encoding(
     transformed_df: DataFrame,
     col_name: str,
     is_training: bool,
-    onehot_categories: dict[str, list[str]],
+    onehot_categories: dict[str, dict[str, str]],
     engineered_features: list[str],
 ) -> DataFrame:
     """Apply OneHot encoding to a categorical column."""
@@ -674,31 +686,39 @@ def _apply_onehot_encoding(
         # says so, and catching it needs a vocabulary check outside the learned ranking rather than a
         # different encoding. All three measurements are pinned in
         # tests/unit/test_anomaly_mahalanobis_detector.py.
-        distinct_values = sorted(row[0] for row in df.select(col_name).distinct().collect() if row[0] is not None)
-        onehot_categories[col_name] = distinct_values
+        distinct_values = sorted(
+            row[0] for row in df.select(col(quote_column_name(col_name))).distinct().collect() if row[0] is not None
+        )
+        # DQX's normal UUID result alias convention, allocated once and then persisted. Raw category
+        # values never become Spark identifiers, so punctuation and case-only differences are safe.
+        occupied = {name.casefold() for name in transformed_df.columns}
+        category_features = {}
+        for value in distinct_values:
+            feature_name = f"__dqx_onehot_{uuid.uuid4().hex}"
+            while feature_name.casefold() in occupied:
+                feature_name = f"__dqx_onehot_{uuid.uuid4().hex}"
+            occupied.add(feature_name.casefold())
+            category_features[value] = feature_name
+        onehot_categories[col_name] = category_features
     else:
-        distinct_values = onehot_categories.get(col_name, [])
-        if not distinct_values:
+        if col_name not in onehot_categories:
             raise InvalidParameterError(
                 f"OneHot categories for column '{col_name}' not found in metadata. "
-                "Model may be from an older version without OneHot category storage."
+                "Retrain the model with this DQX version."
             )
+        category_features = onehot_categories[col_name]
 
-    # The one collision that no schema can predict, so it is caught here rather than in validation:
-    # a one-hot name is built from a *value*, and a table can carry both a "region" column with an
-    # "east" value and a separate "region_east" column. Writing the indicator would overwrite the real
-    # one and leave the model fitted on two copies of the indicator. See
-    # ``validation.validate_generated_feature_names`` for the same refusal over the predictable names.
-    existing_columns = set(transformed_df.columns)
-    for value in distinct_values:
-        feature_name = f"{col_name}_{value}"
-        if feature_name in existing_columns:
+    # Empty is a valid vocabulary for an all-null training column. Its null indicator still applies.
+    existing_columns = {name.casefold() for name in transformed_df.columns}
+    for value, feature_name in category_features.items():
+        if feature_name.casefold() in existing_columns:
             raise InvalidParameterError(
-                f"One-hot encoding column '{col_name}' would create '{feature_name}' for value {value!r}, "
-                f"but a column of that name already exists and would be overwritten. Rename it, or exclude "
-                f"'{col_name}' from the checked columns."
+                "A persisted categorical feature alias conflicts with an input column. "
+                "Remove the conflicting non-feature input or retrain the model."
             )
-        transformed_df = transformed_df.withColumn(feature_name, when(col(col_name) == value, 1.0).otherwise(0.0))
+        transformed_df = transformed_df.withColumn(
+            feature_name, when(col(quote_column_name(col_name)) == value, 1.0).otherwise(0.0)
+        )
         engineered_features.append(feature_name)
 
     return transformed_df
@@ -761,7 +781,7 @@ def _process_categorical_columns(
     categorical_cardinality_threshold: int,
     is_training: bool,
     frequency_maps: dict[str, dict[str, float]],
-    onehot_categories: dict[str, list[str]],
+    onehot_categories: dict[str, dict[str, str]],
     engineered_features: list[str],
 ) -> DataFrame:
     """Process categorical columns with OneHot or Frequency encoding."""
@@ -771,7 +791,7 @@ def _process_categorical_columns(
 
         # Add null indicator and impute nulls
         transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
-        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name), lit("MISSING")))
+        transformed_df = transformed_df.withColumn(col_name, coalesce(col(quote_column_name(col_name)), lit("MISSING")))
 
         # Encode based on cardinality
         if card <= categorical_cardinality_threshold:
@@ -1005,12 +1025,15 @@ def _process_baseline_relative_features(
     and neither appends a feature: the temporal block, which reads the column produced here, and
     numeric imputation, which must not run before the medians below are collected.
     """
-    if not baseline_by or not numeric_cols:
+    if not baseline_by:
+        return transformed_df
+
+    transformed_df = with_baseline_key(transformed_df, baseline_by)
+    if not numeric_cols:
         return transformed_df
 
     metrics = [c.name for c in numeric_cols]
     group_key_col = BASELINE_KEY_COLUMN
-    transformed_df = with_baseline_key(transformed_df, baseline_by)
 
     if is_training:
         computed_group, computed_global = _compute_baseline_medians(transformed_df, metrics, group_key_col)
@@ -1326,7 +1349,7 @@ def apply_feature_engineering(
     column_infos: list[ColumnTypeInfo],
     categorical_cardinality_threshold: int = 20,
     frequency_maps: dict[str, dict[str, float]] | None = None,
-    onehot_categories: dict[str, list[str]] | None = None,
+    onehot_categories: dict[str, dict[str, str]] | None = None,
     baseline_by: list[str] | None = None,
     baseline_medians: dict[str, dict[str, float]] | None = None,
     global_medians: dict[str, float] | None = None,
@@ -1359,7 +1382,7 @@ def apply_feature_engineering(
         column_infos: Column type information from ColumnTypeClassifier
         categorical_cardinality_threshold: Threshold for OneHot vs Frequency encoding
         frequency_maps: Pre-computed frequency maps (for scoring). If None, compute from df (for training).
-        onehot_categories: Pre-computed OneHot distinct values (for scoring). If None, compute from df (for training).
+        onehot_categories: Category-to-feature aliases (for scoring). If None, compute and allocate while training.
         baseline_by: Columns forming the group key. Empty disables group-relative features entirely,
             which is what makes a pre-grouping model's feature list byte-identical.
         baseline_medians: Pre-computed per-group medians (for scoring). Computed from df when training.
@@ -1459,7 +1482,7 @@ def _project_and_describe(
     *,
     categorical_cardinality_threshold: int,
     frequency_maps: dict[str, dict[str, float]],
-    onehot_categories: dict[str, list[str]],
+    onehot_categories: dict[str, dict[str, str]],
     baseline_by: list[str],
     baseline_medians: dict[str, dict[str, float]],
     global_medians: dict[str, float],
@@ -1482,7 +1505,7 @@ def _project_and_describe(
         for c in transformed_df.columns
         if c not in feature_col_names and c not in engineered_features and c not in excluded_bases
     ]
-    result_df = transformed_df.select(*engineered_features, *extra_cols)
+    result_df = transformed_df.select(*[col(quote_column_name(name)) for name in engineered_features + extra_cols])
 
     # Only the features that survived on this frame. Original columns such as a datetime are dropped
     # during transformation, so the persisted list must reflect what the scoring UDF will actually be handed.

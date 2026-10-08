@@ -3,6 +3,7 @@
 import dataclasses
 import json
 
+import pytest
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.transformers import (
@@ -10,6 +11,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.errors import InvalidParameterError
 
 from tests.unit.anomaly_test_constants import STANDARD_REGION_PRODUCT_FEATURES
 
@@ -91,7 +93,7 @@ def test_spark_feature_metadata_creation():
     metadata = SparkFeatureMetadata(
         column_infos=column_infos,
         categorical_frequency_maps={"region": {"US": 0.5, "EU": 0.3, "APAC": 0.2}},
-        onehot_categories={"region": ["US", "EU", "APAC"]},
+        onehot_categories={"region": {value: f"region_{value}" for value in ("US", "EU", "APAC")}},
         engineered_feature_names=["amount_scaled", "region_US", "region_EU", "region_APAC"],
     )
 
@@ -140,7 +142,7 @@ def test_spark_feature_metadata_json_deserialization():
             {"name": "region", "category": "categorical", "cardinality": 3},
         ],
         categorical_frequency_maps={"region": {"US": 0.6, "EU": 0.4}},
-        onehot_categories={"region": ["US", "EU"]},
+        onehot_categories={"region": {value: f"region_{value}" for value in ("US", "EU")}},
         engineered_feature_names=["amount_scaled", "region_US", "region_EU"],
     )
 
@@ -166,7 +168,7 @@ def test_spark_feature_metadata_roundtrip():
         categorical_frequency_maps={
             "col2": {"A": 0.3, "B": 0.25, "C": 0.2, "D": 0.15, "E": 0.1},
         },
-        onehot_categories={"col2": ["A", "B", "C", "D", "E"]},
+        onehot_categories={"col2": {value: f"col2_{value}" for value in ("A", "B", "C", "D", "E")}},
         engineered_feature_names=["col1_scaled", "col2_A", "col2_B", "col2_C", "col2_D", "col2_E", "col3_binary"],
     )
 
@@ -242,8 +244,8 @@ def test_spark_feature_metadata_with_complex_frequency_maps():
             "product": {"A": 0.3, "B": 0.25, "C": 0.2, "D": 0.15, "E": 0.1},
         },
         onehot_categories={
-            "region": ["US", "EU", "APAC"],
-            "product": ["A", "B", "C", "D", "E"],
+            "region": {value: f"region_{value}" for value in ("US", "EU", "APAC")},
+            "product": {value: f"product_{value}" for value in ("A", "B", "C", "D", "E")},
         },
         engineered_feature_names=STANDARD_REGION_PRODUCT_FEATURES,
     )
@@ -351,8 +353,7 @@ def test_spark_feature_metadata_preserves_order():
 # ============================================================================
 
 # A feature_metadata payload exactly as DQX wrote it before group conditioning existed.
-# Held verbatim rather than generated: the point is to prove that a model trained by the
-# previous release still deserializes and still produces an identical feature list.
+# Held verbatim to prove old encodings cannot silently load under the new format.
 PRE_GROUPING_FEATURE_METADATA_JSON = (
     '{"column_infos": [{"name": "amount", "category": "numeric", "cardinality": null, "null_count": 0}, '
     '{"name": "region", "category": "categorical", "cardinality": 3, "null_count": 0}], '
@@ -363,38 +364,30 @@ PRE_GROUPING_FEATURE_METADATA_JSON = (
 )
 
 
-def test_pre_grouping_metadata_deserializes_with_empty_grouping():
-    """A model trained before grouping existed must load, with grouping simply absent."""
-    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
-
-    assert not restored.baseline_by
-    assert not restored.baseline_medians
-    assert not restored.global_medians
+def test_pre_release_metadata_requires_retraining():
+    """A changed encoding is not compatible with a model fitted on its predecessor."""
+    with pytest.raises(InvalidParameterError, match="Retrain the model"):
+        SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
 
 
-def test_pre_grouping_metadata_keeps_its_feature_list_unchanged():
-    """The feature list is positional, so it must survive byte-for-byte.
-
-    An empty ``baseline_by`` makes the relative transform a no-op, which is what guarantees an
-    already-trained model is handed its features in exactly the order it was fitted on.
-    """
-    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
-
-    assert restored.engineered_feature_names == ["region_APAC", "region_EU", "region_US", "amount"]
+@pytest.mark.parametrize("payload", ['{"metadata_version": 999}', '{"metadata_version": true}', '[1]', '{secret'])
+def test_invalid_or_unsupported_metadata_has_a_safe_error(payload):
+    with pytest.raises(InvalidParameterError, match="Retrain the model") as error:
+        SparkFeatureMetadata.from_json(payload)
+    assert payload not in str(error.value)
 
 
 def test_from_json_ignores_unknown_keys():
-    """A record written by a newer DQX must not break an older reader.
-
-    ``from_json`` used to do ``cls(**data)``, so an unrecognised key raised TypeError and the
-    model could not be loaded at all.
-    """
-    payload = json.loads(PRE_GROUPING_FEATURE_METADATA_JSON)
+    """Additive fields within the supported format do not affect known transformations."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[], categorical_frequency_maps={}, onehot_categories={}, engineered_feature_names=[]
+    )
+    payload = json.loads(metadata.to_json())
     payload["some_field_from_the_future"] = {"a": 1}
 
     restored = SparkFeatureMetadata.from_json(json.dumps(payload))
 
-    assert restored.engineered_feature_names == ["region_APAC", "region_EU", "region_US", "amount"]
+    assert restored.engineered_feature_names == metadata.engineered_feature_names
     assert not hasattr(restored, "some_field_from_the_future")
 
 
@@ -428,6 +421,7 @@ def test_group_metadata_survives_a_json_roundtrip():
         onehot_categories={},
         engineered_feature_names=["amount", "amount_rel_baseline"],
         baseline_by=["country", "product"],
+        baseline_group_keys=["DE\x1fcasino", "IT\x1flive", "known_without_median"],
         baseline_medians={"amount": {"DE\x1fcasino": 3284.0, "IT\x1flive": 657.0}},
         global_medians={"amount": 1200.5},
     )
@@ -435,6 +429,7 @@ def test_group_metadata_survives_a_json_roundtrip():
     restored = SparkFeatureMetadata.from_json(metadata.to_json())
 
     assert restored.baseline_by == ["country", "product"]
+    assert restored.baseline_group_keys == metadata.baseline_group_keys
     assert restored.baseline_medians == {"amount": {"DE\x1fcasino": 3284.0, "IT\x1flive": 657.0}}
     assert restored.global_medians == {"amount": 1200.5}
 
@@ -472,14 +467,15 @@ def test_temporal_metadata_survives_a_json_roundtrip():
     assert restored.temporal_window == {"t_min": 1735689600.0, "t_max": 1738281600.0}
 
 
-def test_a_payload_written_before_the_temporal_fields_deserializes_inert():
-    """The inertness contract, at the persistence layer.
-
-    A model trained before this release carries none of the temporal keys. It must come back with an empty
-    time column, which is what makes the transform return immediately and leaves
-    ``engineered_feature_names`` byte-identical to what it was.
-    """
-    restored = SparkFeatureMetadata.from_json(PRE_GROUPING_FEATURE_METADATA_JSON)
+def test_a_supported_payload_without_temporal_fields_has_no_temporal_transform():
+    """Optional conditioning defaults remain empty within the supported metadata format."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[], categorical_frequency_maps={}, onehot_categories={}, engineered_feature_names=[]
+    )
+    payload = json.loads(metadata.to_json())
+    for name in ("baseline_over_time", "temporal_basis", "temporal_coefficients", "temporal_window"):
+        del payload[name]
+    restored = SparkFeatureMetadata.from_json(json.dumps(payload))
 
     assert restored.baseline_over_time == ""
     assert not restored.temporal_basis

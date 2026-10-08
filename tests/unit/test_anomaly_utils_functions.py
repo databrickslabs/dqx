@@ -222,8 +222,8 @@ def test_feature_metadata_json_handles_complex_frequency_maps():
             "product": {"A": 0.4, "B": 0.3, "C": 0.2, "D": 0.1},
         },
         onehot_categories={
-            "region": ["US", "EU", "APAC"],
-            "product": ["A", "B", "C", "D"],
+            "region": {value: f"region_{value}" for value in ("US", "EU", "APAC")},
+            "product": {value: f"product_{value}" for value in ("A", "B", "C", "D")},
         },
         engineered_feature_names=STANDARD_REGION_PRODUCT_FEATURES[:7],  # Exclude "product_E"
     )
@@ -310,7 +310,7 @@ def test_full_metadata_workflow():
             {"name": "region", "category": "categorical", "cardinality": 3},
         ],
         categorical_frequency_maps={"region": {"US": 0.6, "EU": 0.4}},
-        onehot_categories={"region": ["US", "EU"]},
+        onehot_categories={"region": {value: f"region_{value}" for value in ("US", "EU")}},
         engineered_feature_names=["amount_scaled", "region_US", "region_EU"],
     )
 

@@ -25,6 +25,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
+from databricks.labs.dqx.anomaly.feature_prep import collect_feature_matrix
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
@@ -32,6 +33,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering_from_metadata,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.anomaly.types import ScoreCalibration
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
@@ -130,7 +132,7 @@ def prepare_training_features(
     # column, which is a grouping record rather than a feature: ``fit_sklearn_model`` fits the
     # pipeline on every column of this frame, so a passthrough reaching here would be trained on
     # and would land in the inferred MLflow signature.
-    train_pandas = engineered_df.select(*feature_metadata.engineered_feature_names).toPandas()
+    train_pandas = collect_feature_matrix(engineered_df, feature_metadata.engineered_feature_names)
     return train_pandas, feature_metadata
 
 
@@ -235,7 +237,10 @@ def score_with_model(
         return pd.DataFrame({"anomaly_score": scores, "prediction": predictions})
 
     result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    # Calibration needs scores and group identity, not another copy of the features. Selecting
+    # only these outputs also permits a real training feature named anomaly_score or prediction.
+    grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
+    result = result.select(*grouping, "_scores.anomaly_score", "_scores.prediction")
 
     return result
 
@@ -271,7 +276,8 @@ def score_with_ensemble_models(
         return pd.DataFrame({"anomaly_score": mean_scores})
 
     result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-    result = result.select("*", "_scores.anomaly_score").drop("_scores")
+    grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
+    result = result.select(*grouping, "_scores.anomaly_score")
 
     return result
 
@@ -313,14 +319,10 @@ def compute_validation_metrics(
 
 def compute_score_quantiles(
     model: Pipeline, df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
-) -> dict[str, float]:
-    """Compute score quantiles from the training score distribution.
-
-    Also populates ``feature_metadata.baseline_score_quantiles`` when the model is grouped, so
-    scoring can calibrate severity against each group's own distribution.
-    """
+) -> ScoreCalibration:
+    """Return global and grouped training calibration without changing feature metadata."""
     if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
-        return {}
+        return ScoreCalibration({}, {}, ())
 
     scored = score_with_model(model, df, feature_cols, feature_metadata)
     return _quantiles_from_scored(scored, feature_metadata)
@@ -328,13 +330,10 @@ def compute_score_quantiles(
 
 def compute_score_quantiles_ensemble(
     models: list[Pipeline], df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
-) -> dict[str, float]:
-    """Compute score quantiles using ensemble mean scores.
-
-    Also populates ``feature_metadata.baseline_score_quantiles`` when the model is grouped.
-    """
+) -> ScoreCalibration:
+    """Return calibration of ensemble mean scores without changing feature metadata."""
     if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
-        return {}
+        return ScoreCalibration({}, {}, ())
 
     scored = score_with_ensemble_models(models, df, feature_cols, feature_metadata)
     return _quantiles_from_scored(scored, feature_metadata)
@@ -348,8 +347,8 @@ def compute_score_quantiles_ensemble(
 SEVERITY_QUANTILE_RELATIVE_ERROR = 0.001
 
 
-def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMetadata) -> dict[str, float]:
-    """Derive the global score quantiles, and the per-group ones as a side effect.
+def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMetadata) -> ScoreCalibration:
+    """Derive global and per-group calibration as an explicit result.
 
     Note the cost: for a grouped model this walks the scored frame twice, and since ``.cache()``
     is unavailable on serverless the scoring UDF runs for each walk. Paid at training time only,
@@ -358,15 +357,15 @@ def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMeta
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
     quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, SEVERITY_QUANTILE_RELATIVE_ERROR)
 
-    if feature_metadata.baseline_by:
-        feature_metadata.baseline_score_quantiles = compute_baseline_score_quantiles(
-            scored, feature_metadata.baseline_by
-        )
+    grouped = compute_baseline_score_quantiles(scored, feature_metadata.baseline_by)
+    return ScoreCalibration(
+        global_quantiles=dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False)),
+        group_quantiles=grouped.group_quantiles,
+        known_group_keys=grouped.known_group_keys,
+    )
 
-    return dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False))
 
-
-def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str]) -> dict[str, dict[str, float]]:
+def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str]) -> ScoreCalibration:
     """Compute the score quantiles of each group from an already-scored DataFrame.
 
     Takes scores rather than a model so the training set is scored once and reused for both the
@@ -377,7 +376,7 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
     whole change exists to avoid.
     """
     if not baseline_by:
-        return {}
+        return ScoreCalibration({}, {}, ())
 
     # Accuracy stated rather than left to the default, so the per-group calibration cannot drift away from
     # the global one above. `percentile_approx` expresses it as 1/relativeError.
@@ -392,13 +391,15 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
     grouped = with_baseline_key(scored_df, baseline_by).groupBy(BASELINE_KEY_COLUMN).agg(*quantile_exprs)
 
     result: dict[str, dict[str, float]] = {}
+    known_group_keys: list[str] = []
     for row in grouped.collect():
+        known_group_keys.append(row[BASELINE_KEY_COLUMN])
         quantiles = {key: float(row[key]) for key in SCORE_QUANTILE_KEYS if row[key] is not None}
         # A group missing any quantile cannot be interpolated over, so it is left out entirely
         # and falls back to the global calibration rather than being half-calibrated.
         if len(quantiles) == len(SCORE_QUANTILE_KEYS):
             result[row[BASELINE_KEY_COLUMN]] = quantiles
-    return result
+    return ScoreCalibration({}, result, tuple(sorted(known_group_keys)))
 
 
 def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict[str, dict[str, float]]:
@@ -511,4 +512,4 @@ def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatur
         Pandas DataFrame holding exactly the engineered feature columns, in their persisted order
     """
     engineered_train_df, _ = apply_feature_engineering_from_metadata(train_df, feature_metadata)
-    return engineered_train_df.select(*feature_metadata.engineered_feature_names).toPandas()
+    return collect_feature_matrix(engineered_train_df, feature_metadata.engineered_feature_names)

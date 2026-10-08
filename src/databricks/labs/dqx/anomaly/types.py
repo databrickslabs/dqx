@@ -43,6 +43,15 @@ class MLflowSignature(Protocol):
 
 
 @dataclass(frozen=True)
+class ScoreCalibration:
+    """Explicit training calibration, independent of feature transformation metadata."""
+
+    global_quantiles: dict[str, float]
+    group_quantiles: dict[str, dict[str, float]]
+    known_group_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TrainingResult:
     """Result of single model training."""
 
@@ -50,7 +59,7 @@ class TrainingResult:
     run_id: str | None
     hyperparams: dict[str, Any]
     validation_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     feature_metadata: SparkFeatureMetadata
     ensemble_size: int
     algorithm: str
@@ -64,7 +73,7 @@ class EnsembleTrainingResult:
     models: list[Pipeline]
     hyperparams: dict[str, Any]
     aggregated_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     feature_metadata: SparkFeatureMetadata
 
 
@@ -110,6 +119,6 @@ class TrainingArtifacts:
     hyperparams: dict[str, Any]
     training_rows: int
     validation_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     baseline_stats: dict[str, dict[str, float]]
     algorithm: str
