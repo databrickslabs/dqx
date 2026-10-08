@@ -5,12 +5,14 @@ module to avoid over-fragmentation of the scoring layer.
 """
 
 import logging
+import uuid
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly.model_discovery import extract_quantile_points
 from databricks.labs.dqx.anomaly.drift import check_and_warn_drift, format_drift_summary
+from databricks.labs.dqx.anomaly.explainability import AttributionGate
 from databricks.labs.dqx.anomaly.ensemble_scorer import (
     score_ensemble_models,
     score_ensemble_models_local,
@@ -21,9 +23,9 @@ from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     ExplanationContext,
     add_explanation_column,
+    redaction_set,
 )
 from databricks.labs.dqx.anomaly.scoring_utils import (
-    redaction_set,
     add_baseline_severity_percentile_column,
     add_info_column,
     add_severity_percentile_column,
@@ -32,7 +34,6 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     mark_stale_baselines,
     mark_unseen_baselines,
     null_out_unseen_baseline_scores,
-    permissive_quantile_points,
     StaleBaselineContext,
     UnseenGroupContext,
 )
@@ -43,6 +44,7 @@ from databricks.labs.dqx.anomaly.single_model_scorer import (
     score_with_sklearn_model_local,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
 
 
 logger = logging.getLogger(__name__)
@@ -138,8 +140,8 @@ def score_global_model(
     #
     # Extrapolation is reported and never corrected. Unlike an unseen group, the score is still produced:
     # measured, it is still good one window past the boundary, so nulling it would discard a usable verdict.
-    stale_col = "__dqx_is_stale_baseline"
-    horizon_col = "__dqx_stale_horizon"
+    stale_col = f"__dqx_is_stale_baseline_{uuid.uuid4().hex}"
+    horizon_col = f"__dqx_stale_horizon_{uuid.uuid4().hex}"
     df_filtered = mark_stale_baselines(
         df_filtered,
         trained_baseline_over_time or "",
@@ -163,10 +165,9 @@ def score_global_model(
     global_quantile_points = extract_quantile_points(record)
     parsed_metadata = SparkFeatureMetadata.from_json(record.features.feature_metadata)
     group_quantile_points = _group_quantile_points(parsed_metadata)
-    # The scorers use these only to decide which rows are worth a SHAP call. With per-group
-    # calibration the bound differs by group, so the gate takes the per-percentile minimum:
-    # permissive, and add_info_column re-masks contributions on the real severity anyway.
-    quantile_points = permissive_quantile_points(group_quantile_points, global_quantile_points)
+    # Admit any row that a real comparison curve would flag. Public severity and the final
+    # contribution mask still use the row's own calibration, not this permissive gate.
+    gate = AttributionGate.from_calibrations(group_quantile_points, global_quantile_points)
     if config.driver_only:
         scored_df = (
             score_ensemble_models_local(
@@ -177,8 +178,10 @@ def score_global_model(
                 config.merge_columns,
                 config.enable_contributions,
                 model_record=record,
-                quantile_points=quantile_points,
+                quantile_points=global_quantile_points,
                 threshold=config.threshold,
+                output_columns=config.output_columns,
+                gate=gate,
             )
             if record.identity.is_ensemble
             else score_with_sklearn_model_local(
@@ -189,9 +192,11 @@ def score_global_model(
                 config.merge_columns,
                 enable_contributions=config.enable_contributions,
                 model_record=record,
-                quantile_points=quantile_points,
+                quantile_points=global_quantile_points,
                 threshold=config.threshold,
-            ).withColumn("anomaly_score_std", F.lit(0.0))
+                output_columns=config.output_columns,
+                gate=gate,
+            ).withColumn(config.score_std_col, F.lit(0.0))
         )
     else:
         scored_df = (
@@ -203,8 +208,10 @@ def score_global_model(
                 config.merge_columns,
                 config.enable_contributions,
                 model_record=record,
-                quantile_points=quantile_points,
+                quantile_points=global_quantile_points,
                 threshold=config.threshold,
+                output_columns=config.output_columns,
+                gate=gate,
             )
             if record.identity.is_ensemble
             else score_with_sklearn_model(
@@ -215,20 +222,17 @@ def score_global_model(
                 config.merge_columns,
                 enable_contributions=config.enable_contributions,
                 model_record=record,
-                quantile_points=quantile_points,
+                quantile_points=global_quantile_points,
                 threshold=config.threshold,
-            ).withColumn("anomaly_score_std", F.lit(0.0))
+                output_columns=config.output_columns,
+                gate=gate,
+            ).withColumn(config.score_std_col, F.lit(0.0))
         )
-
-    scored_df = scored_df.withColumnRenamed("anomaly_score", config.score_col)
-    scored_df = scored_df.withColumnRenamed("anomaly_score_std", config.score_std_col)
-    if config.enable_contributions and "anomaly_contributions" in scored_df.columns:
-        scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     # Mark unseen groups before severity, then null the score in place afterwards: severity is
     # interpolated from the score, so nulling first would leave severity computed from nothing.
-    unseen_col = "__dqx_is_new_group"
-    group_key_col = "__dqx_row_group_key"
+    unseen_col = f"__dqx_is_new_group_{uuid.uuid4().hex}"
+    group_key_col = f"__dqx_row_group_key_{uuid.uuid4().hex}"
     scored_df = mark_unseen_baselines(
         scored_df,
         parsed_metadata.baseline_by,
@@ -284,7 +288,7 @@ def score_global_model(
         horizon_col,
     ]
     if config.enable_contributions:
-        internal_to_remove.append(config.contributions_col)
+        internal_to_remove.extend([config.contributions_col, config.output_columns.basis_contributions])
     if config.enable_ai_explanation:
         internal_to_remove.append(config.ai_explanation_col)
 
@@ -293,7 +297,7 @@ def score_global_model(
     else:
         internal_to_remove.append(config.score_col)
         columns_to_keep = [col for col in scored_df.columns if col not in internal_to_remove]
-    scored_df = scored_df.select(*columns_to_keep)
+    scored_df = scored_df.select(*[F.col(quote_column_name(c)) for c in columns_to_keep])
 
     if config.row_filter:
         scored_df = join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col, config.info_col)

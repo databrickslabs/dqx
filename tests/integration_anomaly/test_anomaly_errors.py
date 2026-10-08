@@ -29,6 +29,7 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     create_udf_schema,
 )
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
@@ -259,25 +260,56 @@ def test_internal_row_id_collision(ws, spark: SparkSession, make_random, anomaly
     assert "_dqx_row_id" in str(exc.value)
 
 
-def test_internal_score_column_collision(ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
-    """Ensure existing anomaly_score columns are preserved and _dq_info is still added."""
-    model_name = f"{anomaly_registry_prefix}.test_score_collision_{make_random(4).lower()}"
-    registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
-
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
-
-    df = spark.createDataFrame(
-        [(1, 100.0, 2.0, 0.42, 0.1, {"amount": 0.2})],
-        "transaction_id int, amount double, quantity double, anomaly_score double, anomaly_score_std double, "
-        "anomaly_contributions map<string,double>",
+@pytest.mark.parametrize("driver_only", [False, True])
+@pytest.mark.parametrize("ensemble_size", [None, 3], ids=["single", "ensemble"])
+def test_internal_score_column_collision(
+    ws, spark: SparkSession, quick_model_factory, driver_only: bool, ensemble_size: int | None
+):
+    """All four scorer paths preserve input fields across consecutive contribution-enabled checks."""
+    model_name, registry_table, _ = quick_model_factory(
+        spark,
+        params=AnomalyParams(
+            ensemble_size=ensemble_size, algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42)
+        ),
     )
-
+    original = (1, 1000.0, 20.0, 0.42, 0.1, {"original": 0.2}, {"original basis": 0.3}, 12.0)
+    df = spark.createDataFrame(
+        [original, original],
+        "transaction_id int, amount double, quantity double, anomaly_score double, anomaly_score_std double, "
+        "anomaly_contributions map<string,double>, anomaly_basis_contributions map<string,double>, "
+        "severity_percentile double",
+    )
+    checks = [
+        {
+            "name": f"anomaly_check_{index}",
+            "criticality": "warn",
+            "check": {
+                "function": "has_no_row_anomalies",
+                "arguments": {
+                    "model_name": model_name,
+                    "registry_table": registry_table,
+                    "threshold": 0.0,
+                    "driver_only": driver_only,
+                    "enable_contributions": True,
+                    "enable_ai_explanation": False,
+                },
+            },
+        }
+        for index in range(2)
+    ]
     dq_engine = DQEngine(ws, spark)
-    check = create_anomaly_dataset_rule(model_name, registry_table)
-    with pytest.raises(Exception) as exc:
-        dq_engine.apply_checks(df, [check])
+    result = dq_engine.apply_checks_by_metadata(df, checks)
+    rows = result.collect()
 
-    assert "ambiguous" in str(exc.value).lower()
+    assert len(rows) == 2
+    assert result.select(*df.columns).collect() == df.collect()
+    assert set(result.columns) == {*df.columns, "_errors", "_warnings", "_dq_info"}
+    for row in rows:
+        assert len(row["_dq_info"]) == 2
+        assert len(row["_warnings"]) == 2
+        for info in row["_dq_info"]:
+            assert info["anomaly"]["is_anomaly"] is True
+            assert info["anomaly"]["contributions"] is not None
 
 
 def test_training_refuses_a_frame_where_a_derived_feature_would_overwrite_a_real_column(

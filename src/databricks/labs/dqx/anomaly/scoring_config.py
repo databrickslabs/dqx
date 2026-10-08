@@ -47,6 +47,16 @@ class ScoringOutputColumns:
     # with a user column; dropped before the scored DataFrame is returned.
     pattern: str = "anomaly_pattern"
 
+    def result_aliases(self, enable_contributions: bool, *, include_std: bool = False) -> dict[str, str]:
+        """Map scorer result fields to this check's isolated output names."""
+        aliases = {"anomaly_score": self.score}
+        if include_std:
+            aliases["anomaly_score_std"] = self.score_std
+        if enable_contributions:
+            aliases["anomaly_contributions"] = self.contributions
+            aliases["anomaly_basis_contributions"] = self.basis_contributions
+        return aliases
+
 
 @dataclass
 class ScoringConfig:

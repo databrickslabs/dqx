@@ -262,6 +262,7 @@ def has_no_row_anomalies(
         score=f"__dq_anomaly_score_{uuid.uuid4().hex}",
         score_std=f"__dq_anomaly_score_std_{uuid.uuid4().hex}",
         contributions=f"__dq_anomaly_contributions_{uuid.uuid4().hex}",
+        basis_contributions=f"__dq_anomaly_basis_contributions_{uuid.uuid4().hex}",
         severity=f"__dq_severity_percentile_{uuid.uuid4().hex}",
         ai_explanation=f"__dq_ai_explanation_{uuid.uuid4().hex}",
         info=f"__dqx_info_{uuid.uuid4().hex}",

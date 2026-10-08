@@ -606,34 +606,6 @@ def null_out_unseen_baseline_scores(
     return df
 
 
-def permissive_quantile_points(
-    group_quantile_points: dict[str, list[tuple[float, float]]],
-    fallback_quantile_points: list[tuple[float, float]],
-) -> list[tuple[float, float]]:
-    """Per-percentile *minimum* score bound across all groups.
-
-    Used only to decide which rows are worth computing SHAP contributions for. Taking the
-    minimum makes the gate deliberately permissive: a row that any group would consider
-    anomalous passes it. That is safe because the observable contract is re-enforced downstream
-    by ``add_info_column``, which masks contributions on severity against the real threshold —
-    so a permissive gate can only cost a little wasted SHAP, while a strict one would silently
-    drop contributions from genuinely anomalous rows in the groups with the widest score ranges.
-    """
-    if not group_quantile_points:
-        return fallback_quantile_points
-
-    minima: dict[float, float] = {}
-    for points in group_quantile_points.values():
-        for percentile, bound in points:
-            existing = minima.get(percentile)
-            minima[percentile] = bound if existing is None else min(existing, bound)
-
-    for percentile, bound in fallback_quantile_points:
-        minima.setdefault(percentile, bound)
-
-    return sorted(minima.items())
-
-
 def create_udf_schema(enable_contributions: bool) -> StructType:
     """Create schema for scoring UDF output.
 

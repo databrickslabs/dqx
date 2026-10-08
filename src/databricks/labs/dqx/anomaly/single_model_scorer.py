@@ -1,29 +1,27 @@
 """Single-model anomaly scoring (distributed UDF and driver-local)."""
 
-from typing import cast
+import uuid
 
 import cloudpickle
 import pandas as pd
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, pandas_udf
-from pyspark.sql.types import (
-    DoubleType,
-    MapType,
-    StringType,
-    StructField,
-    StructType,
-)
+from pyspark.sql.types import StructType
 
 from databricks.labs.dqx.anomaly.feature_prep import (
     apply_feature_engineering_for_scoring,
     apply_feature_engineering_with_row_passthrough,
     prepare_feature_metadata,
+    collect_feature_matrix,
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
-from databricks.labs.dqx.anomaly.explainability import compute_gated_shap_contributions
+from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
+from databricks.labs.dqx.anomaly.explainability import AttributionGate, compute_gated_shap_contributions
 from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
+from databricks.labs.dqx.check_funcs import join_results_on_null_safe_columns
+from databricks.labs.dqx.utils import quote_column_name
 
 
 def create_scoring_udf(
@@ -51,6 +49,7 @@ def create_scoring_udf_with_contributions(
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
     keys: AttributionKeys | None = None,
+    gate: AttributionGate | None = None,
 ):
     """Create pandas UDF for distributed scoring with SHAP contributions.
 
@@ -74,6 +73,7 @@ def create_scoring_udf_with_contributions(
             quantile_points,
             threshold,
             keys,
+            gate,
         )
 
         return pd.DataFrame({"anomaly_score": scores, **contributions.as_columns()})
@@ -92,6 +92,8 @@ def score_with_sklearn_model(
     model_record: AnomalyModelRecord,
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
+    output_columns: ScoringOutputColumns | None = None,
+    gate: AttributionGate | None = None,
 ) -> DataFrame:
     """Score DataFrame using scikit-learn model with distributed pandas UDF.
 
@@ -116,21 +118,22 @@ def score_with_sklearn_model(
             model_bytes,
             engineered_feature_cols,
             schema,
-            quantile_points,
-            threshold,
-            AttributionKeys.from_metadata(feature_metadata),
+            quantile_points=quantile_points,
+            threshold=threshold,
+            keys=AttributionKeys.from_metadata(feature_metadata),
+            gate=gate,
         )
     else:
         predict_udf = create_scoring_udf(model_bytes, engineered_feature_cols, schema)
 
-    scored_df = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-
-    cols_to_select = [f"{original_row_col}.*", "_scores.anomaly_score"]
-    if enable_contributions:
-        cols_to_select.append("_scores.anomaly_contributions")
-        cols_to_select.append("_scores.anomaly_basis_contributions")
-
-    return scored_df.select(*cols_to_select)
+    scores_col = f"__dqx_scores_{uuid.uuid4().hex}"
+    scored_df = engineered_df.withColumn(
+        scores_col, predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
+    )
+    aliases = (output_columns or ScoringOutputColumns()).result_aliases(enable_contributions)
+    return scored_df.select(
+        f"{original_row_col}.*", *[col(f"{scores_col}.{name}").alias(alias) for name, alias in aliases.items()]
+    )
 
 
 def score_with_sklearn_model_local(
@@ -144,6 +147,8 @@ def score_with_sklearn_model_local(
     model_record: AnomalyModelRecord,
     quantile_points: list[tuple[float, float]] | None = None,
     threshold: float | None = None,
+    output_columns: ScoringOutputColumns | None = None,
+    gate: AttributionGate | None = None,
 ) -> DataFrame:
     """Score DataFrame using scikit-learn model locally on the driver."""
     sklearn_model = load_and_validate_model(model_uri, model_record)
@@ -153,7 +158,7 @@ def score_with_sklearn_model_local(
     )
 
     engineered_feature_cols = feature_metadata.engineered_feature_names
-    local_pdf = cast(pd.DataFrame, engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas())
+    local_pdf = collect_feature_matrix(engineered_df, [*merge_columns, *engineered_feature_cols])
 
     feature_matrix = local_pdf[engineered_feature_cols]
     scores = -sklearn_model.score_samples(feature_matrix)
@@ -167,26 +172,17 @@ def score_with_sklearn_model_local(
             feature_matrix,
             engineered_feature_cols,
             scores,
-            quantile_points,
-            threshold,
-            AttributionKeys.from_metadata(feature_metadata),
+            quantile_points=quantile_points,
+            threshold=threshold,
+            keys=AttributionKeys.from_metadata(feature_metadata),
+            gate=gate,
         )
         result.update(contributions.as_columns())
 
-    result_pdf = pd.DataFrame(result)
-    result_schema = StructType(
-        [
-            *[df.schema[c] for c in merge_columns],
-            StructField("anomaly_score", DoubleType(), True),
-            *(
-                [
-                    StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
-                    StructField("anomaly_basis_contributions", MapType(StringType(), DoubleType()), True),
-                ]
-                if enable_contributions
-                else []
-            ),
-        ]
+    scored_df = df.sparkSession.createDataFrame(
+        pd.DataFrame(result),
+        schema=StructType([*[df.schema[c] for c in merge_columns], *create_udf_schema(enable_contributions).fields]),
     )
-    scored_df = df.sparkSession.createDataFrame(result_pdf, schema=result_schema)
-    return df.join(scored_df, on=merge_columns, how="left")
+    aliases = (output_columns or ScoringOutputColumns()).result_aliases(enable_contributions)
+    scored_df = scored_df.select(*merge_columns, *[col(name).alias(alias) for name, alias in aliases.items()])
+    return join_results_on_null_safe_columns(df, scored_df, merge_columns, list(aliases.values()))
