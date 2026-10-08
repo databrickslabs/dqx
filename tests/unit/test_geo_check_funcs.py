@@ -302,5 +302,21 @@ def test_geo_check_with_conversion_renders_value_as_string(column):
     assert "st_astext(geom)" not in expression
 
 
+def test_type_check_reports_invalid_separately_from_property():
+    """A type/property check splits the invalid-input message from the property message."""
+    expression = _column_expression_clean(is_point("geom", convert_column=True))
+    assert "is not a valid geometry" in expression
+    assert "is not a point geometry" in expression
+
+
+def test_topological_check_reports_invalid_column_and_reference():
+    """A precise topological check reports an invalid column value and an invalid reference separately."""
+    expression = _column_expression_clean(
+        is_geo_contains("geom", _REFERENCE_GEOMETRY_WKT, convert_column=True, convert_reference_geometry=True)
+    )
+    assert "is not a valid geometry" in expression
+    assert "reference geometry for column `geom` is not a valid geometry" in expression
+
+
 def _column_expression_clean(column) -> str:
     return str(column).removeprefix("Column<'").removesuffix("'>")
