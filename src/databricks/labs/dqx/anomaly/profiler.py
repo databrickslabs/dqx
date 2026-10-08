@@ -35,6 +35,7 @@ from databricks.labs.dqx.anomaly.group_config import (
     MIN_ROWS_PER_BASELINE_GROUP,
 )
 from databricks.labs.dqx.profiling_utils import compute_exact_distinct_counts, compute_null_and_distinct_counts
+from databricks.labs.dqx.utils import quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,9 @@ class AnomalyProfile:
     unsupported_columns: list[str] | None = None  # NEW: columns that cannot be used
 
 
-def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
+def auto_discover_columns(
+    df: DataFrame, *, baseline_by: list[str] | None = None, baseline_over_time: str | None = None
+) -> AnomalyProfile:
     """
     Auto-discover feature columns and a baseline grouping for row anomaly detection.
 
@@ -72,12 +75,15 @@ def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
 
     Args:
         df: DataFrame to analyze.
+        baseline_by: Declared grouping, or None to discover a grouping. An empty list keeps the
+            pooled comparison and leaves otherwise eligible categorical columns as features.
+        baseline_over_time: Declared time axis, retained in the input but excluded from features.
 
     Returns:
         AnomalyProfile with recommendations and warnings.
     """
     warnings: list[str] = []
-    return _auto_discover_heuristic(df, warnings)
+    return _auto_discover_heuristic(df, warnings, baseline_by, baseline_over_time)
 
 
 def _compute_numeric_stats_batched(df: DataFrame, column_names: list[str]) -> dict[str, dict[str, float]]:
@@ -539,13 +545,17 @@ def _compute_discovery_stats(df: DataFrame) -> tuple[dict[str, int], dict[str, i
     return null_counts, distinct_counts, numeric_stats, total_count
 
 
-def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfile:
+def _auto_discover_heuristic(
+    df: DataFrame, warnings: list[str], baseline_by: list[str] | None, baseline_over_time: str | None
+) -> AnomalyProfile:
     """
     Auto-discover using on-the-fly heuristics with multi-type support.
 
     Args:
         df: DataFrame to analyze.
         warnings: List to accumulate warnings.
+        baseline_by: Declared grouping, or None to discover one. An empty list disables grouping.
+        baseline_over_time: Declared time axis to exclude from feature candidates.
 
     Returns:
         AnomalyProfile with recommendations (max 10 columns).
@@ -562,7 +572,7 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
         col_type = field.dataType
 
         # Skip ID columns
-        if id_pattern.search(col_name):
+        if id_pattern.search(col_name) or col_name == baseline_over_time:
             continue
 
         null_count = null_counts.get(col_name, 0)
@@ -582,26 +592,29 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
             numeric_stats=numeric_stats,
         )
 
-    # Select top columns
-    max_columns = 10
-    recommended_columns, column_types = _select_top_columns(candidates, max_columns, warnings)
+    if baseline_by is None:
+        recommended_segments, segment_count = _select_segment_columns(
+            df,
+            [candidate[1] for candidate in candidates],
+            {candidate[1]: candidate[2] for candidate in candidates},
+            id_pattern,
+            warnings,
+            total_count=total_count,
+            null_counts=null_counts,
+            distinct_counts=distinct_counts,
+        )
+    else:
+        recommended_segments = list(baseline_by)
+        segment_count = (
+            df.select(*[F.col(quote_column_name(name)) for name in recommended_segments]).distinct().count()
+            if recommended_segments
+            else 1
+        )
 
-    # Select segment columns
-    recommended_segments, segment_count = _select_segment_columns(
-        df,
-        recommended_columns,
-        column_types,
-        id_pattern,
-        warnings,
-        total_count=total_count,
-        null_counts=null_counts,
-        distinct_counts=distinct_counts,
-    )
-
-    # The grouping columns are the basis of comparison, not features, so drop them from the feature
-    # list. A column cannot be both what is measured and what it is measured against.
-    if recommended_segments:
-        recommended_columns = [col for col in recommended_columns if col not in recommended_segments]
+    # Resolve the comparison basis before the feature limit so a basis column cannot consume a
+    # feature slot. Explicit grouping also prevents unrelated suggested groups from disappearing.
+    candidates = [candidate for candidate in candidates if candidate[1] not in recommended_segments]
+    recommended_columns, column_types = _select_top_columns(candidates, 10, warnings)
 
     return AnomalyProfile(
         recommended_columns=recommended_columns,

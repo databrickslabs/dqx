@@ -223,6 +223,14 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
         )
 
 
+def normalize_training_profile(profile: str | None) -> str:
+    """Validate and normalize the profile without accessing data or constructing a strategy."""
+    requested = (profile or DEFAULT_PROFILE).strip().lower()
+    if requested not in SUPPORTED_PROFILES:
+        raise InvalidParameterError(f"Unknown profile {profile!r}. Choose one of: {', '.join(SUPPORTED_PROFILES)}.")
+    return requested
+
+
 def resolve_training_profile(
     profile: str | None,
     params: AnomalyParams,
@@ -251,15 +259,13 @@ def resolve_training_profile(
     calibrated thresholds against. The resolved profile is logged on every run so the default is visible
     rather than implicit.
     """
-    requested = (profile or DEFAULT_PROFILE).strip().lower()
+    requested = normalize_training_profile(profile)
 
     if requested == PROFILE_DISTRIBUTION:
         strategy: AnomalyTrainingStrategy = IsolationForestTrainingStrategy()
         resolved_params = params
-    elif requested == PROFILE_CORRELATION:
+    else:
         strategy = MahalanobisTrainingStrategy()
         resolved_params = dataclasses.replace(params, ensemble_size=1)
-    else:
-        raise InvalidParameterError(f"Unknown profile {profile!r}. Choose one of: {', '.join(SUPPORTED_PROFILES)}.")
 
     return (strategy_override or strategy), resolved_params

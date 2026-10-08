@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.core import fit_isolation_forest
 from databricks.labs.dqx.config import (
     AnomalyConfig,
     AnomalyParams,
@@ -44,6 +46,33 @@ logger = logging.getLogger(__name__)
 # Process-scoped cache for MLflow experiment (one per xdist worker); lifecycle cleared by
 # _cleanup_mlflow_worker_experiment at session end. Not thread-safe.
 _MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
+
+
+@pytest.fixture
+def discovery_basis_df(spark):
+    """Two equally eligible groups make accidental implicit exclusions visible."""
+    start = datetime(2025, 1, 6)
+    return spark.createDataFrame(
+        [
+            (region, channel, float(i), start + timedelta(minutes=i))
+            for region in ("North", "South")
+            for channel in ("Store", "Online")
+            for i in range(200)
+        ],
+        "region string, channel string, amount double, event_time timestamp",
+    )
+
+
+@pytest.fixture
+def grouped_categorical_model(spark):
+    """A local fitted estimator with categorical-only features and a nullable comparison group."""
+    df = spark.createDataFrame(
+        [(region, "open" if i % 3 else "closed", i % 2 == 0) for region in ("North", None) for i in range(40)],
+        "region string, status string, enabled boolean",
+    )
+    params = AnomalyParams(baseline_by=["region"], algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42))
+    model, _, metadata = fit_isolation_forest(df, ["status", "enabled"], params)
+    return df, model, metadata
 
 
 # -----------------------------------------------------------------------------

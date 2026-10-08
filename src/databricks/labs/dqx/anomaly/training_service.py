@@ -39,6 +39,7 @@ from databricks.labs.dqx.anomaly.training_strategies import (
     DEFAULT_PROFILE,
     AnomalyTrainingStrategy,
     resolve_training_profile,
+    normalize_training_profile,
 )
 from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
@@ -90,13 +91,15 @@ class AnomalyTrainingService:
         self._strategy = strategy
 
     @staticmethod
-    def _perform_auto_discovery(df_filtered: DataFrame) -> tuple[list[str], list[str] | None]:
+    def _perform_auto_discovery(
+        df_filtered: DataFrame, baseline_by: list[str] | None, baseline_over_time: str | None
+    ) -> tuple[list[str], list[str] | None]:
         """Discover feature columns and a baseline grouping.
 
         The grouping is chosen for baseline conditioning: finer, bounded by rows per group rather
         than by model count, because there is one model however many groups result.
         """
-        profile = auto_discover_columns(df_filtered)
+        profile = auto_discover_columns(df_filtered, baseline_by=baseline_by, baseline_over_time=baseline_over_time)
         logger.info(f"Auto-selected {len(profile.recommended_columns)} columns: {profile.recommended_columns}")
         if profile.recommended_segments:
             logger.info(
@@ -150,6 +153,7 @@ class AnomalyTrainingService:
         columns: list[str] | None,
         declared_baseline_by: list[str] | None,
     ) -> tuple[list[str], list[str] | None]:
+        baseline_over_time: str | None,
         """Fill in whichever of the feature columns and the grouping the caller left unspecified.
 
         Returns ``(columns, baseline_by)``.
@@ -160,13 +164,8 @@ class AnomalyTrainingService:
         an hours-long run however many groups it finds.
         """
         if columns is None:
-            columns, discovered = self._perform_auto_discovery(df_filtered)
-            if declared_baseline_by:
-                # A declared baseline column is the basis metrics are compared against, not a
-                # metric. Auto-discovery does not know that, so drop them here rather than making
-                # the caller reconcile a list they never wrote.
-                return [c for c in columns if c not in declared_baseline_by], declared_baseline_by
-            return columns, discovered
+            columns, discovered = self._perform_auto_discovery(df_filtered, declared_baseline_by, baseline_over_time)
+            return columns, declared_baseline_by if declared_baseline_by is not None else discovered
 
         if declared_baseline_by is None:
             # Naming *columns* keeps the pooled comparison, as it did before baseline_by existed.
@@ -311,6 +310,7 @@ class AnomalyTrainingService:
     ) -> AnomalyTrainingContext:
         """Build training context with all validated inputs."""
         validate_spark_version(self._spark)
+        profile = normalize_training_profile(profile)
 
         if not model_name:
             raise InvalidParameterError("model_name is required and must be fully qualified as 'catalog.schema.model'.")
@@ -330,16 +330,23 @@ class AnomalyTrainingService:
         validate_training_params(params)
         declared_baseline_by = baseline_by if baseline_by is not None else params.baseline_by
 
+        resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
+        basis_columns = (declared_baseline_by or []) + ([resolved_over_time] if resolved_over_time else [])
+        excluded_basis = sorted(set(basis_columns).intersection(exclude_list))
+        if excluded_basis:
+            raise InvalidParameterError(f"Comparison basis columns cannot also be in exclude_columns: {excluded_basis}")
+        # Validate declarations before discovery scans the data. Feature overlap is checked again
+        # after discovery resolves the final list.
+        validate_baseline_columns(df, declared_baseline_by, columns or [])
+        validate_baseline_over_time(df, resolved_over_time, columns or [])
         columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
         auto_discovery_used = columns is None
-        columns, baseline_by = self._discover_columns_and_grouping(df_filtered, columns, declared_baseline_by)
+        columns, baseline_by = self._discover_columns_and_grouping(
+            df_filtered, columns, declared_baseline_by, resolved_over_time
+        )
 
         if not columns:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
-
-        # Resolved before validate_columns so the feature-width warning can count the derived features
-        # each basis adds. Both are validated in their own right further down.
-        resolved_over_time = baseline_over_time if baseline_over_time is not None else params.baseline_over_time
 
         validation_warnings = validate_columns(
             df, columns, params, baseline_by=baseline_by, baseline_over_time=resolved_over_time
@@ -442,6 +449,9 @@ class AnomalyTrainingService:
     def _train_global(self, context: AnomalyTrainingContext) -> str:
         """Train a single model."""
         sampled_df, _, truncated = sample_df(context.df_filtered, context.columns, context.params)
+        # Validate even a directly supplied context before sampling. An injected strategy remains
+        # authoritative, but does not make an invalid public profile valid.
+        strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
         if not sampled_df.head(1):
             raise InvalidParameterError(
                 "Sampling produced 0 rows. Provide more data or adjust sampling parameters "
@@ -454,7 +464,6 @@ class AnomalyTrainingService:
         # bypassed. Otherwise the profile decides, and may tighten parameters (the correlation-aware
         # detector collapses the ensemble to one model); for the distribution profiles the returned params
         # are the very same object, so nothing is perturbed.
-        strategy, params = resolve_training_profile(context.profile, context.params, self._strategy)
         logger.info(f"profile={context.profile or DEFAULT_PROFILE} -> algorithm strategy '{strategy.name}'")
 
         result = strategy.train(

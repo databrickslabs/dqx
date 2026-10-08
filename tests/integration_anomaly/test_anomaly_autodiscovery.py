@@ -3,16 +3,79 @@
 import datetime
 import logging
 
+import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
+from databricks.labs.dqx.anomaly.training_service import AnomalyTrainingService
+from databricks.labs.dqx.config import AnomalyParams
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import SEGMENT_REGIONS
 from tests.integration_anomaly.conftest import qualify_model_name
 
 #: A Monday, so the weekday and weekend calendar features the advisory warns about are meaningful.
 START = datetime.datetime(2025, 1, 6)
+
+
+@pytest.mark.parametrize("baseline_by", [None, [], ["region"]])
+def test_discovery_respects_declared_grouping(discovery_basis_df, baseline_by):
+    profile = auto_discover_columns(discovery_basis_df, baseline_by=baseline_by, baseline_over_time="event_time")
+    expected_groups = ["region", "channel"] if baseline_by is None else baseline_by
+    assert set(profile.recommended_segments) == set(expected_groups)
+    assert set(profile.recommended_columns) == {"amount", "region", "channel"}.difference(expected_groups)
+    assert "event_time" not in profile.recommended_columns
+
+
+@pytest.mark.parametrize("via_params", [False, True])
+@pytest.mark.parametrize("baseline_by", [[], ["region"]])
+def test_context_resolves_basis_before_discovering_features(
+    spark, discovery_basis_df, make_schema, make_random, via_params, baseline_by
+):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    options = {"baseline_by": baseline_by, "baseline_over_time": "event_time"}
+    params = AnomalyParams(**options) if via_params else AnomalyParams()
+    context = AnomalyTrainingService(spark).build_context(
+        discovery_basis_df,
+        f"{TEST_CATALOG}.{schema.name}.discovery_{suffix}",
+        f"{TEST_CATALOG}.{schema.name}.registry_{suffix}",
+        columns=None,
+        params=params,
+        exclude_columns=None,
+        **({} if via_params else options),
+    )
+    assert set(context.columns) == {"amount", "region", "channel"}.difference(baseline_by)
+    assert context.baseline_by == baseline_by
+    assert context.baseline_over_time == "event_time"
+    assert set(context.df_filtered.columns) == set(discovery_basis_df.columns)
+    assert params.baseline_by == (baseline_by if via_params else None)
+
+
+def test_direct_grouping_opt_out_overrides_params(spark, discovery_basis_df, make_schema, make_random):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    params = AnomalyParams(baseline_by=["region"], baseline_over_time="event_time")
+    context = AnomalyTrainingService(spark).build_context(
+        discovery_basis_df,
+        f"{TEST_CATALOG}.{schema.name}.override_{suffix}",
+        f"{TEST_CATALOG}.{schema.name}.registry_{suffix}",
+        columns=None,
+        params=params,
+        baseline_by=[],
+        exclude_columns=None,
+    )
+    assert context.baseline_by == []
+    assert set(context.columns) == {"amount", "region", "channel"}
+    assert params.baseline_by == ["region"]
+
+
+def test_comparison_basis_does_not_consume_feature_slots(spark):
+    columns = ["baseline_category", "event_time"] + [f"category_{i:02}" for i in range(10)]
+    df = spark.createDataFrame([("A", START, *[f"value_{i % 30}" for _ in range(10)]) for i in range(100)], columns)
+    profile = auto_discover_columns(df, baseline_by=["baseline_category"], baseline_over_time="event_time")
+    assert len(profile.recommended_columns) == 10
+    assert set(profile.recommended_columns) == set(columns[2:])
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
