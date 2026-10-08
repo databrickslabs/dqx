@@ -16,7 +16,15 @@ from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDen
 from databricks.sdk.service.catalog import PermissionsChange, Privilege, VolumeType
 from databricks.sdk.service.compute import ClusterSpec
 from databricks.sdk.service.jobs import JobRunAs, NotebookTask, Task
-from databricks.sdk.service.postgres import Project, ProjectDefaultEndpointSettings, ProjectSpec
+from databricks.sdk.service.postgres import (
+    Project,
+    ProjectDefaultEndpointSettings,
+    ProjectSpec,
+    Role,
+    RoleAuthMethod,
+    RoleIdentityType,
+    RoleRoleSpec,
+)
 
 from databricks_labs_dqx_app.backend.migrations import MigrationRunner
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
@@ -30,6 +38,7 @@ from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, parse_volume_path
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 from databricks_labs_dqx_app.backend.startup import publish_wheels_to_volume
 
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -99,10 +108,10 @@ class AppLiveSetup:
 
 
 @pytest.fixture(scope="session")
-def databricks_profile() -> str:
-    """Require an explicit Databricks CLI profile for this opt-in suite."""
-    import os
-
+def databricks_profile(request: pytest.FixtureRequest) -> str:
+    """Require deliberate CLI consent and a profile for this opt-in suite."""
+    if not request.config.getoption("studio_integration"):
+        pytest.skip("Use make app-integration PROFILE=<profile> for live tests.")
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
     if not profile:
         pytest.skip("Set DATABRICKS_CONFIG_PROFILE via make app-integration PROFILE=<profile>.")
@@ -187,6 +196,25 @@ def make_setup_volume(
             pass
 
     yield from factory("setup volume", create, delete)
+
+
+@pytest.fixture
+def make_setup_schema(ws: WorkspaceClient) -> Generator[Callable[..., str], None, None]:
+    """Create a factory-cleaned temporary schema before granting runner usage."""
+
+    def create(*, catalog: str, schema: str) -> str:
+        validate_identifier(catalog)
+        validate_identifier(schema)
+        ws.schemas.create(schema, catalog)
+        return f"{catalog}.{schema}"
+
+    def delete(full_name: str) -> None:
+        try:
+            ws.schemas.delete(full_name, force=True)
+        except NotFound:
+            pass
+
+    yield from factory("setup temporary schema", create, delete)
 
 
 @pytest.fixture
@@ -306,6 +334,46 @@ def live_resources(
 
 
 @pytest.fixture
+def make_lakebase_oauth_role(
+    live_resources: LiveResources,
+) -> Generator[Callable[..., str], None, None]:
+    """Create an isolated OAuth login role without administrative memberships."""
+    workspace = live_resources.workspace
+    endpoint = live_resources.resources.lakebase.endpoint
+    if endpoint is None:
+        raise RuntimeError("The live Lakebase fixture requires a branch endpoint.")
+    branch = endpoint.rsplit("/endpoints/", 1)[0]
+
+    def create(*, principal: str) -> str:
+        validate_identifier(principal)
+        workspace.postgres.create_role(
+            branch,
+            Role(
+                spec=RoleRoleSpec(
+                    postgres_role=principal,
+                    identity_type=RoleIdentityType.SERVICE_PRINCIPAL,
+                    auth_method=RoleAuthMethod.LAKEBASE_OAUTH_V1,
+                    membership_roles=[],
+                )
+            ),
+            role_id=f"sp-{principal.lower()}",
+        ).wait(lro.LroOptions(timeout=timedelta(minutes=20)))
+        return principal
+
+    def delete(principal: str) -> None:
+        # Roles and their objects belong only to this isolated test project.
+        live_resources.pg.execute(f"DROP OWNED BY {live_resources.pg.q(principal)} CASCADE")
+        try:
+            workspace.postgres.delete_role(f"{branch}/roles/sp-{principal.lower()}").wait(
+                lro.LroOptions(timeout=timedelta(minutes=20))
+            )
+        except NotFound:
+            pass
+
+    yield from factory("Lakebase OAuth role", create, delete)
+
+
+@pytest.fixture
 def make_preconfigured_job(
     ws: WorkspaceClient,
     make_notebook: Callable[..., object],
@@ -360,6 +428,8 @@ def app_live_setup(
     app_workspace: WorkspaceClient,
     live_resources: LiveResources,
     make_preconfigured_job: Callable[..., int],
+    make_setup_schema: Callable[..., str],
+    make_lakebase_oauth_role: Callable[..., str],
 ) -> Generator[AppLiveSetup, None, None]:
     """Compose production setup collaborators with a real app-SP profile and runner job."""
     runner_principal = os.environ.get("DQX_TEST_RUNNER_SERVICE_PRINCIPAL", "").strip()
@@ -371,13 +441,29 @@ def app_live_setup(
         pytest.skip(f"PROFILE cannot create a factory job with the external runner service principal: {err}")
 
     resources = replace(live_resources.resources, job_id=str(job_id))
+    make_setup_schema(catalog=resources.volume.catalog, schema=resources.tmp_schema)
     app_identity = _workspace_identity(app_workspace)
+    make_lakebase_oauth_role(principal=app_identity)
+    database = live_resources.pg.q(resources.lakebase.database)
+    app_role = live_resources.pg.q(app_identity)
+    live_resources.pg.execute(f"GRANT CONNECT, CREATE ON DATABASE {database} TO {app_role}")
     _grant_setup_privileges(
         live_resources.workspace,
         live_resources.volume.catalog,
         live_resources.volume.schema,
         live_resources.volume.volume,
         app_identity,
+    )
+    live_resources.workspace.grants.update(
+        "SCHEMA",
+        f"{resources.volume.catalog}.{resources.tmp_schema}",
+        changes=[PermissionsChange(principal=app_identity, add=[Privilege.USE_SCHEMA, Privilege.CREATE_TABLE])],
+    )
+    grant_runner_wheel_privileges(live_resources.workspace, resources, runner_principal)
+    live_resources.workspace.grants.update(
+        "SCHEMA",
+        f"{resources.volume.catalog}.{resources.volume.schema}",
+        changes=[PermissionsChange(principal=runner_principal, add=[Privilege.SELECT, Privilege.MODIFY])],
     )
     sql = SqlExecutor(
         ws=app_workspace,
@@ -417,6 +503,11 @@ def app_live_setup(
             """Avoid long-running scheduler and AI tasks in the live test process."""
 
     try:
+        # Only the app needs a Lakebase role for setup and application migrations.
+        # Reconcile still exercises the idempotent production migration path.
+        schema = pg.q(resources.lakebase.schema)
+        pg.execute_no_schema(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        PgMigrationRunner(pg).run_all()
         yield AppLiveSetup(
             setup_workspace=live_resources.workspace,
             app_workspace=app_workspace,
@@ -473,3 +564,15 @@ def _workspace_identity(workspace: WorkspaceClient) -> str:
     if not value:
         raise RuntimeError("The authenticated profile did not return an identity.")
     return value
+
+
+def grant_runner_wheel_privileges(workspace: WorkspaceClient, resources: ActiveResources, principal: str) -> None:
+    """Grant wheel reads and temporary-schema usage; both schemas must already exist."""
+    volume = resources.volume
+    for kind, full_name, privilege in (
+        ("CATALOG", volume.catalog, Privilege.USE_CATALOG),
+        ("SCHEMA", f"{volume.catalog}.{volume.schema}", Privilege.USE_SCHEMA),
+        ("SCHEMA", f"{volume.catalog}.{resources.tmp_schema}", Privilege.USE_SCHEMA),
+        ("VOLUME", f"{volume.catalog}.{volume.schema}.{volume.volume}", Privilege.READ_VOLUME),
+    ):
+        workspace.grants.update(kind, full_name, changes=[PermissionsChange(principal=principal, add=[privilege])])

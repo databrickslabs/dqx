@@ -2,19 +2,23 @@
 
 from typing import Annotated
 
+from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends
 
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     SetupAccess,
     get_conf,
+    get_obo_ws,
     get_setup_access,
     get_setup_orchestrator,
+    get_setup_sql_executor,
     require_setup_admin,
     sanitize_setup_display,
 )
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupStatusResponse
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 
 router = APIRouter()
@@ -37,6 +41,8 @@ async def get_setup_status(
 async def reconcile_setup(
     access: Annotated[SetupAccess, require_setup_admin()],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql: Annotated[SqlExecutor, Depends(get_setup_sql_executor)],
 ) -> SetupReport:
     """Run the serialized setup workflow as a bootstrap administrator."""
-    return await orchestrator.reconcile(setup_user=access.user_name)
+    return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=reader_sql)
