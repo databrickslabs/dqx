@@ -14,12 +14,18 @@
 
 # COMMAND ----------
 
-%pip install databricks-labs-dqx[llm]
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install 'databricks-labs-dqx[llm] @ {dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx[llm]
+
 %restart_python
 
 # COMMAND ----------
 
-model_name = "databricks/claude-sonnet-5-5"
+model_name = "databricks/databricks-claude-sonnet-4-5"
 default_user_input = "customername should not start with s and account balance should be positive"
 default_table_name = "samples.tpch.customer"
 
@@ -55,7 +61,7 @@ dq_engine = DQEngine(ws, spark)
 # MAGIC DQX supports AI-assisted rule generation based on user requirements. The following configurations are available:
 # MAGIC
 # MAGIC - **Model Serving Endpoint**:  
-# MAGIC   By default, DQX uses the `databricks/claude-sonnet-5-5` model serving endpoint to generate rules. However, users can specify a different model endpoint if they prefer to use another one.
+# MAGIC   By default, DQX uses the `databricks/databricks-claude-sonnet-4-5` model serving endpoint to generate rules. However, users can specify a different model endpoint if they prefer to use another one.
 # MAGIC
 # MAGIC - **Table Name**:  
 # MAGIC   Users can optionally provide the fully qualified name of a table. DQX will use the table's schema to generate rules. If no table name is provided, the schema will be inferred based on the user's input.
