@@ -601,9 +601,10 @@ async def _ensure_metadata_dims(
                 audience_groups=resources.audience.uc_principals,
             )
         )
-    except Exception:
+    except Exception as error:
         # The access step grants and verifies these tables, so activation must not
         # complete without them; the next reconcile retries the refresh.
+        logger.warning("Could not refresh the DQ metadata dimensions (%s)", type(error).__name__)
         raise RequiredViewSetupError() from None
 
 

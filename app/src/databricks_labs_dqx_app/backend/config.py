@@ -80,7 +80,8 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_USER_GROUPS",
         description=(
             "Explicit audience groups as a JSON list or unquoted comma-separated names; "
-            "an empty list means administrator-managed access."
+            "required for bundle deployments (the bundle sets this from studio_user_group); "
+            "ignored for Marketplace installs, where the setup form collects the audience group."
         ),
     )
 
