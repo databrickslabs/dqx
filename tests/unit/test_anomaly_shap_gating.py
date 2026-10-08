@@ -8,11 +8,29 @@ from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
 from databricks.labs.dqx.anomaly.explainability import (
+    AttributionGate,
     compute_gated_shap_contributions,
     severity_from_scores,
 )
 
 QUANTILE_POINTS = [(10.0, 1.0), (50.0, 2.0), (90.0, 4.0)]
+
+
+def test_crossing_group_tail_does_not_drop_flagged_row_contributions(fitted_model_and_features):
+    model, features = fitted_model_and_features
+    fallback = [(0.0, 0.0), (95.0, 20.0), (99.0, 21.0), (100.0, 30.0)]
+    gate = AttributionGate.from_calibrations(
+        {
+            "wide": [(0.0, 0.0), (95.0, 1.0), (99.0, 10.0), (100.0, 12.0)],
+            "narrow": [(0.0, 0.0), (95.0, 8.0), (99.0, 9.0), (100.0, 12.0)],
+        },
+        fallback,
+    )
+    contributions = compute_gated_shap_contributions(
+        [model], features, ["amount", "quantity"], np.array([0.0, 0.1, 0.2, 9.45]), fallback, 99.5, gate=gate
+    )
+    assert contributions.by_column[:3] == [None, None, None]
+    assert contributions.by_column[3] is not None
 
 
 def test_severity_from_scores_interpolates_between_points():

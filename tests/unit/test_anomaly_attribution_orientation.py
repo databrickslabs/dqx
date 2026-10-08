@@ -17,7 +17,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
 
 from databricks.labs.dqx.anomaly.explainability import (
-    compute_contributions_for_matrix,
     compute_row_attributions,
     format_contributions_map,
     format_shap_contributions,
@@ -119,8 +118,8 @@ def test_a_null_feature_row_and_an_unexplained_row_can_both_appear_at_once():
 # ── ground truth: the orientation itself ─────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def forest_and_features() -> tuple[IsolationForest, list[str]]:
+@pytest.fixture(name="forest_and_features")
+def fixture_forest_and_features() -> tuple[IsolationForest, list[str]]:
     """An isolation forest on three independent standard normals, so any anomaly is one we injected."""
     rng = np.random.default_rng(7)
     columns = ["a", "b", "c"]
@@ -182,7 +181,7 @@ def test_a_zero_share_feature_is_not_rendered_as_a_contributor():
     assert format_contributions_map({"amount": 100.0, "quantity": 0.0}, 3) == "amount (100%)"
 
 
-# ── the row-at-a-time variant, which has to agree with the scoring path ───────────────────────────────
+# ── the active scoring path on batches, missing data and pipelines ──────────────────────────────────
 
 
 def _matrix_forest(columns: int = 3) -> IsolationForest:
@@ -190,75 +189,70 @@ def _matrix_forest(columns: int = 3) -> IsolationForest:
     return IsolationForest(n_estimators=150, random_state=0).fit(rng.normal(0, 1, (400, columns)))
 
 
-def test_the_matrix_variant_names_the_deliberately_anomalous_feature():
-    """Same orientation as the scoring path, asserted independently.
-
-    This function is a second implementation of the same semantics -- it existed with the same two defects
-    the scoring path had, which is how one module came to hold two answers to what a negative SHAP value
-    means. Pinning it separately is what keeps them from drifting apart again.
-    """
+def test_batch_attribution_names_the_deliberately_anomalous_feature():
+    """A bare estimator and a batch explain the deliberate perturbation through the active path."""
     forest = _matrix_forest()
-    probe = np.array([[9.0, 0.1, 0.1]])
+    probe = pd.DataFrame([[9.0, 0.1, 0.1]], columns=["a", "b", "c"])
 
-    contributions = compute_contributions_for_matrix(forest, probe, ["a", "b", "c"])[0]
+    attribution, valid_indices, keys = compute_row_attributions(forest, probe, list(probe.columns))
+    contributions = format_shap_contributions(attribution, valid_indices, len(probe), keys)[0]
 
     named = _top_key(contributions)
     assert named == "a", f"expected the perturbed feature, got {contributions}"
 
 
-def test_the_matrix_variant_reports_fractions_rather_than_percentages():
-    """Its contract differs from the scoring path's on purpose, so the difference is pinned.
-
-    The scoring path emits 0-100 because that is what ``_dq_info[].anomaly.contributions`` documents. This
-    one emits fractions of 1, which is what its own caller expects. Recording that here stops a later
-    reader "aligning" them and silently rescaling the other consumer by a hundred.
-    """
+def test_batch_attribution_reports_percentages_not_legacy_fractions():
+    """The active path uses the 0-100 contract documented in _dq_info, not the removed helper's 0-1."""
     forest = _matrix_forest()
+    probe = pd.DataFrame([[8.0, 0.2, 0.2]], columns=["a", "b", "c"])
 
-    contributions = compute_contributions_for_matrix(forest, np.array([[8.0, 0.2, 0.2]]), ["a", "b", "c"])[0]
+    attribution, valid_indices, keys = compute_row_attributions(forest, probe, list(probe.columns))
+    contributions = format_shap_contributions(attribution, valid_indices, len(probe), keys)[0]
 
     values = [v for v in contributions.values() if v is not None]
-    assert sum(values) == pytest.approx(1.0)
-    assert max(values) <= 1.0
+    assert sum(values) == pytest.approx(100.0, abs=0.2)
+    assert 1.0 < max(values) <= 100.0
 
 
-def test_the_matrix_variant_invents_nothing_when_no_feature_drove_the_anomaly():
-    """The uniform-split defect, in the copy that also carried it.
-
-    Built from a hand-made attribution rather than hunting for a real row with no anomaly-driving
-    evidence, by using a model whose every feature is constant so nothing can be isolated.
-    """
+def test_batch_attribution_invents_nothing_when_no_feature_drove_the_anomaly():
+    """A model trained on constant features has no evidence to attribute, not equal evidence."""
     constant = IsolationForest(n_estimators=50, random_state=0).fit(np.zeros((200, 2)))
+    probe = pd.DataFrame([[0.0, 0.0]], columns=["a", "b"])
 
-    contributions = compute_contributions_for_matrix(constant, np.array([[0.0, 0.0]]), ["a", "b"])[0]
+    attribution, valid_indices, keys = compute_row_attributions(constant, probe, list(probe.columns))
+    contributions = format_shap_contributions(attribution, valid_indices, len(probe), keys)[0]
 
     assert contributions == {"a": None, "b": None}
 
 
-def test_the_matrix_variant_returns_nulls_for_a_row_it_cannot_score():
+def test_batch_attribution_returns_nulls_for_a_row_it_cannot_score():
     """A row carrying a null cannot be attributed, and must not take another row's numbers with it."""
     forest = _matrix_forest(columns=2)
-    probe = np.array([[np.nan, 1.0], [7.0, 0.1]])
+    probe = pd.DataFrame([[np.nan, 1.0], [7.0, 0.1]], columns=["a", "b"])
 
-    contributions = compute_contributions_for_matrix(forest, probe, ["a", "b"])
+    attribution, valid_indices, keys = compute_row_attributions(forest, probe, list(probe.columns))
+    contributions = format_shap_contributions(attribution, valid_indices, len(probe), keys)
 
     assert contributions[0] == {"a": None, "b": None}
     assert contributions[1]["a"] is not None
 
 
-def test_the_matrix_variant_unwraps_a_pipeline_and_its_scaler():
+def test_batch_attribution_unwraps_a_pipeline_and_its_scaler():
     """Models trained by older versions carry a RobustScaler in the pipeline; newer ones carry none.
 
     Both shapes have to work, and the scaler has to be *applied* rather than merely tolerated, or the
     attribution is computed on unscaled values the estimator never saw.
     """
     rng = np.random.default_rng(6)
-    train = rng.normal(0, 1, (400, 2))
+    train = pd.DataFrame(rng.normal(0, 1, (400, 2)), columns=["a", "b"])
     scaled = Pipeline([("scaler", RobustScaler()), ("model", IsolationForest(n_estimators=150, random_state=0))])
     scaled.fit(train)
     bare = Pipeline([("model", IsolationForest(n_estimators=150, random_state=0))]).fit(train)
 
-    probe = np.array([[8.0, 0.1]])
+    probe = pd.DataFrame([[np.nan, 1.0], [8.0, 0.1]], columns=["a", "b"])
     for label, model in (("with a scaler", scaled), ("without one", bare)):
-        contributions = compute_contributions_for_matrix(model, probe, ["a", "b"])[0]
+        attribution, valid_indices, keys = compute_row_attributions(model, probe, list(probe.columns))
+        rows = format_shap_contributions(attribution, valid_indices, len(probe), keys)
+        assert rows[0] == {"a": None, "b": None}
+        contributions = rows[1]
         assert _top_key(contributions) == "a", f"pipeline {label} named {contributions}"

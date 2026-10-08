@@ -1,66 +1,67 @@
-"""Unit tests for the SHAP gate under per-group score calibration.
+"""The attribution gate must admit every row flagged by any real calibration."""
 
-`permissive_quantile_points` collapses many per-group calibrations into the single set of bounds
-the scorers use to decide which rows are worth a SHAP call. Pure dictionary arithmetic, so it is
-testable without Spark.
-"""
+import numpy as np
+import pytest
 
-from databricks.labs.dqx.anomaly.scoring_utils import permissive_quantile_points
+from databricks.labs.dqx.anomaly.explainability import AttributionGate, severity_from_scores
 
-GLOBAL_POINTS = [(0.0, 0.10), (0.5, 0.50), (0.95, 0.90), (1.0, 1.00)]
-
-
-def test_falls_back_to_global_when_no_group_calibration():
-    """An ungrouped model must gate exactly as it did before."""
-    assert permissive_quantile_points({}, GLOBAL_POINTS) == GLOBAL_POINTS
-
-
-def test_takes_the_minimum_bound_across_groups():
-    """The gate must admit a row that *any* group would consider anomalous.
-
-    A per-group maximum, or the global bound, would silently drop contributions from anomalous
-    rows in the groups whose scores run low.
-    """
-    group_points = {
-        "quiet": [(0.0, 0.01), (0.5, 0.05), (0.95, 0.20), (1.0, 0.30)],
-        "busy": [(0.0, 0.40), (0.5, 0.60), (0.95, 0.95), (1.0, 1.20)],
-    }
-
-    result = dict(permissive_quantile_points(group_points, GLOBAL_POINTS))
-
-    assert result[0.95] == 0.20
-    assert result[0.5] == 0.05
-    assert result[1.0] == 0.30
+GLOBAL_POINTS = [(0.0, 0.0), (95.0, 20.0), (99.0, 21.0), (100.0, 30.0)]
+GROUP_POINTS = dict(
+    (
+        ("wide", [(0.0, 0.0), (95.0, 1.0), (99.0, 10.0), (100.0, 12.0)]),
+        ("narrow", [(0.0, 0.0), (95.0, 8.0), (99.0, 9.0), (100.0, 12.0)]),
+    )
+)
 
 
-def test_gate_is_never_stricter_than_the_strictest_group():
-    """Restates the safety property directly: the bound never exceeds any group's own bound."""
-    group_points = {
-        "a": [(0.95, 0.70)],
-        "b": [(0.95, 0.30)],
-        "c": [(0.95, 0.55)],
-    }
-
-    result = dict(permissive_quantile_points(group_points, GLOBAL_POINTS))
-
-    assert result[0.95] <= min(0.70, 0.30, 0.55)
+def test_ungrouped_gate_uses_global_curve():
+    scores = np.array([0.0, 9.45, 20.0, 22.0])
+    gate = AttributionGate.from_calibrations({}, GLOBAL_POINTS)
+    np.testing.assert_array_equal(gate.maximum_severity(scores), severity_from_scores(scores, GLOBAL_POINTS))
 
 
-def test_percentiles_only_the_global_calibration_has_are_kept():
-    """A partial group calibration must not shrink the set of interpolation points."""
-    group_points = {"a": [(0.95, 0.30)]}
-
-    result = dict(permissive_quantile_points(group_points, GLOBAL_POINTS))
-
-    assert set(result) == {0.0, 0.5, 0.95, 1.0}
-    assert result[0.0] == 0.10
-    assert result[0.95] == 0.30
+def test_crossing_tail_curves_are_not_combined_knot_by_knot():
+    score = np.array([9.45])
+    gate = AttributionGate.from_calibrations(GROUP_POINTS, GLOBAL_POINTS)
+    assert severity_from_scores(score, GROUP_POINTS["narrow"])[0] > 99.5
+    assert gate.maximum_severity(score)[0] > 99.5
+    synthetic_minima = [(0.0, 0.0), (95.0, 1.0), (99.0, 9.0), (100.0, 12.0)]
+    assert severity_from_scores(score, synthetic_minima)[0] < 99.5
 
 
-def test_result_is_ordered_by_percentile():
-    """The interpolation walks these in order, so ordering is part of the contract."""
-    group_points = {"a": [(1.0, 0.9), (0.0, 0.1), (0.5, 0.4)]}
+@pytest.mark.parametrize("threshold", [95.0, 99.0, 99.5, 99.9])
+def test_gate_includes_every_group_and_global_fallback(threshold):
+    scores = np.linspace(0.0, 35.0, 1001)
+    gate = AttributionGate.from_calibrations(GROUP_POINTS, GLOBAL_POINTS)
+    admitted = gate.maximum_severity(scores) >= threshold
+    for curve in (GLOBAL_POINTS, *GROUP_POINTS.values()):
+        flagged = severity_from_scores(scores, curve) >= threshold
+        assert np.all(admitted[flagged])
 
-    result = permissive_quantile_points(group_points, GLOBAL_POINTS)
 
-    assert [p for p, _ in result] == sorted(p for p, _ in result)
+def test_global_fallback_remains_included_when_its_scores_run_lower():
+    gate = AttributionGate.from_calibrations({"high": GLOBAL_POINTS}, GROUP_POINTS["narrow"])
+    assert gate.maximum_severity(np.array([9.45]))[0] > 99.5
+
+
+def test_incomplete_group_uses_global_fallback():
+    scores = np.array([0.0, 1.0, 21.0])
+    gate = AttributionGate.from_calibrations({"partial": [(95.0, 0.1)]}, GLOBAL_POINTS)
+    np.testing.assert_array_equal(gate.maximum_severity(scores), severity_from_scores(scores, GLOBAL_POINTS))
+
+
+@pytest.mark.parametrize(
+    "points, expected",
+    [
+        ([(0.0, 0.0), (90.0, 1.0), (95.0, 1.0), (99.0, 2.0), (100.0, 3.0)], 90.0),
+        ([(0.0, 1.0), (95.0, 1.0), (99.0, 1.0), (100.0, 1.0)], 0.0),
+        ([(0.0, 0.0), (90.0, 1.0), (95.0, 1.0)], 90.0),
+    ],
+)
+def test_equal_score_knots_use_first_matching_bound(points, expected):
+    assert severity_from_scores(np.array([1.0]), points)[0] == expected
+
+
+def test_degenerate_tail_uses_remaining_knots_above_anchor():
+    points = [(0.0, 0.0), (95.0, 1.0), (99.0, 1.0), (100.0, 2.0)]
+    np.testing.assert_allclose(severity_from_scores(np.array([1.0, 1.5, 3.0]), points), [95.0, 99.5, 100.0])

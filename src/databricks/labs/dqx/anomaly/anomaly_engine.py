@@ -137,7 +137,7 @@ class AnomalyEngine(DQEngineBase):
             The model name (e.g., 'catalog.schema.model_name').
 
         Examples:
-            # Auto-discovery with default 2% expected anomaly rate (simplest)
+            # Auto-discovery with default training settings
             anomaly_engine.train(
                 df,
                 model_name="catalog.schema.my_model",
@@ -153,7 +153,7 @@ class AnomalyEngine(DQEngineBase):
             )
 
             # How much gets flagged is set on the *check*, not at training time: threshold is an
-            # alert budget over training severity, so 95 flags the top 5%.
+            # cutoff calibrated against training scores, not a fixed fraction of future rows.
             check = has_no_row_anomalies(
                 model_name="catalog.schema.fraud_detector",
                 registry_table="catalog.schema.dqx_anomaly_models",

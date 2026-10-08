@@ -9,19 +9,13 @@ OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, s
 shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
 """
 
-import numpy as np
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, DoubleType, MapType, StringType, StructField, StructType
-from sklearn.ensemble import IsolationForest
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from databricks.labs.dqx.anomaly import explainability as explainability_mod
 from databricks.labs.dqx.anomaly.explainability import (
     add_top_contributors_to_message,
-    compute_contributions_for_matrix,
-    create_optimal_tree_explainer,
     format_contributions_map,
 )
 from tests.integration_anomaly.constants import (
@@ -224,18 +218,6 @@ def test_add_top_contributors_handles_null_map():
     assert format_contributions_map({}, 2) == ""
 
 
-def test_create_optimal_tree_explainer():
-    """TreeExplainer is created when SHAP is available, otherwise ImportError."""
-    if explainability_mod.SHAP is None:
-        with pytest.raises(ImportError):
-            create_optimal_tree_explainer(object())
-        return
-
-    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-    explainer = create_optimal_tree_explainer(model)
-    assert explainer is not None
-
-
 def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
     """Compute SHAP contributions in driver-only mode (Spark Connect safe)."""
     if explainability_mod.SHAP is None:
@@ -263,39 +245,6 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
     contribs = row["_dq_info"][0]["anomaly"]["contributions"]
     assert contribs is not None
     assert "amount" in contribs and "quantity" in contribs
-
-
-def test_compute_contributions_helper():
-    """Compute contributions directly for a small matrix."""
-    if explainability_mod.SHAP is None:
-        pytest.skip("Explainability dependencies not available")
-
-    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-    feature_matrix = np.array([[0.0, 0.1], [2.0, 2.1]])
-    contributions = compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
-
-    assert len(contributions) == 2
-    assert set(contributions[0].keys()) == {"amount", "quantity"}
-
-
-def test_compute_contributions_pipeline_and_nan():
-    """Pipeline models and NaN rows are handled correctly."""
-    if explainability_mod.SHAP is None:
-        pytest.skip("Explainability dependencies not available")
-
-    pipeline = Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("model", IsolationForest(random_state=42)),
-        ]
-    )
-    pipeline.fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-
-    feature_matrix = np.array([[np.nan, 0.1], [2.0, 2.1]])
-    contributions = compute_contributions_for_matrix(pipeline, feature_matrix, ["amount", "quantity"])
-
-    assert contributions[0] == {"amount": None, "quantity": None}
-    assert set(contributions[1].keys()) == {"amount", "quantity"}
 
 
 def test_format_contributions_map():

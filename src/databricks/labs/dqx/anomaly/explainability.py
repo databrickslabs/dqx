@@ -20,14 +20,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import mlflow.sklearn as mlflow_sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import pandas_udf
-from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
-from sklearn.pipeline import Pipeline
+from pyspark.sql.types import StringType
 
 from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 from databricks.labs.dqx.anomaly.scoring_config import (
@@ -558,26 +555,77 @@ def severity_from_scores(scores: np.ndarray, quantile_points: list[tuple[float, 
     anchor = by_percentile.get(TAIL_ANCHOR_PERCENTILE)
     rate = by_percentile.get(TAIL_RATE_PERCENTILE)
 
-    # Without both anchors there is no tail to fit, and a degenerate tail has no width to interpolate over.
-    # Either way every point stays a knot, which is the behaviour that predates the tail.
-    if anchor is None or rate is None or rate <= anchor:
-        percentiles = np.array([float(p) for p, _ in points])
-        score_knots = np.array([float(q) for _, q in points])
-        return np.interp(scores, score_knots, percentiles)
+    values = np.asarray(scores, dtype=float)
+    if anchor is None or rate is None:
+        return _linear_severity_from_scores(values, points)
 
     body = [(p, q) for p, q in points if p <= TAIL_ANCHOR_PERCENTILE]
-    values = np.asarray(scores, dtype=float)
-    severity = np.interp(
-        values,
-        np.array([float(q) for _, q in body]),
-        np.array([float(p) for p, _ in body]),
-    )
+    severity = _linear_severity_from_scores(values, body)
+    above = values > anchor
+    if rate <= anchor:
+        tail = [(p, q) for p, q in points if p >= TAIL_ANCHOR_PERCENTILE]
+        severity[above] = _linear_severity_from_scores(values[above], tail)
+        return severity
 
     head_tail_probability = 100.0 - TAIL_ANCHOR_PERCENTILE
     base = head_tail_probability / (100.0 - TAIL_RATE_PERCENTILE)
-    above = values > anchor
     severity[above] = 100.0 - head_tail_probability * np.power(base, -(values[above] - anchor) / (rate - anchor))
     return severity
+
+
+def _linear_severity_from_scores(values: np.ndarray, points: list[tuple[float, float]]) -> np.ndarray:
+    """Match Spark's first matching upper bound, including repeated score knots."""
+    if not points:
+        return np.full(values.shape, np.nan)
+    previous_p, previous_q = points[0]
+    severity = np.full(values.shape, float(points[-1][0]))
+    matched = values <= previous_q
+    severity[matched] = float(previous_p)
+    for percentile, bound in points[1:]:
+        selected = ~matched & (values <= bound)
+        span = bound - previous_q
+        severity[selected] = (
+            float(percentile)
+            if span == 0
+            else previous_p + (values[selected] - previous_q) * (percentile - previous_p) / span
+        )
+        matched |= selected
+        previous_p, previous_q = percentile, bound
+    severity[np.isnan(values)] = np.nan
+    return severity
+
+
+@dataclass(frozen=True)
+class AttributionGate:
+    """Actual calibration curves used only to admit rows to attribution.
+
+    The authoritative Spark severity still determines the public verdict. Taking a maximum of
+    complete curves includes every row any supported comparison would flag without inventing
+    a new curve from unrelated knots. Evaluation uses only batch-sized arrays.
+    """
+
+    curves: tuple[tuple[tuple[float, float], ...], ...]
+
+    @classmethod
+    def from_calibrations(
+        cls,
+        groups: dict[str, list[tuple[float, float]]],
+        fallback: list[tuple[float, float]],
+    ) -> "AttributionGate":
+        """Include the global fallback and complete group curves, skipping duplicates."""
+        percentiles = {p for p, _ in fallback}
+        curves = [tuple(sorted(fallback))] if fallback else []
+        curves.extend(
+            tuple(sorted(points)) for points in groups.values() if {p for p, _ in points} == percentiles and points
+        )
+        return cls(tuple(dict.fromkeys(curves)))
+
+    def maximum_severity(self, scores: np.ndarray) -> np.ndarray:
+        """Return the most permissive severity across the stored real calibrations."""
+        maximum = np.full(np.asarray(scores).shape, -np.inf)
+        for curve in self.curves:
+            np.maximum(maximum, severity_from_scores(scores, list(curve)), out=maximum)
+        return maximum
 
 
 def compute_gated_shap_contributions(
@@ -588,6 +636,7 @@ def compute_gated_shap_contributions(
     quantile_points: list[tuple[float, float]] | None,
     threshold: float | None,
     keys: AttributionKeys | None = None,
+    gate: AttributionGate | None = None,
 ) -> RowContributions:
     """Attribute only the rows whose severity reaches the anomaly threshold.
 
@@ -624,15 +673,19 @@ def compute_gated_shap_contributions(
             *from_metadata*.
             Attribution is keyed by source column when given, and the basis split is only attempted
             then, because an unlabelled split would publish raw engineered names.
+        gate: Complete comparison calibrations, when group-specific severity is available.
 
     Returns:
         *RowContributions*. *by_column* is unchanged from what this function has always produced.
     """
     num_rows = len(feature_matrix)
-    if not quantile_points or threshold is None:
+    if threshold is None or not (quantile_points or (gate and gate.curves)):
         return _contributions_for_frame(models, feature_matrix, engineered_feature_cols, keys)
 
-    severity = severity_from_scores(np.asarray(scores, dtype=float), quantile_points)
+    values = np.asarray(scores, dtype=float)
+    severity = (
+        gate.maximum_severity(values) if gate and gate.curves else severity_from_scores(values, quantile_points or [])
+    )
     anomalous_positions = np.flatnonzero(severity >= (float(threshold) - _SEVERITY_GATE_EPSILON))
     by_column: list[dict[str, float | None] | None] = [None] * num_rows
     by_basis: list[dict[str, float | None] | None] = [None] * num_rows
@@ -713,122 +766,6 @@ def format_contributions_map(contributions_map: dict[str, float | None] | None, 
 
     # Format as string: "amount (85%), quantity (10%), discount (5%)"
     return ", ".join(f"{col} ({val:.0f}%)" for col, val in top_contribs)
-
-
-def create_optimal_tree_explainer(tree_model: Any) -> Any:
-    """Create TreeSHAP explainer for the given tree model.
-
-    Uses SHAP's TreeExplainer, which provides efficient SHAP value computation
-    for tree-based models via optimized C++ implementations.
-
-    Args:
-        tree_model: Trained tree-based model (e.g., IsolationForest)
-
-    Returns:
-        Configured SHAP TreeExplainer
-    """
-    return SHAP.TreeExplainer(tree_model)
-
-
-def compute_contributions_for_matrix(
-    model_local: Any, feature_matrix: np.ndarray, columns: list[str]
-) -> list[dict[str, float | None]]:
-    """Compute normalised contributions for a raw feature matrix, one row at a time.
-
-    Shares the semantics of the scoring path rather than reimplementing them: values are oriented via
-    *_oriented_towards_anomaly*, the side arguing the row is normal earns no share, and a row with
-    no anomaly-driving evidence gets all-``None`` instead of an invented uniform split. Keeping the two in
-    step matters more than the small duplication -- one module giving two different answers to "what does a
-    negative SHAP value mean" is how the original defect survived as long as it did.
-
-    Unlike the scoring path, contributions here are fractions of 1 rather than percentages, which is the
-    existing contract of this function and its caller.
-    """
-    # If model is a Pipeline (due to feature scaling), extract components
-    # SHAP's TreeExplainer only supports tree models, not pipelines
-    # A Pipeline no longer necessarily contains a scaler: DQX fits the forest without one, since an
-    # affine per-feature transform cannot change axis-parallel splits. Models trained before that
-    # still carry a RobustScaler, so the step is looked up rather than assumed -- indexing
-    # named_steps["scaler"] directly would raise KeyError on anything trained by this version.
-    if isinstance(model_local, Pipeline):
-        scaler = model_local.named_steps.get("scaler")
-        tree_model = model_local.named_steps["model"]
-        needs_scaling = scaler is not None
-    else:
-        scaler = None
-        tree_model = model_local
-        needs_scaling = False
-
-    explainer = SHAP.TreeExplainer(tree_model)
-
-    # Scale the data if the model uses a scaler
-    if needs_scaling:
-        feature_matrix = scaler.transform(feature_matrix)
-
-    # Handle NaN values (SHAP can't process them)
-    has_nan = pd.isna(feature_matrix).any(axis=1)
-
-    contributions_list: list[dict[str, float | None]] = []
-    for i in range(len(feature_matrix)):
-        if has_nan[i]:
-            contributions_list.append({col: None for col in columns})
-            continue
-
-        driving = np.maximum(
-            _oriented_towards_anomaly(np.asarray(explainer.shap_values(feature_matrix[i : i + 1]))[0]), 0.0
-        )
-        total = driving.sum()
-
-        contributions: dict[str, float | None]
-        if total > 0:
-            normalized = driving / total
-            contributions = {col: float(normalized[j]) for j, col in enumerate(columns)}
-        else:
-            contributions = {col: None for col in columns}
-
-        contributions_list.append(contributions)
-
-    return contributions_list
-
-
-def compute_feature_contributions(
-    model_uri: str,
-    df: DataFrame,
-    columns: list[str],
-) -> DataFrame:
-    """
-    Compute per-row feature contributions using TreeSHAP.
-
-    TreeSHAP provides exact feature attributions from the IsolationForest model,
-    showing which features contributed most to each anomaly score.
-
-    Args:
-        model_uri: MLflow model URI to load sklearn IsolationForest.
-        df: DataFrame with data to explain.
-        columns: Feature columns used for training.
-
-    Returns:
-        DataFrame with additional 'anomaly_contributions' map column containing
-        normalized SHAP values (absolute contributions summing to 1.0 per row).
-    """
-    return_schema = StructType([StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)])
-
-    @pandas_udf(return_schema)  # type: ignore[call-overload]
-    def compute_shap_udf(feature_struct: pd.Series) -> pd.DataFrame:
-        """Compute SHAP values for each row using TreeExplainer."""
-        model_local = mlflow_sklearn.load_model(model_uri)
-
-        # feature_struct is already a DataFrame with struct fields as columns
-        feature_matrix = feature_struct.values
-        contributions_list = compute_contributions_for_matrix(model_local, feature_matrix, columns)
-
-        # Return as a DataFrame so the StructType schema is satisfied
-        return pd.DataFrame({"anomaly_contributions": contributions_list})
-
-    # Combine feature columns into struct, then apply UDF
-    result = df.withColumn("anomaly_contributions", compute_shap_udf(F.struct(*[F.col(c) for c in columns])))
-
-    return result
 
 
 def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int = 3) -> DataFrame:
