@@ -235,10 +235,13 @@ def test_explanation_context_threads_pattern_col_from_scoring_config():
         registry_table="catalog.schema.reg",
         threshold=95.0,
         merge_columns=["__dqx_row_id_x"],
-        output_columns=ScoringOutputColumns(pattern="__dq_anomaly_pattern_abc123"),
+        output_columns=ScoringOutputColumns(
+            pattern="__dq_anomaly_pattern_abc123", basis_contributions="__dq_basis_abc123"
+        ),
     )
     ctx = ExplanationContext.from_scoring_config(config)
     assert ctx.pattern_col == "__dq_anomaly_pattern_abc123"
+    assert ctx.basis_contributions_col == "__dq_basis_abc123"
 
 
 def test_probe_endpoint_reachable_true_resolves_endpoint_and_probes_once():

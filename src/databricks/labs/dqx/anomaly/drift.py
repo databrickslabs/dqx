@@ -269,7 +269,9 @@ def format_drift_summary(
     e.g. 'drift detected: amount=4.12; quantity=3.55'.
 
     Drifted columns listed in *redact_columns* are excluded from the per-feature
-    breakdown so their names are never sent to the LLM. When every drifted column
+    breakdown so their names are never sent to the LLM. Pass the metadata-expanded redaction set,
+    including engineered features and labels, rather than only the source-column names.
+    When every drifted column
     is redacted, the output collapses to an opaque 'drift detected (N features)'
     indicator so the prompt still signals drift without leaking names.
     """

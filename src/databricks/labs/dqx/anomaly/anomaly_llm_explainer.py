@@ -27,6 +27,7 @@ from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_la
 from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_expr
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
+from databricks.labs.dqx.check_funcs import join_results_on_null_safe_columns
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -387,6 +388,7 @@ class ExplanationContext:
         return cls(
             severity_col=config.severity_col,
             contributions_col=config.contributions_col,
+            basis_contributions_col=config.output_columns.basis_contributions,
             score_std_col=config.score_std_col,
             ai_explanation_col=config.ai_explanation_col,
             threshold=config.threshold,
@@ -463,17 +465,17 @@ def pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Co
     return F.expr(sql)
 
 
-def _baseline_grouping_str(metadata: SparkFeatureMetadata | None) -> str:
+def _baseline_grouping_str(metadata: SparkFeatureMetadata | None, redact_set: frozenset[str] = frozenset()) -> str:
     """The baseline grouping columns as a prompt string, e.g. 'region, product' or 'none'.
 
     A per-run constant: the anomalies in this run are all judged against a group baseline defined by
-    these columns (or against a global baseline when the model is not grouped). The column *names*
-    are structural, not row values, so unlike the old segment values they carry no PII and need no
-    redaction.
+    these columns (or against a global baseline when the model is not grouped). Explicitly redacted
+    names stay withheld even though they describe structure rather than row values. Preserve the fact
+    that a grouped comparison was used instead of misleadingly reporting it as absent.
     """
     if metadata is None or not metadata.baseline_by:
         return "none"
-    return ", ".join(metadata.baseline_by)
+    return ", ".join("withheld" if column in redact_set else column for column in metadata.baseline_by)
 
 
 # Coarse disclosure states. Deliberately three, and deliberately unlabelled by any number: a reader who
@@ -581,7 +583,7 @@ def _disclosure_clause_expr(state: Column) -> Column:
     return expr
 
 
-def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
+def _temporal_baseline_str(metadata: SparkFeatureMetadata | None, redact_set: frozenset[str] = frozenset()) -> str:
     """The time column each metric is judged along, e.g. 'event_ts', or 'none'.
 
     The sibling of *_baseline_grouping_str*, and it exists for the same reason: how a row was judged
@@ -594,11 +596,12 @@ def _temporal_baseline_str(metadata: SparkFeatureMetadata | None) -> str:
     This matters for more than completeness. When a metric is judged against its own history, its value can
     sit comfortably inside the range the table has ever held and still be wrong for *when* it arrived. A
     model told only that the metric mattered will reach for "unusually high", which is the one thing the
-    evidence does not say. Like the grouping columns, this is a column *name* and carries no row values.
+    evidence does not say. An explicitly redacted time-column name is withheld without concealing the
+    fact that the model used a temporal comparison.
     """
     if metadata is None or not metadata.baseline_over_time:
         return "none"
-    return metadata.baseline_over_time
+    return "withheld" if metadata.baseline_over_time in redact_set else metadata.baseline_over_time
 
 
 def _human_labels(metadata: SparkFeatureMetadata | None) -> dict[str, str]:
@@ -776,8 +779,9 @@ def _build_ai_query_prompt_column(
     constants for the whole call. The shared header (*AI_QUERY_PROMPT_HEADER*) holds the
     instructions and field semantics.
     """
-    baseline_grouping = _baseline_grouping_str(ctx.feature_metadata)
-    temporal_baseline = _temporal_baseline_str(ctx.feature_metadata)
+    redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
+    baseline_grouping = _baseline_grouping_str(ctx.feature_metadata, redact_set)
+    temporal_baseline = _temporal_baseline_str(ctx.feature_metadata, redact_set)
     confidence_expr = (
         F.when((F.col("mean_std").isNull()) | F.lit(not is_ensemble), F.lit("n/a"))
         .when(F.col("mean_std") < F.lit(_CONFIDENCE_HIGH_BELOW), F.lit("high"))
@@ -1100,16 +1104,16 @@ def _attach_explanation_struct(
     result_sdf: DataFrame,
     ctx: ExplanationContext,
 ) -> DataFrame:
-    """Join per-pattern LLM results back onto the scored DataFrame and wrap as a struct.
+    """Join one uniquely named explanation struct back onto the scored DataFrame.
 
-    Rows below threshold or in dropped groups get a null struct.
+    Raw response fields must never enter the input schema: ordinary input columns may have the same
+    names. Rows below threshold, failed responses and dropped groups get a null struct.
     """
     pattern_col = ctx.pattern_col
-    joined = df_with_pattern.join(result_sdf, on=pattern_col, how="left")
-    return joined.withColumn(
-        ctx.ai_explanation_col,
+    explanations = result_sdf.select(
+        F.col(pattern_col),
         F.when(
-            (F.col(ctx.severity_col) >= F.lit(ctx.threshold)) & F.col("narrative").isNotNull(),
+            F.col("narrative").isNotNull(),
             F.struct(
                 F.col("narrative").alias("narrative"),
                 F.col("business_impact").alias("business_impact"),
@@ -1121,17 +1125,17 @@ def _attach_explanation_struct(
                 # Last, matching ai_explanation_struct_schema: add_info_column casts positionally.
                 F.col("__disclosure").alias("evidence_scope"),
             ),
-        ).otherwise(_build_empty_explanation_column()),
-    ).drop(
-        pattern_col,
-        "narrative",
-        "business_impact",
-        "top_drivers",
-        "action",
-        "group_size",
-        "group_avg_severity",
-        "__disclosure",
+        )
+        .otherwise(_build_empty_explanation_column())
+        .alias(ctx.ai_explanation_col),
     )
+    joined = join_results_on_null_safe_columns(df_with_pattern, explanations, [pattern_col], [ctx.ai_explanation_col])
+    return joined.withColumn(
+        ctx.ai_explanation_col,
+        F.when(F.col(ctx.severity_col) >= F.lit(ctx.threshold), F.col(ctx.ai_explanation_col)).otherwise(
+            _build_empty_explanation_column()
+        ),
+    ).drop(pattern_col)
 
 
 def _log_dropped_groups(dropped_groups_count: int, dropped_rows_count: int, max_groups: int) -> None:

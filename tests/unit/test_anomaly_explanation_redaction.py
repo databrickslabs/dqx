@@ -8,6 +8,7 @@ sensitive means everything computed from it is sensitive.
 """
 
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import redaction_set
+from databricks.labs.dqx.anomaly.drift import DriftResult, format_drift_summary
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 
 
@@ -118,3 +119,36 @@ def test_metadata_driven_redaction_leaves_other_columns_untouched():
 
     assert "amount" not in result
     assert "amount_rel_baseline" not in result
+
+
+def test_drift_summary_uses_the_same_metadata_expanded_redaction_as_contributions():
+    metadata = _metadata()
+    drift = DriftResult(
+        drift_detected=True,
+        drift_score=4.0,
+        drifted_columns=["country_US", "country_DE", "country_freq", "country_is_null", "amount"],
+        column_scores={name: 4.0 for name in metadata.engineered_feature_names},
+        recommendation="",
+    )
+
+    summary = format_drift_summary(drift, redaction_set(("country",), metadata))
+
+    assert summary == "drift detected: amount=4.00"
+    assert "country" not in summary
+    assert "US" not in summary
+    assert "DE" not in summary
+
+
+def test_drift_summary_discloses_no_names_or_scores_when_all_evidence_is_redacted():
+    metadata = _metadata()
+    drift = DriftResult(
+        drift_detected=True,
+        drift_score=4.0,
+        drifted_columns=["country_US", "amount_rel_baseline"],
+        column_scores={"country_US": 4.17, "amount_rel_baseline": 9.18},
+        recommendation="",
+    )
+
+    assert format_drift_summary(drift, redaction_set(("country", "amount"), metadata)) == (
+        "drift detected (2 features)"
+    )

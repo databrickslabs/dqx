@@ -23,6 +23,7 @@ from databricks.labs.dqx.anomaly.anomaly_llm_explainer import (
     add_explanation_column,
 )
 from databricks.labs.dqx.anomaly.scoring_utils import (
+    redaction_set,
     add_baseline_severity_percentile_column,
     add_info_column,
     add_severity_percentile_column,
@@ -252,7 +253,9 @@ def score_global_model(
             scored_df,
             ExplanationContext.from_scoring_config(config, parsed_metadata, record.identity.algorithm),
             is_ensemble=record.identity.is_ensemble,
-            drift_summary=format_drift_summary(drift_result, config.redact_columns),
+            drift_summary=format_drift_summary(
+                drift_result, redaction_set(tuple(config.redact_columns), parsed_metadata)
+            ),
         )
 
     scored_df = add_info_column(
