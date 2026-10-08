@@ -84,6 +84,8 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 
 The Genie `SELECT` allowlist is exactly the five approved views plus `dim_dq_rules` and `dim_dq_monitored_tables`. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. On a bundle deployment the schemas are owned by the deploying identity, so the app service principal receives an explicit privilege list that includes `MANAGE` (not `ALL_PRIVILEGES`, which makes the bundle engine drop `MANAGE`) instead. The bundle grants the administrator group only its workspace permissions; the app re-applies and verifies the administrator group's Unity Catalog grants after each deploy restart.
 
+The runner service principal needs no Lakebase role or grants. Run configs too large to pass as job parameters are staged in the Delta `dq_run_configs` table in the main schema, which its main-schema `SELECT` / `MODIFY` already covers.
+
 ### Audience, broad mode, and administrators
 
 The **audience** is a dedicated, existing workspace group. Studio never creates groups, and the setup form rejects `users`, `account users`, and `admins`.

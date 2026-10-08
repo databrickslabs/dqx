@@ -367,7 +367,7 @@ The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.
 2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **bundle-declared grants** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
 3. `databricks bundle run` — starts the app.
 
-Remember the manual prerequisites: the [catalog grants](#the-use-catalog-prerequisite) for the app SP (`USE CATALOG`, `CREATE SCHEMA`), task-runner SP, and audience, plus [runner Lakebase role and grants](#task-runner-lakebase-access) for the current oversized-config path. Cold-start UC checks must pass before Studio is ready; they do not verify runner Lakebase access.
+Remember the manual prerequisites: the [catalog grants](#the-use-catalog-prerequisite) for the app SP (`USE CATALOG`, `CREATE SCHEMA`), task-runner SP, and audience. Cold-start UC checks must pass before Studio is ready. The task runner needs no Lakebase role or grants.
 
 > **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and publishes the task-runner wheel to the UC volume. Wait for the setup checks to report that wheel publishing is ready before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
 
@@ -510,7 +510,7 @@ rm -rf .databricks                                          # clean local bundle
 databricks bundle deploy -p <your-profile> --force          # or force deploy
 ```
 
-**First deploy fails with `cannot create resources.postgres_roles.task_runner_sp: Project with name 'projects/<id>' not found (404)`:**
+**First deploy fails with `cannot create resources.postgres_roles.app_sp: Project with name 'projects/<id>' not found (404)`:**
 This happens on a fresh workspace right after the Lakebase project is created (eventual consistency). Re-run `make app-deploy`; the second run succeeds.
 
 **Profiler or dry-run not starting:**

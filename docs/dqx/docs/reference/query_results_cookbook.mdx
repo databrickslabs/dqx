@@ -912,13 +912,13 @@ Then drill into a single check to get the failing rows. Replace `<your_check_nam
 ## DQX Studio quarantine records {#dqx-studio-quarantine-records}
 
 DQX Studio stores its quarantined rows in its own `dq_quarantine_records` table in the
-Studio catalog (`<catalog>.dqx_studio.dq_quarantine_records`) — a different shape from
+Studio catalog (`<catalog>.<prefix>.dq_quarantine_records`) — a different shape from
 the tables above. `row_data` holds the full source row, and `errors` / `warnings` the
 checks each row failed, all as
 [`VARIANT`](https://docs.databricks.com/aws/en/semi-structured/variant). For an overview
 and the basic "recent rows" query, see
 [Analyse in Lakehouse](/docs/studio/running/#analyse-in-lakehouse); the recipes below go
-further. Replace `<catalog>` with your Studio catalog.
+further. Replace `<catalog>` with your Studio catalog and `<prefix>` with its storage prefix (default `dqx_studio`).
 
 **Read individual fields out of the source row:**
 
@@ -926,7 +926,7 @@ further. Replace `<catalog>` with your Studio catalog.
 SELECT quarantine_id,
        row_data:order_id::string   AS order_id,
        row_data:amount::double     AS amount
-FROM <catalog>.dqx_studio.dq_quarantine_records
+FROM <catalog>.<prefix>.dq_quarantine_records
 WHERE source_table_fqn = 'main.sales.orders';
 ```
 
@@ -939,7 +939,7 @@ SELECT q.quarantine_id,
        e.value:name::string     AS check_name,
        e.value:message::string  AS message,
        e.value:columns          AS columns
-FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+FROM <catalog>.<prefix>.dq_quarantine_records AS q,
      LATERAL variant_explode(q.errors) AS e
 WHERE q.run_id = '<run_id>';
 ```
@@ -948,7 +948,7 @@ WHERE q.run_id = '<run_id>';
 
 ```sql
 SELECT e.value:name::string AS check_name, count(*) AS failing_rows
-FROM <catalog>.dqx_studio.dq_quarantine_records AS q,
+FROM <catalog>.<prefix>.dq_quarantine_records AS q,
      LATERAL variant_explode(q.errors) AS e
 WHERE q.source_table_fqn = 'main.sales.orders'
 GROUP BY e.value:name::string
@@ -960,8 +960,8 @@ what triggered it, and whether it succeeded:
 
 ```sql
 SELECT q.quarantine_id, q.source_table_fqn, q.created_at, r.*
-FROM <catalog>.dqx_studio.dq_quarantine_records AS q
-JOIN <catalog>.dqx_studio.dq_validation_runs   AS r
+FROM <catalog>.<prefix>.dq_quarantine_records AS q
+JOIN <catalog>.<prefix>.dq_validation_runs   AS r
   ON q.run_id = r.run_id
 WHERE q.source_table_fqn = 'main.sales.orders'
 ORDER BY q.created_at DESC;

@@ -62,7 +62,7 @@ administrator to grant two things:
   GRANT SELECT ON dqx_studio.dq_rules_core TO "<principal>";
   ```
 
-`<principal>` is the Postgres role for the reader's identity — for a service
+`dqx_studio` here is Studio's Lakebase schema (`lakebase_schema_name`, default `dqx_studio`). It does not follow the Unity Catalog storage prefix. `<principal>` is the Postgres role for the reader's identity — for a service
 principal, its **application id**. `SELECT` on the view is enough; readers don't need
 access to the underlying `dq_resolved_rules` table.
 

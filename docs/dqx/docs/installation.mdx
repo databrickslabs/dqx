@@ -519,7 +519,7 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
    - `catalog_name` — Unity Catalog catalog where the studio's schemas and volume live (must already exist).
    - `dqx_service_principal_application_id` — the task-runner SP you created in step 2.
 
-   The bundle manages its own SQL warehouse and Lakebase project. Pass the two values with `--var` in step 4; other settings can also be overridden with `--var name=value`. Two optional settings control storage and audience: `prefix` (default `dqx_studio`) derives the schema names, and `studio_user_group` (default `dqx-studio-users`, which must already exist) is the audience. With `make app-deploy` these are the `STUDIO_PREFIX=<prefix>` and `STUDIO_USER_GROUP=<group>` arguments. Set `STUDIO_USER_GROUP=users` for **broad mode**, which shares Studio with the workspace `users` group and grants Unity Catalog access to `account users` (account-wide).
+   The bundle manages its own SQL warehouse and Lakebase project. Pass the two values with `--var` in step 4; other settings can also be overridden with `--var name=value`. Two optional settings control storage and audience: `prefix` (default `dqx_studio`) derives the schema names, and `studio_user_group` (default `dqx-studio-users`, which must already exist) is the audience. With `make app-deploy` these are the `STUDIO_PREFIX=<prefix>` and `STUDIO_USER_GROUP=<group>` arguments; with the Databricks CLI pass `--var prefix=<prefix>` and `--var studio_user_group=<group>`. Set `STUDIO_USER_GROUP=users` for **broad mode**, which shares Studio with the workspace `users` group and grants Unity Catalog access to `account users` (account-wide). When you set broad mode with `--var studio_user_group=users` (or through `BUNDLE_VARS` / `-BundleVars`) instead of `STUDIO_USER_GROUP`, also pass `--var studio_uc_principal="account users"`. Catalog and prefix cannot be changed once Studio's storage exists, so choose them before the first deploy.
 
    See the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md#step-4-configure-databricksyml) for the full reference of each variable, including security implications of `admin_group` and when to override per target.
 
@@ -538,14 +538,16 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
    GRANT USE CATALOG ON CATALOG <catalog> TO `<audience>`;
    ```
 
-   The setup wizard verifies these on every start and prints any that are still missing. With a custom `admin_group` account group, administrators receive the same catalog access as the audience; with the built-in `admins` group they must also belong to the audience group to use OBO features.
+   The setup wizard verifies these and prints the exact `GRANT` statement for any that are still missing. With a custom `admin_group` account group, also grant it `USE CATALOG`: administrators then receive the same access as the audience. With the built-in `admins` group (the default), Unity Catalog cannot grant to it, so administrators must also belong to the audience group to use OBO features.
 
 6. Start Studio:
    ```commandline
    databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
    ```
 
-7. Open the deployed app from the **Apps** page in your Databricks workspace.
+7. Open the deployed app from the **Apps** page as a workspace administrator (a member of `admins` or of `admin_group`). The bundle supplies the catalog, prefix, and audience, so the setup wizard shows them read-only. Run any `GRANT` statements it prints and choose **Verify again** until every step is green.
+
+8. **Assign roles**: in Studio, open **Admin Settings → Entitlements** and map your audience groups to the Author, Approver, and Viewer roles. See [Permissions & Entitlements](/docs/studio/governance/permissions-and-entitlements) for the full permission matrix.
 
 Once the catalog grants in step 5 are in place, one helper command **from the repository root** can deploy and start the prebuilt release without running `app-build`. On macOS or Linux:
 
@@ -558,6 +560,8 @@ On Windows, use the experimental PowerShell helper:
 ```powershell
 .\make.ps1 app-deploy -Profile <your-profile> -Release -BundleVars @('catalog_name=<your-catalog>', 'dqx_service_principal_application_id=<your-sp-application-id>')
 ```
+
+To set a non-default prefix or audience, add `STUDIO_PREFIX=<prefix> STUDIO_USER_GROUP=<group|users>` to the `make` command. The PowerShell helper has no equivalent arguments: add `'prefix=<prefix>'` and `'studio_user_group=<group>'` to `-BundleVars` (broad mode also needs `'studio_uc_principal=account users'`).
 
 To build and deploy Studio from source instead, use `make app-deploy PROFILE=<profile> TARGET=<target>` on macOS or Linux. On Windows, run the experimental PowerShell helper from the repository root:
 
@@ -574,7 +578,7 @@ The studio's schemas (`<prefix>`, `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_de
 For the full walkthrough — including step-by-step commands, the `USE CATALOG` prerequisite, troubleshooting, and target-specific configuration — see the [DQX Studio deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md).
 
 <Admonition type="note" title="Hybrid storage backend">
-DQX Studio splits its data across two physical backends: high-volume append-mostly tables (`dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`) live in **Delta Lake** because they're written by Spark; transactional tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for fast row-level reads/writes from the FastAPI request handlers.
+DQX Studio splits its data across two physical backends: high-volume append-mostly tables (`dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`) live in **Delta Lake** because they're written by Spark; transactional tables (rules catalog, app settings, RBAC, comments, schedule configs) live in **Lakebase Postgres** for fast row-level reads/writes from the FastAPI request handlers. Run configs too large to pass as job parameters are staged in the Delta `dq_run_configs` table in the main schema, so the task runner reads and writes only Delta and needs no Lakebase role or grants.
 </Admonition>
 
 <Admonition type="note" title="First-run wheel upload">
@@ -593,7 +597,7 @@ When a new version is published to the listing, update the app from your workspa
 
 #### Using a Declarative Automation Bundle (DAB)
 
-From the repository root, fetch the new Studio release tag, check it out, and redeploy with the same catalog and task-runner service principal:
+From the repository root, fetch the new Studio release tag, check it out, and redeploy with the same catalog and task-runner service principal. If you set a non-default prefix or audience at install time, pass the same `STUDIO_PREFIX` / `STUDIO_USER_GROUP` again: the catalog and prefix are locked once storage exists.
 
 ```commandline
 git fetch --tags origin
