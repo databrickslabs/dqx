@@ -14,7 +14,7 @@ from databricks_labs_dqx_app.backend.services.job_service import JobService
 
 def test_latest_run_lookup_excludes_preview_running_and_canceled_runs(sql_executor_mock: MagicMock) -> None:
     sql_executor_mock.query_dicts.return_value = [{"run_id": "r1", "status": "SUCCESS"}]
-    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql"))
+    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock)
 
     row = svc.get_latest_completed_run_result_row("c.s.dq_validation_runs", "main.sales.orders")
 
@@ -28,7 +28,7 @@ def test_latest_run_lookup_excludes_preview_running_and_canceled_runs(sql_execut
 
 def test_latest_run_lookup_returns_none_when_no_runs(sql_executor_mock: MagicMock) -> None:
     sql_executor_mock.query_dicts.return_value = []
-    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql"))
+    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock)
 
     assert svc.get_latest_completed_run_result_row("c.s.dq_validation_runs", "main.sales.orders") is None
 
@@ -40,7 +40,7 @@ def test_by_run_status_lookup_excludes_preview_and_is_deterministic(sql_executor
     # than one terminal row. Canceled runs are kept — the by-run endpoint
     # reports a canceled run as 503 rather than hiding it.
     sql_executor_mock.query_dicts.return_value = [{"run_id": "r1", "status": "SUCCESS"}]
-    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql"))
+    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock)
 
     row = svc.get_run_status_row("c.s.dq_validation_runs", "r1")
 
@@ -57,7 +57,7 @@ def test_shared_run_result_row_stays_column_agnostic(sql_executor_mock: MagicMoc
     # tables (dq_profiling_results) have no run_type column and which must still
     # return preview runs — so it must not reference run_type or add ordering.
     sql_executor_mock.query_dicts.return_value = [{"run_id": "r1", "status": "SUCCESS"}]
-    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql"))
+    svc = JobService(ws=MagicMock(), job_id="1", sql=sql_executor_mock)
 
     svc.get_run_result_row("c.s.dq_profiling_results", "r1")
 

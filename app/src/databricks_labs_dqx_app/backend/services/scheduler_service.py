@@ -233,11 +233,11 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_profiling_results", "created_at"),
     (_QUARANTINE_TABLE_NAME, "created_at"),
     ("dq_metrics", "run_time"),
+    ("dq_run_configs", "created_at"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
-    ("dq_run_configs", "created_at"),
 )
 
 

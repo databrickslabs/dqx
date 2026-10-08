@@ -1459,7 +1459,7 @@ def _stub_idle_sources(svc, *, configs=None, products=0, tables=0):
     depends only on what we inject. Trackers return a far-future next_run so
     active configs never actually fire during the assertion."""
     far_future = (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()
-    svc._load_schedule_configs = lambda: (configs or {})  # type: ignore[method-assign]
+    svc._load_schedule_configs = lambda: configs or {}  # type: ignore[method-assign]
     svc._get_tracker = lambda name: {"next_run_at": far_future}  # type: ignore[method-assign]
     svc._tick_products = lambda now: products  # type: ignore[method-assign]
     svc._tick_monitored_tables = lambda now: tables  # type: ignore[method-assign]
