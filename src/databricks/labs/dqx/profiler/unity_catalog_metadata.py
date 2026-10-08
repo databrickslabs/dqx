@@ -178,10 +178,10 @@ def collect_column_upstream_lineage(
     an ``INTERVAL n DAYS`` lookback from *config.lookback_days*, and an optional
     ``e.depth < N`` predicate from *config.depth* (omitted when *None* → unbounded).
 
-    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column*; each entry
-    is escaped via ``_sql_str_literal``, so user-supplied column names cannot inject SQL.
-    Empty or whitespace-only entries are dropped; the walk short-circuits to an empty list
-    when no usable seeds remain.
+    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column_name*; each
+    entry is escaped via ``_sql_str_literal``, so user-supplied column names cannot inject
+    SQL. Empty or whitespace-only entries are dropped; the walk short-circuits to an empty
+    list when no usable seeds remain.
 
     Returns:
         ``[{"source_table","source_column","target_column","depth","predecessor"}, ...]`` or
@@ -206,30 +206,30 @@ def collect_column_upstream_lineage(
         "frontier_table, frontier_column, predecessor, source_column, target_column, "
         "depth, path, event_time) AS ( "
         "("
-        f" SELECT source_table_full_name AS frontier_table, source_column AS frontier_column, "
-        f"        {table_literal} AS predecessor, source_column, target_column, "
+        f" SELECT source_table_full_name AS frontier_table, source_column_name AS frontier_column, "
+        f"        {table_literal} AS predecessor, source_column_name, target_column_name, "
         f"        1 AS depth, "
-        f"        array(concat_ws('.', source_table_full_name, source_column)) AS path, "
+        f"        array(concat_ws('.', source_table_full_name, source_column_name)) AS path, "
         f"        event_time "
         f" FROM {_COLUMN_LINEAGE_TABLE} "
         f" WHERE target_table_full_name = {table_literal} "
-        f"   AND target_column IN ({seed_list}) "
+        f"   AND target_column_name IN ({seed_list}) "
         f"   AND source_table_full_name IS NOT NULL "
-        f"   AND source_column IS NOT NULL "
+        f"   AND source_column_name IS NOT NULL "
         f"   AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f" LIMIT {max_nodes} "
         ") UNION ALL ("
-        f" SELECT t.source_table_full_name AS frontier_table, t.source_column AS frontier_column, "
-        f"        e.frontier_table AS predecessor, t.source_column, t.target_column, "
+        f" SELECT t.source_table_full_name AS frontier_table, t.source_column_name AS frontier_column, "
+        f"        e.frontier_table AS predecessor, t.source_column_name, t.target_column_name, "
         f"        e.depth + 1 AS depth, "
-        f"        array_append(e.path, concat_ws('.', t.source_table_full_name, t.source_column)) AS path, "
+        f"        array_append(e.path, concat_ws('.', t.source_table_full_name, t.source_column_name)) AS path, "
         f"        t.event_time "
         f" FROM edges e JOIN {_COLUMN_LINEAGE_TABLE} t "
         f"   ON t.target_table_full_name = e.frontier_table "
-        f"  AND t.target_column = e.frontier_column "
+        f"  AND t.target_column_name = e.frontier_column "
         f" WHERE {depth_predicate}t.source_table_full_name IS NOT NULL "
-        f"   AND t.source_column IS NOT NULL "
-        f"   AND NOT array_contains(e.path, concat_ws('.', t.source_table_full_name, t.source_column)) "
+        f"   AND t.source_column_name IS NOT NULL "
+        f"   AND NOT array_contains(e.path, concat_ws('.', t.source_table_full_name, t.source_column_name)) "
         f"   AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
         f" LIMIT {max_nodes} "
         ") ) "

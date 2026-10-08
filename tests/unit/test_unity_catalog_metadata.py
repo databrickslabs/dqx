@@ -216,7 +216,7 @@ def test_collect_column_upstream_lineage_sql_has_cycle_guard_and_limits():
     # Anchor table literal is escaped as a SQL string literal with single quotes doubled.
     assert "'cat.sch.tab'" in sql_text
     # Seed columns are inlined as escaped literals (sorted, de-duplicated).
-    assert "target_column IN ('id', 'name')" in sql_text
+    assert "target_column_name IN ('id', 'name')" in sql_text
     # No temp view registered on the session.
     spark.createDataFrame.assert_not_called()
 

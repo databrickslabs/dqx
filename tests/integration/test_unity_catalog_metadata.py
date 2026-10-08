@@ -59,8 +59,8 @@ def stub_system_tables(spark, make_schema, make_random, monkeypatch):
     )
     spark.sql(
         f"CREATE TABLE {column_lineage} ("
-        "source_table_full_name STRING, source_column STRING, "
-        "target_table_full_name STRING, target_column STRING, event_time TIMESTAMP)"
+        "source_table_full_name STRING, source_column_name STRING, "
+        "target_table_full_name STRING, target_column_name STRING, event_time TIMESTAMP)"
     )
     spark.sql(
         f"CREATE TABLE {table_tags} ("
