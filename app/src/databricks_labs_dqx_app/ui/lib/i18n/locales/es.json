@@ -2077,7 +2077,7 @@
     "colMean": "Media",
     "colStddev": "Desv. estándar",
     "profileHeaderLastProfile": "Último perfil",
-    "profileHeaderRows": "Filas",
+    "profileHeaderRows": "Filas perfiladas",
     "profileHeaderColumns": "Columnas",
     "profileHeaderDuration": "Duración",
     "profilePrimaryKeyBadge": "Clave primaria: {{columns}}",
