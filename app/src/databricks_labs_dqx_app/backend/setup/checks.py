@@ -1,5 +1,8 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
+import json
+import logging
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import EffectivePermissionsList
 
@@ -9,11 +12,12 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
 _SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
+logger = logging.getLogger(__name__)
 
 
 class ResourceCheckers:
@@ -27,12 +31,14 @@ class ResourceCheckers:
         sql: SqlExecutor,
         pg: PgExecutor,
         compute: ComputeService,
+        audience_groups: tuple[str, ...] = (),
     ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._sql = sql
         self._pg = pg
         self._compute = compute
+        self._audience_groups = audience_groups
         self._app_sp: str | None = None
         self._app_sp_resolved = False
 
@@ -105,8 +111,207 @@ class ResourceCheckers:
             )
         return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
 
+    def check_runner_access(
+        self,
+        job_id: int,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+        include_outputs: bool = False,
+    ) -> SetupStep:
+        """Verify wheel access, schema usage, and main-schema data access.
+
+        Missing grants are reported for an administrator to apply; this check
+        never grants the runner write or administrative privileges.
+
+        Args:
+            job_id: Resolved task-runner job whose run-as identity is checked.
+            reader_ws: Setup administrator's OBO client for read-only ownership
+                inspection, or the app client during unattended startup.
+            reader_sql: Administrator's SQL executor for SHOW GRANTS using the
+                supported Apps SQL scope instead of the grants REST API.
+            include_outputs: Check main-schema SELECT/MODIFY after migrations.
+                Schema grants cover current and future outputs; source access
+                remains run-specific. Runner Lakebase access is not checked.
+        """
+        app_sp = self._app_sp_id()
+        try:
+            job = self._workspace.jobs.get(job_id)
+            run_as = getattr(getattr(job, "settings", None), "run_as", None)
+            principal = getattr(run_as, "service_principal_name", None)
+        except Exception:
+            # Setup must remain action-required when the Jobs API cannot resolve the identity.
+            principal = None
+        if (
+            not app_sp
+            or not isinstance(principal, str)
+            or not principal.strip()
+            or _has_control_characters(principal)
+            or principal.casefold() == app_sp.casefold()
+        ):
+            return _action_required(
+                SetupStepId.TASK_RUNNER,
+                "task_runner_identity_unresolved",
+                "Could not resolve a task-runner service principal distinct from the app identity.",
+            )
+        volume = self._resources.volume
+        catalog = _instruction_identifier(volume.catalog)
+        schema = f"{catalog}.{_instruction_identifier(volume.schema)}"
+        quoted_volume = f"{schema}.{_instruction_identifier(volume.volume)}"
+        quoted_principal = _instruction_identifier(principal)
+        requirements = [
+            ("CATALOG", volume.catalog, "USE_CATALOG", "USE CATALOG", catalog),
+            ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE SCHEMA", schema),
+            (
+                "SCHEMA",
+                f"{volume.catalog}.{self._resources.tmp_schema}",
+                "USE_SCHEMA",
+                "USE SCHEMA",
+                f"{catalog}.{_instruction_identifier(self._resources.tmp_schema)}",
+            ),
+            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ VOLUME", quoted_volume),
+        ]
+        if include_outputs:
+            requirements.extend(
+                ("SCHEMA", self._main_schema_full_name(), privilege, privilege, schema)
+                for privilege in ("SELECT", "MODIFY")
+            )
+        instructions: list[str] = []
+        unknown: list[str] = []
+        inspected: dict[tuple[str, str], frozenset[str] | None] = {}
+        grant_rows: dict[tuple[str, str], list[dict[str, str]]] = {}
+        memberships: dict[str, frozenset[str]] = {}
+        for kind, full_name, privilege, grant, quoted_name in requirements:
+            key = (kind, full_name)
+            if key not in inspected:
+                required = frozenset(item[2] for item in requirements if item[:2] == key)
+                inspected[key] = self._runner_privileges(
+                    kind, full_name, principal, reader_sql, required, grant_rows, memberships
+                )
+            privileges = inspected[key]
+            if privileges is not None and (privilege in privileges or "ALL_PRIVILEGES" in privileges):
+                continue
+            # Container ownership does not imply data access to child tables.
+            if privilege not in {"SELECT", "MODIFY"} and (
+                self._is_owner(kind, full_name, principal)
+                or (reader_ws is not None and self._is_owner(kind, full_name, principal, reader_ws=reader_ws))
+            ):
+                continue
+            if privileges is None:
+                unknown.append(
+                    f"Verify setup as an administrator with ownership or READ METADATA on {kind} {quoted_name}, "
+                    "or as a metastore administrator, to inspect the runner's grants. "
+                    "SQL verification also requires CAN_USE on the bound warehouse and USE CATALOG/USE SCHEMA "
+                    "on the temporary schema and the object's parent containers."
+                )
+                continue
+            instructions.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
+        if unknown:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permission_check_failed",
+                summary="Could not verify task-runner access to required Studio resources.",
+                instructions=(*unknown, *instructions),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        if instructions:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permissions_missing",
+                summary="The task-runner service principal needs access to required Studio resources.",
+                instructions=tuple(instructions),
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
+        return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
+
+    def _runner_privileges(
+        self,
+        kind: str,
+        full_name: str,
+        principal: str,
+        reader_sql: SqlExecutor | None,
+        required: frozenset[str],
+        grant_rows: dict[tuple[str, str], list[dict[str, str]]],
+        memberships: dict[str, frozenset[str]],
+    ) -> frozenset[str] | None:
+        # App credentials support effective grants, unlike the OBO grants API.
+        response = self._effective_permissions(kind, full_name, principal)
+        if response is not None:
+            return _privileges(response)
+        if reader_sql is None:
+            return None
+        try:
+            parts = full_name.split(".")
+            for part in parts:
+                validate_identifier(part)
+            validate_identifier(principal)
+            objects = [(kind, full_name)]
+            if kind != "CATALOG":
+                objects.append(("CATALOG", parts[0]))
+            if kind == "VOLUME":
+                objects.append(("SCHEMA", ".".join(parts[:2])))
+            rows: list[dict[str, str]] = []
+            for object_kind, name in objects:
+                key = (object_kind, name)
+                if key not in grant_rows:
+                    normalized: list[dict[str, str]] = []
+                    for row in reader_sql.query_dicts(
+                        f"SHOW GRANTS ON {object_kind} {quote_fqn(name)}", require_complete=True
+                    ):
+                        values = {column.casefold(): value for column, value in row.items()}
+                        granted_principal = values.get("principal")
+                        action = values.get("actiontype")
+                        if (
+                            len(values) != len(row)
+                            or not isinstance(granted_principal, str)
+                            or not granted_principal.strip()
+                            or not isinstance(action, str)
+                            or not action.strip()
+                        ):
+                            return None
+                        normalized.append({"principal": granted_principal, "actiontype": action})
+                    grant_rows[key] = normalized
+                rows.extend(grant_rows[key])
+            direct = frozenset(
+                row["actiontype"].upper().replace(" ", "_")
+                for row in rows
+                if row["principal"].strip().casefold() == principal.casefold()
+            )
+            if required.issubset(direct) or "ALL_PRIVILEGES" in direct:
+                return direct
+            if not any(row["principal"].strip().casefold() != principal.casefold() for row in rows):
+                return direct
+            if principal not in memberships:
+                matches = [
+                    sp
+                    for sp in self._workspace.service_principals.list(
+                        filter=f"applicationId eq {json.dumps(principal)}"
+                    )
+                    if (sp.application_id or "").casefold() == principal.casefold()
+                ]
+                if len(matches) != 1:
+                    return None
+                memberships[principal] = frozenset(
+                    value.strip().casefold()
+                    for group in matches[0].groups or []
+                    for value in (group.display, group.value)
+                    if value
+                )
+            return direct | frozenset(
+                row["actiontype"].upper().replace(" ", "_")
+                for row in rows
+                if row["principal"].strip().casefold() in memberships[principal]
+            )
+        except Exception:
+            return None
+
     def ensure_sibling_schemas(self) -> SetupStep:
-        """Create the app-owned temporary and Genie schemas if they are absent."""
+        """Create sibling schemas and verify the app can create views in them."""
+        app_sp = self._app_sp_id()
+        if not app_sp:
+            return _identity_required(SetupStepId.SCHEMAS)
         try:
             catalog = _validated_identifier(self._resources.volume.catalog)
             schemas = (
@@ -122,6 +327,35 @@ class ResourceCheckers:
                 "Could not create the required application schemas.",
                 action=SetupActionId.RECONCILE,
             )
+        for schema in schemas:
+            full_name = f"{catalog}.{schema}"
+            response = self._effective_permissions("SCHEMA", full_name, app_sp)
+            if response is None:
+                return _action_required(
+                    SetupStepId.SCHEMAS,
+                    "sibling_schema_permission_check_failed",
+                    "Could not verify the app service principal's sibling-schema permissions.",
+                )
+            missing = _missing_privileges(response, _SCHEMA_PRIVILEGES)
+            if missing and not self._is_owner("SCHEMA", full_name, app_sp):
+                quoted_schema = f"{_instruction_identifier(catalog)}.{_instruction_identifier(schema)}"
+                principal = _instruction_identifier(app_sp)
+                return SetupStep(
+                    id=SetupStepId.SCHEMAS,
+                    state=StepState.ACTION_REQUIRED,
+                    code="sibling_schema_permissions_missing",
+                    summary="The app service principal needs permission to create views in a sibling schema.",
+                    instructions=(f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {principal};",),
+                    actions=(SetupActionId.VERIFY_AGAIN,),
+                )
+        for group in self._audience_groups:
+            quoted_schema = f"{self._sql.q(catalog)}.{self._sql.q(schemas[0])}"
+            try:
+                self._sql.execute_no_schema(
+                    f"GRANT USE SCHEMA, CREATE TABLE ON SCHEMA {quoted_schema} TO {_instruction_identifier(group)}"
+                )
+            except Exception:
+                logger.warning("Could not grant a configured audience group access to the temporary schema.")
         return _passed(SetupStepId.SCHEMAS, "Required application schemas are available.")
 
     def check_lakebase(self) -> SetupStep:
@@ -222,14 +456,23 @@ class ResourceCheckers:
         except Exception:
             return None
 
-    def _is_owner(self, securable_type: str, full_name: str, app_sp: str) -> bool:
+    def _is_owner(
+        self,
+        securable_type: str,
+        full_name: str,
+        app_sp: str,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> bool:
+        workspace = reader_ws or self._workspace
         try:
             if securable_type == "VOLUME":
-                securable = self._workspace.volumes.read(full_name)
+                securable = workspace.volumes.read(full_name)
             elif securable_type == "CATALOG":
-                securable = self._workspace.catalogs.get(full_name)
+                securable = workspace.catalogs.get(full_name)
             elif securable_type == "SCHEMA":
-                securable = self._workspace.schemas.get(full_name)
+                securable = workspace.schemas.get(full_name)
+            elif securable_type == "TABLE":
+                securable = workspace.tables.get(full_name)
             else:
                 return False
         except Exception:

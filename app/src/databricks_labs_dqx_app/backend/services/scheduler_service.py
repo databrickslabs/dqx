@@ -797,6 +797,8 @@ class SchedulerService:
         schedule_name = f"product:{product_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -1022,6 +1024,8 @@ class SchedulerService:
         schedule_name = f"table:{binding_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -1662,7 +1666,7 @@ class SchedulerService:
     # Tracker (dq_schedule_runs)
     # ------------------------------------------------------------------
 
-    def _get_tracker(self, name: str) -> dict[str, str] | None:
+    def _get_tracker(self, name: str) -> dict[str, Any] | None:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
         validate_schedule_name(name)
@@ -1670,7 +1674,7 @@ class SchedulerService:
         ts = self._oltp_sql.ts_text
         sql = (
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "
-            f"last_run_id, status "
+            f"last_run_id, status, paused "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._oltp_sql.query(sql)
@@ -1683,12 +1687,13 @@ class SchedulerService:
             "next_run_at": row[2],
             "last_run_id": row[3],
             "status": row[4],
+            "paused": len(row) > 5 and row[5] in (True, "true", "t", 1),
         }
 
     def _realign_next_run(
         self,
         schedule_name: str,
-        tracker: dict[str, str],
+        tracker: dict[str, Any],
         next_run: Any,
         cron_expr: str,
         tz_name: str | None,
@@ -1725,20 +1730,26 @@ class SchedulerService:
         missed-window contract already allows, and that firing re-anchors
         ``last_run_at`` to now, so this cannot become a retry loop.
 
-        Two cases deliberately keep the stored value: a cron that no longer
-        parses, and a ``failed`` status. Both mean ``next_run_at`` may be a
-        :data:`_FAILURE_BACKOFF` stamp rather than a real occurrence, and
-        replacing a backoff with "next occurrence after the failed run" is
-        exactly the tight retry loop the backoff exists to prevent. A cron
-        edited during a backoff window takes effect when it expires.
+        One case deliberately keeps the stored value: a cron that no longer
+        parses. Its ``next_run_at`` is a :data:`_FAILURE_BACKOFF` stamp rather
+        than a real occurrence, and the ``_compute_next_cron_run`` call below
+        raises for it — the ``except`` returns the stored stamp untouched, so a
+        malformed cron can never have its backoff replaced by "next occurrence
+        after the failed run" (the tight retry loop the backoff exists to
+        prevent).
+
+        A ``failed`` status does NOT skip realignment. When a firing fails under
+        a VALID cron, :meth:`_finish_schedule_firing` advances ``next_run_at``
+        to a real cron occurrence (not a backoff) and stamps ``failed``; if the
+        cron is then edited, that occurrence must realign like any other —
+        otherwise a single failed run freezes the schedule on its old cadence
+        and silently ignores every later edit. This cannot loop: the
+        re-derived occurrence is anchored on ``last_run_at`` and firing it
+        re-anchors ``last_run_at`` to now.
 
         Returns the ``next_run_at`` the caller should evaluate — the stored one
         or, when realigned, the new occurrence.
         """
-        status = tracker.get("status")
-        if status == "failed":
-            return next_run
-
         stored_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
         if stored_dt is None or stored_dt <= now:
             return next_run
@@ -1768,6 +1779,7 @@ class SchedulerService:
         )
         # Only the occurrence moves: last_run_at / last_run_id / status carry
         # over so the Schedules UI keeps showing the previous run's outcome.
+        status = tracker.get("status")
         self._upsert_tracker(
             schedule_name,
             last_dt,
@@ -2512,6 +2524,7 @@ class SchedulerService:
     def _create_view(self, source_table_fqn: str) -> str:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
+        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
@@ -2519,7 +2532,7 @@ class SchedulerService:
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
+        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
@@ -2534,24 +2547,51 @@ class SchedulerService:
                 "The SQL query contains prohibited statements and cannot be used to create a view."
             )
 
+        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
+        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
 
-    def _grant_view(self, view_name: str) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+    def _resolve_view_runner(self) -> str:
+        """Resolve the job's current run-as identity before creating a view."""
+        from databricks_labs_dqx_app.backend.services.view_service import quote_view_principal
 
         try:
-            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
-        except Exception as e:
-            logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
+            job = self._ws.jobs.get(job_id=int(self._job_id))
+            run_as = job.settings.run_as if job.settings else None
+            if run_as is None or run_as.group_name:
+                raise RuntimeError("Missing direct job run-as identity")
+            principals = [name for name in (run_as.service_principal_name, run_as.user_name) if name]
+            if len(principals) != 1:
+                raise RuntimeError("Ambiguous job run-as identity")
+            return quote_view_principal(principals[0])
+        except Exception:
+            raise RuntimeError(
+                "Cannot resolve a valid task-runner identity for temporary view permissions. "
+                "Verify the job run-as configuration and job read access."
+            ) from None
+
+    def _grant_view(self, view_name: str, runner: str) -> None:
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        quoted_view = quote_fqn(view_name)
+        try:
+            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quoted_view} TO {runner}")
+        except Exception:
+            try:
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quoted_view}")
+            except Exception:
+                logger.warning("Scheduler temporary view cleanup failed after a permission failure")
+            raise RuntimeError(
+                "Cannot grant temporary view access to the task runner. View cleanup was attempted."
+            ) from None
 
     _tmp_schema_ensured = False
 

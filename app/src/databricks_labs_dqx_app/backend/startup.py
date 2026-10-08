@@ -28,7 +28,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_rules_catalog_service,
     get_run_set_service,
     get_sp_ws,
-    get_view_service,
+    get_scheduler_view_service,
     set_oltp_executor,
 )
 from databricks_labs_dqx_app.backend.logger import logger
@@ -37,7 +37,9 @@ from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunne
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor_from_connection
 from databricks_labs_dqx_app.backend.runtime import Runtime
 from databricks_labs_dqx_app.backend.runtime import rt as application_runtime
+from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.reset_status import ResetStatusStore
 from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
@@ -45,7 +47,11 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
 from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
+    DIM_MONITORED_TABLES_TABLE_NAME,
+    DIM_RULES_TABLE_NAME,
+    MetadataDimService,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
@@ -65,6 +71,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
@@ -78,9 +85,7 @@ from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
-from databricks_labs_dqx_app.backend.run_config_store import RUN_CONFIGS_TABLE
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import validate_object_id
 
 StartupHook = Callable[[], Awaitable[None] | None]
 
@@ -256,6 +261,7 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
                 sql=sp_sql,
                 pg=pg_executor,
                 compute=compute,
+                audience_groups=tuple(conf.user_groups),
             ),
             jobs=TaskRunnerJobManager(sp_ws),
             pg_migrations=PgMigrationRunner(pg_executor),
@@ -431,11 +437,11 @@ async def _run_post_migration_startup(
     resources: ActiveResources,
     resource_tagger: ResourceTaggingService,
 ) -> None:
+    _mark_interrupted_admin_jobs(oltp)
     _ensure_score_views(delta_sql, resources)
     await _ensure_metadata_dims(delta_sql, oltp, resources)
-    _ensure_entitlement_objects(delta_sql, resources)
-    _grant_user_view_access(delta_sql, resources)
-    _grant_task_runner_run_config_access(oltp)
+    ensure_entitlement_objects(delta_sql, resources)
+    grant_user_view_access(delta_sql, resources, audience_groups=tuple(conf.user_groups))
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
@@ -460,11 +466,27 @@ async def _run_post_migration_startup(
     mark_tmp_schema_ready()
 
 
+def _mark_interrupted_admin_jobs(oltp: OltpExecutorProtocol) -> None:
+    """Fail any demo-seed / database-reset status still ``running`` from the previous process.
+
+    Both jobs run on daemon threads of the app process, so a restart kills them
+    without a terminal status. Runs first in activation, before the admin routes
+    that launch either job can be reached.
+    """
+    settings = AppSettingsService(sql=oltp)
+    for name, store in (("Demo deployment", DemoStatusStore(settings)), ("Database reset", ResetStatusStore(settings))):
+        try:
+            if store.mark_interrupted_if_running():
+                logger.warning("%s was interrupted by an app restart; marked as failed", name)
+        except Exception:
+            logger.warning("Could not check for an interrupted %s", name.lower(), exc_info=True)
+
+
 def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
     try:
         ScoreViewService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_views()
     except Exception:
-        logger.warning("Could not create the DQ score views")
+        raise RequiredViewSetupError() from None
 
 
 async def _ensure_metadata_dims(
@@ -479,72 +501,67 @@ async def _ensure_metadata_dims(
                 registry=RegistryService(sql=oltp),
                 monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
                 genie_schema=resources.genie_schema,
+                audience_groups=tuple(conf.user_groups),
             )
         )
     except Exception:
         logger.warning("Could not refresh the DQ metadata dimensions")
 
 
-def _ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
+def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
+    """Create required entitlement objects or raise a sanitized setup failure.
+
+    Args:
+        delta_sql: App service principal's SQL executor.
+        resources: Resolved installation resources.
+
+    Raises:
+        RequiredViewSetupError: If the entitlement table or view cannot be created.
+    """
     try:
         EntitlementService(sql=delta_sql, genie_schema=resources.genie_schema).ensure_objects()
     except Exception:
-        logger.warning("Could not create the entitlement objects")
+        raise RequiredViewSetupError() from None
 
 
-_USER_READABLE_VIEWS = (
-    METRIC_VIEW_NAME,
-    SHAPING_VIEW_NAME,
-    ASOF_VIEW_NAME,
-    ATTRIBUTION_VIEW_NAME,
-    FAILING_ROWS_VIEW_NAME,
-)
+def grant_user_view_access(
+    delta_sql: SqlExecutor, resources: ActiveResources, *, audience_groups: tuple[str, ...] = ()
+) -> None:
+    """Best-effort user access to approved Genie views and metadata tables.
 
-
-def _grant_task_runner_run_config_access(oltp: OltpExecutorProtocol) -> None:
-    """Grant the task-runner SP read/delete on ``dq_run_configs`` in Lakebase."""
-    role = conf.task_runner_postgres_role.strip()
-    if not role or getattr(oltp, "dialect", "") != "postgres":
-        return
-    # A malformed role must never be interpolated into DDL, but a cosmetic
-    # misconfig of this optional grant must not abort startup — this is a
-    # best-effort step, like the adjacent grants. Log and skip instead of
-    # letting validate_object_id's ValueError propagate out of the lifespan.
-    try:
-        validate_object_id(role)
-    except ValueError:
+    Args:
+        delta_sql: App service principal's SQL executor.
+        resources: Resolved installation resources.
+    """
+    if not audience_groups:
         logger.warning(
-            "Task-runner Postgres role is not a valid identifier; skipping the dq_run_configs grant", exc_info=True
+            "DQX_USER_GROUPS is empty: audience access is administrator-managed. "
+            "No audience grants will be applied; configure scoped groups or grant access manually. "
+            "Existing grants are not revoked."
         )
         return
-    schema = oltp.q(oltp.schema)
-    table = oltp.fqn(RUN_CONFIGS_TABLE)
-    quoted_role = oltp.q(role)
-    statements = [
-        f"GRANT USAGE ON SCHEMA {schema} TO {quoted_role}",
-        f"GRANT SELECT, DELETE ON {table} TO {quoted_role}",
-    ]
-    for statement in statements:
-        try:
-            oltp.execute(statement)
-        except Exception:
-            # Name the failing statement so a later opaque runner permission
-            # error can be traced back to the specific grant that did not apply.
-            logger.warning("Task-runner grant failed: %s", statement, exc_info=True)
-
-
-def _grant_user_view_access(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
     catalog = delta_sql.q(resources.volume.catalog)
     schema = delta_sql.q(resources.genie_schema)
-    statements = [
-        f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `account users`",
-        *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{name} TO `account users`" for name in _USER_READABLE_VIEWS),
-    ]
-    for statement in statements:
-        try:
-            delta_sql.execute_no_schema(statement)
-        except Exception:
-            logger.warning("Could not grant account users access to a Studio view", exc_info=True)
+    genie_objects = (
+        METRIC_VIEW_NAME,
+        SHAPING_VIEW_NAME,
+        ASOF_VIEW_NAME,
+        ATTRIBUTION_VIEW_NAME,
+        FAILING_ROWS_VIEW_NAME,
+        DIM_RULES_TABLE_NAME,
+        DIM_MONITORED_TABLES_TABLE_NAME,
+    )
+    for group in audience_groups:
+        principal = delta_sql.q(group)
+        statements = [
+            f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO {principal}",
+            *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{delta_sql.q(name)} TO {principal}" for name in genie_objects),
+        ]
+        for statement in statements:
+            try:
+                delta_sql.execute_no_schema(statement)
+            except Exception:
+                logger.warning("Could not grant a configured audience group access to a Genie object.")
 
 
 def _ensure_genie_space(
@@ -561,6 +578,7 @@ def _ensure_genie_space(
             warehouse_id=resources.warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
+            audience_groups=tuple(conf.user_groups),
         )
     except Exception:
         logger.warning("Could not provision the DQ Genie space")
@@ -593,7 +611,7 @@ async def _build_scheduler_data_product_service(
         rules_catalog=rules_catalog,
         materializer=materializer,
     )
-    view_service = await get_view_service(sql=delta_sql, sp_sql=delta_sql)
+    view_service = await get_scheduler_view_service(sp_ws=workspace, sp_sql=delta_sql)
     job_service = await get_job_service(sp_ws=workspace, sql=delta_sql, oltp=oltp, app_settings=app_settings)
     run_sets = await get_run_set_service(sql=oltp, validation_sql=delta_sql)
     binding_runs = await get_binding_run_service(

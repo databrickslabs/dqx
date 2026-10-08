@@ -23,6 +23,9 @@ variables:
   admin_group:
     description: "Workspace group bootstrapped with the Admin role"
     default: "admins"
+  studio_user_group:
+    description: "Existing scoped workspace group allowed to use Studio, its warehouse, and approved Genie objects"
+    default: "dqx-studio-users"
   app_name:
     description: "Databricks App name (unique per workspace)"
     default: "dqx-studio"
@@ -147,6 +150,8 @@ variables:
           value: "${var.tmp_schema_name}"
         - name: "DQX_ADMIN_GROUP"
           value: "${var.admin_group}"
+        - name: "DQX_USER_GROUPS"
+          value: '["${var.studio_user_group}"]'
         - name: "DQX_WHEELS_VOLUME"
           value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
         - name: "DQX_LAKEBASE_ENDPOINT"
@@ -201,6 +206,7 @@ resources:
 
       user_api_scopes:
         - sql
+        - genie
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read
@@ -235,15 +241,13 @@ resources:
         # No ``database:`` binding — the app connects via DQX_LAKEBASE_ENDPOINT and
         # gets connect/create rights from postgres_roles.app_sp (below).
 
-      # Workspace-scoped ACL: use the workspace-local ``users`` group (the
-      # account-level ``account users`` group isn't resolvable by the app
-      # permissions API in workspaces where it isn't synced).
+      # Share only with the explicitly configured Studio audience.
       permissions:
-        - group_name: "users"
+        - group_name: ${var.studio_user_group}
           level: "CAN_USE"
 
   # Bundle-managed SQL warehouse. The app queries it (app SP via the binding above)
-  # and end-user OBO dry-run/preview queries run through it, so ``users`` needs CAN_USE.
+  # and the configured audience's OBO dry-run/preview queries run through it.
   sql_warehouses:
     dqx_sql_warehouse:
       name: ${var.sql_warehouse_name}
@@ -257,14 +261,12 @@ resources:
       enable_serverless_compute: true
       warehouse_type: PRO
       # List the app SP explicitly: with ``permissions`` set, the app's warehouse
-      # binding would otherwise override them and drop its access. Use workspace
-      # ``users`` — the warehouse permissions API can't resolve account-level
-      # ``account users`` (UC ``grants`` below can).
+      # binding would otherwise override them and drop its access.
       permissions:
         - level: CAN_USE
           service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
         - level: CAN_USE
-          group_name: "users"
+          group_name: ${var.studio_user_group}
 
   # Stateful storage. ``lifecycle.prevent_destroy: true`` makes ``bundle destroy``
   # (or a replacing deploy) fail fast instead of dropping data; to tear down, drop
@@ -273,7 +275,7 @@ resources:
   # a catalog the bundle doesn't manage — for the **app SP** this is handled by
   # binding the wheels volume as an app ``uc_securable`` above (Databricks Apps
   # auto-grants USE CATALOG + USE SCHEMA on the parents). The **task-runner SP** and
-  # OBO end users (``account users``) still need one manual GRANT — see DEPLOYMENT.md.
+  # configured OBO audience still need a manual catalog grant — see DEPLOYMENT.md.
   schemas:
     main_schema:
       catalog_name: ${var.catalog_name}
@@ -308,7 +310,7 @@ resources:
             - ALL_PRIVILEGES
         # End users create temp views here via their OBO token during dry-run /
         # preview, so they need USE SCHEMA + CREATE TABLE.
-        - principal: "account users"
+        - principal: ${var.studio_user_group}
           privileges:
             - USE_SCHEMA
             - CREATE_TABLE
@@ -325,12 +327,10 @@ resources:
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
             - ALL_PRIVILEGES
-        # The Genie space + end users read these derived views/dims. Schema-level
-        # SELECT covers current + future objects.
-        - principal: "account users"
+        # Startup grants SELECT only on five Genie views and two metadata tables.
+        - principal: ${var.studio_user_group}
           privileges:
             - USE_SCHEMA
-            - SELECT
       lifecycle:
         prevent_destroy: true
     demo_schema:
@@ -353,7 +353,7 @@ resources:
             - ALL_PRIVILEGES
         # End users browse/preview the demo source tables via OBO, so they need
         # read access (the demo is meant to be explored).
-        - principal: "account users"
+        - principal: ${var.studio_user_group}
           privileges:
             - USE_SCHEMA
             - SELECT
@@ -421,9 +421,10 @@ resources:
       membership_roles:
         - DATABRICKS_SUPERUSER
     # Login role for the task-runner SP (a different SP than the app). It reads
-    # and deletes staged run configs in ``dq_run_configs``; the app grants it
-    # USAGE + SELECT/DELETE at startup (see _grant_task_runner_run_config_access).
-    # Least privilege: no createdb/createrole/superuser — only the explicit grant.
+    # and deletes staged run configs in ``dq_run_configs``. Setup verifies its
+    # CONNECT, USAGE and SELECT/DELETE grants after migrations; an administrator
+    # applies missing grants using the setup instructions.
+    # Least privilege: no createdb/createrole/superuser.
     task_runner_sp:
       parent: "projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}"
       role_id: "sp-${var.dqx_service_principal_application_id}"
@@ -439,11 +440,10 @@ resources:
       dataset_catalog: ${var.catalog_name}
       dataset_schema: ${var.schema_name}
       embed_credentials: true
-      # Workspace-scoped ACL — see the app/warehouse permissions note; use the
-      # workspace-local ``users`` group, not account-level ``account users``.
+      # Share the aggregate dashboard only with the configured audience.
       permissions:
         - level: CAN_READ
-          group_name: "users"
+          group_name: ${var.studio_user_group}
 
   jobs:
     dqx_task_runner:

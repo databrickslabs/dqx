@@ -37,6 +37,10 @@ skipped (logged) when no Job/warehouse is available and never fails the seed.
   :meth:`~DataProductService.add_member` (requires each binding already
   approved) -> :meth:`~DataProductService.submit` ->
   :meth:`~DataProductService.approve`.
+* **Schedules** — a few realistic table + collection schedules from
+  :data:`~.manifest.SCHEDULES`, written through the same services the schedule
+  routes use and seeded **paused**: the pause flag is written *before* the cron,
+  so the scheduler never sees an unpaused demo schedule and none ever fires.
 
 **Testability.** ``run(weeks=0)`` builds rules + bindings + products (all
 approved) and writes a terminal status, but SKIPS the validation-gate real-run
@@ -59,6 +63,7 @@ from databricks_labs_dqx_app.backend.demo import datagen, manifest, redate
 from databricks_labs_dqx_app.backend.demo.manifest import (
     BindingSpec,
     RuleSpec,
+    ScheduleSpec,
     UNIQUE_EXPECT_ROWS,
     WEEKS_DEFAULT,
     active_mapping,
@@ -92,7 +97,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
-from databricks_labs_dqx_app.backend.services.job_service import JobService
+from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
@@ -106,6 +111,12 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 )
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
+from databricks_labs_dqx_app.backend.services.schedule_config_service import (
+    PRODUCT_SCHEDULE_PREFIX,
+    TABLE_SCHEDULE_PREFIX,
+    ScheduleConfigService,
+)
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import ScheduleGrantService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -144,6 +155,10 @@ _METRICS_POLL_SECONDS = 5
 # ~30min seed).
 _PROFILE_TIMEOUT_SECONDS = 900
 _PROFILE_POLL_SECONDS = 10
+# Job life-cycle states after which the profiler can no longer write its row.
+# A job that ends without one (e.g. its write failed) must not hold the seed
+# for the full timeout.
+_JOB_ENDED_STATES = frozenset({"TERMINATED", "SKIPPED", "INTERNAL_ERROR"})
 # Rows the demo profiler samples from its source table.
 _PROFILE_SAMPLE_LIMIT = 50_000
 _PROFILE_SAMPLE = ProfilerSample(kind=PROFILER_SAMPLE_KIND_RECORDS, value=_PROFILE_SAMPLE_LIMIT)
@@ -159,6 +174,7 @@ class DemoSeedResult:
         products: Number of data products created or reused.
         weeks: Number of weeks of quality trend generated (0 for a build-only run).
         trend_points: Number of re-dated score-history points written.
+        schedules: Number of paused demo schedules written.
     """
 
     rules: int
@@ -166,6 +182,7 @@ class DemoSeedResult:
     products: int
     weeks: int
     trend_points: int
+    schedules: int = 0
 
 
 class DemoSeedService:
@@ -194,6 +211,8 @@ class DemoSeedService:
         tagging_sql: SqlExecutor | None = None,
         job_service: JobService | None = None,
         profiler_view: ViewService | None = None,
+        schedule_config: ScheduleConfigService | None = None,
+        schedule_grants: ScheduleGrantService | None = None,
         catalog: str = "dqx",
     ) -> None:
         self._demo_sql = demo_sql
@@ -227,6 +246,14 @@ class DemoSeedService:
         # route before the seed thread launches (tagging is the first phase, so
         # the OBO token is still fresh). ``None`` in CLI/tests → SP, best-effort.
         self._tagging_sql = tagging_sql
+        # Optional schedule collaborators. With *schedule_config* the seed ends
+        # by writing the paused demo schedules; without it (minimal test graph)
+        # that phase is a logged no-op. *schedule_grants* is an SP-only
+        # ScheduleGrantService: the demo tables are created (and so owned) by the
+        # app SP, so its read probe passes and only the best-effort task-runner
+        # grant is attempted. It never fails the seed.
+        self._schedule_config = schedule_config
+        self._schedule_grants = schedule_grants
         self._catalog = catalog
         self._schema = manifest.SOURCE_SCHEMA
         self._started_at = ""
@@ -307,12 +334,17 @@ class DemoSeedService:
                 # (current) score for the freshly governed tables.
                 self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
 
+            self._set_status("running", "schedules", "Adding paused schedules", user_email)
+            product_map = {spec.name: pid for spec, pid in zip(manifest.DATA_PRODUCTS, product_ids, strict=True)}
+            schedules = self._build_schedules(binding_map, product_map, user_email)
+
             result = DemoSeedResult(
                 rules=len(rule_map),
                 tables=len(binding_map),
                 products=len(product_ids),
                 weeks=weeks,
                 trend_points=trend_points,
+                schedules=schedules,
             )
             self._set_status(
                 "succeeded",
@@ -486,8 +518,9 @@ class DemoSeedService:
                 sample_kind=_PROFILE_SAMPLE.kind,
                 job_run_id=job_run_id,
             )
-            status = self._wait_for_profile(run_id)
-            if status == "SUCCESS":
+            status = self._wait_for_profile(run_id, job_service, job_run_id)
+            # ``JOB_SUCCESS``: the Job succeeded but its result row isn't visible yet.
+            if status in ("SUCCESS", "JOB_SUCCESS"):
                 logger.info("Demo profiling of %s completed (run_id=%s)", table_fqn, self._sanitize(run_id))
             else:
                 logger.warning(
@@ -514,27 +547,57 @@ class DemoSeedService:
                     # finally, so a drop failure must never mask the seed result.
                     logger.warning("Failed to drop demo profiler view %s", self._sanitize(view_fqn))
 
-    def _wait_for_profile(self, run_id: str) -> str | None:
+    def _wait_for_profile(self, run_id: str, job_service: JobService, job_run_id: int) -> str | None:
         """Poll ``dq_profiling_results`` until the profiler run reaches a terminal row.
 
         The runner overwrites the app-written RUNNING placeholder with a terminal
         (``SUCCESS`` / ``FAILED``) row once the Job finishes; this reads that
-        non-RUNNING status. Returns the terminal status, or ``None`` when the
-        bounded deadline elapses first (the caller logs that best-effort).
+        non-RUNNING status. If the Job itself ends without writing one, returns a
+        ``JOB_<state>`` status right away instead of waiting out the deadline.
+        Returns ``None`` when the bounded deadline elapses first (the caller logs
+        that best-effort).
         """
-        results_fqn = self._app_sql.fqn("dq_profiling_results")
         deadline = time.monotonic() + _PROFILE_TIMEOUT_SECONDS
         while True:
-            rows = self._app_sql.query_dicts(
-                f"SELECT status FROM {results_fqn} "  # noqa: S608
-                f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
-            )
-            status = rows[0].get("status") if rows else None
+            status = self._profile_result_status(run_id)
             if status:
                 return status
+            job_status = self._profile_job_status(job_service, job_run_id)
+            if job_status is not None and job_status.state in _JOB_ENDED_STATES:
+                # The runner writes its row before the Job ends; re-read once in
+                # case it landed between the two checks.
+                status = self._profile_result_status(run_id)
+                if status:
+                    return status
+                logger.warning(
+                    "Demo profiler job %s ended without a result row (%s): %s",
+                    job_run_id,
+                    job_status.result_state or job_status.state,
+                    self._sanitize(job_status.message or ""),
+                )
+                return f"JOB_{job_status.result_state or job_status.state}"
             if time.monotonic() >= deadline:
                 return None
             time.sleep(_PROFILE_POLL_SECONDS)
+
+    def _profile_result_status(self, run_id: str) -> str | None:
+        results_fqn = self._app_sql.fqn("dq_profiling_results")
+        rows = self._app_sql.query_dicts(
+            f"SELECT status FROM {results_fqn} "  # noqa: S608
+            f"WHERE run_id = '{escape_sql_string(run_id)}' AND status <> 'RUNNING' LIMIT 1"
+        )
+        return rows[0].get("status") if rows else None
+
+    @staticmethod
+    def _profile_job_status(job_service: JobService, job_run_id: int) -> RunStatus | None:
+        try:
+            return job_service.get_run_status(job_run_id)
+        except Exception:
+            # Broad except by design (see the BLE001 policy block in
+            # pyproject.toml): a Jobs API hiccup must fall back to the
+            # row-only poll, never abort profiling.
+            logger.warning("Could not read demo profiler job %s status", job_run_id, exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # Phase: rules
@@ -817,6 +880,75 @@ class DemoSeedService:
             self._data_products.approve(product.product_id, user_email)
             product_ids.append(product.product_id)
         return product_ids
+
+    # ------------------------------------------------------------------
+    # Phase: schedules (paused)
+    # ------------------------------------------------------------------
+
+    def _build_schedules(self, binding_map: dict[str, str], product_map: dict[str, str], user_email: str) -> int:
+        """Write every :data:`~.manifest.SCHEDULES` entry as a paused schedule; return how many.
+
+        Each schedule goes through the same services the schedule routes use
+        (:meth:`MonitoredTableService.update_schedule` /
+        :meth:`DataProductService.update` for the cron, and
+        :meth:`ScheduleConfigService.set_tracker_paused` for the pause flag the
+        Schedules page toggles). The pause is written FIRST: the scheduler skips
+        a target whose tracker is paused, and a target only becomes schedulable
+        once it has a cron, so there is no window in which a demo schedule could
+        fire. Both writes are upserts keyed on the target, so a re-seed rewrites
+        the same schedules (re-pausing any a user resumed) instead of adding
+        more, and a wipe-first reset clears them with the rest of the app data.
+
+        A target missing from *binding_map* / *product_map* is skipped.
+        """
+        if self._schedule_config is None:
+            logger.info("Demo schedules skipped: no schedule config service")
+            return 0
+        written = 0
+        for spec in manifest.SCHEDULES:
+            if spec.target_kind == "table":
+                binding_id = binding_map.get(spec.target)
+                if binding_id is None:
+                    continue
+                self._schedule_config.set_tracker_paused(f"{TABLE_SCHEDULE_PREFIX}{binding_id}", True)
+                self._grant_scheduler_reads([self._table_fqn(spec.target)])
+                self._monitored_tables.update_schedule(
+                    binding_id, spec.cron, spec.timezone, user_email, schedule_kind=spec.kind
+                )
+            else:
+                product_id = product_map.get(spec.target)
+                if product_id is None:
+                    continue
+                self._schedule_config.set_tracker_paused(f"{PRODUCT_SCHEDULE_PREFIX}{product_id}", True)
+                self._grant_scheduler_reads(self._data_products.member_table_fqns(product_id))
+                self._data_products.update(product_id, self._product_schedule_updates(spec), user_email)
+            written += 1
+        return written
+
+    @staticmethod
+    def _product_schedule_updates(spec: ScheduleSpec) -> dict[str, Any]:
+        """The schedule-only partial update the collection Scheduling tab sends (keeps the status)."""
+        return {
+            "schedule_cron": spec.cron,
+            "schedule_tz": spec.timezone,
+            "schedule_kind": spec.kind,
+            "schedule_sample_size": None,
+        }
+
+    def _grant_scheduler_reads(self, fqns: list[str]) -> None:
+        """Best-effort scheduler SELECT grant on *fqns*; never fails the seed.
+
+        :meth:`ScheduleGrantService.grant_select_to_schedulers` already skips
+        the app-SP grant when the SP can read the table (it created the demo
+        tables), so on a normal deploy this only tops up the task-runner SP.
+        """
+        if self._schedule_grants is None:
+            return
+        for fqn in fqns:
+            try:
+                self._schedule_grants.grant_select_to_schedulers(fqn)
+            except Exception as exc:  # grants are best-effort for the seed
+                logger.warning("Demo schedule grant skipped for %s: %s", fqn, self._sanitize(str(exc)))
 
     # ------------------------------------------------------------------
     # Phase: validation gate (weeks > 0)

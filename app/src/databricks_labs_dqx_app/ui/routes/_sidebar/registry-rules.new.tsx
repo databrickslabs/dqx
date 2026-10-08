@@ -35,6 +35,7 @@ import {
   takeDescribeRuleProposal,
 } from "@/components/apply-rules/describe-rule-handoff";
 import { cn } from "@/lib/utils";
+import { resolvePageTab } from "@/lib/registry-rule-page-tab";
 
 export const Route = createFileRoute("/_sidebar/registry-rules/new")({
   validateSearch: (search: Record<string, unknown>): { tab?: string; returnTo?: string } => ({
@@ -52,6 +53,8 @@ function RegistryRuleCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { tab, returnTo } = useSearch({ from: "/_sidebar/registry-rules/new" });
+  // Absent ?tab= means About — derived, never redirected (one history entry).
+  const activeTab = resolvePageTab(tab);
 
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
@@ -162,7 +165,7 @@ function RegistryRuleCreatePage() {
           viewingRule={null}
           labelDefinitions={labelDefinitions}
           onSaved={handleSaved}
-          activeTab={tab as PageTab | undefined}
+          activeTab={activeTab}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
           jsonDialogOpen={formJsonDialogOpen}

@@ -7,16 +7,31 @@ makes services testable via ``create_autospec(SqlExecutor)``.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState
+from databricks.sdk.service.sql import Disposition, Format, StatementState, StatementStatus
 
 from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+class SqlStatementError(RuntimeError):
+    """SQL execution failure carrying a validated SQLSTATE diagnostic."""
+
+    def __init__(self, message: str, sqlstate: str | None) -> None:
+        """Preserve the existing error message and a safe structured diagnostic.
+
+        Args:
+            message: Existing SQL execution error message.
+            sqlstate: SQLSTATE from the SDK statement status.
+        """
+        super().__init__(message)
+        self.sqlstate = sqlstate if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else None
 
 
 # ---------------------------------------------------------------------------
@@ -672,17 +687,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL statement returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
 
         if state == StatementState.SUCCEEDED:
             return
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def execute_no_schema(self, sql: str) -> None:
@@ -702,17 +719,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL statement returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, 120)
+            status = self._wait_for_completion(sid, 120)
+            state = status.state
 
         if state == StatementState.SUCCEEDED:
             return
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL execution failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
@@ -732,17 +751,19 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
             if state == StatementState.SUCCEEDED and sid:
                 resp = self._ws.statement_execution.get_statement(sid)
 
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status and resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL query failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
@@ -750,11 +771,41 @@ class SqlExecutor:
             return resp.result.data_array
         return []
 
-    def query_dicts(self, sql: str, *, timeout_seconds: int = 120) -> list[dict[str, str | None]]:
+    def query_dicts(
+        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+    ) -> list[dict[str, str | None]]:
         """Execute a SQL query and return rows as column-name-keyed dicts.
 
         Column names are extracted from the response manifest.
+
+        Args:
+            sql: SQL query to execute.
+            timeout_seconds: Maximum time to wait for statement completion.
+            require_complete: Validate the result schema and read every data
+                chunk, rejecting incomplete or ambiguous results. Defaults to
+                the existing permissive first-chunk behavior.
+
+        Raises:
+            RuntimeError: The query fails or complete results cannot be verified.
+                Complete-result failures use sanitized guidance without SQL or
+                upstream error details.
         """
+        if not require_complete:
+            return self._query_dicts(sql, timeout_seconds=timeout_seconds)
+        try:
+            return self._query_dicts(sql, timeout_seconds=timeout_seconds, require_complete=True)
+        except Exception:
+            # SDK, polling, and response-validation failures must not expose
+            # query text or upstream diagnostics during metadata inspection.
+            raise RuntimeError(
+                "Could not verify complete SQL results. Confirm the SQL warehouse is available, "
+                "CAN_USE is granted, and the caller can inspect the requested metadata, then retry."
+            ) from None
+
+    def _query_dicts(
+        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+    ) -> list[dict[str, str | None]]:
+        """Execute a query with optional complete-result validation."""
         resp = self._ws.statement_execution.execute_statement(
             warehouse_id=self._warehouse_id,
             statement=sql,
@@ -767,19 +818,96 @@ class SqlExecutor:
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")
 
-        state = resp.status.state
+        status = resp.status
+        state = status.state
         sid = resp.statement_id
 
         if state not in _TERMINAL_STATES and sid:
-            state = self._wait_for_completion(sid, timeout_seconds)
+            status = self._wait_for_completion(sid, timeout_seconds)
+            state = status.state
             if state == StatementState.SUCCEEDED and sid:
                 resp = self._ws.statement_execution.get_statement(sid)
 
         if state == StatementState.FAILED:
-            msg = resp.status.error.message if resp.status and resp.status.error else "Unknown error"
-            raise RuntimeError(f"SQL query failed: {msg}\nSQL: {sql}")
+            msg = status.error.message if status.error else "Unknown error"
+            raise SqlStatementError(f"SQL query failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
+
+        if require_complete:
+            if (
+                not resp.status
+                or resp.status.state != StatementState.SUCCEEDED
+                or not resp.manifest
+                or not resp.manifest.schema
+                or resp.manifest.truncated
+                or not resp.result
+            ):
+                raise RuntimeError("Incomplete SQL query result.")
+            columns = [col.name or "" for col in resp.manifest.schema.columns or []]
+            if (
+                not columns
+                or any(not name.strip() for name in columns)
+                or len({name.casefold() for name in columns}) != len(columns)
+            ):
+                raise RuntimeError("Unknown SQL query result schema.")
+            manifest = resp.manifest
+            chunk_metadata = {info.chunk_index: info for info in manifest.chunks or []}
+            if len(chunk_metadata) != len(manifest.chunks or []) or any(
+                index is None or index < 0 for index in chunk_metadata
+            ):
+                raise RuntimeError("Ambiguous SQL query chunk metadata.")
+            rows: list[dict[str, str | None]] = []
+            chunk = resp.result
+            chunk_index = chunk.chunk_index if chunk.chunk_index is not None else 0
+            seen = {chunk_index}
+            while True:
+                if chunk.chunk_index is not None and chunk.chunk_index != chunk_index:
+                    raise RuntimeError("Unexpected SQL query result chunk.")
+                metadata = chunk_metadata.get(chunk_index)
+                declared_counts = [
+                    count for count in (chunk.row_count, metadata.row_count if metadata else None) if count is not None
+                ]
+                payload = chunk.data_array
+                if payload is None:
+                    if not (
+                        0 in declared_counts
+                        or manifest.total_row_count == 0
+                        or manifest.total_chunk_count == 0
+                        or manifest.chunks == []
+                    ):
+                        raise RuntimeError("Missing SQL query result payload.")
+                    payload = []
+                if any(count != len(payload) for count in declared_counts):
+                    raise RuntimeError("Incomplete SQL query chunk rows.")
+                for row in payload:
+                    if len(row) != len(columns):
+                        raise RuntimeError("Malformed SQL query result row.")
+                    rows.append(dict(zip(columns, row)))
+                index = chunk.next_chunk_index
+                if index is None:
+                    if manifest.total_row_count is not None and len(rows) != manifest.total_row_count:
+                        raise RuntimeError("Incomplete SQL query result rows.")
+                    # An explicitly empty result can have a placeholder ResultData
+                    # even when the manifest declares no actual data chunks.
+                    observed = (
+                        set()
+                        if not rows and seen == {0} and (manifest.total_chunk_count == 0 or manifest.chunks == [])
+                        else seen
+                    )
+                    if manifest.total_chunk_count is not None and (
+                        len(observed) != manifest.total_chunk_count
+                        or any(not 0 <= value < manifest.total_chunk_count for value in observed)
+                    ):
+                        raise RuntimeError("Incomplete SQL query result chunks.")
+                    if manifest.chunks is not None and observed != set(chunk_metadata):
+                        raise RuntimeError("Incomplete SQL query manifest chunks.")
+                    return rows
+                if index < 0 or index in seen or not resp.statement_id:
+                    raise RuntimeError("Incomplete SQL query result chunks.")
+                seen.add(index)
+                chunk = self._ws.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
+                chunk_index = index
 
         if not resp.result or not resp.result.data_array:
             return []
@@ -1014,14 +1142,14 @@ class SqlExecutor:
         """Delta interval literal — bare integer, uppercase ``DAY`` (singular)."""
         return f"INTERVAL {int(days)} DAY"
 
-    def _wait_for_completion(self, statement_id: str, timeout_seconds: int) -> StatementState:
+    def _wait_for_completion(self, statement_id: str, timeout_seconds: int) -> StatementStatus:
         """Poll statement status until it reaches a terminal state."""
         start = time.time()
         poll_interval = 2.0
         while time.time() - start < timeout_seconds:
             status = self._ws.statement_execution.get_statement(statement_id)
             state = status.status.state if status.status else None
-            if state in _TERMINAL_STATES:
-                return state  # type: ignore[return-value]
+            if status.status is not None and state in _TERMINAL_STATES:
+                return status.status
             time.sleep(poll_interval)
         raise RuntimeError(f"SQL statement {statement_id} timed out after {timeout_seconds}s")

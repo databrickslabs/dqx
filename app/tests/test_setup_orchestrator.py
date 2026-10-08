@@ -3,11 +3,13 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
     SetupState,
@@ -18,6 +20,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
 def _passed(step_id: SetupStepId) -> SetupStep:
@@ -38,6 +41,9 @@ def _action_required(step_id: SetupStepId, code: str) -> SetupStep:
 class FakeCheckers:
     events: list[str]
     results: dict[SetupStepId, SetupStep] = field(default_factory=dict)
+    runner_reader: WorkspaceClient | None = None
+    runner_sql: SqlExecutor | None = None
+    output_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
@@ -51,6 +57,21 @@ class FakeCheckers:
 
     def check_unity_catalog(self) -> SetupStep:
         return self._result(SetupStepId.UNITY_CATALOG)
+
+    def check_runner_access(
+        self,
+        job_id: int,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+        include_outputs: bool = False,
+    ) -> SetupStep:
+        self.events.append(f"runner_outputs:{job_id}" if include_outputs else f"runner_volume:{job_id}")
+        self.runner_reader = reader_ws
+        self.runner_sql = reader_sql
+        if include_outputs:
+            return self.output_result
+        return self.results.get(SetupStepId.TASK_RUNNER, _passed(SetupStepId.TASK_RUNNER))
 
     def ensure_sibling_schemas(self) -> SetupStep:
         return self._result(SetupStepId.SCHEMAS)
@@ -122,9 +143,12 @@ class FakeActivation:
     wait_until: asyncio.Event | None = None
     runtime: SetupRuntime | None = None
     background_failure: Exception | None = None
+    activation_failure: Exception | None = None
 
     async def activate(self) -> None:
         self.events.append("activate")
+        if self.activation_failure is not None:
+            raise self.activation_failure
         if self.wait_until is not None:
             await self.wait_until.wait()
 
@@ -238,6 +262,65 @@ async def test_reconcile_stops_at_external_run_as_action(resources: ActiveResour
 
 
 @pytest.mark.asyncio
+async def test_reconcile_blocks_wheel_publication_until_runner_can_read_volume(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    fixture.checkers.results[SetupStepId.TASK_RUNNER] = _action_required(
+        SetupStepId.TASK_RUNNER, "task_runner_permissions_missing"
+    )
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.TASK_RUNNER
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_permissions_missing"
+    assert "publish_wheels" not in fixture.events
+    assert "pg_migrations" not in fixture.events
+    assert "activate" not in fixture.events
+
+    del fixture.checkers.results[SetupStepId.TASK_RUNNER]
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert fixture.events.index("runner_volume:27") < fixture.events.index("publish_wheels")
+
+
+@pytest.mark.asyncio
+async def test_runner_output_permissions_block_activation_after_migrations(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    fixture.checkers.output_result = _action_required(SetupStepId.TASK_RUNNER, "task_runner_permissions_missing")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.TASK_RUNNER
+    assert "delta_migrations" in fixture.events
+    assert "activate" not in fixture.events
+    assert not any(event.startswith("persist:") for event in fixture.events)
+
+    fixture.checkers.output_result = _passed(SetupStepId.TASK_RUNNER)
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert fixture.events.index("runner_outputs:27") > fixture.events.index("delta_migrations")
+    assert sum(step.id == SetupStepId.TASK_RUNNER for step in report.steps) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_passes_request_scoped_admin_reader_to_runner_check(resources: ActiveResources) -> None:
+    fixture = _make_orchestrator(resources)
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader_sql = create_autospec(SqlExecutor, instance=True)
+
+    report = await fixture.orchestrator.reconcile(
+        setup_user="admin@example.com", reader_ws=reader, reader_sql=reader_sql
+    )
+
+    assert report.state == SetupState.READY
+    assert fixture.checkers.runner_reader is reader
+    assert fixture.checkers.runner_sql is reader_sql
+
+
+@pytest.mark.asyncio
 async def test_discovered_job_becomes_runtime_state_before_external_action(resources: ActiveResources) -> None:
     unresolved_resources = ActiveResources(
         volume=resources.volume,
@@ -309,17 +392,66 @@ async def test_wheel_publication_failure_blocks_migrations(resources: ActiveReso
 
 
 @pytest.mark.asyncio
-async def test_migration_failure_blocks_completion_and_activation(resources: ActiveResources) -> None:
+async def test_lakebase_migration_failure_reports_stage_without_secret(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
     fixture = _make_orchestrator(resources)
-    fixture.orchestrator.pg_migrations.failure = RuntimeError("credential=secret")
+    fixture.orchestrator.pg_migrations.failure = PrivilegeError("credential=secret")
 
     report = await fixture.orchestrator.reconcile(setup_user="admin@example.com")
 
     assert report.current_step == SetupStepId.MIGRATIONS
     assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert report.step(SetupStepId.MIGRATIONS).code == "lakebase_migration_failed"
     assert "credential=secret" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "Lakebase migration failed" in caplog.text
+    assert "SQLSTATE 42501" in caplog.text
+    assert "credential=secret" not in caplog.text
     assert not any(event.startswith("persist:") for event in fixture.events)
     assert "activate" not in fixture.events
+
+
+@pytest.mark.asyncio
+async def test_delta_migration_failure_reports_stage(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture
+) -> None:
+    class PrivilegeError(RuntimeError):
+        sqlstate = "42501"
+
+    fixture = _make_orchestrator(resources)
+    fixture.orchestrator.delta_migrations.failure = PrivilegeError("SQL: sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).code == "delta_migration_failed"
+    assert "SQL: sensitive statement" not in report.step(SetupStepId.MIGRATIONS).summary
+    assert "pg_migrations" in fixture.events
+    assert "delta_migrations" in fixture.events
+    assert "activate" not in fixture.events
+    assert "SQLSTATE 42501" in caplog.text
+    assert "sensitive statement" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["pg_migrations", "delta_migrations"])
+async def test_migration_log_rejects_untrusted_sqlstate(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, stage: str
+) -> None:
+    class InvalidDiagnosticError(RuntimeError):
+        sqlstate = "42501\nforged diagnostic"
+
+    fixture = _make_orchestrator(resources)
+    getattr(fixture.orchestrator, stage).failure = InvalidDiagnosticError("sensitive statement")
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.MIGRATIONS).state == StepState.FAILED
+    assert "SQLSTATE" not in caplog.text
+    assert "forged diagnostic" not in caplog.text
+    assert "sensitive statement" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -366,6 +498,25 @@ async def test_background_start_failure_keeps_activated_app_ready(resources: Act
 
     assert report.state == SetupState.READY
     assert fixture.runtime.report() is report
+
+
+@pytest.mark.asyncio
+async def test_required_view_failure_reports_uc_setup_instead_of_background_services(
+    resources: ActiveResources,
+) -> None:
+    activation = FakeActivation([], activation_failure=RequiredViewSetupError())
+    fixture = _make_orchestrator(resources, activation=activation)
+
+    report = await fixture.orchestrator.reconcile()
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.current_step == SetupStepId.ACTIVATION
+    step = report.step(SetupStepId.ACTIVATION)
+    assert step.state == StepState.FAILED
+    assert step.code == "required_views_creation_failed"
+    assert "CREATE TABLE" in " ".join(step.instructions)
+    assert "Genie schema" in step.summary
+    assert not any(event.startswith("start_background:") for event in fixture.events)
 
 
 @pytest.mark.asyncio

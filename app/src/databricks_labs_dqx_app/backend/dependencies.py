@@ -314,6 +314,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             warehouse_id=warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
+            audience_groups=tuple(conf.user_groups),
         )
 
     return _reprovision
@@ -669,6 +670,7 @@ async def get_profiling_suggestion_service(
 async def get_view_service(
     sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> ViewService:
     """Create a ViewService with split auth.
 
@@ -676,7 +678,20 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
-    return ViewService(sql=sql, sp_sql=sp_sql)
+    runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    return ViewService(sql=sql, sp_sql=sp_sql, runner_principal=runner, cleanup_principal=cleanup)
+
+
+async def get_scheduler_view_service(sp_ws: WorkspaceClient, sp_sql: SqlExecutor) -> ViewService:
+    """Create background views in the temporary schema under the app identity."""
+    resources = rt.require_resources()
+    tmp_sql = SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
+    return await get_view_service(sql=tmp_sql, sp_sql=sp_sql, sp_ws=sp_ws)
 
 
 async def get_comments_service(
@@ -703,7 +718,10 @@ async def get_schedule_grant_service(
     Reads and grants run under the caller's OBO client; *sp_ws* is used only to
     resolve the app SP identity and derive the task-runner SP from the bound job.
     """
-    return ScheduleGrantService(obo_ws=obo_ws, sp_ws=sp_ws, job_id=conf.job_id)
+    resources = rt.require_resources()
+    return ScheduleGrantService(
+        obo_ws=obo_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=resources.warehouse_id or ""
+    )
 
 
 async def get_preview_sql_executor(
@@ -805,9 +823,7 @@ async def get_job_service(
     resolved_port = getattr(oltp, "port", None) or lakebase.port or 5432
     resolved_database = getattr(oltp, "database", None) or lakebase.database or ""
     resolved_schema = getattr(oltp, "schema", None) or lakebase.schema or ""
-    resolved_username = (
-        conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or lakebase.username or ""
-    )
+    resolved_username, _app_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
@@ -832,6 +848,75 @@ def _require_resolved_job_id() -> int:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DQX Studio setup is not ready.",
         ) from None
+
+
+def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
+    """Resolve fresh runner and app identities, failing closed with setup guidance.
+
+    Raises:
+        HTTPException: Setup or identity inspection is unavailable, the principals
+            are not distinct, or the legacy runner role does not match.
+    """
+    job_id = _require_resolved_job_id()
+    # SDK authentication and transport failures may contain credentials; sanitize
+    # every failure at these external boundaries rather than exposing raw messages.
+    try:
+        job = workspace.jobs.get(job_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to inspect the task-runner job. Confirm the configured job exists and the "
+                "app service principal has CAN_MANAGE on it, then verify again in Studio setup."
+            ),
+        ) from None
+    runner = getattr(getattr(job.settings, "run_as", None), "service_principal_name", None)
+    try:
+        identity = workspace.current_user.me()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to resolve the app service principal identity. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        ) from None
+    app_principal = identity.user_name or identity.id
+    if (
+        not isinstance(app_principal, str)
+        or not app_principal.strip()
+        or sanitize_setup_display(app_principal) != app_principal
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "A valid app service principal identity is required. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        )
+    if (
+        not isinstance(runner, str)
+        or not runner.strip()
+        or sanitize_setup_display(runner) != runner
+        or runner.casefold() == app_principal.casefold()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Assign a task-runner service principal distinct from the app service principal "
+                "in the Jobs UI, then verify again in Studio setup."
+            ),
+        )
+    configured_role = conf.task_runner_postgres_role.strip()
+    if configured_role and configured_role.casefold() != runner.casefold():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "DQX_TASK_RUNNER_POSTGRES_ROLE must match the job's run-as service principal. "
+                "Correct or remove the override, then verify again in Studio setup."
+            ),
+        )
+    return runner, app_principal
 
 
 async def get_run_set_service(
@@ -919,6 +1004,7 @@ async def get_metadata_dim_service(
         registry=registry,
         monitored_tables=monitored_tables,
         genie_schema=rt.require_resources().genie_schema,
+        audience_groups=tuple(conf.user_groups),
     )
 
 
@@ -1018,6 +1104,7 @@ async def get_demo_seed_service(
     status: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    schedule_config: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -1033,11 +1120,15 @@ async def get_demo_seed_service(
       ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
       ``get_view_service`` used on request paths — so background runs create
       their temp views with no user token.
+    * The :class:`ScheduleGrantService` for the paused demo schedules uses the
+      SP on both legs (``obo_ws`` too): the SP created the demo tables, so its
+      read probe passes and only the best-effort task-runner grant runs.
     """
     from .demo.seed_service import DemoSeedService
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
+    runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
@@ -1052,6 +1143,8 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        runner_principal=runner_principal,
+        cleanup_principal=cleanup_principal,
     )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
@@ -1064,6 +1157,8 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        runner_principal=runner_principal,
+        cleanup_principal=cleanup_principal,
     )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
@@ -1095,6 +1190,10 @@ async def get_demo_seed_service(
         embeddings=embeddings,
         job_service=job_service,
         profiler_view=profiler_view,
+        schedule_config=schedule_config,
+        schedule_grants=ScheduleGrantService(
+            obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
+        ),
         catalog=resources.volume.catalog,
     )
 
@@ -1262,6 +1361,20 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     if orchestrator is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
     return orchestrator
+
+
+def get_setup_sql_executor(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+) -> SqlExecutor:
+    """Inspect setup grants with OBO SQL before application resources are activated."""
+    resources = orchestrator.resources
+    return SqlExecutor(
+        ws=obo_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
 
 
 def sanitize_setup_display(value: str | None) -> str | None:

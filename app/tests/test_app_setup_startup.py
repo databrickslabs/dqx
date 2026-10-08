@@ -3,12 +3,13 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend.runtime import Runtime
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.models import SetupReport, SetupState, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -184,36 +185,70 @@ async def test_fastapi_lifespan_yields_restricted_app_and_always_cleans_up(
     assert events == ["start", "served", "stop"]
 
 
-@pytest.mark.asyncio
-async def test_post_migration_startup_does_not_grant_catalog_privileges(
-    resources: ActiveResources, monkeypatch
+@pytest.mark.parametrize("groups", [(), ("studio-authors",)])
+def test_startup_warns_when_audience_access_is_administrator_managed(
+    resources: ActiveResources, caplog: pytest.LogCaptureFixture, groups: tuple[str, ...]
 ) -> None:
     from databricks_labs_dqx_app.backend import startup
 
-    app = MagicMock()
-    workspace = MagicMock()
-    delta_sql = MagicMock()
+    delta_sql = create_autospec(SqlExecutor, instance=True)
     delta_sql.q.side_effect = lambda value: f"`{value}`"
-    oltp = MagicMock()
-    settings = MagicMock()
+    startup.logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger=startup.logger.name):
+            startup.grant_user_view_access(delta_sql, resources, audience_groups=groups)
+    finally:
+        startup.logger.removeHandler(caplog.handler)
 
-    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
-    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: settings)
-    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    warnings = [record.message for record in caplog.records if "DQX_USER_GROUPS" in record.message]
+    assert bool(warnings) is (not groups)
+    if not groups:
+        assert "administrator-managed" in warnings[0]
+        delta_sql.execute_no_schema.assert_not_called()
 
-    async def start_scheduler(*_args) -> None:
-        return None
 
-    monkeypatch.setattr(startup, "_start_scheduler", start_scheduler)
-    monkeypatch.setattr(startup, "_maybe_start_ai_bootstrap", lambda *_args: None)
+def test_user_view_grants_are_limited_to_approved_genie_objects(resources: ActiveResources) -> None:
+    from databricks_labs_dqx_app.backend import startup
 
-    await startup._run_post_migration_startup(app, workspace, delta_sql, oltp, resources, resource_tagger=MagicMock())
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+
+    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
 
     statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
-    assert not any("GRANT USE CATALOG" in statement for statement in statements)
+    assert statements == [
+        "GRANT USE SCHEMA ON SCHEMA `main`.`genie` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`mv_dq_scores` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_results_asof` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_check_attribution` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`v_dq_failing_rows` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_rules` TO `studio-authors`",
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
+    ]
+
+
+def test_user_view_grant_failure_does_not_block_other_grants(resources: ActiveResources) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    delta_sql.execute_no_schema.side_effect = [
+        RuntimeError("permission denied"),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+
+    startup.grant_user_view_access(delta_sql, resources, audience_groups=("studio-authors",))
+
+    assert delta_sql.execute_no_schema.call_args_list[-1].args == (
+        "GRANT SELECT ON TABLE `main`.`genie`.`dim_dq_monitored_tables` TO `studio-authors`",
+    )
 
 
 @pytest.mark.asyncio
@@ -226,6 +261,7 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     app = FastAPI()
     workspace = MagicMock()
     delta_sql = MagicMock()
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
     pg_executor = MagicMock()
     startup_metadata_dims = MagicMock()
     request_metadata_dims = MagicMock()
@@ -251,8 +287,7 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
     monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
     monkeypatch.setattr(startup, "MetadataDimService", lambda **_kwargs: startup_metadata_dims)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
@@ -267,6 +302,65 @@ async def test_successful_startup_metadata_refresh_seeds_genie_cache(
 
     startup_metadata_dims.refresh.assert_called_once_with()
     request_metadata_dims.refresh.assert_not_called()
+    grant_statements = [call.args[0] for call in delta_sql.execute_no_schema.call_args_list]
+    assert not any("account users" in statement for statement in grant_statements)
+
+
+def test_user_view_grants_default_to_administrator_managed(resources: ActiveResources) -> None:
+    from databricks_labs_dqx_app.backend import startup
+
+    delta_sql = create_autospec(SqlExecutor, instance=True)
+    startup.grant_user_view_access(delta_sql, resources)
+    delta_sql.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_view", ["score", "entitlement"])
+async def test_startup_does_not_activate_when_required_view_fails(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, failing_view: str
+) -> None:
+    """A failed view DDL must keep setup from reporting the app as ready."""
+    from databricks_labs_dqx_app.backend import startup
+
+    workspace = MagicMock()
+    delta_sql = MagicMock()
+    delta_sql.q.side_effect = lambda value: f"`{value}`"
+    delta_sql.execute.side_effect = RuntimeError("SQLSTATE 42501")
+    orchestrator = MagicMock()
+    orchestrator.reconcile = AsyncMock()
+    compute = MagicMock()
+    compute.sp_application_id.return_value = "app-sp"
+
+    async def get_workspace() -> MagicMock:
+        return workspace
+
+    monkeypatch.setattr(startup, "_resolve_resources", lambda: resources)
+    monkeypatch.setattr(startup, "get_sp_ws", get_workspace)
+    monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: delta_sql)
+    monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
+    monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "SetupOrchestrator", lambda **_kwargs: orchestrator)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
+    if failing_view == "score":
+        monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
+    else:
+        monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+
+    context = await startup.start_studio(FastAPI())
+    assert context is not None
+    try:
+        with pytest.raises(RuntimeError, match="Could not create required Studio views"):
+            await activate_studio(context)
+    finally:
+        await deactivate_studio(context)
 
 
 @pytest.mark.asyncio
@@ -305,8 +399,7 @@ async def test_startup_reconciles_studio_resource_tags(
     monkeypatch.setattr(startup, "ResourceTaggingService", lambda _workspace: tagger)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
-    monkeypatch.setattr(startup, "_ensure_entitlement_objects", lambda *_args: None)
-    monkeypatch.setattr(startup, "_grant_user_view_access", lambda *_args: None)
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
@@ -423,83 +516,3 @@ async def test_startup_cleans_open_context_when_reconciliation_is_cancelled(
         await startup.start_studio(app)
 
     pg_executor.close.assert_called_once_with()
-
-
-class TestGrantTaskRunnerRunConfigAccess:
-    """The app grants the task-runner SP read/delete on ``dq_run_configs`` at startup."""
-
-    def _oltp(self, dialect: str = "postgres") -> MagicMock:
-        oltp = MagicMock(name="oltp")
-        oltp.dialect = dialect
-        oltp.schema = "studio"
-        oltp.q.side_effect = lambda value: f'"{value}"'
-        oltp.fqn.side_effect = lambda name: f'"studio"."{name}"'
-        return oltp
-
-    def test_grants_usage_and_select_delete_when_configured(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)
-
-        issued = [call.args[0] for call in oltp.execute.call_args_list]
-        assert issued == [
-            'GRANT USAGE ON SCHEMA "studio" TO "sp-runner"',
-            'GRANT SELECT, DELETE ON "studio"."dq_run_configs" TO "sp-runner"',
-        ]
-
-    def test_noop_when_no_role_configured(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "")
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)
-        oltp.execute.assert_not_called()
-
-    def test_noop_when_oltp_is_not_postgres(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp(dialect="delta")
-        startup._grant_task_runner_run_config_access(oltp)
-        oltp.execute.assert_not_called()
-
-    def test_skips_grant_when_role_malformed(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        # A role that fails validate_object_id must never be interpolated into DDL,
-        # but this optional best-effort grant must not abort startup — it logs and
-        # skips rather than letting the ValueError propagate out of the lifespan.
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", 'evil"; DROP')
-        oltp = self._oltp()
-        startup._grant_task_runner_run_config_access(oltp)  # does not raise
-        oltp.execute.assert_not_called()
-
-    def test_names_failing_statement_and_continues(self, monkeypatch) -> None:
-        from databricks_labs_dqx_app.backend import startup
-
-        # A failed first grant must not stop the second, and the warning must name
-        # the specific failing statement so a later opaque runner permission error
-        # can be traced back to the grant that did not apply.
-        monkeypatch.setattr(startup.conf, "task_runner_postgres_role", "sp-runner")
-        oltp = self._oltp()
-        oltp.execute.side_effect = [RuntimeError("permission denied"), None]
-
-        # Capture directly off the module logger: the app reroutes logging, so
-        # pytest's caplog (which relies on root propagation) does not see these.
-        messages: list[str] = []
-
-        class _Capture(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                messages.append(record.getMessage())
-
-        handler = _Capture()
-        startup.logger.addHandler(handler)
-        try:
-            startup._grant_task_runner_run_config_access(oltp)
-        finally:
-            startup.logger.removeHandler(handler)
-
-        assert oltp.execute.call_count == 2  # did not stop after the first failure
-        assert any('GRANT USAGE ON SCHEMA "studio" TO "sp-runner"' in m for m in messages)

@@ -42,6 +42,8 @@ class PendingApplication:
     id: str | None = None
     created_by: str | None = None
     created_at: datetime | None = None
+    row_filter: str | None = None
+    pass_threshold: int | None = None
 
 
 class PendingApplicationService:
@@ -54,7 +56,8 @@ class PendingApplicationService:
         created_at = sql.ts_text("created_at")
         self._select_cols = (
             "id, binding_id, rule_id, "
-            f"{column_mapping} AS column_mapping_json, created_by, {created_at} AS created_at"
+            f"{column_mapping} AS column_mapping_json, created_by, {created_at} AS created_at, "
+            "row_filter, pass_threshold"
         )
 
     # ------------------------------------------------------------------
@@ -67,21 +70,34 @@ class PendingApplicationService:
         rule_id: str,
         column_mapping: list[ColumnMappingGroup],
         user_email: str,
+        *,
+        row_filter: str | None = None,
+        pass_threshold: int | None = None,
     ) -> PendingApplication:
         """Stage (or replace) a pending application for ``(binding_id, rule_id)``.
 
         Upsert semantics: an existing pending row for the same
-        ``(binding_id, rule_id)`` has its ``column_mapping`` overwritten
-        rather than duplicated, so re-running the bulk import for the same
-        contract bundle is idempotent.
+        ``(binding_id, rule_id)`` has its ``column_mapping``, ``row_filter``
+        and ``pass_threshold`` overwritten rather than duplicated, so
+        re-running the bulk import for the same contract bundle is idempotent.
+        The per-application overrides are carried through to
+        :meth:`ApplyRulesService.apply_rule` when the rule is approved, which
+        validates them the same way as a direct apply.
         """
+        row_filter = (row_filter or "").strip() or None
         existing = self._get_by_natural_key(binding_id, rule_id)
         if existing is not None:
             existing.column_mapping = column_mapping
+            existing.row_filter = row_filter
+            existing.pass_threshold = pass_threshold
             mapping_expr = self._sql.json_literal_expr(json.dumps(column_mapping))
             self._sql.update(
                 self._table,
-                updates={"column_mapping": RawSql(mapping_expr)},
+                updates={
+                    "column_mapping": RawSql(mapping_expr),
+                    "row_filter": row_filter,
+                    "pass_threshold": pass_threshold,
+                },
                 where={"id": existing.id or ""},
             )
             logger.info("Updated pending application for binding %s rule %s", binding_id, rule_id)
@@ -94,6 +110,8 @@ class PendingApplicationService:
             column_mapping=column_mapping,
             created_by=user_email,
             created_at=datetime.now(timezone.utc),
+            row_filter=row_filter,
+            pass_threshold=pass_threshold,
         )
         mapping_expr = self._sql.json_literal_expr(json.dumps(pending.column_mapping))
         self._sql.insert(
@@ -105,6 +123,8 @@ class PendingApplicationService:
                 "column_mapping": RawSql(mapping_expr),
                 "created_by": user_email,
                 "created_at": RawSql("now()"),
+                "row_filter": row_filter,
+                "pass_threshold": pass_threshold,
             },
         )
         logger.info("Recorded pending application for binding %s rule %s", binding_id, rule_id)
@@ -156,6 +176,15 @@ class PendingApplicationService:
         return f"'{escape_sql_string(value)}'" if value else "NULL"
 
     @staticmethod
+    def _parse_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _parse_column_mapping(raw: str | None) -> list[ColumnMappingGroup]:
         if not raw:
             return []
@@ -189,4 +218,6 @@ class PendingApplicationService:
             column_mapping=self._parse_column_mapping(row[3]),
             created_by=row[4],
             created_at=self._parse_timestamp(row[5]),
+            row_filter=(row[6] or None) if len(row) > 6 else None,
+            pass_threshold=self._parse_int(row[7]) if len(row) > 7 else None,
         )

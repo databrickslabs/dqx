@@ -57,5 +57,6 @@ def test_get_demo_seed_service_declares_expected_params() -> None:
         "app_settings",
         "status",
         "reset_service",
+        "schedule_config",
     }
     assert expected <= params
