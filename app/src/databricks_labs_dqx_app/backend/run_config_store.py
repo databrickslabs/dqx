@@ -7,6 +7,10 @@ rules can exceed that limit when the full ``checks`` list is inlined in
 into the ``dq_run_configs`` Delta table keyed by ``run_id`` and passes a
 tiny stub ``{"__manifest__": true}`` instead. The task runner reads the config
 from the table using the ``run_id`` and deletes the row once the run finishes.
+
+The stub also carries the few small config fields the app reads back from
+the Jobs API (see *MANIFEST_SUMMARY_KEYS*), so a staged run can still be
+attributed to its table and recognised as a preview without a SQL lookup.
 """
 
 import base64
@@ -24,6 +28,12 @@ JOB_PARAMETERS_CHAR_LIMIT = 10_000
 
 # Marker key in the inline stub passed to the task runner.
 MANIFEST_CONFIG_KEY = "__manifest__"
+
+# Small config fields copied into the stub so Jobs API readers
+# (services.task_runner_runs) can name a staged run's table and tell previews
+# apart without reading the staged config. The runner ignores them: it loads
+# the full config from the table whenever the manifest key is set.
+MANIFEST_SUMMARY_KEYS = ("source_table_fqn", "skip_history", "run_type")
 
 # Delta table holding run configs that are too large to inline.
 RUN_CONFIGS_TABLE = "dq_run_configs"
@@ -78,9 +88,10 @@ def build_inline_config_payload(config: dict[str, Any]) -> str:
     return _compact_json(config)
 
 
-def build_manifest_config_payload() -> str:
-    """Serialize the stub the task runner uses to load a staged config from the table."""
-    return _compact_json({MANIFEST_CONFIG_KEY: True})
+def build_manifest_config_payload(config: dict[str, Any]) -> str:
+    """Serialize the stub the task runner uses to load *config* back from the table."""
+    summary = {key: config[key] for key in MANIFEST_SUMMARY_KEYS if key in config}
+    return _compact_json({MANIFEST_CONFIG_KEY: True, **summary})
 
 
 def stage_config_to_table(sql: SqlExecutor, run_id: str, config: dict[str, Any]) -> None:
@@ -145,7 +156,7 @@ def prepare_config_json(
         raise
     except Exception as exc:
         raise RunConfigStagingError(run_id, sql.fqn(RUN_CONFIGS_TABLE), exc) from exc
-    manifest = build_manifest_config_payload()
+    manifest = build_manifest_config_payload(config)
     manifest_params = {**job_parameters_without_config, "config_json": manifest}
     manifest_size = job_parameters_size(manifest_params)
     if manifest_size > JOB_PARAMETERS_CHAR_LIMIT:
