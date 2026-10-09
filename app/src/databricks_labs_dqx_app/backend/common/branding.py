@@ -134,13 +134,6 @@ def custom_preset_number(preset_id: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def validate_logo_mode(value: object) -> str:
-    """Validate the logo mode."""
-    if value not in LOGO_MODES:
-        raise BrandingValidationError("Logo mode must be 'shared' or 'separate'.")
-    return str(value)
-
-
 def _sniff_mime(raw: bytes) -> str | None:
     if raw.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"

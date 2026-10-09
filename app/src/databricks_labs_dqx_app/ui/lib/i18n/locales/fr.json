@@ -212,14 +212,13 @@
     "home": "Accueil"
   },
   "config": {
-    "tabCustomisation": "Personnalisation",
+    "tabTheme": "Thème",
     "kwBranding": "marque nom entreprise logo image en-tête titre organisation importer",
     "kwTheme": "style thème couleurs préréglage mode sombre clair en-tête barre latérale",
     "styling": {
       "companyNameLabel": "Nom de l'entreprise",
       "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Affiché dans la barre supérieure sous la forme {{title}}",
-      "logoModeSeparate": "Des logos distincts pour les modes clair et sombre",
       "logoRequirements": "PNG, JPEG ou WebP, 256 Ko maximum",
       "logoErrorType": "Le SVG et les autres types de fichiers ne sont pas pris en charge. Utilisez une image PNG, JPEG ou WebP.",
       "logoErrorSize": "L'image dépasse 256 Ko. Exportez une version plus petite, d'environ 200 px de haut.",
@@ -275,7 +274,7 @@
         "dracula": "Dracula"
       },
       "themeTitle": "Thème",
-      "themeDescription": "Choisissez un préréglage ou définissez vos propres couleurs. Modifier une couleur dans un mode met aussi à jour l'autre mode, tant que vous ne l'avez pas définie vous-même. Enregistrer un préréglage modifié l'ajoute en tant que Personnalisé 1, Personnalisé 2, etc.",
+      "themeDescription": "Choisissez un préréglage ou définissez vos propres couleurs.",
       "companyNameReset": "Réinitialiser le nom de l'entreprise",
       "logoLabel": "Logo",
       "logoTileLight": "Clair",
@@ -283,16 +282,16 @@
       "logoUploadTo": "Importer le logo ({{mode}})",
       "logoUploadHint": "Cliquez ou déposez une image",
       "logoReset": "Réinitialiser le logo",
-      "colorsLabelMode": "Couleurs ({{mode}})",
       "editMode": "Modifier les couleurs ({{mode}})",
       "modeToggleLabel": "Mode",
       "customPresetName": "Personnalisé {{number}}",
       "customPresetDelete": "Supprimer {{name}}",
-      "customPresetDeleteConfirm": "Supprimer ce préréglage pour tout le monde ? Les couleurs actuellement utilisées restent inchangées.",
+      "customPresetDeleteConfirm": "Supprimer ce préréglage pour tout le monde ?",
       "delete": "Supprimer",
       "customPresetDeleted": "Préréglage supprimé",
       "themeSavedAsCustom": "Couleurs enregistrées sous Personnalisé {{number}}",
-      "resetTheme": "Réinitialiser le thème"
+      "resetTheme": "Réinitialiser le thème",
+      "colorsLabel": "Couleurs"
     },
     "breadcrumb": "Configuration",
     "title": "Configuration",

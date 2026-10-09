@@ -7,13 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   useDeleteBrandingLogo,
   useGetBranding,
   useSaveBrandingCompanyName,
-  useSaveBrandingLogoMode,
   useUploadBrandingLogo,
   type BrandingOut,
 } from "@/lib/api";
@@ -29,7 +27,7 @@ const NAME_SAVE_DELAY_MS = 800;
 const MODES: readonly Mode[] = ["light", "dark"];
 
 function Row({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-wrap items-center justify-between gap-4 px-3 py-3">{children}</div>;
+  return <div className="flex flex-wrap items-center justify-between gap-4 rounded-md border p-3">{children}</div>;
 }
 
 function RowLabel({ htmlFor, label, hint }: { htmlFor?: string; label: string; hint?: React.ReactNode }) {
@@ -217,16 +215,14 @@ function BrandingEditor({ data }: { data: BrandingOut }) {
   const preview = usePreviewState();
   const uploadMutation = useUploadBrandingLogo();
   const deleteMutation = useDeleteBrandingLogo();
-  const modeMutation = useSaveBrandingLogoMode();
   const { applyResponse } = useBrandingUpdate();
   const [error, setError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
-  const separate = data.logo_mode === "separate";
   const logos = { light: data.logos.light ?? null, dark: data.logos.dark ?? null };
   const hasLogo = !!logos.light || !!logos.dark;
   const disabled = !isAdmin;
-  const busy = uploadMutation.isPending || deleteMutation.isPending || modeMutation.isPending || resetting;
+  const busy = uploadMutation.isPending || deleteMutation.isPending || resetting;
 
   // Live theme edits from the Styling card win over the saved theme.
   const swatches = useMemo(
@@ -251,10 +247,9 @@ function BrandingEditor({ data }: { data: BrandingOut }) {
       setError(t(code === "size" ? "config.styling.logoErrorSize" : "config.styling.logoErrorType"));
       return;
     }
-    // Shared mode keeps its one logo in the light slot.
-    const slot = separate ? mode : "light";
+    // The server shares the first logo across both modes; later uploads change only this mode.
     uploadMutation.mutate(
-      { slot, data: payload },
+      { slot: mode, data: payload },
       {
         onSuccess: (response) => {
           applyResponse(response);
@@ -281,16 +276,6 @@ function BrandingEditor({ data }: { data: BrandingOut }) {
     }
   };
 
-  const setSeparate = (next: boolean) => {
-    modeMutation.mutate(
-      { data: { logo_mode: next ? "separate" : "shared" } },
-      {
-        onSuccess: (response) => applyResponse(response),
-        onError: (err) => toastSaveError(t, err),
-      },
-    );
-  };
-
   return (
     <Card>
       <CardHeader>
@@ -300,57 +285,46 @@ function BrandingEditor({ data }: { data: BrandingOut }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="divide-y rounded-md border">
-          <CompanyNameRow serverName={data.company_name ?? ""} disabled={disabled} />
-          <Row>
-            <RowLabel htmlFor="branding-separate-logos" label={t("config.styling.logoModeSeparate")} />
-            <Switch
-              id="branding-separate-logos"
-              checked={separate}
-              disabled={disabled || busy}
-              onCheckedChange={setSeparate}
-            />
-          </Row>
-          <Row>
-            <RowLabel
-              label={t("config.styling.logoLabel")}
-              hint={
-                <>
-                  <p>{t("config.styling.logoRequirements")}</p>
-                  {error && <p className="text-destructive">{error}</p>}
-                </>
-              }
-            />
-            <div className="flex items-start gap-3">
-              {MODES.map((mode) => {
-                const logo = pickHeaderLogo({ logoMode: data.logo_mode ?? "shared", logos }, mode === "dark");
-                return (
-                  <LogoTile
-                    key={mode}
-                    mode={mode}
-                    src={logo ? logoUrl(logo.slot, logo.hash) : null}
-                    swatch={swatches[mode]}
-                    disabled={disabled}
-                    busy={busy}
-                    onFile={(file) => void upload(mode, file)}
-                  />
-                );
-              })}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="mt-2 h-8 w-8"
-                aria-label={t("config.styling.logoReset")}
-                title={t("config.styling.logoReset")}
-                disabled={disabled || busy || !hasLogo}
-                onClick={() => void resetLogos()}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </Row>
-        </div>
+        <CompanyNameRow serverName={data.company_name ?? ""} disabled={disabled} />
+        <Row>
+          <RowLabel
+            label={t("config.styling.logoLabel")}
+            hint={
+              <>
+                <p>{t("config.styling.logoRequirements")}</p>
+                {error && <p className="text-destructive">{error}</p>}
+              </>
+            }
+          />
+          <div className="flex items-start gap-3">
+            {MODES.map((mode) => {
+              const logo = pickHeaderLogo({ logoMode: data.logo_mode ?? "shared", logos }, mode === "dark");
+              return (
+                <LogoTile
+                  key={mode}
+                  mode={mode}
+                  src={logo ? logoUrl(logo.slot, logo.hash) : null}
+                  swatch={swatches[mode]}
+                  disabled={disabled}
+                  busy={busy}
+                  onFile={(file) => void upload(mode, file)}
+                />
+              );
+            })}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="mt-2 h-8 w-8"
+              aria-label={t("config.styling.logoReset")}
+              title={t("config.styling.logoReset")}
+              disabled={disabled || busy || !hasLogo}
+              onClick={() => void resetLogos()}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </Row>
       </CardContent>
     </Card>
   );

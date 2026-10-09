@@ -711,13 +711,6 @@ export interface BrandingLogoIn {
   data_base64: string;
 }
 
-/**
- * Logo mode update.
- */
-export interface BrandingLogoModeIn {
-  logo_mode: string;
-}
-
 export type BrandingLogosOutLight = string | null;
 
 export type BrandingLogosOutDark = string | null;
@@ -6632,68 +6625,6 @@ export function useGetBrandingSuspense<TData = Awaited<ReturnType<typeof getBran
 
 
 /**
- * Reset all styling to DQX Default (admin only).
- * @summary Reset Branding
- */
-export const resetBranding = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<BrandingOut>> => {
-    
-    
-    return axios.default.delete(
-      `/api/v1/config/branding`,options
-    );
-  }
-
-
-
-export const getResetBrandingMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetBranding>>, TError,void, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof resetBranding>>, TError,void, TContext> => {
-
-const mutationKey = ['resetBranding'];
-const {mutation: mutationOptions, axios: axiosOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, axios: undefined};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetBranding>>, void> = () => {
-          
-
-          return  resetBranding(axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ResetBrandingMutationResult = NonNullable<Awaited<ReturnType<typeof resetBranding>>>
-    
-    export type ResetBrandingMutationError = AxiosError<HTTPValidationError>
-
-    /**
- * @summary Reset Branding
- */
-export const useResetBranding = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetBranding>>, TError,void, TContext>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof resetBranding>>,
-        TError,
-        void,
-        TContext
-      > => {
-
-      const mutationOptions = getResetBrandingMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
-/**
  * Set or clear the company name (admin only).
  * @summary Save Company Name
  */
@@ -6877,69 +6808,6 @@ export const useDeleteBrandingCustomPreset = <TError = AxiosError<HTTPValidation
       > => {
 
       const mutationOptions = getDeleteBrandingCustomPresetMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
-/**
- * Choose one shared logo or separate light and dark logos (admin only).
- * @summary Save Logo Mode
- */
-export const saveBrandingLogoMode = (
-    brandingLogoModeIn: BrandingLogoModeIn, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<BrandingOut>> => {
-    
-    
-    return axios.default.put(
-      `/api/v1/config/branding/logo-mode`,
-      brandingLogoModeIn,options
-    );
-  }
-
-
-
-export const getSaveBrandingLogoModeMutationOptions = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingLogoMode>>, TError,{data: BrandingLogoModeIn}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof saveBrandingLogoMode>>, TError,{data: BrandingLogoModeIn}, TContext> => {
-
-const mutationKey = ['saveBrandingLogoMode'];
-const {mutation: mutationOptions, axios: axiosOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, axios: undefined};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveBrandingLogoMode>>, {data: BrandingLogoModeIn}> = (props) => {
-          const {data} = props ?? {};
-
-          return  saveBrandingLogoMode(data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SaveBrandingLogoModeMutationResult = NonNullable<Awaited<ReturnType<typeof saveBrandingLogoMode>>>
-    export type SaveBrandingLogoModeMutationBody = BrandingLogoModeIn
-    export type SaveBrandingLogoModeMutationError = AxiosError<HTTPValidationError>
-
-    /**
- * @summary Save Logo Mode
- */
-export const useSaveBrandingLogoMode = <TError = AxiosError<HTTPValidationError>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingLogoMode>>, TError,{data: BrandingLogoModeIn}, TContext>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof saveBrandingLogoMode>>,
-        TError,
-        {data: BrandingLogoModeIn},
-        TContext
-      > => {
-
-      const mutationOptions = getSaveBrandingLogoModeMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

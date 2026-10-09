@@ -8,6 +8,7 @@ from databricks_labs_dqx_app.backend.common.branding import BrandingValidationEr
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
+PNG2 = b"\x89PNG\r\n\x1a\n" + b"\x02" * 16
 
 
 @pytest.fixture
@@ -67,10 +68,6 @@ class TestBrandingSettings:
         with pytest.raises(BrandingValidationError):
             svc.save_branding_theme(None, {"header": "red"}, False, {})
 
-    def test_logo_mode_round_trip(self, svc):
-        svc.save_branding_logo_mode("separate")
-        assert svc.get_branding()["logo_mode"] == "separate"
-
     def test_corrupt_stored_value_is_tolerated(self, svc, store):
         store["branding_v1"] = json.dumps({"light": {"colors": {"header": "nope", "text": "#000000"}}})
         assert svc.get_branding()["light"] == {"colors": {"text": "#000000"}}
@@ -83,10 +80,37 @@ class TestBrandingSettings:
         assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
 
     def test_delete_logo(self, svc):
-        svc.save_branding_logo("dark", "image/png", PNG)
-        svc.delete_branding_logo("dark")
-        assert svc.get_branding_logo("dark") is None
+        svc.save_branding_logo("light", "image/png", PNG)
+        svc.delete_branding_logo("light")
+        assert svc.get_branding_logo("light") is None
         assert svc.get_branding_logo_hashes() == {"light": None, "dark": None}
+
+    def test_first_logo_is_shared_whichever_slot(self, svc):
+        saved = svc.save_branding_logo("dark", "image/png", PNG)
+        branding = svc.get_branding()
+        assert branding["logo_mode"] == "shared"
+        assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
+
+    def test_later_light_upload_keeps_shared_logo_for_dark(self, svc):
+        first = svc.save_branding_logo("light", "image/png", PNG)
+        second = svc.save_branding_logo("light", "image/png", PNG2)
+        assert svc.get_branding()["logo_mode"] == "separate"
+        assert svc.get_branding_logo_hashes() == {"light": second.hash, "dark": first.hash}
+
+    def test_later_dark_upload_only_changes_dark(self, svc):
+        first = svc.save_branding_logo("light", "image/png", PNG)
+        second = svc.save_branding_logo("dark", "image/png", PNG2)
+        assert svc.get_branding()["logo_mode"] == "separate"
+        assert svc.get_branding_logo_hashes() == {"light": first.hash, "dark": second.hash}
+
+    def test_removing_all_logos_makes_next_upload_shared(self, svc):
+        svc.save_branding_logo("light", "image/png", PNG)
+        svc.save_branding_logo("dark", "image/png", PNG2)
+        svc.delete_branding_logo("light")
+        svc.delete_branding_logo("dark")
+        assert svc.get_branding()["logo_mode"] == "shared"
+        saved = svc.save_branding_logo("dark", "image/png", PNG)
+        assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
 
     def test_logo_hashes_read_from_branding_value_only(self, svc, sql_executor_mock):
         saved = svc.save_branding_logo("light", "image/png", PNG)
@@ -98,21 +122,11 @@ class TestBrandingSettings:
         saved = svc.save_branding_logo("light", "image/png", PNG)
         svc.save_branding_company_name("Acme")
         svc.save_branding_theme("nord", {}, False, {})
-        svc.save_branding_logo_mode("separate")
         assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
 
     def test_unknown_slot_rejected(self, svc):
         with pytest.raises(BrandingValidationError):
             svc.get_branding_logo("sepia")
-
-    def test_reset_clears_everything(self, svc):
-        svc.save_branding_company_name("Acme")
-        svc.save_branding_logo("light", "image/png", PNG)
-        svc.reset_branding()
-        assert svc.get_branding() == default_branding()
-        assert svc.get_branding_logo("light") is None
-        assert svc.get_branding_logo_hashes() == {"light": None, "dark": None}
-
 
 class TestCustomPresets:
     def test_edited_theme_is_kept_as_custom_preset(self, svc):
@@ -166,13 +180,6 @@ class TestCustomPresets:
             svc.save_branding_theme(None, {"brand": f"#0000{i:02X}"}, False, {})
         with pytest.raises(BrandingValidationError):
             svc.save_branding_theme(None, {"brand": "#FFFFFF"}, False, {})
-
-    def test_reset_keeps_custom_presets(self, svc):
-        svc.save_branding_theme(None, {"brand": "#111111"}, False, {})
-        svc.reset_branding()
-        branding = svc.get_branding()
-        assert branding["preset"] is None and branding["light"] == {"colors": {}}
-        assert [c["id"] for c in branding["custom_presets"]] == ["custom-1"]
 
     def test_corrupt_custom_presets_dropped(self, svc, store):
         store["branding_v1"] = json.dumps(

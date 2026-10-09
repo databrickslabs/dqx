@@ -11,8 +11,8 @@ export const PRESETS: readonly Preset[] = [
   { id: "dqx-default", light: {}, dark: {} },
   {
     id: "databricks",
-    light: { header: "#DB1F0C", page_background: "#FFFFFF", text: "#1B3139", brand: "#DB1F0C", sidebar: "#F9F7F4" },
-    dark: { header: "#B3200F", page_background: "#121A1D", text: "#EEEDE9", brand: "#E0230F", sidebar: "#1B3139" },
+    light: { header: "#1B3139", page_background: "#FFFFFF", text: "#1B3139", brand: "#FF3621", sidebar: "#F9F7F4" },
+    dark: { header: "#0B2026", page_background: "#121A1D", text: "#EEEDE9", brand: "#FF5F46", sidebar: "#1B3139" },
   },
   {
     id: "high-contrast",

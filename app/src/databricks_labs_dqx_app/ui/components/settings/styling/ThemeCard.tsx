@@ -147,7 +147,37 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
 
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-2">
-            <SectionLabel>{t("config.styling.colorsLabelMode", { mode: modeLabel(mode) })}</SectionLabel>
+            <div className="flex flex-wrap items-center gap-2">
+              <SectionLabel>{t("config.styling.colorsLabel")}</SectionLabel>
+              <div className="flex gap-1" role="group" aria-label={t("config.styling.modeToggleLabel")}>
+                {MODES.map((m) => (
+                  <Button
+                    key={m}
+                    type="button"
+                    size="sm"
+                    variant={mode === m ? "secondary" : "ghost"}
+                    aria-pressed={mode === m}
+                    className="h-7 px-3 text-xs"
+                    onClick={() => setMode(m)}
+                  >
+                    {modeLabel(m)}
+                  </Button>
+                ))}
+              </div>
+              {draft.base && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="ml-auto h-7 px-2 text-xs"
+                  disabled={busy || !isDirty(draft, applyPreset(draft.base))}
+                  onClick={() => setDraft((d) => (d.base ? applyPreset(d.base) : d))}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {t("config.styling.resetTheme")}
+                </Button>
+              )}
+            </div>
             <ColorGroupPicker
               key={mode}
               idPrefix={`branding-${mode}`}
@@ -185,21 +215,6 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
                 );
               })}
             </div>
-            <div className="flex gap-1 pt-1" role="group" aria-label={t("config.styling.modeToggleLabel")}>
-              {MODES.map((m) => (
-                <Button
-                  key={m}
-                  type="button"
-                  size="sm"
-                  variant={mode === m ? "secondary" : "ghost"}
-                  aria-pressed={mode === m}
-                  className="h-7 px-3 text-xs"
-                  onClick={() => setMode(m)}
-                >
-                  {modeLabel(m)}
-                </Button>
-              ))}
-            </div>
           </div>
         </div>
 
@@ -212,18 +227,6 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
           <Button size="sm" variant="outline" onClick={() => setDraft(saved)} disabled={!dirty || saveMutation.isPending}>
             {t("config.styling.cancel")}
           </Button>
-          {draft.base && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="ml-auto"
-              disabled={busy || !isDirty(draft, applyPreset(draft.base))}
-              onClick={() => setDraft((d) => (d.base ? applyPreset(d.base) : d))}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              {t("config.styling.resetTheme")}
-            </Button>
-          )}
         </div>
       </CardContent>
     </Card>

@@ -95,10 +95,8 @@ class TestRoles:
                 "/api/v1/config/branding/theme",
                 {"preset": None, "light": {"colors": {}}, "dark": {"customised": False, "colors": {}}},
             ),
-            ("put", "/api/v1/config/branding/logo-mode", {"logo_mode": "separate"}),
             ("put", "/api/v1/config/branding/logo/light", {"content_type": "image/png", "data_base64": ""}),
             ("delete", "/api/v1/config/branding/logo/light", None),
-            ("delete", "/api/v1/config/branding", None),
             ("delete", "/api/v1/config/branding/presets/custom-1", None),
         ],
     )
@@ -187,14 +185,12 @@ class TestMutations:
         assert viewer.get("/api/v1/config/branding/logo/dark").status_code == 404
 
     def test_delete_logo(self, admin):
-        admin.put("/api/v1/config/branding/logo/dark", json={"content_type": "image/png", "data_base64": _b64(PNG)})
-        out = admin.delete("/api/v1/config/branding/logo/dark").json()
-        assert out["logos"]["dark"] is None
+        admin.put("/api/v1/config/branding/logo/light", json={"content_type": "image/png", "data_base64": _b64(PNG)})
+        out = admin.delete("/api/v1/config/branding/logo/light").json()
+        assert out["logos"]["light"] is None
 
-    def test_reset(self, admin):
-        admin.put("/api/v1/config/branding/company-name", json={"company_name": "Acme"})
-        out = admin.delete("/api/v1/config/branding").json()
-        assert out["company_name"] is None
+    def test_reset_all_endpoint_removed(self, admin):
+        assert admin.delete("/api/v1/config/branding").status_code == 405
 
 
 class TestLogoMimeAllowlist:

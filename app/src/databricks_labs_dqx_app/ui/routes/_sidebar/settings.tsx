@@ -2816,7 +2816,7 @@ function DangerZoneCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "customisation" | "tags" | "danger";
+type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "tags" | "theme" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2847,8 +2847,8 @@ function ConfigPage() {
       { id: "compute", label: t("config.tabCompute"), icon: Cpu },
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "governance", label: t("config.tabGovernance"), icon: Scale },
-      { id: "customisation", label: t("config.tabCustomisation"), icon: Palette },
       { id: "tags", label: t("config.tabTags"), icon: Tags },
+      { id: "theme", label: t("config.tabTheme"), icon: Palette },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
     [t],
@@ -2872,8 +2872,8 @@ function ConfigPage() {
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
-      { id: "branding", tab: "customisation", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
-      { id: "theme", tab: "customisation", title: t("config.styling.themeTitle"), keywords: t("config.kwTheme"), render: () => <ThemeCard /> },
+      { id: "branding", tab: "theme", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
+      { id: "theme", tab: "theme", title: t("config.styling.themeTitle"), keywords: t("config.kwTheme"), render: () => <ThemeCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
@@ -2976,8 +2976,8 @@ function ConfigPage() {
                         tab.label
                       )}
                     </TabsTrigger>
-                    {/* Same divider as the monitored-table tab bar: bg-border matches the bg-muted track, so it can't be used here. */}
-                    {tab.id === "general" && (
+                    {/* Dividers after General and before Danger Zone. Same as the monitored-table tab bar: bg-border matches the bg-muted track. */}
+                    {(tab.id === "general" || tab.id === "theme") && (
                       <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
                     )}
                     </Fragment>
@@ -2988,9 +2988,9 @@ function ConfigPage() {
                 <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
                   {entries
                     .filter((e) => e.tab === tab.id)
-                    // Cards within each tab are ordered alphabetically by title, except Customisation,
-                    // where Branding always comes before Theme.
-                    .sort((a, b) => (tab.id === "customisation" ? 0 : a.title.localeCompare(b.title)))
+                    // Cards within each tab are ordered alphabetically by title, except Theme,
+                    // where Branding always comes before the theme card.
+                    .sort((a, b) => (tab.id === "theme" ? 0 : a.title.localeCompare(b.title)))
                     .map((e) => (
                       <FadeIn key={e.id}>
                         <SettingSection reset={reset}>{e.render()}</SettingSection>

@@ -4,28 +4,28 @@ sidebar_position: 7
 
 import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
-# Customisation
+# Theme
 
 <FeatureTags>
   <FeatureLifecycleStage stage="beta" heading={false} />
   <AvailableSinceVersion version="0.17.0" heading={false} />
 </FeatureTags>
 
-Admins can brand DQX Studio for their company under **Settings → Customisation**. It applies to every Studio user. Users still choose light or dark mode themselves.
+Admins can brand DQX Studio for their company under **Settings → Theme**. It applies to every Studio user. Users still choose light or dark mode themselves.
 
 ## Branding
 
 - **Company name** adds your company to the top bar: **DQX Studio | Acme**. It saves as you type. Reset it to show **DQX Studio** only.
-- **Logo** replaces the DQX icon in the top bar. Click a logo preview, or drop an image onto it, to upload. The previews show the logo on the light and dark mode top bars. Turn on **Separate logos for light and dark mode** to upload one for each. With separate logos and no dark mode logo, dark mode shows the light mode logo.
+- **Logo** replaces the DQX icon in the top bar. Click a logo preview, or drop an image onto it, to upload. The previews show the logo on the light and dark mode top bars. Your first logo is used in both modes; after that, uploading to the light or dark preview changes only that mode.
 - Logos must be PNG, JPEG or WebP, up to 256 KB. SVG isn't supported. Logos are shown 24 px tall and up to 160 px wide, so a logo about 200 px tall is plenty.
 
 ## Theme
 
 Pick a preset or set five colours: **Brand** (top bar), **Sidebar**, **Page background**, **Interactive elements** (buttons and highlights) and **Text**. Studio derives the rest (cards, hover, borders, button text) from them.
 
-- Use **Light** and **Dark** under the preview to choose which mode's colours you are editing. The preview always shows both modes.
+- Use **Light** and **Dark** next to **Colours** to choose which mode's colours you are editing. The preview always shows both modes.
 - Changing a colour in one mode generates the same colour in the other mode, until you set that one yourself.
-- Saving changes to a preset adds them as a new preset, **Custom 1**, **Custom 2** and so on. Delete a custom preset with its bin icon; the colours in use stay as they are.
+- Saving changes to a preset adds them as a new preset, **Custom 1**, **Custom 2** and so on. Delete a custom preset with its bin icon.
 - If a colour combination may be hard to read, Studio shows a warning that names the colour to adjust. You can still save.
 - Status colours (pass, warn, fail) and chart colours don't change.
 - **Reset theme** restores the original colours of the preset you started from. It doesn't change the company name, logo or custom presets, and isn't shown for custom presets.

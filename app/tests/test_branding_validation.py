@@ -17,7 +17,6 @@ from databricks_labs_dqx_app.backend.common.branding import (
     normalize_hex,
     parse_stored_branding,
     sanitize_company_name,
-    validate_logo_mode,
     validate_preset,
 )
 
@@ -101,13 +100,6 @@ class TestPresetAndLogoMode:
         with pytest.raises(BrandingValidationError):
             validate_preset("neon")
 
-    @pytest.mark.parametrize("mode", ["shared", "separate"])
-    def test_logo_modes(self, mode):
-        assert validate_logo_mode(mode) == mode
-
-    def test_bad_logo_mode(self):
-        with pytest.raises(BrandingValidationError):
-            validate_logo_mode("both")
 
 
 class TestDecodeLogo:

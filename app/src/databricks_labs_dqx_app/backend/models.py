@@ -3109,12 +3109,6 @@ class BrandingCompanyNameIn(BaseModel):
     company_name: str | None = None
 
 
-class BrandingLogoModeIn(BaseModel):
-    """Logo mode update."""
-
-    logo_mode: str
-
-
 class BrandingLogoIn(BaseModel):
     """Logo upload as base64."""
 

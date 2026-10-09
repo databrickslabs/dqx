@@ -15,7 +15,6 @@ from databricks_labs_dqx_app.backend.models import (
     BrandingCustomPresetOut,
     BrandingDarkOut,
     BrandingLogoIn,
-    BrandingLogoModeIn,
     BrandingLogosOut,
     BrandingModeColorsOut,
     BrandingOut,
@@ -115,16 +114,6 @@ def delete_custom_preset(preset_id: str, svc: SettingsDep, email: EmailDep) -> B
     return _to_out(svc)
 
 
-@router.put("/logo-mode", response_model=BrandingOut, operation_id="saveBrandingLogoMode", dependencies=_ADMIN)
-def save_logo_mode(body: BrandingLogoModeIn, svc: SettingsDep, email: EmailDep) -> BrandingOut:
-    """Choose one shared logo or separate light and dark logos (admin only)."""
-    try:
-        svc.save_branding_logo_mode(body.logo_mode, user_email=email)
-    except BrandingValidationError as e:
-        raise _bad_request(e) from e
-    return _to_out(svc)
-
-
 @router.put("/logo/{slot}", response_model=BrandingOut, operation_id="uploadBrandingLogo", dependencies=_ADMIN)
 def upload_logo(slot: str, body: BrandingLogoIn, svc: SettingsDep, email: EmailDep) -> BrandingOut:
     """Upload a PNG, JPEG or WebP logo of up to 256 KB (admin only)."""
@@ -169,11 +158,3 @@ def get_logo(slot: str, svc: SettingsDep, v: str | None = None) -> Response:
         media_type=logo.mime,
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": cache_control},
     )
-
-
-@router.delete("", response_model=BrandingOut, operation_id="resetBranding", dependencies=_ADMIN)
-def reset_branding(svc: SettingsDep, email: EmailDep) -> BrandingOut:
-    """Reset all styling to DQX Default (admin only)."""
-    svc.reset_branding()
-    logger.info(f"Reset branding to DQX Default (by={email})")
-    return _to_out(svc)

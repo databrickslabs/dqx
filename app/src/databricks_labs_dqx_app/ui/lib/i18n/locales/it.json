@@ -212,14 +212,13 @@
     "home": "Home"
   },
   "config": {
-    "tabCustomisation": "Personalizzazione",
+    "tabTheme": "Tema",
     "kwBranding": "marchio nome azienda logo immagine intestazione titolo organizzazione carica",
     "kwTheme": "stile tema colori preimpostazione modalità scura chiara intestazione barra laterale",
     "styling": {
       "companyNameLabel": "Nome dell'azienda",
       "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Mostrato nella barra superiore come {{title}}",
-      "logoModeSeparate": "Loghi distinti per la modalità chiara e scura",
       "logoRequirements": "PNG, JPEG o WebP, fino a 256 KB",
       "logoErrorType": "SVG e altri tipi di file non sono supportati. Usa un'immagine PNG, JPEG o WebP.",
       "logoErrorSize": "L'immagine supera i 256 KB. Esporta una versione più piccola, alta circa 200 px.",
@@ -275,7 +274,7 @@
         "dracula": "Dracula"
       },
       "themeTitle": "Tema",
-      "themeDescription": "Scegli una preimpostazione o imposta i tuoi colori. Modificare un colore in una modalità aggiorna anche l'altra, finché non lo imposti tu. Salvare le modifiche a una preimpostazione la aggiunge come Personalizzato 1, Personalizzato 2 e così via.",
+      "themeDescription": "Scegli una preimpostazione o imposta i tuoi colori.",
       "companyNameReset": "Reimposta nome azienda",
       "logoLabel": "Logo",
       "logoTileLight": "Chiaro",
@@ -283,16 +282,16 @@
       "logoUploadTo": "Carica logo ({{mode}})",
       "logoUploadHint": "Fai clic o trascina un'immagine",
       "logoReset": "Reimposta logo",
-      "colorsLabelMode": "Colori ({{mode}})",
       "editMode": "Modifica colori ({{mode}})",
       "modeToggleLabel": "Modalità",
       "customPresetName": "Personalizzato {{number}}",
       "customPresetDelete": "Elimina {{name}}",
-      "customPresetDeleteConfirm": "Eliminare questa preimpostazione per tutti? I colori in uso restano invariati.",
+      "customPresetDeleteConfirm": "Eliminare questa preimpostazione per tutti?",
       "delete": "Elimina",
       "customPresetDeleted": "Preimpostazione eliminata",
       "themeSavedAsCustom": "Colori salvati come Personalizzato {{number}}",
-      "resetTheme": "Reimposta tema"
+      "resetTheme": "Reimposta tema",
+      "colorsLabel": "Colori"
     },
     "breadcrumb": "Impostazioni amministratore",
     "title": "Impostazioni amministratore",

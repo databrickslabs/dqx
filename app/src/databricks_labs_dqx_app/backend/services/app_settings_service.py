@@ -15,12 +15,10 @@ from databricks_labs_dqx_app.backend.common.branding import (
     MAX_CUSTOM_PRESETS,
     BrandingValidationError,
     custom_preset_number,
-    default_branding,
     logo_hash,
     normalize_colors,
     parse_stored_branding,
     sanitize_company_name,
-    validate_logo_mode,
     validate_preset,
 )
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
@@ -1397,12 +1395,6 @@ class AppSettingsService:
             branding["preset"] = None
         return self._save_branding(branding, user_email)
 
-    def save_branding_logo_mode(self, mode: object, *, user_email: str | None = None) -> dict[str, object]:
-        """Validate and store whether one logo is shared or each mode has its own."""
-        branding = self.get_branding()
-        branding["logo_mode"] = validate_logo_mode(mode)
-        return self._save_branding(branding, user_email)
-
     @staticmethod
     def _logo_key(slot: str) -> str:
         if slot not in LOGO_SLOTS:
@@ -1423,41 +1415,52 @@ class AppSettingsService:
             return None
 
     def save_branding_logo(self, slot: str, mime: str, raw: bytes, *, user_email: str | None = None) -> StoredLogo:
-        """Store an already-validated logo for *slot*."""
-        key = self._logo_key(slot)
-        digest = logo_hash(raw)
-        payload = {"content_type": mime, "data_base64": base64.b64encode(raw).decode(), "sha256": digest}
-        self.save_setting(key, json.dumps(payload), user_email=user_email)
-        self._set_branding_logo_hash(slot, digest, user_email)
-        return StoredLogo(mime=mime, data=raw, hash=digest)
+        """Store an already-validated logo.
 
-    def delete_branding_logo(self, slot: str, *, user_email: str | None = None) -> None:
-        """Remove the logo for *slot*."""
-        self.delete_setting(self._logo_key(slot))
-        self._set_branding_logo_hash(slot, None, user_email)
-
-    def _set_branding_logo_hash(self, slot: str, digest: str | None, user_email: str | None) -> None:
+        The first logo is shared by light and dark mode, whichever *slot* it was uploaded to. Once a
+        logo exists, each upload replaces only *slot*'s logo, and the other mode keeps the one it
+        showed before.
+        """
+        self._logo_key(slot)
         branding = self.get_branding()
         hashes = branding_logo_hashes(branding)
-        hashes[slot] = digest
+        if not hashes["light"] and not hashes["dark"]:
+            target = "light"
+            branding["logo_mode"] = "shared"
+        else:
+            target = slot
+            if branding.get("logo_mode") != "separate":
+                # Leaving shared mode: the dark slot gets the shared logo unless it is being replaced.
+                if slot == "light" and not hashes["dark"]:
+                    shared = self.get_branding_logo("light")
+                    if shared is not None:
+                        hashes["dark"] = self._write_logo("dark", shared.mime, shared.data, user_email)
+                branding["logo_mode"] = "separate"
+        hashes[target] = self._write_logo(target, mime, raw, user_email)
         branding["logos"] = hashes
+        self._save_branding(branding, user_email)
+        return StoredLogo(mime=mime, data=raw, hash=hashes[target] or "")
+
+    def _write_logo(self, slot: str, mime: str, raw: bytes, user_email: str | None) -> str:
+        digest = logo_hash(raw)
+        payload = {"content_type": mime, "data_base64": base64.b64encode(raw).decode(), "sha256": digest}
+        self.save_setting(self._logo_key(slot), json.dumps(payload), user_email=user_email)
+        return digest
+
+    def delete_branding_logo(self, slot: str, *, user_email: str | None = None) -> None:
+        """Remove the logo for *slot*; with no logos left, the next upload is shared again."""
+        self.delete_setting(self._logo_key(slot))
+        branding = self.get_branding()
+        hashes = branding_logo_hashes(branding)
+        hashes[slot] = None
+        branding["logos"] = hashes
+        if not hashes["light"] and not hashes["dark"]:
+            branding["logo_mode"] = "shared"
         self._save_branding(branding, user_email)
 
     def get_branding_logo_hashes(self) -> dict[str, str | None]:
         """Return each slot's logo hash (None when unset), read from the small branding value."""
         return branding_logo_hashes(self.get_branding())
-
-    def reset_branding(self) -> None:
-        """Remove all branding (company name, theme and logos). Saved custom presets are kept."""
-        custom = branding_custom_presets(self.get_branding())
-        if custom:
-            branding = default_branding()
-            branding["custom_presets"] = custom
-            self.save_setting(_BRANDING_KEY, json.dumps(branding))
-        else:
-            self.delete_setting(_BRANDING_KEY)
-        for slot in LOGO_SLOTS:
-            self.delete_setting(self._logo_key(slot))
 
 
 def branding_custom_presets(branding: dict[str, object]) -> list[dict[str, object]]:
