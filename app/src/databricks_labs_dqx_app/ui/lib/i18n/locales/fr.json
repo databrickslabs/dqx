@@ -318,7 +318,7 @@
     "computeWarehouseDefaultSuffix": "(par défaut)",
     "computeWarehouseCustomOption": "enregistré",
     "computeNoWarehouses": "Aucun warehouse trouvé",
-    "computeSpAccessMissing": "Le service principal de l'application ne peut pas encore utiliser ce warehouse.",
+    "computeSpAccessMissing": "Le service principal de l'application a besoin de CAN MANAGE sur ce warehouse.",
     "computeGrantButton": "Accorder l'accès",
     "computeGrantAdminOnly": "Seuls les administrateurs peuvent accorder l'accès.",
     "computeJobsLabel": "Compute des jobs",
@@ -2448,7 +2448,6 @@
       "noneForRule": "Cette règle n'est encore appliquée à aucune table."
     },
     "importButton": "Importer",
-    "colAppliedRules": "Règles appliquées",
     "groupByNone": "Aucun",
     "groupByDqScore": "Score DQ",
     "groupByCatalog": "Catalogue",
@@ -3012,42 +3011,89 @@
     "whyNeeded": "Pourquoi cette étape est nécessaire",
     "purposes": {
       "identity": "Un principal de service utilisé par DQX Studio pour gérer les ressources de l’application et effectuer les opérations de configuration.",
-      "volume": "Stocke la bibliothèque DQX Core et l’application d’exécution des tâches utilisées par les jobs de profilage et de qualité des données.",
       "unity_catalog": "Permet à Studio de créer et d’interroger ses schémas, tables, vues temporaires et résultats d’exécution.",
-      "schemas": "Sépare l’état de l’application, les vues temporaires et les objets destinés à Genie dans Unity Catalog.",
       "lakebase": "Stocke l’état transactionnel de Studio, notamment les règles, rôles, paramètres et planifications.",
       "warehouse": "Exécute les requêtes SQL de Studio pour la configuration, les métadonnées, les résultats et les contrôles interactifs.",
       "task_runner": "Exécute les charges de profilage et de qualité des données basées sur Spark en dehors de l’application web.",
       "wheels": "Maintient le lanceur de tâches sur les mêmes versions de DQX et de Studio que l’application.",
       "migrations": "Crée et met à niveau les tables Delta et Lakebase requises par cette version de Studio.",
-      "activation": "Démarre les API et services d’arrière-plan de Studio uniquement lorsque toutes les dépendances sont prêtes."
+      "activation": "Démarre les API et services d’arrière-plan de Studio uniquement lorsque toutes les dépendances sont prêtes.",
+      "configuration": "Le catalogue, le préfixe de stockage et le groupe d'audience utilisés par Studio pour ses données et ses accès.",
+      "storage": "Crée les schémas Unity Catalog et le volume de wheels qui contiennent l'état de Studio, les vues temporaires et les objets destinés à Genie.",
+      "access": "Accorde au groupe d'audience et aux administrateurs l'accès à l'espace de travail et aux données nécessaire pour utiliser Studio.",
+      "ai": "Vérifie que les utilisateurs de Studio peuvent utiliser le modèle d'IA des suggestions de règles. Sinon, les fonctionnalités d'IA sont désactivées jusqu'à ce que l'accès soit corrigé.",
+      "app_sharing": "Vérifie que le groupe d'audience peut ouvrir cette application. Le partage se gère dans les autorisations de l'application."
     },
     "steps": {
       "identity": "Identité de l’application",
-      "volume": "Volume des wheels",
       "unity_catalog": "Accès à Unity Catalog",
-      "schemas": "Schémas de l’application",
       "lakebase": "Base de données Lakebase",
       "warehouse": "Entrepôt SQL",
       "task_runner": "Tâche d’exécution des jobs",
       "wheels": "Wheels de l’application",
       "migrations": "Migrations de base de données",
-      "activation": "Activer Studio"
+      "activation": "Activer Studio",
+      "configuration": "Configuration de Studio",
+      "storage": "Schémas et volume de stockage",
+      "access": "Accès de l'audience",
+      "ai": "Fonctionnalités d'IA",
+      "app_sharing": "Partage de l'application"
     },
     "states": {
       "pending": "En attente",
       "running": "En cours",
       "passed": "Prêt",
       "action_required": "Action requise",
-      "failed": "Attention requise"
+      "failed": "Attention requise",
+      "warning": "Avertissement",
+      "overridden": "Confirmé par un admin"
     },
     "actions": {
       "reconcile": "Lancer la configuration",
       "verify_again": "Vérifier à nouveau",
-      "openJobs": "Ouvrir les jobs"
+      "openJobs": "Ouvrir les jobs",
+      "configure": "Enregistrer la configuration"
+    },
+    "warningsReview": {
+      "title": "La configuration de Studio s'est terminée avec des avertissements",
+      "description": "Studio est prêt à l'emploi. Examinez les avertissements ci-dessous, que vous pouvez corriger maintenant ou plus tard, puis continuez. Utilisez Vérifier à nouveau après les avoir corrigés.",
+      "acknowledge": "J'ai compris, continuer vers Studio"
     },
     "instructions": "Comment résoudre ce problème",
-    "diagnosticCode": "Code : {{code}}"
+    "diagnosticCode": "Code : {{code}}",
+    "configuration": {
+      "catalog": "Catalogue",
+      "catalogHelp": "Un catalogue Unity Catalog existant. Studio y crée ses schémas.",
+      "prefix": "Préfixe de stockage",
+      "prefixHelp": "Lettres minuscules, chiffres et traits de soulignement. Schémas : <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
+      "audience_group": "Groupe d'audience",
+      "audience_groupHelp": "Un groupe de compte existant affecté à cet espace de travail. Ses membres peuvent utiliser Studio ; les rôles sont attribués séparément.",
+      "schemas": "Schémas",
+      "submit": "Enregistrer et continuer",
+      "broadAudience": "Audience large : tous les utilisateurs de l'espace de travail",
+      "errors": {
+        "configuration_invalid": "Vérifiez le catalogue, le préfixe et le nom du groupe.",
+        "catalog_not_found": "Le catalogue n'existe pas ou vous n'y avez pas accès.",
+        "audience_group_not_found": "Le groupe n'existe pas dans cet espace de travail.",
+        "configuration_locked": "Le stockage est déjà provisionné ; la configuration ne peut plus être modifiée.",
+        "configuration_managed_by_deployment": "Cette configuration est gérée par le déploiement.",
+        "catalog_check_failed": "Le catalogue n'a pas pu être vérifié. Réessayez.",
+        "group_check_failed": "Le groupe n'a pas pu être vérifié. Réessayez.",
+        "default": "Impossible d'enregistrer la configuration."
+      }
+    },
+    "override": {
+      "button": {
+        "default": "Continuer quand même",
+        "app_sharing": "J'ai partagé l'application",
+        "ai": "Garder l'IA activée"
+      },
+      "help": {
+        "default": "Studio ne voit que les autorisations accordées directement à un utilisateur ou à un groupe. Si vous avez accordé cet accès via un groupe parent, ou manuellement dans l'espace de travail, il peut sembler manquant ici. Si vous êtes sûr qu'il est en place, vous pouvez continuer quand même.",
+        "app_sharing": "Studio n'est pas autorisé à lire avec qui l'application est partagée ; il ne peut donc pas le vérifier lui-même. Une fois l'application partagée avec vos utilisateurs, confirmez-le ici.",
+        "ai": "Si vos utilisateurs peuvent déjà utiliser ce modèle d'IA (par exemple via un groupe parent), vous pouvez garder les fonctionnalités d'IA activées."
+      }
+    }
   },
   "schedules": {
     "title": "Planifications",

@@ -1,20 +1,15 @@
 import json
 import os
 from importlib import resources
-import logging
 from pathlib import Path
 from typing import Annotated
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-from databricks.labs.dqx.errors import InvalidParameterError
-from databricks_labs_dqx_app.backend.volume import parse_volume_path
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 
 from .._metadata import app_name, app_slug
-
-logger = logging.getLogger(__name__)
 
 # project root is the parent of the src folder
 project_root = Path(__file__).parent.parent.parent.parent
@@ -34,34 +29,26 @@ class AppConfig(BaseSettings):
     )
     app_name: str = Field(default=app_name)
     api_prefix: str = Field(default="/api")
-    catalog: str = Field(default="dqx")
-    schema_name: str = Field(default="dqx_studio", validation_alias="DQX_SCHEMA")
+    catalog: str = Field(default="", validation_alias="DQX_CATALOG")
+    prefix: str = Field(default="", validation_alias="DQX_PREFIX")
+    schema_name: str = Field(default="", validation_alias="DQX_SCHEMA")
     tmp_schema_name: str = Field(default="", validation_alias="DQX_TMP_SCHEMA")
     genie_schema_name: str = Field(default="", validation_alias="DQX_GENIE_SCHEMA")
+    demo_schema_name: str = Field(default="", validation_alias="DQX_DEMO_SCHEMA")
+    default_dashboard_id: str = Field(default="", validation_alias="DQX_DEFAULT_DASHBOARD_ID")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
-    wheels_volume: str = Field(default="", validation_alias="DQX_WHEELS_VOLUME")
 
-    @model_validator(mode="after")
-    def derive_sibling_schema_names(self) -> "AppConfig":
-        """Name app-owned sibling schemas after the bound volume's schema."""
-        try:
-            schema = parse_volume_path(self.wheels_volume).schema
-        except InvalidParameterError:
-            schema = self.schema_name
-        if "schema_name" in self.model_fields_set and self.schema_name != schema:
-            logger.warning(
-                "DQX_SCHEMA differs from the bound volume schema; the bound volume determines application storage."
-            )
-        self.tmp_schema_name = self.tmp_schema_name or f"{schema}_tmp"
-        self.genie_schema_name = self.genie_schema_name or f"{schema}_genie"
-        return self
+    @property
+    def has_deployment_storage(self) -> bool:
+        """Whether the deployment supplies Studio storage (bundle deployments)."""
+        return bool(self.catalog.strip())
 
     tag_bundle_owned_resources: bool = Field(
         default=False,
         validation_alias="DQX_TAG_BUNDLE_OWNED_RESOURCES",
         description="Tag DAB-created main schema, demo schema, and wheels volume as Studio-owned.",
     )
-    # Production deploys bind ``job_id`` and ``wheels_volume`` from
+    # Production deploys bind ``job_id`` from
     # bundle resources, so missing values there indicate a misconfigured
     # deploy that would otherwise silently break profiler / dry-run /
     # schedules at first use. Setting ``DQX_REQUIRE_TASK_RUNNER=1``
@@ -71,7 +58,7 @@ class AppConfig(BaseSettings):
     require_task_runner: bool = Field(
         default=False,
         validation_alias="DQX_REQUIRE_TASK_RUNNER",
-        description="Require DQX_JOB_ID and DQX_WHEELS_VOLUME at startup (production deploys).",
+        description="Require DQX_JOB_ID at startup (production deploys).",
     )
     llm_endpoint: str = Field(default="databricks-claude-sonnet-4-5", validation_alias="DQX_LLM_ENDPOINT")
     # Hard cap on tokens generated per LLM call. Bounds cost/latency and
@@ -93,7 +80,8 @@ class AppConfig(BaseSettings):
         validation_alias="DQX_USER_GROUPS",
         description=(
             "Explicit audience groups as a JSON list or unquoted comma-separated names; "
-            "an empty list means administrator-managed access."
+            "required for bundle deployments (the bundle sets this from studio_user_group); "
+            "ignored for Marketplace installs, where the setup form collects the audience group."
         ),
     )
 
@@ -120,13 +108,8 @@ class AppConfig(BaseSettings):
         groups: list[str] = []
         for value in values:
             group = value.strip()
-            if (
-                not group
-                or "`" in group
-                or replace_control_characters(value) != value
-                or group.casefold() in {"account users", "users"}
-            ):
-                raise ValueError("DQX_USER_GROUPS must contain scoped group names, not broad built-in groups.")
+            if not group or "`" in group or replace_control_characters(value) != value:
+                raise ValueError("DQX_USER_GROUPS must contain group names without backticks or control characters.")
             if group not in groups:
                 groups.append(group)
         return groups

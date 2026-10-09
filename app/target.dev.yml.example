@@ -12,6 +12,15 @@ targets:
       profile: <your-databricks-cli-profile>
     variables:
       catalog_name: <your-catalog>
+      # Storage prefix: schemas become <prefix>, <prefix>_tmp, <prefix>_genie and
+      # <prefix>_demo. Omit to use the default ``dqx_studio``. Also settable via
+      # ``make app-deploy STUDIO_PREFIX=<prefix>``.
+      # prefix: dqx_studio
+      # Workspace group allowed to use Studio. Also settable via
+      # ``make app-deploy STUDIO_USER_GROUP=<group>``. Use ``users`` for broad mode
+      # (workspace ACLs use ``users``, UC grants use ``account users``; the Make
+      # target sets ``studio_uc_principal`` for you, otherwise set it to
+      # ``account users`` here).
       studio_user_group: <your-scoped-studio-user-group>
       # Application id of the service principal that runs the task-runner job.
       dqx_service_principal_application_id: <your-service-principal-application-id>
@@ -20,6 +29,6 @@ targets:
       # into .build/ and the app publishes it to the wheels volume at startup; the
       # runner job installs it from there. Remove this override to install the pinned,
       # published release from the registry instead (production behaviour).
-      dqx_task_dependency: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}/${var.dqx_wheel_filename}"
+      dqx_task_dependency: "/Volumes/${var.catalog_name}/${var.schema_name}/wheels/${var.dqx_wheel_filename}"
     presets:
       trigger_pause_status: PAUSED

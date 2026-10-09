@@ -1,8 +1,9 @@
 """API-safe models for DQX Studio setup readiness."""
 
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _StrEnum(str, Enum):
@@ -27,21 +28,26 @@ class StepState(_StrEnum):
     PASSED = "passed"
     ACTION_REQUIRED = "action_required"
     FAILED = "failed"
+    WARNING = "warning"
+    OVERRIDDEN = "overridden"
 
 
 class SetupStepId(_StrEnum):
     """Stable identifiers for the ordered setup workflow."""
 
     IDENTITY = "identity"
-    VOLUME = "volume"
-    UNITY_CATALOG = "unity_catalog"
-    SCHEMAS = "schemas"
     LAKEBASE = "lakebase"
+    CONFIGURATION = "configuration"
+    UNITY_CATALOG = "unity_catalog"
+    STORAGE = "storage"
     WAREHOUSE = "warehouse"
     TASK_RUNNER = "task_runner"
     WHEELS = "wheels"
     MIGRATIONS = "migrations"
     ACTIVATION = "activation"
+    ACCESS = "access"
+    AI = "ai"
+    APP_SHARING = "app_sharing"
 
 
 class SetupActionId(_StrEnum):
@@ -49,6 +55,8 @@ class SetupActionId(_StrEnum):
 
     RECONCILE = "reconcile"
     VERIFY_AGAIN = "verify_again"
+    CONFIGURE = "configure"
+    OVERRIDE = "override"
 
 
 class _ImmutableModel(BaseModel):
@@ -91,9 +99,40 @@ class SetupReport(_ImmutableModel):
         raise LookupError(f"Setup report does not contain step {step_id.value!r}")
 
 
+class SetupConfigurationView(_ImmutableModel):
+    """Sanitized view of the active Studio storage and audience configuration."""
+
+    source: Literal["deployment", "saved", "none"]
+    catalog: str = ""
+    prefix: str = ""
+    audience_group: str = ""
+    schemas: tuple[str, ...] = ()
+    broad_audience: bool = False
+    locked: bool = False
+
+
+class SetupConfigurationRequest(BaseModel):
+    """Administrator-submitted catalog, prefix and audience group (Marketplace path)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    catalog: str = Field(max_length=255)
+    prefix: str = Field(default="dqx_studio", max_length=64)
+    audience_group: str = Field(max_length=255)
+
+
+class SetupOverrideRequest(BaseModel):
+    """Administrator confirmation that a step's requirement was met in a way Studio cannot see."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: SetupStepId
+
+
 class SetupStatusResponse(_ImmutableModel):
     """Setup report projected with caller-specific management access."""
 
     report: SetupReport
     can_manage: bool
     admin_group: str
+    configuration: SetupConfigurationView | None = None

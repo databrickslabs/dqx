@@ -90,13 +90,16 @@ class TaskRunnerJobManager:
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.PASSED,
                 code="task_runner_run_as_ready",
-                summary="The task-runner job uses a separate service principal.",
+                summary="The task-runner job runs as its own service principal.",
             )
         return SetupStep(
             id=SetupStepId.TASK_RUNNER,
             state=StepState.ACTION_REQUIRED,
             code=_run_as_action_code(run_as, app_sp_id),
-            summary="Assign a service principal distinct from the app identity as this job's run_as identity.",
+            summary=(
+                "The task-runner job must run as its own service principal, not the app's. "
+                "Change Run as on the job, then click Verify again."
+            ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 

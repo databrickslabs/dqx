@@ -508,8 +508,7 @@ class ScheduleGrantService:
                         "principal": principal,
                         "type": "service_principal",
                         "remediation": (
-                            f"GRANT {required.replace('_', ' ')} ON {kind} {quote_fqn(name)} "
-                            f"TO {quote_ident(principal)};"
+                            f"GRANT {required} ON {kind} {quote_fqn(name)} " f"TO {quote_ident(principal)};"
                         ),
                     }
                 )

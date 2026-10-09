@@ -38,6 +38,7 @@ DEFAULT_PASS_THRESHOLD_DEFAULT = 70
 # and is ignored for ``full``. Shared by the profiler routes and the
 # ``/compute/profiler-sample`` admin endpoints.
 ProfilerSampleKind = Literal["full", "records", "percent"]
+AiEnabledSource = Literal["default", "admin", "setup"]
 PROFILER_SAMPLE_KIND_FULL: ProfilerSampleKind = "full"
 PROFILER_SAMPLE_KIND_RECORDS: ProfilerSampleKind = "records"
 PROFILER_SAMPLE_KIND_PERCENT: ProfilerSampleKind = "percent"
@@ -1005,6 +1006,7 @@ class AppSettingsService:
     # ------------------------------------------------------------------
 
     _AI_ENABLED_KEY = "ai_enabled"
+    _AI_ENABLED_SOURCE_KEY = "ai_enabled_source"
     _AI_ENDPOINT_NAME_KEY = "ai_endpoint_name"
     _AI_RATE_LIMIT_KEY = "ai_rate_limit_per_user_per_hour"
 
@@ -1043,10 +1045,31 @@ class AppSettingsService:
             return True
         return raw.strip().lower() == "true"
 
-    def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
-        """Persist the AI kill-switch setting. Returns the saved value."""
+    def save_ai_enabled(
+        self,
+        enabled: bool,
+        *,
+        user_email: str | None = None,
+        source: AiEnabledSource = "admin",
+    ) -> bool:
+        """Persist the AI kill-switch setting. Returns the saved value.
+
+        Args:
+            enabled: Whether AI features are on.
+            user_email: Who made the change.
+            source: *admin* for an administrator's choice, *setup* when setup turned AI
+                off (or back on) because Studio users could not use the AI model. Setup
+                never overrides an administrator's choice.
+        """
         self.save_setting(self._AI_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        self.save_setting(self._AI_ENABLED_SOURCE_KEY, source, user_email=user_email)
         return enabled
+
+    def get_ai_enabled_source(self) -> AiEnabledSource:
+        """Return who decided the AI kill-switch: the *default*, an *admin*, or *setup*."""
+        if self.get_setting(self._AI_ENABLED_KEY) is None:
+            return "default"
+        return "setup" if self.get_setting(self._AI_ENABLED_SOURCE_KEY) == "setup" else "admin"
 
     def get_ai_endpoint_name(self) -> str:
         """Return the configured AI serving endpoint name.

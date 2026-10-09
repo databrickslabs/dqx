@@ -79,7 +79,7 @@ you can query outside the app from SQL, a notebook, or an alerting job:
 
 ```sql
 SELECT quarantine_id, run_id, created_at, row_data, errors, warnings
-FROM <catalog>.dqx_studio.dq_quarantine_records
+FROM <catalog>.<prefix>.dq_quarantine_records  -- default prefix: dqx_studio
 WHERE source_table_fqn = 'main.sales.orders'
 ORDER BY created_at DESC
 LIMIT 100;

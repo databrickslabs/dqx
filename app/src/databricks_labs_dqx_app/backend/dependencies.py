@@ -18,14 +18,15 @@ from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
 from .common.authorization import UserRole, get_user_email
 from .config import AppConfig, conf, get_sql_warehouse_path
-from .demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
 from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
 from .sanitization import replace_control_characters
 from .setup.runtime import setup_runtime
-from .setup.orchestrator import SetupOrchestrator
+from .setup.configuration import SetupConfigurationStore
+from .setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
+from .setup.resources import ActiveResources
 from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
@@ -104,6 +105,7 @@ _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
+_WORKSPACE_ADMINS_GROUP = "admins"  # workspace administrators may always run setup
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +316,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             warehouse_id=warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
-            audience_groups=tuple(conf.user_groups),
+            audience_groups=resources.audience.workspace_principals,
         )
 
     return _reprovision
@@ -678,8 +680,9 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
-    runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
-    return ViewService(sql=sql, sp_sql=sp_sql, runner_principal=runner, cleanup_principal=cleanup)
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
+    _runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    return ViewService(sql=sql, sp_sql=sp_sql, cleanup_principal=cleanup)
 
 
 async def get_scheduler_view_service(sp_ws: WorkspaceClient, sp_sql: SqlExecutor) -> ViewService:
@@ -971,12 +974,13 @@ async def get_metadata_dim_service(
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
 ) -> MetadataDimService:
     """Create the materializer for the Genie metadata dimensions."""
+    resources = rt.require_resources()
     return MetadataDimService(
         sp_sql=sp_sql,
         registry=registry,
         monitored_tables=monitored_tables,
-        genie_schema=rt.require_resources().genie_schema,
-        audience_groups=tuple(conf.user_groups),
+        genie_schema=resources.genie_schema,
+        audience_groups=resources.audience.uc_principals,
     )
 
 
@@ -1086,7 +1090,7 @@ async def get_demo_seed_service(
     load-bearing:
 
     * ``demo_sql`` is a fresh :class:`SqlExecutor` bound to the demo source
-      schema (:data:`~backend.demo.manifest.SOURCE_SCHEMA`), where the seeded
+      schema (*resources.demo_schema*), where the seeded
       e-commerce tables live, rather than the app's own ``dqx_studio`` schema.
     * The :class:`BindingRunService` is built with a :class:`ViewService` whose
       ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
@@ -1100,12 +1104,13 @@ async def get_demo_seed_service(
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
-    runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
+    _runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
         catalog=resources.volume.catalog,
-        schema=DEMO_SOURCE_SCHEMA,
+        schema=resources.demo_schema,
     )
     sp_view = ViewService(
         sql=SqlExecutor(
@@ -1115,7 +1120,6 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
-        runner_principal=runner_principal,
         cleanup_principal=cleanup_principal,
     )
     # Profiler temp views for the demo profiling phase are created on the tmp
@@ -1129,7 +1133,6 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
-        runner_principal=runner_principal,
         cleanup_principal=cleanup_principal,
     )
     binding_run = BindingRunService(
@@ -1167,6 +1170,7 @@ async def get_demo_seed_service(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
         catalog=resources.volume.catalog,
+        schema=resources.demo_schema,
     )
 
 
@@ -1267,20 +1271,29 @@ class SetupAccess:
 def setup_access(user: User, admin_group: str) -> SetupAccess:
     """Derive bootstrap setup access from a trusted SCIM user record.
 
+    Members of the configured administrator group or of the workspace *admins* group may
+    manage setup. Group names are compared case-insensitively after sanitization.
+
     Args:
         user: User returned by the caller's OBO-authenticated SCIM request.
         admin_group: Configured Databricks group permitted to manage setup.
 
     Returns:
-        Sanitized user identity and whether they are a member of the configured group.
+        Sanitized user identity and whether they may manage setup.
     """
-    configured_group = sanitize_setup_display(admin_group)
+    setup_groups = {
+        group.casefold()
+        for group in (sanitize_setup_display(admin_group), _WORKSPACE_ADMINS_GROUP)
+        if group is not None
+    }
     groups = {
-        display for group in (user.groups or []) if (display := sanitize_setup_display(group.display)) is not None
+        display.casefold()
+        for group in (user.groups or [])
+        if (display := sanitize_setup_display(group.display)) is not None
     }
     return SetupAccess(
         user_name=sanitize_setup_display(user.user_name) or "unknown",
-        can_manage=configured_group is not None and configured_group in groups,
+        can_manage=not setup_groups.isdisjoint(groups),
     )
 
 
@@ -1320,7 +1333,10 @@ def require_setup_admin() -> object:
         if not access.can_manage:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Setup reconciliation requires membership in the configured administrator group.",
+                detail=(
+                    "Setup reconciliation requires membership in the configured administrator group "
+                    "or the workspace admins group."
+                ),
             )
         return access
 
@@ -1335,18 +1351,38 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     return orchestrator
 
 
-def get_setup_sql_executor(
+def get_setup_configuration_store(request: Request) -> SetupConfigurationStore:
+    """Return the setup choices store built over the startup Lakebase executor.
+
+    The store is published on application state during startup, before activation, so it is
+    available while the setup gate still blocks every other database-backed route.
+    """
+    store = getattr(request.app.state, "setup_configuration_store", None)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
+    return store
+
+
+def get_setup_sql_reader_factory(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
-) -> SqlExecutor:
-    """Inspect setup grants with OBO SQL before application resources are activated."""
-    resources = orchestrator.resources
-    return SqlExecutor(
-        ws=obo_ws,
-        warehouse_id=resources.warehouse_id,
-        catalog=resources.volume.catalog,
-        schema=resources.tmp_schema,
-    )
+) -> ReaderSqlFactory:
+    """Return a builder of OBO SQL executors for setup grant inspection on given storage.
+
+    Setup binds storage during a run (for example right after new choices are saved), so
+    the orchestrator builds the executor once it knows which storage is bound.
+    """
+    warehouse_id = orchestrator.bootstrap.warehouse_id
+
+    def build(resources: ActiveResources) -> SqlExecutor | None:
+        return SqlExecutor(
+            ws=obo_ws,
+            warehouse_id=warehouse_id,
+            catalog=resources.volume.catalog,
+            schema=resources.tmp_schema,
+        )
+
+    return build
 
 
 def sanitize_setup_display(value: str | None) -> str | None:

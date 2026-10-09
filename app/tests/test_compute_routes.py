@@ -1,7 +1,7 @@
 """Tests for the compute routes (P22-B) — settings, listings, warehouse access/grant."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, call, create_autospec
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -70,7 +70,7 @@ def client(route_app_settings: MagicMock, checkers: MagicMock, obo_ws: MagicMock
     app.include_router(router, prefix="/api/v1/compute")
     app.dependency_overrides[get_app_settings_service] = lambda: route_app_settings
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws
-    app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(checkers=checkers)
+    app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(bound=SimpleNamespace(checkers=checkers))
     app.dependency_overrides[get_user_email] = lambda: "admin@x"
     app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
     return TestClient(app)
@@ -169,7 +169,9 @@ class TestSettings:
         sql_executor_mock.query.side_effect = _query
 
         orchestrator = MagicMock()
-        orchestrator.checkers.check_warehouse.return_value = SetupStep(id=SetupStepId.WAREHOUSE, state=StepState.PASSED)
+        orchestrator.bound.checkers.check_warehouse.return_value = SetupStep(
+            id=SetupStepId.WAREHOUSE, state=StepState.PASSED
+        )
         result = await save_compute_settings(
             ComputeSettingsIn(
                 sql_warehouse_id="wh-9",
@@ -201,7 +203,8 @@ class TestSettings:
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "warehouse_permissions_missing"
         route_app_settings.save_sql_warehouse_id.assert_not_called()
-        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
+        # The probe is read-only: it never grants the audience access to a rejected warehouse.
+        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws, include_audience=False)
 
     def test_save_warehouse_persists_candidate_after_readiness_passes(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock, obo_ws: MagicMock
@@ -210,18 +213,22 @@ class TestSettings:
         response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
 
         assert response.status_code == 200
-        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
+        # Probe first (read-only), then grant the audience access once the warehouse is adopted.
+        assert checkers.check_warehouse.call_args_list == [
+            call("new-warehouse", reader_ws=obo_ws, include_audience=False),
+            call("new-warehouse", reader_ws=obo_ws),
+        ]
 
-    def test_save_warehouse_accepts_candidate_when_acl_is_unreadable(
+    def test_save_warehouse_accepts_candidate_when_access_is_unverifiable(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
     ) -> None:
-        """An inconclusive ACL read must not reject a potentially usable warehouse."""
+        """Access given through a group can't be read; the administrator's choice is accepted."""
         checkers.check_warehouse.return_value = SetupStep(
             id=SetupStepId.WAREHOUSE,
             state=StepState.ACTION_REQUIRED,
             code="warehouse_permission_unknown",
-            summary="Could not determine app service principal access to the SQL warehouse.",
+            summary="Studio couldn't read the permissions on its SQL warehouse.",
         )
 
         response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
@@ -242,6 +249,22 @@ class TestSettings:
         assert response.json()["warehouse_is_override"] is False
         checkers.check_warehouse.assert_not_called()
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("", user_email="admin@x")
+
+    def test_save_warehouse_requires_bound_storage(self, route_app_settings: MagicMock, obo_ws: MagicMock) -> None:
+        """Validating a warehouse needs storage-bound checkers; unconfigured storage is a curated 503."""
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1/compute")
+        app.dependency_overrides[get_app_settings_service] = lambda: route_app_settings
+        app.dependency_overrides[get_obo_ws] = lambda: obo_ws
+        app.dependency_overrides[get_setup_orchestrator] = lambda: SimpleNamespace(bound=None)
+        app.dependency_overrides[get_user_email] = lambda: "admin@x"
+        app.dependency_overrides[get_user_role] = lambda: UserRole.ADMIN
+
+        response = TestClient(app).put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DQX Studio storage is not configured."
+        route_app_settings.save_sql_warehouse_id.assert_not_called()
 
     def test_save_warehouse_returns_curated_unavailable_response_without_setup_orchestrator(
         self, unavailable_client: TestClient
@@ -281,7 +304,7 @@ class TestWarehouseAccess:
         async def _status(wid, reader_ws):
             return "granted"
 
-        compute_svc.grant_warehouse_can_use_async.side_effect = _grant
+        compute_svc.grant_warehouse_manage_async.side_effect = _grant
         compute_svc.warehouse_access_status_async.side_effect = _status
         compute_svc.sp_application_id.return_value = "sp-1"
 
@@ -293,7 +316,7 @@ class TestWarehouseAccess:
         async def _boom(wid, grantor_ws):
             raise PermissionError("no manage")
 
-        compute_svc.grant_warehouse_can_use_async.side_effect = _boom
+        compute_svc.grant_warehouse_manage_async.side_effect = _boom
         with pytest.raises(HTTPException) as exc:
             await grant_warehouse_access(GrantWarehouseAccessIn(warehouse_id="wh-1"), compute_svc, MagicMock())
         assert exc.value.status_code == 502

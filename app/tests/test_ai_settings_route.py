@@ -88,7 +88,8 @@ class TestSaveAiSettings:
             "admin@x",
         )
 
-        assert sql_executor_mock.upsert.call_count == 3
+        # ai_enabled also records that an administrator made the choice (ai_enabled_source).
+        assert sql_executor_mock.upsert.call_count == 4
         assert result.ai_enabled is True
         assert result.ai_endpoint_name == "my-endpoint"
         assert result.ai_rate_limit_per_user_per_hour == 5

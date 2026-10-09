@@ -13,7 +13,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend._scheduler_registry import get_scheduler, set_scheduler
-from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.config import AppConfig, conf
 from databricks_labs_dqx_app.backend.dependencies import (
     _build_column_reader,
     get_app_settings_service,
@@ -45,7 +45,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.binding_run_service import BindingRunService
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
-from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME, EntitlementService
+from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
     DIM_MONITORED_TABLES_TABLE_NAME,
@@ -61,16 +61,19 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
-from databricks_labs_dqx_app.backend.services.score_view_service import (
-    ASOF_VIEW_NAME,
-    ATTRIBUTION_VIEW_NAME,
-    METRIC_VIEW_NAME,
-    SHAPING_VIEW_NAME,
-    ScoreViewService,
-)
+from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
+from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
+from databricks_labs_dqx_app.backend.setup.ai_access import AiAccess
+from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
+from databricks_labs_dqx_app.backend.setup.configuration import (
+    ResolvedConfiguration,
+    SetupConfigurationStore,
+    resolve_configuration,
+)
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import (
@@ -81,9 +84,10 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStepId,
     StepState,
 )
-from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator, StudioActivation
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
-from databricks_labs_dqx_app.backend.setup.resources import parse_volume_path, resolve_lakebase_connection
+from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator, StudioActivation
+from databricks_labs_dqx_app.backend.setup.overrides import SetupOverrides
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources
+from databricks_labs_dqx_app.backend.setup.resources import resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -191,26 +195,150 @@ class _Activation(StudioActivation):
         await start_studio_background(self.context)
 
 
-async def start_studio(app: FastAPI) -> StartupContext | None:
-    """Construct setup collaborators, reconcile readiness, and never abort lifespan."""
+@dataclass(frozen=True)
+class _ConfigurationResolver:
+    """Resolve Studio storage and audience from deployment config or saved setup choices."""
+
+    config: AppConfig
+    store: SetupConfigurationStore
+
+    def resolve(self) -> ResolvedConfiguration:
+        return resolve_configuration(self.config, self.store)
+
+    def lock(self, *, user_email: str | None) -> None:
+        self.store.lock(user_email=user_email)
+
+
+@dataclass
+class _Binder:
+    """Build storage-dependent collaborators and the activation context for resolved resources."""
+
+    app: FastAPI
+    sp_ws: WorkspaceClient
+    pg_executor: PgExecutor
+    compute: ComputeService
+    identity: BootstrapCheckers
+    settings: AppSettingsService
+    resource_tagger: ResourceTaggingService
+    context: StartupContext | None = None
+
+    async def bind(self, resources: ActiveResources) -> BoundSetup:
+        await self.release()
+        sp_sql = SqlExecutor(
+            ws=self.sp_ws,
+            warehouse_id=resources.warehouse_id,
+            catalog=resources.volume.catalog,
+            schema=resources.volume.schema,
+        )
+        app, sp_ws, pg_executor, resource_tagger = self.app, self.sp_ws, self.pg_executor, self.resource_tagger
+        context = StartupContext(
+            resources=resources,
+            runtime=application_runtime,
+            oltp_executor=pg_executor,
+            register_oltp=set_oltp_executor,
+            activation_hooks=(
+                lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
+            ),
+            background_hooks=(
+                lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
+                lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
+            ),
+            shutdown_hooks=(lambda: _stop_background_services(app),),
+        )
+
+        async def publish_wheels() -> list[str]:
+            return await publish_wheels_to_volume(sp_ws, resources.volume.path)
+
+        bound = BoundSetup(
+            resources=resources,
+            checkers=ResourceCheckers(
+                resources=resources,
+                workspace=sp_ws,
+                sql=sp_sql,
+                compute=self.compute,
+                app_sp_id=self.identity.app_sp_id(),
+                verification_memo=VerificationMemo(self.settings),
+                configured_warehouse_id=self.settings.get_sql_warehouse_id,
+            ),
+            access=AudienceAccess(
+                resources=resources,
+                workspace=sp_ws,
+                sql=sp_sql,
+                settings=self.settings,
+                app_name=conf.app_slug_name,
+                dashboard_id=conf.default_dashboard_id,
+            ),
+            delta_migrations=MigrationRunner(sp_sql),
+            publish_wheels=publish_wheels,
+            activation=_Activation(context),
+            ai=AiAccess(resources=resources, workspace=sp_ws, settings=self.settings),
+        )
+        # Track the context only once every collaborator exists, so a failed bind leaves nothing behind.
+        self.context = context
+        return bound
+
+    async def release(self) -> None:
+        """Deactivate the context bound to the previously resolved resources, if any."""
+        context, self.context = self.context, None
+        if context is not None:
+            await deactivate_studio(context)
+
+
+@dataclass
+class StudioLifecycle:
+    """Resources opened by *start_studio* that *stop_studio* must release.
+
+    Args:
+        pg_executor: Lakebase executor shared by every bound Studio context.
+        binder: Binder owning the currently bound Studio context, once constructed.
+    """
+
+    pg_executor: PgExecutor
+    binder: _Binder | None = None
+    closed: bool = False
+
+    async def stop(self) -> None:
+        """Deactivate the bound Studio context and close Lakebase exactly once."""
+        failures: list[BaseException] = []
+        if self.binder is not None:
+            try:
+                await self.binder.release()
+            except BaseException as error:
+                failures.append(error)
+        if not self.closed:
+            self.closed = True
+            try:
+                await asyncio.to_thread(self.pg_executor.close)
+            except BaseException as error:
+                failures.append(error)
+        _raise_cleanup_failures(failures)
+
+
+async def start_studio(app: FastAPI) -> StudioLifecycle | None:
+    """Open Lakebase, construct setup collaborators, reconcile readiness, and never abort lifespan.
+
+    Studio storage is not required at startup: it is resolved from deployment configuration
+    or saved setup choices and bound lazily by the setup orchestrator.
+
+    Args:
+        app: FastAPI application receiving the setup orchestrator on its state.
+
+    Returns:
+        The lifecycle to pass to *stop_studio*, or *None* when the Lakebase or warehouse
+        bindings are unavailable.
+    """
     setup_runtime.publish(SetupReport(state=SetupState.CHECKING, steps=()))
-    resources = _resolve_resources()
-    if resources is None:
+    bootstrap = _resolve_bootstrap()
+    if bootstrap is None:
         return None
 
     pg_executor: PgExecutor | None = None
     try:
         sp_ws = await get_sp_ws()
-        sp_sql = SqlExecutor(
-            ws=sp_ws,
-            warehouse_id=resources.warehouse_id,
-            catalog=resources.volume.catalog,
-            schema=resources.volume.schema,
-        )
         pg_executor = await asyncio.to_thread(
             build_pg_executor_from_connection,
             sp_ws,
-            resources.lakebase,
+            bootstrap.lakebase,
             token_refresh_minutes=conf.lakebase_token_refresh_minutes,
             token_refresh_retry_seconds=conf.lakebase_token_refresh_retry_seconds,
             token_refresh_retry_jitter=conf.lakebase_token_refresh_retry_jitter,
@@ -225,59 +353,50 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         _publish_unavailable(
             SetupStepId.LAKEBASE,
             "lakebase_connection_unavailable",
-            "Could not open the required Lakebase connection.",
+            "Studio couldn't connect to its Lakebase database. Restart the app to try again.",
         )
         return None
 
-    resource_tagger = ResourceTaggingService(sp_ws)
-    context = StartupContext(
-        resources=resources,
-        runtime=application_runtime,
-        oltp_executor=pg_executor,
-        register_oltp=set_oltp_executor,
-        activation_hooks=(
-            lambda: _run_post_migration_startup(app, sp_ws, sp_sql, pg_executor, resources, resource_tagger),
-        ),
-        background_hooks=(
-            lambda: _start_scheduler(sp_ws, sp_sql, pg_executor, resources),
-            lambda: _maybe_start_ai_bootstrap(app, sp_ws, sp_sql, pg_executor),
-        ),
-        shutdown_hooks=(lambda: _stop_background_services(app, pg_executor),),
-        opened=True,
-    )
+    lifecycle = StudioLifecycle(pg_executor=pg_executor)
     try:
         app_settings = AppSettingsService(sql=pg_executor)
         compute = ComputeService(sp_ws=sp_ws, app_settings=app_settings)
-
-        async def publish_wheels() -> list[str]:
-            return await publish_wheels_to_volume(sp_ws, resources.volume.path)
-
+        bootstrap_checks = BootstrapCheckers(
+            workspace=sp_ws,
+            pg=pg_executor,
+            lakebase_schema=bootstrap.lakebase.schema,
+        )
+        binder = _Binder(
+            app=app,
+            sp_ws=sp_ws,
+            pg_executor=pg_executor,
+            compute=compute,
+            identity=bootstrap_checks,
+            settings=app_settings,
+            resource_tagger=ResourceTaggingService(sp_ws),
+        )
+        lifecycle.binder = binder
+        configuration_store = SetupConfigurationStore(app_settings)
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
-            resources=resources,
-            checkers=ResourceCheckers(
-                resources=resources,
-                workspace=sp_ws,
-                sql=sp_sql,
-                pg=pg_executor,
-                compute=compute,
-                audience_groups=tuple(conf.user_groups),
-            ),
-            jobs=TaskRunnerJobManager(sp_ws),
+            bootstrap=bootstrap,
+            bootstrap_checks=bootstrap_checks,
             pg_migrations=PgMigrationRunner(pg_executor),
-            delta_migrations=MigrationRunner(sp_sql),
+            configuration=_ConfigurationResolver(conf, configuration_store),
+            binder=binder,
+            jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
-            publish_wheels=publish_wheels,
-            activation=_Activation(context),
             app_sp_id=compute.sp_application_id(),
+            overrides=SetupOverrides(app_settings),
         )
         app.state.setup_orchestrator = orchestrator
+        app.state.setup_configuration_store = configuration_store
         await orchestrator.reconcile()
-        return context
+        return lifecycle
     except BaseException as startup_error:
         cleanup_error: BaseException | None = None
         try:
-            await deactivate_studio(context)
+            await lifecycle.stop()
         except BaseException as error:
             cleanup_error = error
         if isinstance(startup_error, asyncio.CancelledError):
@@ -287,23 +406,17 @@ async def start_studio(app: FastAPI) -> StartupContext | None:
         raise
 
 
-async def stop_studio(context: StartupContext | None) -> None:
-    """Clean up every resource opened by *start_studio*."""
-    if context is not None:
-        await deactivate_studio(context)
+async def stop_studio(lifecycle: StudioLifecycle | None) -> None:
+    """Clean up every resource opened by *start_studio*.
+
+    Args:
+        lifecycle: Lifecycle returned by *start_studio*, or *None* when startup opened nothing.
+    """
+    if lifecycle is not None:
+        await lifecycle.stop()
 
 
-def _resolve_resources() -> ActiveResources | None:
-    try:
-        volume = parse_volume_path(conf.wheels_volume)
-    except Exception:
-        _publish_unavailable(
-            SetupStepId.VOLUME,
-            "wheels_volume_invalid",
-            "A valid bound Unity Catalog wheels volume is required.",
-        )
-        return None
-
+def _resolve_bootstrap() -> BootstrapResources | None:
     try:
         lakebase = resolve_lakebase_connection(conf, os.environ)
     except Exception:
@@ -312,7 +425,7 @@ def _resolve_resources() -> ActiveResources | None:
         _publish_unavailable(
             SetupStepId.LAKEBASE,
             "lakebase_binding_missing",
-            "A Lakebase connection is required for DQX Studio.",
+            "The app has no Lakebase database attached. Add a Lakebase resource to the app, then restart it.",
         )
         return None
 
@@ -323,18 +436,11 @@ def _resolve_resources() -> ActiveResources | None:
         _publish_unavailable(
             SetupStepId.WAREHOUSE,
             "warehouse_binding_missing",
-            "A SQL warehouse binding is required for DQX Studio.",
+            "The app has no SQL warehouse attached. Add a SQL warehouse resource to the app, then restart it.",
         )
         return None
 
-    return ActiveResources(
-        volume=volume,
-        lakebase=lakebase,
-        warehouse_id=warehouse_id,
-        job_id=conf.job_id.strip() or None,
-        tmp_schema=conf.tmp_schema_name,
-        genie_schema=conf.genie_schema_name,
-    )
+    return BootstrapResources(lakebase=lakebase, warehouse_id=warehouse_id, job_id=conf.job_id.strip() or None)
 
 
 def _publish_unavailable(step_id: SetupStepId, code: str, summary: str) -> None:
@@ -439,9 +545,8 @@ async def _run_post_migration_startup(
 ) -> None:
     _mark_interrupted_admin_jobs(oltp)
     _ensure_score_views(delta_sql, resources)
-    await _ensure_metadata_dims(delta_sql, oltp, resources)
+    await _ensure_metadata_dims(workspace, delta_sql, oltp, resources)
     ensure_entitlement_objects(delta_sql, resources)
-    grant_user_view_access(delta_sql, resources, audience_groups=tuple(conf.user_groups))
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
@@ -490,6 +595,7 @@ def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> N
 
 
 async def _ensure_metadata_dims(
+    workspace: WorkspaceClient,
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
@@ -501,11 +607,27 @@ async def _ensure_metadata_dims(
                 registry=RegistryService(sql=oltp),
                 monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
                 genie_schema=resources.genie_schema,
-                audience_groups=tuple(conf.user_groups),
+                audience_groups=resources.audience.uc_principals,
             )
         )
+    except Exception as error:
+        logger.warning("Could not refresh the DQ metadata dimensions (%s)", type(error).__name__)
+        # The access step grants and verifies these tables. A refresh that fails after an
+        # earlier one created them leaves slightly stale data, which the next refresh fixes;
+        # only a first refresh that never created them must block activation.
+        if not await asyncio.to_thread(_metadata_dims_exist, workspace, resources):
+            raise RequiredViewSetupError() from None
+
+
+def _metadata_dims_exist(workspace: WorkspaceClient, resources: ActiveResources) -> bool:
+    genie = f"{resources.volume.catalog}.{resources.genie_schema}"
+    try:
+        return all(
+            workspace.tables.exists(f"{genie}.{name}").table_exists
+            for name in (DIM_RULES_TABLE_NAME, DIM_MONITORED_TABLES_TABLE_NAME)
+        )
     except Exception:
-        logger.warning("Could not refresh the DQ metadata dimensions")
+        return False
 
 
 def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:
@@ -524,46 +646,6 @@ def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResource
         raise RequiredViewSetupError() from None
 
 
-def grant_user_view_access(
-    delta_sql: SqlExecutor, resources: ActiveResources, *, audience_groups: tuple[str, ...] = ()
-) -> None:
-    """Best-effort user access to approved Genie views and metadata tables.
-
-    Args:
-        delta_sql: App service principal's SQL executor.
-        resources: Resolved installation resources.
-    """
-    if not audience_groups:
-        logger.warning(
-            "DQX_USER_GROUPS is empty: audience access is administrator-managed. "
-            "No audience grants will be applied; configure scoped groups or grant access manually. "
-            "Existing grants are not revoked."
-        )
-        return
-    catalog = delta_sql.q(resources.volume.catalog)
-    schema = delta_sql.q(resources.genie_schema)
-    genie_objects = (
-        METRIC_VIEW_NAME,
-        SHAPING_VIEW_NAME,
-        ASOF_VIEW_NAME,
-        ATTRIBUTION_VIEW_NAME,
-        FAILING_ROWS_VIEW_NAME,
-        DIM_RULES_TABLE_NAME,
-        DIM_MONITORED_TABLES_TABLE_NAME,
-    )
-    for group in audience_groups:
-        principal = delta_sql.q(group)
-        statements = [
-            f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO {principal}",
-            *(f"GRANT SELECT ON TABLE {catalog}.{schema}.{delta_sql.q(name)} TO {principal}" for name in genie_objects),
-        ]
-        for statement in statements:
-            try:
-                delta_sql.execute_no_schema(statement)
-            except Exception:
-                logger.warning("Could not grant a configured audience group access to a Genie object.")
-
-
 def _ensure_genie_space(
     workspace: WorkspaceClient,
     resources: ActiveResources,
@@ -578,7 +660,7 @@ def _ensure_genie_space(
             warehouse_id=resources.warehouse_id,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
-            audience_groups=tuple(conf.user_groups),
+            audience_groups=resources.audience.workspace_principals,
         )
     except Exception:
         logger.warning("Could not provision the DQ Genie space")
@@ -714,7 +796,7 @@ def _maybe_start_ai_bootstrap(
         logger.warning("Could not start the Studio AI bootstrap")
 
 
-async def _stop_background_services(app: FastAPI, pg_executor: PgExecutor) -> None:
+async def _stop_background_services(app: FastAPI) -> None:
     failures: list[BaseException] = []
     scheduler = get_scheduler()
     if scheduler is not None:
@@ -734,9 +816,4 @@ async def _stop_background_services(app: FastAPI, pg_executor: PgExecutor) -> No
             pass
         except BaseException as error:
             failures.append(error)
-
-    try:
-        await asyncio.to_thread(pg_executor.close)
-    except BaseException as error:
-        failures.append(error)
     _raise_cleanup_failures(failures)

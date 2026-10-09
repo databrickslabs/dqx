@@ -6,17 +6,31 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 
+import { useState } from "react";
+import axios from "axios";
 import {
+  configureSetup,
   getGetSetupStatusQueryKey,
   getSetupStatus,
+  overrideSetupStep,
   reconcileSetup,
+  type SetupStepId,
 } from "@/lib/api";
-import { setupView } from "@/lib/setup-state";
+import {
+  setupView,
+  unacknowledgedWarnings,
+  warningKey,
+} from "@/lib/setup-state";
+import {
+  acknowledgeWarnings,
+  readAcknowledgedWarnings,
+} from "@/lib/setup-acknowledgements";
 import { useWorkspaceHost } from "@/lib/api-custom";
 import {
   SetupStatusUnavailable,
   SetupWizard,
 } from "@/components/setup/SetupWizard";
+import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -56,6 +70,17 @@ export function reconciliationMutationOptions(
   };
 }
 
+/** Extract the backend error code from a failed configuration request. */
+export function configurationErrorCode(error: unknown): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const detail: unknown = error.response?.data?.detail;
+  if (typeof detail === "object" && detail !== null && "code" in detail) {
+    const { code } = detail;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Blocks Studio routes until the authenticated caller's setup readiness is
  * known. Remediation actions are rendered only from the backend report.
@@ -65,16 +90,26 @@ export function SetupGate({ children }: SetupGateProps) {
   const reconciliation = useMutation(
     reconciliationMutationOptions(queryClient, () => reconcileSetup()),
   );
+  const override = useMutation({
+    mutationFn: (stepId: SetupStepId) =>
+      overrideSetupStep({ step_id: stepId }),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
+  const configuration = useMutation({
+    mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
   const setupStatus = useQuery({
     queryKey: getGetSetupStatusQueryKey(),
     queryFn: () => getSetupStatus(),
     refetchInterval: (query) =>
       setupPollingInterval(
         query.state.data?.data.report.state,
-        reconciliation.isPending,
+        reconciliation.isPending || override.isPending,
       ),
     refetchIntervalInBackground: setupPollingInBackground(),
   });
+  const [acknowledged, setAcknowledged] = useState(readAcknowledgedWarnings);
   const workspaceHost = useWorkspaceHost({
     query: {
       enabled:
@@ -88,8 +123,16 @@ export function SetupGate({ children }: SetupGateProps) {
   if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
-  const view = setupView(setupStatus.data.data);
+  const view = setupView(setupStatus.data.data, acknowledged);
   if (view.kind === "ready") return <>{children}</>;
+
+  const onAcknowledgeWarnings = () =>
+    setAcknowledged((current) =>
+      acknowledgeWarnings(
+        current,
+        unacknowledgedWarnings(view.report, current).map(warningKey),
+      ),
+    );
 
   return (
     <SetupWizard
@@ -97,7 +140,17 @@ export function SetupGate({ children }: SetupGateProps) {
       workspaceHost={workspaceHost.data?.workspace_host}
       isReconciling={reconciliation.isPending}
       onReconcile={() => reconciliation.mutate()}
-      reconciliationFailed={reconciliation.isError}
+      reconciliationFailed={reconciliation.isError || override.isError}
+      onOverride={(stepId) => override.mutate(stepId)}
+      isOverriding={override.isPending}
+      onAcknowledgeWarnings={onAcknowledgeWarnings}
+      onConfigure={(values) => configuration.mutate(values)}
+      isConfiguring={configuration.isPending}
+      configurationError={
+        configuration.isError
+          ? (configurationErrorCode(configuration.error) ?? "default")
+          : undefined
+      }
     />
   );
 }

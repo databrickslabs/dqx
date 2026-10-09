@@ -118,9 +118,11 @@ class TestAiGatewaySettings:
 
         svc.save_ai_enabled(True, user_email="admin@x")
 
-        _, kwargs = sql_executor_mock.upsert.call_args
-        assert kwargs["key_cols"] == {"setting_key": "ai_enabled"}
-        assert kwargs["value_cols"]["setting_value"] == "true"
+        saved = {
+            call.kwargs["key_cols"]["setting_key"]: call.kwargs["value_cols"]["setting_value"]
+            for call in sql_executor_mock.upsert.call_args_list
+        }
+        assert saved == {"ai_enabled": "true", "ai_enabled_source": "admin"}
 
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_ai_enabled() is True
