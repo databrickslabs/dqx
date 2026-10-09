@@ -51,7 +51,7 @@ export function SetupShell({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen bg-background text-foreground">
         <header className="border-b bg-background/95">
           <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4 sm:px-6">
-            <Logo to="" />
+            <Logo to="" branded={false} />
             <ModeToggle />
           </div>
         </header>

@@ -20,7 +20,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
   return (
     <div className="flex flex-col h-screen overflow-x-hidden">
       {/* Fixed top banner — independent of sidebar, never shifts */}
-      <header className="sticky top-0 z-50 bg-background border-b shrink-0">
+      <header className="sticky top-0 z-50 bg-header text-header-foreground border-b shrink-0">
         <div className="flex h-12 items-center justify-between px-4">
           <div className="flex items-center gap-3">
             <Logo />
