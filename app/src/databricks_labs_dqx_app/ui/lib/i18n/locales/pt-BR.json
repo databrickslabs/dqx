@@ -256,10 +256,7 @@
       "pair_sidebarActive": "Item ativo da barra lateral",
       "save": "Salvar",
       "cancel": "Cancelar",
-      "resetDefault": "Redefinir todo o estilo para o padrão do DQX",
-      "resetConfirm": "Remover o nome da empresa, o logotipo e as cores para todos e voltar ao padrão do DQX? Não é possível desfazer.",
       "themeSaved": "Cores salvas",
-      "themeReset": "Estilo redefinido para o padrão do DQX",
       "saveFailed": "Não foi possível salvar: {{detail}}",
       "previewNavItem": "Tabelas monitoradas",
       "previewNavItemActive": "Resultados",
@@ -267,7 +264,7 @@
       "previewButton": "Executar verificações",
       "previewHoverRow": "Linha em destaque",
       "presets": {
-        "dqx-default": "DQX Default",
+        "dqx-default": "DQX Studio",
         "databricks": "Databricks",
         "aubergine": "Berinjela",
         "ocean": "Oceano",
@@ -294,7 +291,8 @@
       "customPresetDeleteConfirm": "Excluir esta predefinição para todos? As cores em uso agora continuam como estão.",
       "delete": "Excluir",
       "customPresetDeleted": "Predefinição excluída",
-      "themeSavedAsCustom": "Cores salvas como Personalizado {{number}}"
+      "themeSavedAsCustom": "Cores salvas como Personalizado {{number}}",
+      "resetTheme": "Redefinir tema"
     },
     "breadcrumb": "Configurações de administrador",
     "title": "Configurações de administrador",

@@ -1,18 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Paintbrush } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { Paintbrush, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,7 +10,6 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   useDeleteBrandingCustomPreset,
   useGetBranding,
-  useResetBranding,
   useSaveBrandingTheme,
   type BrandingOut,
 } from "@/lib/api";
@@ -68,9 +56,8 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   const appIsDark = useIsDarkMode();
   const preview = usePreviewState();
   const saveMutation = useSaveBrandingTheme();
-  const resetMutation = useResetBranding();
   const deletePresetMutation = useDeleteBrandingCustomPreset();
-  const { applyResponse, applyReset } = useBrandingUpdate();
+  const { applyResponse } = useBrandingUpdate();
 
   const saved = useMemo(() => draftFromApi(server), [server]);
   const [draft, setDraft] = useState<ThemeDraft>(saved);
@@ -84,7 +71,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   );
   const warnings = useMemo(() => draftWarnings(draft), [draft]);
   const dirty = isDirty(draft, saved);
-  const busy = !isAdmin || saveMutation.isPending || resetMutation.isPending || deletePresetMutation.isPending;
+  const busy = !isAdmin || saveMutation.isPending || deletePresetMutation.isPending;
   const customPresets = server.custom_presets ?? [];
 
   // Share the unsaved theme with the Branding card's logo previews.
@@ -132,17 +119,6 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
         onError: (err) => toastSaveError(t, err),
       },
     );
-  };
-
-  const reset = () => {
-    resetMutation.mutate(undefined, {
-      onSuccess: (response) => {
-        applyReset(response);
-        setDraft(draftFromApi(response.data));
-        toast.success(t("config.styling.themeReset"));
-      },
-      onError: (err) => toastSaveError(t, err),
-    });
   };
 
   const modeLabel = (m: Mode) => t(m === "light" ? "config.styling.modeLight" : "config.styling.modeDark");
@@ -236,23 +212,18 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
           <Button size="sm" variant="outline" onClick={() => setDraft(saved)} disabled={!dirty || saveMutation.isPending}>
             {t("config.styling.cancel")}
           </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button size="sm" variant="ghost" className="ml-auto" disabled={busy}>
-                {t("config.styling.resetDefault")}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t("config.styling.resetDefault")}</AlertDialogTitle>
-                <AlertDialogDescription>{t("config.styling.resetConfirm")}</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t("config.styling.cancel")}</AlertDialogCancel>
-                <AlertDialogAction onClick={reset}>{t("config.styling.resetDefault")}</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {draft.base && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              disabled={busy || !isDirty(draft, applyPreset(draft.base))}
+              onClick={() => setDraft((d) => (d.base ? applyPreset(d.base) : d))}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("config.styling.resetTheme")}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

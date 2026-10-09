@@ -11,6 +11,8 @@ import { presetById } from "./presets";
  */
 export type ThemeDraft = {
   preset: string | null;
+  /** Built-in preset the draft started from, which "Reset theme" restores; null for custom presets. */
+  base: string | null;
   light: GroupColors;
   dark: GroupColors;
   manual: Record<Mode, ColorGroup[]>;
@@ -22,7 +24,10 @@ export function draftFromApi(b: BrandingOut): ThemeDraft {
   const light = { ...(b.light.colors as GroupColors) };
   const dark = b.dark.customised ? { ...(b.dark.colors as GroupColors) } : {};
   const preset = b.preset ?? null;
-  if (preset) return { preset, light, dark, manual: NO_MANUAL };
+  const builtIn = (id: string | null) => (id && presetById(id) ? id : null);
+  const isDefault = Object.keys(light).length === 0 && Object.keys(dark).length === 0;
+  const base = builtIn(preset) ?? (preset === null && isDefault ? "dqx-default" : null);
+  if (preset) return { preset, base, light, dark, manual: NO_MANUAL };
   // A colour equal to what the other mode would generate is treated as generated.
   const fromLight = generateDark(light);
   const manual = {
@@ -34,19 +39,20 @@ export function draftFromApi(b: BrandingOut): ThemeDraft {
     }),
     dark: COLOR_GROUPS.filter((g) => dark[g] !== undefined && dark[g] !== fromLight[g]),
   };
-  return { preset, light, dark, manual };
+  return { preset, base, light, dark, manual };
 }
 
 export function applyPreset(id: string): ThemeDraft {
   const p = presetById(id);
-  if (!p || id === "dqx-default") return { preset: "dqx-default", light: {}, dark: {}, manual: NO_MANUAL };
-  return { preset: id, light: { ...p.light }, dark: { ...p.dark }, manual: NO_MANUAL };
+  if (!p || id === "dqx-default") return { preset: "dqx-default", base: "dqx-default", light: {}, dark: {}, manual: NO_MANUAL };
+  return { preset: id, base: id, light: { ...p.light }, dark: { ...p.dark }, manual: NO_MANUAL };
 }
 
 /** Loads a saved custom preset ("Custom N"). */
 export function applyCustomPreset(p: BrandingCustomPresetOut): ThemeDraft {
   return {
     preset: p.id,
+    base: null,
     light: { ...(p.light.colors as GroupColors) },
     dark: p.dark.customised ? { ...(p.dark.colors as GroupColors) } : {},
     manual: NO_MANUAL,
@@ -77,7 +83,7 @@ export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: stri
     if (mode === "light") delete dark[group];
     else light[group] = generateLight({ [group]: value })[group];
   }
-  return { preset: null, light, dark, manual };
+  return { ...d, preset: null, light, dark, manual };
 }
 
 /** The dark colours the draft shows: generated from light, with the dark overrides on top. */

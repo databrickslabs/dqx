@@ -10,7 +10,7 @@ describe("theme editor helpers", () => {
     expect(d.dark.header).toBe("#2C092D");
   });
   test("dqx-default clears colours", () => {
-    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", light: {}, dark: {}, manual: { light: [], dark: [] } });
+    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", base: "dqx-default", light: {}, dark: {}, manual: { light: [], dark: [] } });
   });
   test("editing a colour detaches the preset", () => {
     const d = setGroup(applyPreset("nord"), "light", "brand", "#000000");
@@ -40,7 +40,7 @@ describe("theme editor helpers", () => {
       dark: { customised: false, colors: {} },
       logos: {},
     });
-    expect(d).toEqual({ preset: null, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
+    expect(d).toEqual({ preset: null, base: null, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
   });
 });
 
@@ -53,6 +53,7 @@ describe("custom presets", () => {
   test("applyCustomPreset loads its colours and records it", () => {
     expect(applyCustomPreset(custom)).toEqual({
       preset: "custom-2",
+      base: null,
       light: { brand: "#112233" },
       dark: { brand: "#445566" },
       manual: { light: [], dark: [] },
@@ -60,6 +61,11 @@ describe("custom presets", () => {
   });
   test("editing a custom preset detaches it", () => {
     expect(setGroup(applyCustomPreset(custom), "light", "text", "#000000").preset).toBeNull();
+  });
+  test("an edited built-in preset remembers it for Reset theme", () => {
+    const d = setGroup(applyPreset("aubergine"), "light", "text", "#000000");
+    expect(d.preset).toBeNull();
+    expect(d.base).toBe("aubergine");
   });
   test("customPresetNumber", () => {
     expect(customPresetNumber("custom-12")).toBe(12);

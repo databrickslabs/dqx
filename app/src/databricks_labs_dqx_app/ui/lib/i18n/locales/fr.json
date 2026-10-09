@@ -256,10 +256,7 @@
       "pair_sidebarActive": "Élément actif de la barre latérale",
       "save": "Enregistrer",
       "cancel": "Annuler",
-      "resetDefault": "Rétablir tout le style DQX par défaut",
-      "resetConfirm": "Supprimer le nom de l'entreprise, le logo et les couleurs pour tout le monde et revenir au style DQX par défaut ? Cette action est irréversible.",
       "themeSaved": "Couleurs enregistrées",
-      "themeReset": "Style rétabli sur DQX par défaut",
       "saveFailed": "Échec de l'enregistrement : {{detail}}",
       "previewNavItem": "Tables surveillées",
       "previewNavItemActive": "Résultats",
@@ -267,7 +264,7 @@
       "previewButton": "Lancer les contrôles",
       "previewHoverRow": "Ligne survolée",
       "presets": {
-        "dqx-default": "DQX Default",
+        "dqx-default": "DQX Studio",
         "databricks": "Databricks",
         "aubergine": "Aubergine",
         "ocean": "Océan",
@@ -294,7 +291,8 @@
       "customPresetDeleteConfirm": "Supprimer ce préréglage pour tout le monde ? Les couleurs actuellement utilisées restent inchangées.",
       "delete": "Supprimer",
       "customPresetDeleted": "Préréglage supprimé",
-      "themeSavedAsCustom": "Couleurs enregistrées sous Personnalisé {{number}}"
+      "themeSavedAsCustom": "Couleurs enregistrées sous Personnalisé {{number}}",
+      "resetTheme": "Réinitialiser le thème"
     },
     "breadcrumb": "Configuration",
     "title": "Configuration",

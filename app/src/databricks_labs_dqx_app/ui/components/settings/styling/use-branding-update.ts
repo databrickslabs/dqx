@@ -7,7 +7,6 @@ import { getGetBrandingQueryKey, type BrandingOut } from "@/lib/api";
 import { extractApiError } from "@/lib/api-error";
 import {
   applyStyleSheet,
-  DEFAULT_BRANDING_SNAPSHOT,
   snapshotFromApi,
   toStyleSheet,
   writeBrandingCache,
@@ -16,7 +15,6 @@ import {
 /** Seeds the branding query with a mutation response and applies it to the page straight away. */
 export function useBrandingUpdate(): {
   applyResponse: (response: AxiosResponse<BrandingOut>) => void;
-  applyReset: (response: AxiosResponse<BrandingOut>) => void;
 } {
   const queryClient = useQueryClient();
   const applyResponse = useCallback(
@@ -28,15 +26,7 @@ export function useBrandingUpdate(): {
     },
     [queryClient],
   );
-  const applyReset = useCallback(
-    (response: AxiosResponse<BrandingOut>) => {
-      queryClient.setQueryData(getGetBrandingQueryKey(), response);
-      writeBrandingCache(DEFAULT_BRANDING_SNAPSHOT);
-      applyStyleSheet("");
-    },
-    [queryClient],
-  );
-  return { applyResponse, applyReset };
+  return { applyResponse };
 }
 
 export function toastSaveError(t: TFunction, err: unknown): void {

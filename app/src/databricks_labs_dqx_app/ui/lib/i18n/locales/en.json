@@ -256,10 +256,7 @@
       "pair_sidebarActive": "Active sidebar item",
       "save": "Save",
       "cancel": "Cancel",
-      "resetDefault": "Reset all styling to DQX Default",
-      "resetConfirm": "Remove the company name, logo and colours for everyone and return to DQX Default? This can't be undone.",
       "themeSaved": "Colours saved",
-      "themeReset": "Styling reset to DQX Default",
       "saveFailed": "Couldn't save: {{detail}}",
       "previewNavItem": "Monitored tables",
       "previewNavItemActive": "Results",
@@ -267,7 +264,7 @@
       "previewButton": "Run checks",
       "previewHoverRow": "Hover row",
       "presets": {
-        "dqx-default": "DQX Default",
+        "dqx-default": "DQX Studio",
         "databricks": "Databricks",
         "aubergine": "Aubergine",
         "ocean": "Ocean",
@@ -294,7 +291,8 @@
       "customPresetDeleteConfirm": "Delete this preset for everyone? The colours in use now stay as they are.",
       "delete": "Delete",
       "customPresetDeleted": "Preset deleted",
-      "themeSavedAsCustom": "Colours saved as Custom {{number}}"
+      "themeSavedAsCustom": "Colours saved as Custom {{number}}",
+      "resetTheme": "Reset theme"
     },
     "breadcrumb": "Admin Settings",
     "title": "Admin Settings",
