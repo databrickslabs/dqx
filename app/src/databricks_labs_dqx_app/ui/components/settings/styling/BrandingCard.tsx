@@ -16,7 +16,7 @@ import {
   type BrandingOut,
 } from "@/lib/api";
 import { LOGO_ACCEPT, fileToLogoPayload, type GroupColors, type Mode } from "@/lib/branding";
-import { headerSwatches, headerTitle, logoUrl, pickHeaderLogo, type HeaderSwatch } from "@/lib/branding/header";
+import { headerSwatches, logoUrl, pickHeaderLogo, type HeaderSwatch } from "@/lib/branding/header";
 import selector from "@/lib/selector";
 import { cn } from "@/lib/utils";
 import { publishPreview, usePreviewState } from "./preview-store";
@@ -85,15 +85,12 @@ function CompanyNameRow({ serverName, disabled }: { serverName: string; disabled
     return () => window.clearTimeout(id);
   }, [value]);
 
-  const { product, company } = headerTitle(value);
-  const title = company ? `${product} | ${company}` : product;
-
   return (
     <Row>
       <RowLabel
         htmlFor="branding-company-name"
         label={t("config.styling.companyNameLabel")}
-        hint={t("config.styling.companyNamePreview", { title })}
+        hint={t("config.styling.companyNamePreview")}
       />
       <div className="flex items-center gap-2">
         {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}

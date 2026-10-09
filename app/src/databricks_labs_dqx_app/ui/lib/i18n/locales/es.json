@@ -218,7 +218,7 @@
     "styling": {
       "companyNameLabel": "Nombre de la empresa",
       "companyNamePlaceholder": "Acme",
-      "companyNamePreview": "Se muestra en la barra superior como {{title}}",
+      "companyNamePreview": "Se muestra en la barra superior",
       "logoRequirements": "PNG, JPEG o WebP, hasta 256 KB",
       "logoErrorType": "SVG y otros tipos de archivo no son compatibles. Usa una imagen PNG, JPEG o WebP.",
       "logoErrorSize": "La imagen supera los 256 KB. Exporta una versión más pequeña, de unos 200 px de alto.",
