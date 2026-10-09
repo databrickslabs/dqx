@@ -1,0 +1,36 @@
+---
+sidebar_position: 7
+---
+
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Styling
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+Admins can brand DQX Studio for their company under **Settings → Styling**. Changes apply to everyone. Users still choose light or dark mode themselves.
+
+## Company Name
+
+Adds your company to the top bar: **DQX Studio | Acme**. Leave it empty to show **DQX Studio**.
+
+## Custom Logo
+
+Replaces the DQX icon in the top bar. Use one logo for both modes, or separate logos for light and dark mode.
+
+- PNG, JPEG or WebP, up to 256 KB. SVG is not supported.
+- Logos are shown 24 px tall; wide logos keep their proportions.
+
+## Branding
+
+Pick a preset or set five colours: **Header**, **Page background**, **Text**, **Brand** and **Sidebar**. Studio derives the rest (cards, hover, borders, button text) from them.
+
+- Dark mode matches your light colours automatically. Turn off **Match light mode (auto)** to set dark colours yourself.
+- If a colour combination may be hard to read, Studio shows a warning. You can still save.
+- Status colours (pass, warn, fail) and chart colours don't change.
+- **Reset to DQX Default** removes the company name, logo and colours.
+
+Presets: DQX Default, Databricks, Aubergine, Ocean, Dimmed, High contrast, Nord, Solarized and Dracula.
