@@ -30,6 +30,7 @@ import {
   draftWarnings,
   effectiveDark,
   isDirty,
+  setDarkAuto,
   setGroup,
   type ColorGroup,
   type Mode,
@@ -81,12 +82,7 @@ function BrandingEditor({ server }: { server: BrandingOut }) {
 
   const onColor = (mode: Mode) => (group: ColorGroup, hex: string) => setDraft((d) => setGroup(d, mode, group, hex));
 
-  const onMatchLight = (auto: boolean) =>
-    setDraft((d) =>
-      auto
-        ? { ...d, preset: null, darkCustomised: false, dark: {} }
-        : { ...d, darkCustomised: true, dark: effectiveDark(d.light, false, {}) },
-    );
+  const onMatchLight = (auto: boolean) => setDraft((d) => setDarkAuto(d, auto));
 
   const save = () => {
     saveMutation.mutate(

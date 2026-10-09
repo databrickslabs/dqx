@@ -85,5 +85,6 @@ function CompanyNameForm({ initial }: { initial: string }) {
 export function CompanyNameCard() {
   const { data } = useGetBranding(selector<BrandingOut>());
   if (!data) return <Skeleton className="h-40 w-full" />;
-  return <CompanyNameForm initial={data.company_name ?? ""} />;
+  // Keyed so a reset or refetch with a different name re-seeds the form.
+  return <CompanyNameForm key={data.company_name ?? ""} initial={data.company_name ?? ""} />;
 }

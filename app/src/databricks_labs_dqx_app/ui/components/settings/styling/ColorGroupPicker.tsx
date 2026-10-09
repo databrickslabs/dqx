@@ -70,7 +70,7 @@ export function ColorGroupPicker({ idPrefix, colors, defaults, disabled, onChang
                 onChange={(e) => onChange(group, e.target.value.toUpperCase())}
                 className="h-8 w-10 cursor-pointer rounded-md border bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               />
-              <HexField key={value} id={`${id}-hex`} value={value} disabled={disabled} label={label} onCommit={(hex) => onChange(group, hex)} />
+              <HexField key={value} id={`${id}-hex`} value={value} disabled={disabled} label={t("config.styling.hexValueLabel", { group: label })} onCommit={(hex) => onChange(group, hex)} />
             </div>
           </div>
         );

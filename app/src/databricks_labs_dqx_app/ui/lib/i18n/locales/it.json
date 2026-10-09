@@ -249,6 +249,7 @@
       "modeDark": "Scura",
       "matchLight": "Segui la modalità chiara (auto)",
       "matchLightHelp": "I colori della modalità scura vengono generati da quelli della modalità chiara.",
+      "hexValueLabel": "Valore esadecimale di {{group}}",
       "group_header": "Intestazione",
       "group_page_background": "Sfondo della pagina",
       "group_text": "Testo",

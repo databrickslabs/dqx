@@ -32,6 +32,18 @@ export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: stri
   return next;
 }
 
+/**
+ * Switches dark mode between auto (generated from light) and custom (seeded with the generated
+ * colours). The preset is kept only if the result still equals it exactly.
+ */
+export function setDarkAuto(d: ThemeDraft, auto: boolean): ThemeDraft {
+  const next: ThemeDraft = auto
+    ? { ...d, darkCustomised: false, dark: {} }
+    : { ...d, darkCustomised: true, dark: effectiveDark(d.light, false, {}) };
+  if (!d.preset || isDirty(next, applyPreset(d.preset))) next.preset = null;
+  return next;
+}
+
 export function draftWarnings(d: ThemeDraft): ContrastWarning[] {
   return [
     ...checkContrast("light", deriveAllTokens("light", d.light)),

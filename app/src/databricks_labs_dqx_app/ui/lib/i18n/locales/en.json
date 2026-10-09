@@ -249,6 +249,7 @@
       "modeDark": "Dark",
       "matchLight": "Match light mode (auto)",
       "matchLightHelp": "Dark mode colours are generated from your light mode colours.",
+      "hexValueLabel": "{{group}} hex value",
       "group_header": "Header",
       "group_page_background": "Page background",
       "group_text": "Text",

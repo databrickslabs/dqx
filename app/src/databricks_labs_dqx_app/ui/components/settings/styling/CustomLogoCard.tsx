@@ -1,4 +1,5 @@
 import { useRef, useState, type ChangeEvent } from "react";
+import { useIsMutating } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Image as ImageIcon, Trash2, Upload } from "lucide-react";
@@ -31,10 +32,12 @@ function LogoSlot({ slot, label, hash, disabled }: LogoSlotProps) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const uploadMutation = useUploadBrandingLogo();
   const deleteMutation = useDeleteBrandingLogo();
   const { applyResponse } = useBrandingUpdate();
   const busy = disabled || uploadMutation.isPending || deleteMutation.isPending;
+  const src = hash ? logoUrl(slot, hash) : null;
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -79,8 +82,8 @@ function LogoSlot({ slot, label, hash, disabled }: LogoSlotProps) {
     <div className="space-y-2">
       <p className="text-sm font-medium">{label}</p>
       <div className="flex h-16 items-center justify-center rounded-md border bg-muted">
-        {hash ? (
-          <img src={logoUrl(slot, hash)} alt={label} className="h-6 w-auto max-w-40 object-contain" />
+        {src && src !== failedSrc ? (
+          <img src={src} alt={label} className="h-6 w-auto max-w-40 object-contain" onError={() => setFailedSrc(src)} />
         ) : (
           <img src="/dqx-logo.svg" alt="" className="h-6 w-6 opacity-40" />
         )}
@@ -109,6 +112,9 @@ export function CustomLogoCard() {
   const { data } = useGetBranding(selector<BrandingOut>());
   const modeMutation = useSaveBrandingLogoMode();
   const { applyResponse } = useBrandingUpdate();
+  // Logo uploads/removals run in the slots; block mode changes until they settle.
+  const logoBusy =
+    useIsMutating({ mutationKey: ["uploadBrandingLogo"] }) + useIsMutating({ mutationKey: ["deleteBrandingLogo"] }) > 0;
 
   if (!data) return <Skeleton className="h-40 w-full" />;
 
@@ -155,7 +161,7 @@ export function CustomLogoCard() {
               size="sm"
               variant={mode === m ? "default" : "outline"}
               aria-pressed={mode === m}
-              disabled={disabled || modeMutation.isPending}
+              disabled={disabled || modeMutation.isPending || logoBusy}
               onClick={() => saveMode(m)}
             >
               {t(m === "shared" ? "config.styling.logoModeShared" : "config.styling.logoModeSeparate")}

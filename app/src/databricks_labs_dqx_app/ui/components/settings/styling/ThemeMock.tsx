@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { headerTitle } from "@/lib/branding/header";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,8 @@ function PreviewMock({
 }) {
   const { t } = useTranslation();
   const { product, company } = headerTitle(companyName);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const src = logoSrc && logoSrc !== failedSrc ? logoSrc : null;
   return (
     <div
       className={cn("flex h-56 flex-col overflow-hidden rounded-md border text-xs", className)}
@@ -67,8 +70,8 @@ function PreviewMock({
         className="flex h-10 shrink-0 items-center gap-2 border-b px-3"
         style={{ background: tokens["--header"], color: tokens["--header-foreground"], borderColor: tokens["--border"] }}
       >
-        {logoSrc ? (
-          <img src={logoSrc} alt="" className="h-5 w-auto max-w-32 object-contain" />
+        {src ? (
+          <img src={src} alt="" className="h-5 w-auto max-w-32 object-contain" onError={() => setFailedSrc(src)} />
         ) : (
           <img src="/dqx-logo.svg" alt="" className="h-5 w-5" />
         )}

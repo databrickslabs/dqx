@@ -249,6 +249,7 @@
       "modeDark": "Sombre",
       "matchLight": "Suivre le mode clair (auto)",
       "matchLightHelp": "Les couleurs du mode sombre sont générées à partir de celles du mode clair.",
+      "hexValueLabel": "Valeur hexadécimale : {{group}}",
       "group_header": "En-tête",
       "group_page_background": "Fond de page",
       "group_text": "Texte",
