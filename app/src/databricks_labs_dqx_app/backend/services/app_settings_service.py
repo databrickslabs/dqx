@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 from dataclasses import dataclass
@@ -8,6 +9,16 @@ from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
+from databricks_labs_dqx_app.backend.common.branding import (
+    LOGO_SLOTS,
+    BrandingValidationError,
+    logo_hash,
+    normalize_colors,
+    parse_stored_branding,
+    sanitize_company_name,
+    validate_logo_mode,
+    validate_preset,
+)
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
@@ -17,6 +28,8 @@ _CONFIG_KEY = "workspace_config"
 _SETUP_JOB_ID_KEY = "setup_task_runner_job_id"
 _SETUP_COMPLETED_AT_KEY = "setup_completed_at"
 _SETUP_COMPLETED_BY_KEY = "setup_completed_by"
+_BRANDING_KEY = "branding_v1"
+_BRANDING_LOGO_KEY_PREFIX = "branding_logo_"
 
 # Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
 # row cap applied to DRAFT monitored-table runs when the admin has not
@@ -41,6 +54,17 @@ ProfilerSampleKind = Literal["full", "records", "percent"]
 PROFILER_SAMPLE_KIND_FULL: ProfilerSampleKind = "full"
 PROFILER_SAMPLE_KIND_RECORDS: ProfilerSampleKind = "records"
 PROFILER_SAMPLE_KIND_PERCENT: ProfilerSampleKind = "percent"
+
+
+@dataclass(frozen=True)
+class StoredLogo:
+    """A stored branding logo."""
+
+    mime: str
+    data: bytes
+    hash: str
+
+
 PROFILER_SAMPLE_KIND_DEFAULT: ProfilerSampleKind = PROFILER_SAMPLE_KIND_PERCENT
 PROFILER_SAMPLE_VALUE_DEFAULT = 10
 # Per-kind fallback when the kind is set but the value is missing or corrupt.
@@ -211,6 +235,13 @@ class AppSettingsService:
             },
         )
         logger.info("Saved setting: %s (by=%s)", key, user_email or "system")
+
+    def delete_setting(self, key: str) -> None:
+        """Delete a single setting by key (no-op when absent)."""
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        self._sql.execute(f"DELETE FROM {self._table} WHERE setting_key = '{escape_sql_string(key)}'")
+        logger.info("Deleted setting: %s", key)
 
     def record_setup_completion(
         self,
@@ -1284,6 +1315,93 @@ class AppSettingsService:
             "color": color.strip(),
             "is_default": bool(item.get("is_default")),
         }
+
+    # ------------------------------------------------------------------
+    # Branding — company name, header logos and colour theme (custom styling).
+    # ``branding_v1`` holds the JSON value; each logo has its own key so the
+    # (small) branding read never carries image bytes.
+    # ------------------------------------------------------------------
+
+    def get_branding(self) -> dict[str, object]:
+        """Return the stored branding, with invalid fields dropped."""
+        return parse_stored_branding(self.get_setting(_BRANDING_KEY))
+
+    def _save_branding(self, branding: dict[str, object], user_email: str | None) -> dict[str, object]:
+        self.save_setting(_BRANDING_KEY, json.dumps(branding), user_email=user_email)
+        return branding
+
+    def save_branding_company_name(self, name: object, *, user_email: str | None = None) -> dict[str, object]:
+        """Validate and store the company name (empty clears it)."""
+        branding = self.get_branding()
+        branding["company_name"] = sanitize_company_name(name)
+        return self._save_branding(branding, user_email)
+
+    def save_branding_theme(
+        self,
+        preset: object,
+        light_colors: object,
+        dark_customised: bool,
+        dark_colors: object,
+        *,
+        user_email: str | None = None,
+    ) -> dict[str, object]:
+        """Validate and store the colour theme."""
+        branding = self.get_branding()
+        branding["preset"] = validate_preset(preset)
+        branding["light"] = {"colors": normalize_colors(light_colors)}
+        branding["dark"] = {"customised": bool(dark_customised), "colors": normalize_colors(dark_colors)}
+        return self._save_branding(branding, user_email)
+
+    def save_branding_logo_mode(self, mode: object, *, user_email: str | None = None) -> dict[str, object]:
+        """Validate and store whether one logo is shared or each mode has its own."""
+        branding = self.get_branding()
+        branding["logo_mode"] = validate_logo_mode(mode)
+        return self._save_branding(branding, user_email)
+
+    @staticmethod
+    def _logo_key(slot: str) -> str:
+        if slot not in LOGO_SLOTS:
+            raise BrandingValidationError("Logo slot must be 'light' or 'dark'.")
+        return f"{_BRANDING_LOGO_KEY_PREFIX}{slot}"
+
+    def get_branding_logo(self, slot: str) -> StoredLogo | None:
+        """Return the stored logo for *slot*, or None when unset or unreadable."""
+        raw = self.get_setting(self._logo_key(slot))
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+            data = base64.b64decode(payload["data_base64"], validate=True)
+            return StoredLogo(mime=str(payload["content_type"]), data=data, hash=logo_hash(data))
+        except (ValueError, KeyError, TypeError):
+            logger.warning(f"Stored {slot} logo is unreadable; ignoring it")
+            return None
+
+    def save_branding_logo(self, slot: str, mime: str, raw: bytes, *, user_email: str | None = None) -> StoredLogo:
+        """Store an already-validated logo for *slot*."""
+        key = self._logo_key(slot)
+        digest = logo_hash(raw)
+        payload = {"content_type": mime, "data_base64": base64.b64encode(raw).decode(), "sha256": digest}
+        self.save_setting(key, json.dumps(payload), user_email=user_email)
+        return StoredLogo(mime=mime, data=raw, hash=digest)
+
+    def delete_branding_logo(self, slot: str) -> None:
+        """Remove the logo for *slot*."""
+        self.delete_setting(self._logo_key(slot))
+
+    def get_branding_logo_hashes(self) -> dict[str, str | None]:
+        """Return each slot's logo hash (None when unset)."""
+        hashes: dict[str, str | None] = {}
+        for slot in LOGO_SLOTS:
+            logo = self.get_branding_logo(slot)
+            hashes[slot] = logo.hash if logo else None
+        return hashes
+
+    def reset_branding(self) -> None:
+        """Remove all branding (company name, theme and logos)."""
+        self.delete_setting(_BRANDING_KEY)
+        for slot in LOGO_SLOTS:
+            self.delete_setting(self._logo_key(slot))
 
 
 def _sanitize_audit_identity(value: str | None) -> str | None:

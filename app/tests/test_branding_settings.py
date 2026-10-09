@@ -1,0 +1,99 @@
+"""Tests for branding persistence on AppSettingsService."""
+
+import json
+
+import pytest
+
+from databricks_labs_dqx_app.backend.common.branding import BrandingValidationError, default_branding
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
+
+
+@pytest.fixture
+def store(sql_executor_mock) -> dict[str, str]:
+    data: dict[str, str] = {}
+
+    def _upsert(_table, *, key_cols, value_cols, **_kwargs):
+        data[key_cols["setting_key"]] = value_cols["setting_value"]
+
+    def _query(sql):
+        for key, value in data.items():
+            if f"'{key}'" in sql:
+                return [(value,)]
+        return []
+
+    def _execute(sql, **_kwargs):
+        for key in list(data):
+            if sql.startswith("DELETE") and f"'{key}'" in sql:
+                del data[key]
+
+    sql_executor_mock.fqn.side_effect = lambda t: t
+    sql_executor_mock.upsert.side_effect = _upsert
+    sql_executor_mock.query.side_effect = _query
+    sql_executor_mock.execute.side_effect = _execute
+    return data
+
+
+@pytest.fixture
+def svc(sql_executor_mock, store) -> AppSettingsService:
+    return AppSettingsService(sql=sql_executor_mock)
+
+
+class TestBrandingSettings:
+    def test_unset_returns_default(self, svc):
+        assert svc.get_branding() == default_branding()
+
+    def test_company_name_round_trip(self, svc):
+        out = svc.save_branding_company_name("  Acme ", user_email="a@x")
+        assert out["company_name"] == "Acme"
+        assert svc.get_branding()["company_name"] == "Acme"
+
+    def test_empty_company_name_clears(self, svc):
+        svc.save_branding_company_name("Acme")
+        svc.save_branding_company_name("")
+        assert svc.get_branding()["company_name"] is None
+
+    def test_theme_round_trip_keeps_other_fields(self, svc):
+        svc.save_branding_company_name("Acme")
+        svc.save_branding_theme("aubergine", {"header": "#3f0e40"}, False, {})
+        branding = svc.get_branding()
+        assert branding["company_name"] == "Acme"
+        assert branding["preset"] == "aubergine"
+        assert branding["light"] == {"colors": {"header": "#3F0E40"}}
+        assert branding["dark"] == {"customised": False, "colors": {}}
+
+    def test_theme_rejects_bad_colour(self, svc):
+        with pytest.raises(BrandingValidationError):
+            svc.save_branding_theme(None, {"header": "red"}, False, {})
+
+    def test_logo_mode_round_trip(self, svc):
+        svc.save_branding_logo_mode("separate")
+        assert svc.get_branding()["logo_mode"] == "separate"
+
+    def test_corrupt_stored_value_is_tolerated(self, svc, store):
+        store["branding_v1"] = json.dumps({"light": {"colors": {"header": "nope", "text": "#000000"}}})
+        assert svc.get_branding()["light"] == {"colors": {"text": "#000000"}}
+
+    def test_logo_round_trip_and_hashes(self, svc):
+        assert svc.get_branding_logo_hashes() == {"light": None, "dark": None}
+        saved = svc.save_branding_logo("light", "image/png", PNG)
+        logo = svc.get_branding_logo("light")
+        assert logo is not None and logo.data == PNG and logo.mime == "image/png"
+        assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
+
+    def test_delete_logo(self, svc):
+        svc.save_branding_logo("dark", "image/png", PNG)
+        svc.delete_branding_logo("dark")
+        assert svc.get_branding_logo("dark") is None
+
+    def test_unknown_slot_rejected(self, svc):
+        with pytest.raises(BrandingValidationError):
+            svc.get_branding_logo("sepia")
+
+    def test_reset_clears_everything(self, svc):
+        svc.save_branding_company_name("Acme")
+        svc.save_branding_logo("light", "image/png", PNG)
+        svc.reset_branding()
+        assert svc.get_branding() == default_branding()
+        assert svc.get_branding_logo("light") is None
