@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hexToOklch } from "./color";
 import { DEFAULT_GROUPS } from "./groups";
-import { deriveAllTokens, deriveOverrides, effectiveDark, generateDark, THEMABLE_TOKENS } from "./derive";
+import { mutedForeground, deriveAllTokens, deriveOverrides, effectiveDark, generateDark, THEMABLE_TOKENS } from "./derive";
 
 const css = readFileSync(join(import.meta.dir, "../../styles/globals.css"), "utf8");
 function block(selector: string): string {
@@ -90,5 +90,12 @@ describe("dark mode", () => {
   });
   test("header falls back to the effective page background", () => {
     expect(deriveAllTokens("light", { page_background: "#FDF6E3" })["--header"]).toBe("#FDF6E3");
+  });
+  test("muted text keeps 4.5:1 on Solarized light", () => {
+    const tokens = deriveAllTokens("light", { page_background: "#FDF6E3", text: "#586E75" });
+    expect(contrastRatio("#FDF6E3", tokens["--muted-foreground"])).toBeGreaterThanOrEqual(4.5);
+  });
+  test("mutedForeground softens text when there is headroom", () => {
+    expect(mutedForeground("#000000", "#FFFFFF", 0.45)).not.toBe("#000000");
   });
 });

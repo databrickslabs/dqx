@@ -1,4 +1,4 @@
-import { hexToOklch, mix, oklchToHex, readableOn, tint, withLightness } from "./color";
+import { contrastRatio, hexToOklch, mix, oklchToHex, readableOn, tint, withLightness } from "./color";
 import { COLOR_GROUPS, DEFAULT_GROUPS, type ColorGroup, type GroupColors, type Mode } from "./groups";
 
 /** Mode-specific step sizes, measured from today's globals.css. */
@@ -38,6 +38,20 @@ const INPUTS: Record<string, ColorGroup[]> = {
   "--sidebar-ring": ["brand", "page_background"],
 };
 
+/** Largest mix toward the background (<= maxT) that keeps muted text at >= 4.5:1. */
+export function mutedForeground(text: string, bg: string, maxT: number): string {
+  if (contrastRatio(bg, text) < 4.5) return text;
+  if (contrastRatio(bg, mix(text, bg, maxT)) >= 4.5) return mix(text, bg, maxT);
+  let lo = 0;
+  let hi = maxT;
+  for (let i = 0; i < 12; i++) {
+    const mid = (lo + hi) / 2;
+    if (contrastRatio(bg, mix(text, bg, mid)) >= 4.5) lo = mid;
+    else hi = mid;
+  }
+  return mix(text, bg, lo);
+}
+
 export const THEMABLE_TOKENS: readonly string[] = Object.keys(INPUTS);
 
 export function deriveAllTokens(mode: Mode, set: GroupColors): Record<string, string> {
@@ -58,7 +72,7 @@ export function deriveAllTokens(mode: Mode, set: GroupColors): Record<string, st
     "--foreground": g.text,
     "--card-foreground": g.text,
     "--popover-foreground": g.text,
-    "--muted-foreground": mix(g.text, g.page_background, s.muted),
+    "--muted-foreground": mutedForeground(g.text, g.page_background, s.muted),
     "--primary": g.brand,
     "--primary-foreground": readableOn(g.brand),
     "--ring": ring,
