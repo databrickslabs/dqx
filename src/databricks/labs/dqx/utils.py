@@ -139,10 +139,19 @@ def _strip_literals_and_comments(match: "re.Match[str]") -> str:
     return "" if match.group("comment") is not None else " "
 
 
-_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+_SCALAR_VARIABLE_TYPES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bool,
+    Decimal,
+    datetime.date,
+    datetime.datetime,
+    datetime.time,
+)
 
 VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
-"""Supported scalar types for variable substitution values."""
+"""Supported scalar types for variable substitution into SQL / column expressions."""
 
 
 def get_column_name_or_alias(

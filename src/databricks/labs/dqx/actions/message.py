@@ -37,12 +37,19 @@ class AlertMessage:
         user_metadata: Engine-level user metadata (from *ExtraParams.user_metadata*) as a raw
             string-to-string mapping. Empty when no metadata was configured. Rendered by every
             destination so run-level context (e.g. pipeline name) reaches the notification.
+        extras: Per-producer payloads emitted by preceding actions in the same run (via
+            *ActionResult.extras*), keyed by producing action name. Empty when no upstream
+            action contributed. Rendered alongside *user_metadata* so downstream signals such
+            as *collect_lineage → lineage_location* reach the notification without a
+            second lookup.
         fields: Flat string-to-string mapping suitable for key-value rendering
             in notification payloads.  Contains one entry per observed metric
             under a key of the form *metric.NAME* (for example, *metric.error_row_count*),
-            one *user_metadata.KEY* entry per user-metadata item, plus un-prefixed reserved
-            entries for *condition*, *run_id*, *run_time*, and *table*.  The prefixes ensure
-            metric and metadata names never silently overwrite the reserved metadata keys.
+            one *user_metadata.KEY* entry per user-metadata item, one
+            *extras.ACTION.KEY* entry per upstream-action payload item, plus un-prefixed
+            reserved entries for *condition*, *run_id*, *run_time*, and *table*.  The
+            prefixes ensure metric, metadata, and extras names never silently overwrite the
+            reserved metadata keys.
     """
 
     title: str
@@ -55,6 +62,7 @@ class AlertMessage:
     severity: str
     fields: dict[str, str]
     user_metadata: dict[str, str] = field(default_factory=dict)
+    extras: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 class StandardMessageBuilder:
@@ -87,6 +95,7 @@ class StandardMessageBuilder:
         table: str | None,
         severity: str = "error",
         user_metadata: dict[str, str] | None = None,
+        extras: dict[str, dict[str, str]] | None = None,
     ) -> AlertMessage:
         """Build an *AlertMessage* from run-time primitives.
 
@@ -99,8 +108,9 @@ class StandardMessageBuilder:
         (for example, *metric.error_row_count*) so that they never collide with the
         reserved metadata keys *condition*, *run_id*, *run_time*, and *table*,
         which are always un-prefixed.  User metadata entries are likewise stored
-        under a *user_metadata.KEY* prefix.  *observed_metrics* on the returned
-        *AlertMessage* is always the raw, un-prefixed metrics dict.
+        under a *user_metadata.KEY* prefix, and extras payloads emitted by preceding
+        actions under an *extras.ACTION.KEY* prefix.  *observed_metrics* on the
+        returned *AlertMessage* is always the raw, un-prefixed metrics dict.
 
         Args:
             action_name: Logical name of the DQX action that was triggered.
@@ -113,6 +123,10 @@ class StandardMessageBuilder:
             severity: Alert severity level; defaults to "error".
             user_metadata: Optional engine-level user metadata (from *ExtraParams.user_metadata*)
                 to surface in the alert payload; included under *user_metadata.KEY* prefixed keys.
+            extras: Optional per-producer payloads from preceding actions in the same run
+                (from *ActionContext.extras*); included under *extras.ACTION.KEY* prefixed
+                keys so downstream signals like *collect_lineage → lineage_location* reach
+                the notification without a second lookup.
 
         Returns:
             A frozen *AlertMessage* instance populated from the supplied arguments.
@@ -133,6 +147,14 @@ class StandardMessageBuilder:
         normalized_user_metadata = {key: str(value) for key, value in (user_metadata or {}).items()}
         for meta_key, meta_value in normalized_user_metadata.items():
             fields[f"user_metadata.{meta_key}"] = meta_value
+        normalized_extras: dict[str, dict[str, str]] = {
+            producer: {key: str(value) for key, value in payload.items()}
+            for producer, payload in (extras or {}).items()
+            if payload
+        }
+        for producer, payload in normalized_extras.items():
+            for extra_key, extra_value in payload.items():
+                fields[f"extras.{producer}.{extra_key}"] = extra_value
 
         return AlertMessage(
             title=title,
@@ -145,4 +167,5 @@ class StandardMessageBuilder:
             severity=severity,
             fields=fields,
             user_metadata=normalized_user_metadata,
+            extras=normalized_extras,
         )

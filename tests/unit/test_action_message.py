@@ -2,6 +2,7 @@
 
 import dataclasses
 from datetime import datetime, timezone
+from typing import cast
 
 import pytest
 
@@ -35,7 +36,7 @@ class TestAlertMessage:
             fields={"key": "value"},
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            msg.title = "mutated"  # type: ignore[misc]
+            setattr(msg, "title", "mutated")
 
     def test_condition_can_be_none(self):
         msg = AlertMessage(
@@ -280,8 +281,9 @@ class TestStandardMessageBuilderBuild:
         assert msg.fields["user_metadata.pipeline"] == "sales_daily"
 
     def test_user_metadata_values_are_stringified(self) -> None:
-        # Non-string metadata values are coerced to str for the flat fields mapping.
-        non_str_metadata: dict[str, str] = {"retries": 3}  # type: ignore[dict-item]
+        # Non-string metadata values are coerced to str for the flat fields mapping. The cast
+        # bypasses the dict literal's static type to drive the stringification path at runtime.
+        non_str_metadata = cast(dict[str, str], {"retries": 3})
         msg = StandardMessageBuilder.build(
             action_name="notify_on_errors",
             condition="error_row_count > 0",
@@ -303,6 +305,68 @@ class TestStandardMessageBuilderBuild:
             table="catalog.schema.table",
         )
         assert not [key for key in msg.fields if key.startswith("user_metadata.")]
+
+
+# ---------------------------------------------------------------------------
+# Extras (per-producer payloads from preceding actions)
+# ---------------------------------------------------------------------------
+
+
+class TestStandardMessageBuilderExtras:
+    def test_extras_surfaced_in_fields_with_prefix(self) -> None:
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+            extras={"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}},
+        )
+        assert msg.fields["extras.collect_lineage.lineage_location"] == "cat.sch.lineage_edges"
+        assert msg.extras == {"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}}
+
+    def test_extras_values_are_stringified(self) -> None:
+        # Cast drives the stringification path at runtime; the real signature is dict[str, dict[str, str]].
+        non_str_extras = cast(dict[str, dict[str, str]], {"collect_lineage": {"row_count": 42}})
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+            extras=non_str_extras,
+        )
+        assert msg.fields["extras.collect_lineage.row_count"] == "42"
+        assert msg.extras == {"collect_lineage": {"row_count": "42"}}
+
+    def test_no_extras_adds_no_prefixed_fields(self) -> None:
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+        )
+        assert not [key for key in msg.fields if key.startswith("extras.")]
+        assert not msg.extras
+
+    def test_empty_producer_payload_is_skipped(self) -> None:
+        # Producers that return an empty extras dict should not create dangling prefixed keys.
+        msg = StandardMessageBuilder.build(
+            action_name="notify_on_errors",
+            condition="error_row_count > 0",
+            metrics=_METRICS,
+            run_id="run-001",
+            run_time=_RUN_TIME,
+            table="catalog.schema.table",
+            extras={"collect_lineage": {}, "other_action": {"k": "v"}},
+        )
+        assert "collect_lineage" not in msg.extras
+        assert msg.extras == {"other_action": {"k": "v"}}
+        assert msg.fields["extras.other_action.k"] == "v"
 
 
 # ---------------------------------------------------------------------------
