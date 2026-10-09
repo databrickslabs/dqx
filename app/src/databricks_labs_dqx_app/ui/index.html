@@ -27,15 +27,45 @@
       })();
     </script>
     <script>
+      // dqx-branding-bootstrap
       // Apply the cached company theme before React mounts so the loading screen
-      // is already themed. Mirrors ui/lib/branding/bootstrap-script.ts; any invalid
-      // entry discards the whole cache.
+      // is already themed. Token names must match THEMABLE_TOKENS in
+      // lib/branding/derive.ts (enforced by index-html-bootstrap.test.ts); any
+      // invalid entry discards the whole cache.
       (function (win) {
         try {
           var raw = win.localStorage.getItem("dqx.branding.v1");
           if (!raw) return;
           var s = JSON.parse(raw);
-          var TOKEN = /^--[a-z][a-z0-9-]*$/;
+          var ALLOWED = [
+            "--header",
+            "--header-foreground",
+            "--background",
+            "--card",
+            "--popover",
+            "--foreground",
+            "--card-foreground",
+            "--popover-foreground",
+            "--muted-foreground",
+            "--primary",
+            "--primary-foreground",
+            "--ring",
+            "--accent",
+            "--accent-foreground",
+            "--secondary",
+            "--secondary-foreground",
+            "--muted",
+            "--border",
+            "--input",
+            "--sidebar",
+            "--sidebar-foreground",
+            "--sidebar-accent",
+            "--sidebar-accent-foreground",
+            "--sidebar-border",
+            "--sidebar-primary",
+            "--sidebar-primary-foreground",
+            "--sidebar-ring",
+          ];
           var HEX = /^#[0-9A-Fa-f]{6}$/;
           var build = function (sel, map) {
             if (!map || typeof map !== "object") return null;
@@ -43,7 +73,7 @@
             for (var k in map) {
               if (!Object.prototype.hasOwnProperty.call(map, k)) continue;
               var v = map[k];
-              if (!TOKEN.test(k) || typeof v !== "string" || !HEX.test(v)) return null;
+              if (ALLOWED.indexOf(k) === -1 || typeof v !== "string" || !HEX.test(v)) return null;
               body += k + ":" + v + ";";
             }
             return body ? sel + "{" + body + "}" : "";
