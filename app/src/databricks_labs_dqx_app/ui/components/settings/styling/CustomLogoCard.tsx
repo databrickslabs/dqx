@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useIsMutating } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -14,8 +14,8 @@ import {
   useUploadBrandingLogo,
   type BrandingOut,
 } from "@/lib/api";
-import { LOGO_ACCEPT, fileToLogoPayload } from "@/lib/branding";
-import { logoUrl, type HeaderLogoSlot } from "@/lib/branding/header";
+import { LOGO_ACCEPT, fileToLogoPayload, type GroupColors } from "@/lib/branding";
+import { headerSwatches, logoUrl, type HeaderLogoSlot, type HeaderSwatch } from "@/lib/branding/header";
 import selector from "@/lib/selector";
 import { toastSaveError, useBrandingUpdate } from "./use-branding-update";
 
@@ -26,9 +26,11 @@ interface LogoSlotProps {
   label: string;
   hash: string | null;
   disabled: boolean;
+  /** Saved header colours for this slot's mode, so the preview matches the real top bar. */
+  swatch: HeaderSwatch;
 }
 
-function LogoSlot({ slot, label, hash, disabled }: LogoSlotProps) {
+function LogoSlot({ slot, label, hash, disabled, swatch }: LogoSlotProps) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,13 +83,19 @@ function LogoSlot({ slot, label, hash, disabled }: LogoSlotProps) {
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium">{label}</p>
-      <div className="flex h-16 items-center justify-center rounded-md border bg-muted">
+      <div
+        className="flex h-16 items-center justify-center rounded-md border"
+        style={{ backgroundColor: swatch.background, color: swatch.foreground }}
+      >
         {src && src !== failedSrc ? (
           <img src={src} alt={label} className="h-6 w-auto max-w-40 object-contain" onError={() => setFailedSrc(src)} />
         ) : (
           <img src="/dqx-logo.svg" alt="" className="h-6 w-6 opacity-40" />
         )}
       </div>
+      {src !== null && src === failedSrc && (
+        <p className="text-sm text-destructive">{t("config.styling.logoLoadFailed")}</p>
+      )}
       <div className="flex items-center gap-2">
         <input ref={inputRef} type="file" accept={LOGO_ACCEPT} className="hidden" onChange={onFile} />
         <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => inputRef.current?.click()}>
@@ -110,6 +118,15 @@ export function CustomLogoCard() {
   const { t } = useTranslation();
   const { isAdmin } = usePermissions();
   const { data } = useGetBranding(selector<BrandingOut>());
+  const swatches = useMemo(
+    () =>
+      headerSwatches({
+        light: (data?.light.colors ?? {}) as GroupColors,
+        darkCustomised: !!data?.dark.customised,
+        dark: (data?.dark.colors ?? {}) as GroupColors,
+      }),
+    [data],
+  );
   const modeMutation = useSaveBrandingLogoMode();
   const { applyResponse } = useBrandingUpdate();
   // Logo uploads/removals run in the slots; block mode changes until they settle.
@@ -168,9 +185,17 @@ export function CustomLogoCard() {
             </Button>
           ))}
         </div>
+        <p className="text-xs text-muted-foreground">{t("config.styling.logoModeHelp")}</p>
         <div className="grid gap-4 sm:grid-cols-2">
           {slots.map((s) => (
-            <LogoSlot key={s.slot} slot={s.slot} label={s.label} hash={data.logos[s.slot] ?? null} disabled={disabled} />
+            <LogoSlot
+              key={s.slot}
+              slot={s.slot}
+              label={s.label}
+              hash={data.logos[s.slot] ?? null}
+              disabled={disabled}
+              swatch={swatches[s.slot]}
+            />
           ))}
         </div>
         <p className="text-sm text-muted-foreground">{t("config.styling.logoRequirements")}</p>

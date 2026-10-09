@@ -149,6 +149,9 @@ function BrandingEditor({ server }: { server: BrandingOut }) {
                 />
               </TabsContent>
               <TabsContent value="dark" className="mt-2 space-y-3">
+                {draft.preset && draft.preset !== "dqx-default" && (
+                  <p className="text-xs text-muted-foreground">{t("config.styling.presetDarkNote")}</p>
+                )}
                 <div className="flex items-center justify-between gap-4 rounded-md border p-3">
                   <div className="space-y-0.5 pr-4">
                     <Label htmlFor="branding-match-light" className="text-sm">

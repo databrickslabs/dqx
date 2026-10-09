@@ -2988,6 +2988,9 @@ function ConfigPage() {
               </TabsList>
               {tabs.map((tab) => (
                 <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
+                  {tab.id === "styling" && (
+                    <p className="text-sm text-muted-foreground">{t("config.styling.appliesToEveryone")}</p>
+                  )}
                   {entries
                     .filter((e) => e.tab === tab.id)
                     // Cards within each tab are ordered alphabetically by title.

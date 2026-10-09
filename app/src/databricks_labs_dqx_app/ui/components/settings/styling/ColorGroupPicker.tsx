@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { COLOR_GROUPS, isHex, type ColorGroup, type GroupColors } from "@/lib/branding";
+import { COLOR_GROUPS, parseHexInput, type ColorGroup, type GroupColors } from "@/lib/branding";
 
 interface HexFieldProps {
   id: string;
@@ -12,29 +12,53 @@ interface HexFieldProps {
   onCommit: (hex: string) => void;
 }
 
-/** Free-text hex entry; invalid input reverts to the current value on blur. */
+/**
+ * Free-text hex entry. Accepts #RRGGBB, 3-digit shorthand and pasted values with spaces;
+ * anything else reverts to the current value and shows an inline hint.
+ */
 function HexField({ id, value, disabled, label, onCommit }: HexFieldProps) {
+  const { t } = useTranslation();
   const [text, setText] = useState(value);
+  const [invalid, setInvalid] = useState(false);
+  const errorId = `${id}-error`;
   const commit = () => {
-    const next = text.trim().startsWith("#") ? text.trim() : `#${text.trim()}`;
-    if (isHex(next)) onCommit(next.toUpperCase());
-    else setText(value);
+    const next = parseHexInput(text);
+    if (next) {
+      setInvalid(false);
+      setText(next);
+      if (next !== value) onCommit(next);
+    } else {
+      setInvalid(true);
+      setText(value);
+    }
   };
   return (
-    <Input
-      id={id}
-      value={text}
-      disabled={disabled}
-      aria-label={label}
-      spellCheck={false}
-      maxLength={7}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-      }}
-      className="h-8 w-24 font-mono text-xs uppercase"
-    />
+    <div className="flex flex-col items-end gap-1">
+      <Input
+        id={id}
+        value={text}
+        disabled={disabled}
+        aria-label={label}
+        aria-invalid={invalid}
+        aria-describedby={invalid ? errorId : undefined}
+        spellCheck={false}
+        maxLength={32}
+        onChange={(e) => {
+          setText(e.target.value);
+          setInvalid(false);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+        className="h-8 w-24 font-mono text-xs uppercase"
+      />
+      {invalid && (
+        <p id={errorId} className="text-[11px] text-destructive">
+          {t("config.styling.hexInvalid")}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -58,10 +82,13 @@ export function ColorGroupPicker({ idPrefix, colors, defaults, disabled, onChang
         const id = `${idPrefix}-${group}`;
         return (
           <div key={group} className="flex items-center justify-between gap-4 px-3 py-2">
-            <Label htmlFor={id} className="text-sm">
-              {label}
-            </Label>
-            <div className="flex items-center gap-2">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor={id} className="text-sm">
+                {label}
+              </Label>
+              <p className="text-[11px] text-muted-foreground">{t(`config.styling.group_${group}_help`)}</p>
+            </div>
+            <div className="flex items-start gap-2">
               <input
                 id={id}
                 type="color"

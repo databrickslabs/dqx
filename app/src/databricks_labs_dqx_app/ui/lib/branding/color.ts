@@ -9,6 +9,17 @@ export function isHex(value: unknown): value is string {
   return typeof value === "string" && HEX_RE.test(value);
 }
 
+/**
+ * Normalises typed or pasted hex input to #RRGGBB: surrounding spaces and a missing "#" are
+ * tolerated, and 3-digit shorthand is expanded (#FFF -> #FFFFFF). Returns null for anything else.
+ */
+export function parseHexInput(text: string): string | null {
+  const raw = text.trim().replace(/^#/, "");
+  const full = /^[0-9A-Fa-f]{3}$/.test(raw) ? [...raw].map((c) => c + c).join("") : raw;
+  const hex = `#${full}`.toUpperCase();
+  return isHex(hex) ? hex : null;
+}
+
 function hexToRgb(hex: string): [number, number, number] {
   if (!isHex(hex)) throw new Error("invalid hex colour");
   return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number];

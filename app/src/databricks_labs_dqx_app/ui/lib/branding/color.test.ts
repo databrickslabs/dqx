@@ -1,12 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import {
-  contrastRatio, hexToOklch, isHex, mix, oklchToHex, readableOn, tint, withLightness,
+  contrastRatio, hexToOklch, isHex, mix, oklchToHex, parseHexInput, readableOn, tint, withLightness,
 } from "./color";
 
 describe("isHex", () => {
   test.each(["#000000", "#ff3621", "#ABCDEF"])("accepts %s", (v) => expect(isHex(v)).toBe(true));
   test.each(["#fff", "red", "#FF3621;}", "#FF362100", "", null, 7, " #000000"])("rejects %p", (v) =>
     expect(isHex(v)).toBe(false),
+  );
+});
+
+describe("parseHexInput", () => {
+  test.each([
+    ["#1a2b3c", "#1A2B3C"],
+    ["1A2B3C", "#1A2B3C"],
+    ["  #1a2b3c  ", "#1A2B3C"],
+    ["#FFF", "#FFFFFF"],
+    ["abc", "#AABBCC"],
+    [" #0f0 ", "#00FF00"],
+  ])("accepts %p", (input, expected) => expect(parseHexInput(input)).toBe(expected));
+  test.each(["", "#", "red", "#12345", "#1234567", "#GGGGGG", "#FF3621;}", "# FFF"])("rejects %p", (input) =>
+    expect(parseHexInput(input)).toBeNull(),
   );
 });
 
