@@ -115,6 +115,7 @@ def delete_logo(slot: str, svc: SettingsDep) -> BrandingOut:
         svc.delete_branding_logo(slot)
     except BrandingValidationError as e:
         raise _bad_request(e) from e
+    logger.info(f"Removed {slot} branding logo")
     return _to_out(svc)
 
 

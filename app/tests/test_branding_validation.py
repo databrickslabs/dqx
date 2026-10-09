@@ -179,4 +179,4 @@ class TestParseStoredBranding:
 
 def test_decode_logo_rejects_huge_base64_before_decoding():
     with pytest.raises(BrandingValidationError, match="256 KB"):
-        decode_logo("image/png", "A" * (MAX_LOGO_BYTES * 2))
+        decode_logo("image/png", "!" * (MAX_LOGO_BYTES * 2))
