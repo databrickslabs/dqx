@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { applyPreset, draftFromApi, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setDarkAuto, setGroup } from "./editor";
+import { generateDark, generateLight } from "./derive";
+import { applyPreset, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
 
 describe("theme editor helpers", () => {
   test("applyPreset loads both modes and records the preset", () => {
     const d = applyPreset("aubergine");
     expect(d.preset).toBe("aubergine");
     expect(d.light.header).toBe("#3F0E40");
-    expect(d.darkCustomised).toBe(true);
+    expect(d.dark.header).toBe("#2C092D");
   });
   test("dqx-default clears colours", () => {
-    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", light: {}, darkCustomised: false, dark: {} });
+    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", light: {}, dark: {}, manual: { light: [], dark: [] } });
   });
   test("editing a colour detaches the preset", () => {
     const d = setGroup(applyPreset("nord"), "light", "brand", "#000000");
@@ -39,24 +40,38 @@ describe("theme editor helpers", () => {
       dark: { customised: false, colors: {} },
       logos: {},
     });
-    expect(d).toEqual({ preset: null, light: { brand: "#112233" }, darkCustomised: false, dark: {} });
+    expect(d).toEqual({ preset: null, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
   });
 });
 
-describe("setDarkAuto", () => {
-  test("turning auto off on DQX Default detaches the preset and seeds generated colours", () => {
-    const d = setDarkAuto(setGroup(applyPreset("dqx-default"), "light", "brand", "#2F6FAE"), false);
-    expect(d.preset).toBeNull();
-    expect(d.darkCustomised).toBe(true);
-    expect(d.dark.brand).toBeDefined();
-    expect(setDarkAuto(applyPreset("dqx-default"), false).preset).toBeNull();
+describe("light and dark follow each other", () => {
+  test("a light edit regenerates the dark colour", () => {
+    const d = setGroup(applyPreset("nord"), "light", "header", "#3F0E40");
+    expect(d.dark.header).toBeUndefined();
+    expect(draftDark(d).header).toBe(generateDark({ header: "#3F0E40" }).header!);
   });
-  test("turning auto on detaches a preset with custom dark colours", () => {
-    const d = setDarkAuto(applyPreset("nord"), true);
-    expect(d).toEqual({ preset: null, light: applyPreset("nord").light, darkCustomised: false, dark: {} });
+  test("a dark edit generates the light colour", () => {
+    const d = setGroup(applyPreset("dqx-default"), "dark", "page_background", "#1A1D21");
+    expect(d.dark.page_background).toBe("#1A1D21");
+    expect(d.light.page_background).toBe(generateLight({ page_background: "#1A1D21" }).page_background!);
+    expect(draftDark(d).page_background).toBe("#1A1D21");
   });
-  test("keeps the preset when the result still equals it", () => {
-    expect(setDarkAuto(applyPreset("dqx-default"), true)).toEqual(applyPreset("dqx-default"));
+  test("colours set by hand are never replaced from the other mode", () => {
+    let d = setGroup(applyPreset("dqx-default"), "dark", "brand", "#00AA00");
+    d = setGroup(d, "light", "brand", "#112233");
+    d = setGroup(d, "dark", "brand", "#00BB00");
+    expect(d.light.brand).toBe("#112233");
+    expect(draftDark(d).brand).toBe("#00BB00");
+  });
+  test("generated colours stay generated after a save and reload", () => {
+    const d = setGroup(applyPreset("dqx-default"), "dark", "text", "#EEEEEE");
+    const t = draftToTheme(d);
+    const loaded = draftFromApi({ preset: null, company_name: null, logo_mode: "shared", light: t.light, dark: t.dark, logos: {} });
+    expect(loaded.manual).toEqual({ light: [], dark: ["text"] });
+  });
+  test("dark overrides are only saved when there are any", () => {
+    expect(draftToTheme(setGroup(applyPreset("dqx-default"), "light", "brand", "#2F6FAE")).dark).toEqual({ customised: false, colors: {} });
+    expect(draftToTheme(applyPreset("nord")).dark.customised).toBe(true);
   });
 });
 

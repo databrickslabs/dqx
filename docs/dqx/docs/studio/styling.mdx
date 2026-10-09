@@ -4,34 +4,29 @@ sidebar_position: 7
 
 import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
-# Styling
+# Customisation
 
 <FeatureTags>
   <FeatureLifecycleStage stage="beta" heading={false} />
   <AvailableSinceVersion version="0.17.0" heading={false} />
 </FeatureTags>
 
-Admins can brand DQX Studio for their company under **Settings → Styling**. Changes apply to every Studio user as soon as they're saved. Users still choose light or dark mode themselves.
-
-## Company Name
-
-Adds your company to the top bar: **DQX Studio | Acme**. Leave it empty to show **DQX Studio**.
-
-## Custom Logo
-
-Replaces the DQX icon in the top bar. Use one logo for both modes, or separate logos for light and dark mode. Choose separate logos if your logo is hard to see on a dark header. Logo changes apply straight away.
-
-- PNG, JPEG or WebP, up to 256 KB. SVG isn't supported: export your logo as a PNG or WebP instead.
-- Logos are shown 24 px tall and up to 160 px wide, keeping their proportions. A logo about 200 px tall is plenty.
-- With separate logos and no dark mode logo uploaded, dark mode shows the light mode logo.
+Admins can brand DQX Studio for their company under **Settings → Customisation**. It applies to every Studio user. Users still choose light or dark mode themselves.
 
 ## Branding
 
-Pick a preset or set five colours: **Header**, **Page background**, **Text**, **Brand** and **Sidebar**. Studio derives the rest (cards, hover, borders, button text) from them.
+- **Company name** adds your company to the top bar: **DQX Studio | Acme**. It saves as you type. Reset it to show **DQX Studio** only.
+- **Logo** replaces the DQX icon in the top bar. Click a logo preview, or drop an image onto it, to upload. The previews show the logo on the light and dark mode top bars. Turn on **Separate logos for light and dark mode** to upload one for each. With separate logos and no dark mode logo, dark mode shows the light mode logo.
+- Logos must be PNG, JPEG or WebP, up to 256 KB. SVG isn't supported. Logos are shown 24 px tall and up to 160 px wide, so a logo about 200 px tall is plenty.
 
-- Dark mode is generated from your light colours automatically. Turn off **Generate dark mode from light colours** to set dark colours yourself. Presets set their own dark mode colours.
+## Theme
+
+Pick a preset or set five colours: **Brand** (top bar), **Sidebar**, **Page background**, **Interactive elements** (buttons and highlights) and **Text**. Studio derives the rest (cards, hover, borders, button text) from them.
+
+- Use **Light** and **Dark** under the preview to choose which mode's colours you are editing. The preview always shows both modes.
+- Changing a colour in one mode generates the same colour in the other mode, until you set that one yourself.
 - If a colour combination may be hard to read, Studio shows a warning that names the colour to adjust. You can still save.
 - Status colours (pass, warn, fail) and chart colours don't change.
 - **Reset all styling to DQX Default** removes the company name, logo and colours for everyone. This can't be undone.
 
-Presets: DQX Default, Databricks, Aubergine, Ocean, Dimmed, High contrast, Nord, Solarized and Dracula.
+Presets: DQX Default, Databricks, High contrast, Aubergine, Dimmed, Dracula, Nord, Ocean and Solarized.

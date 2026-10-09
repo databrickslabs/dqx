@@ -2,7 +2,10 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { COLOR_GROUPS, parseHexInput, type ColorGroup, type GroupColors } from "@/lib/branding";
+import { parseHexInput, type ColorGroup, type GroupColors } from "@/lib/branding";
+
+/** Display order, top of the app to the content. */
+const PICKER_ORDER: readonly ColorGroup[] = ["header", "sidebar", "page_background", "brand", "text"];
 
 interface HexFieldProps {
   id: string;
@@ -76,7 +79,7 @@ export function ColorGroupPicker({ idPrefix, colors, defaults, disabled, onChang
   const { t } = useTranslation();
   return (
     <div className="divide-y rounded-md border">
-      {COLOR_GROUPS.map((group) => {
+      {PICKER_ORDER.map((group) => {
         const value = (colors[group] ?? defaults[group]).toUpperCase();
         const label = t(`config.styling.group_${group}`);
         const id = `${idPrefix}-${group}`;

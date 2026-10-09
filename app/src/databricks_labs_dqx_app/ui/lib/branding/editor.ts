@@ -1,53 +1,90 @@
 import type { BrandingOut } from "@/lib/api";
 import { checkContrast, type ContrastWarning } from "./contrast";
-import { deriveAllTokens, effectiveDark } from "./derive";
-import type { ColorGroup, GroupColors, Mode } from "./groups";
+import { deriveAllTokens, effectiveDark, generateDark, generateLight } from "./derive";
+import { COLOR_GROUPS, type ColorGroup, type GroupColors, type Mode } from "./groups";
 import { presetById } from "./presets";
 
-/** Unsaved theme being edited in Settings -> Styling. */
-export type ThemeDraft = { preset: string | null; light: GroupColors; darkCustomised: boolean; dark: GroupColors };
+/**
+ * Unsaved theme being edited in Settings -> Customisation. Editing a colour in one mode generates the
+ * same colour in the other mode, unless that one was set by hand (*manual*). *dark* holds only dark
+ * colours that differ from the ones generated from light. Preset colours are never manual.
+ */
+export type ThemeDraft = {
+  preset: string | null;
+  light: GroupColors;
+  dark: GroupColors;
+  manual: Record<Mode, ColorGroup[]>;
+};
+
+const NO_MANUAL: Record<Mode, ColorGroup[]> = { light: [], dark: [] };
 
 export function draftFromApi(b: BrandingOut): ThemeDraft {
-  return {
-    preset: b.preset ?? null,
-    light: { ...(b.light.colors as GroupColors) },
-    darkCustomised: !!b.dark.customised,
-    dark: { ...(b.dark.colors as GroupColors) },
+  const light = { ...(b.light.colors as GroupColors) };
+  const dark = b.dark.customised ? { ...(b.dark.colors as GroupColors) } : {};
+  const preset = b.preset ?? null;
+  if (preset) return { preset, light, dark, manual: NO_MANUAL };
+  // A colour equal to what the other mode would generate is treated as generated.
+  const fromLight = generateDark(light);
+  const manual = {
+    light: COLOR_GROUPS.filter((g) => {
+      const v = light[g];
+      if (v === undefined) return false;
+      const d = dark[g];
+      return d === undefined || generateLight({ [g]: d })[g] !== v;
+    }),
+    dark: COLOR_GROUPS.filter((g) => dark[g] !== undefined && dark[g] !== fromLight[g]),
   };
+  return { preset, light, dark, manual };
 }
 
 export function applyPreset(id: string): ThemeDraft {
   const p = presetById(id);
-  if (!p || id === "dqx-default") return { preset: "dqx-default", light: {}, darkCustomised: false, dark: {} };
-  return { preset: id, light: { ...p.light }, darkCustomised: true, dark: { ...p.dark } };
-}
-
-/** Sets one colour; the draft stops being a preset as soon as it differs from it. */
-export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: string): ThemeDraft {
-  const value = hex.toUpperCase();
-  const next: ThemeDraft = { ...d, [mode]: { ...d[mode], [group]: value } };
-  const p = d.preset ? presetById(d.preset) : undefined;
-  const presetValue = p ? (p[mode] as GroupColors)[group] : undefined;
-  if (presetValue?.toUpperCase() !== value) next.preset = null;
-  return next;
+  if (!p || id === "dqx-default") return { preset: "dqx-default", light: {}, dark: {}, manual: NO_MANUAL };
+  return { preset: id, light: { ...p.light }, dark: { ...p.dark }, manual: NO_MANUAL };
 }
 
 /**
- * Switches dark mode between auto (generated from light) and custom (seeded with the generated
- * colours). The preset is kept only if the result still equals it exactly.
+ * Sets one colour by hand; the draft stops being a preset as soon as it differs from it. The same
+ * colour in the other mode is regenerated from this one unless it was set by hand.
  */
-export function setDarkAuto(d: ThemeDraft, auto: boolean): ThemeDraft {
-  const next: ThemeDraft = auto
-    ? { ...d, darkCustomised: false, dark: {} }
-    : { ...d, darkCustomised: true, dark: effectiveDark(d.light, false, {}) };
-  if (!d.preset || isDirty(next, applyPreset(d.preset))) next.preset = null;
-  return next;
+export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: string): ThemeDraft {
+  const value = hex.toUpperCase();
+  const p = d.preset ? presetById(d.preset) : undefined;
+  const presetValue = p ? (p[mode] as GroupColors)[group] : undefined;
+  if (presetValue?.toUpperCase() === value && d[mode][group] === presetValue) return d;
+  const other: Mode = mode === "light" ? "dark" : "light";
+  const manual = { ...d.manual, [mode]: d.manual[mode].includes(group) ? d.manual[mode] : [...d.manual[mode], group] };
+  const light = { ...d.light };
+  const dark = { ...d.dark };
+  if (mode === "light") light[group] = value;
+  else dark[group] = value;
+  if (!d.manual[other].includes(group)) {
+    // Dark follows light through generation, so drop the stored dark colour; light needs a value.
+    if (mode === "light") delete dark[group];
+    else light[group] = generateLight({ [group]: value })[group];
+  }
+  return { preset: null, light, dark, manual };
+}
+
+/** The dark colours the draft shows: generated from light, with the dark overrides on top. */
+export function draftDark(d: ThemeDraft): GroupColors {
+  return effectiveDark(d.light, Object.keys(d.dark).length > 0, d.dark);
+}
+
+/** The theme payload saved to the backend. */
+export function draftToTheme(d: ThemeDraft): {
+  preset: string | null;
+  light: { colors: GroupColors };
+  dark: { customised: boolean; colors: GroupColors };
+} {
+  const customised = Object.keys(d.dark).length > 0;
+  return { preset: d.preset, light: { colors: d.light }, dark: { customised, colors: customised ? d.dark : {} } };
 }
 
 export function draftWarnings(d: ThemeDraft): ContrastWarning[] {
   return [
     ...checkContrast("light", deriveAllTokens("light", d.light)),
-    ...checkContrast("dark", deriveAllTokens("dark", effectiveDark(d.light, d.darkCustomised, d.dark))),
+    ...checkContrast("dark", deriveAllTokens("dark", draftDark(d))),
   ];
 }
 

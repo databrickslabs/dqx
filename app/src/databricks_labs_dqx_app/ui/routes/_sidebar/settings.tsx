@@ -45,8 +45,7 @@ import {
 } from "@/lib/label-definition-drafts";
 import { resolveCriticality } from "@/lib/registry-rule-conversion";
 import { GovernedKeyPicker, type GovernedKeySeed } from "@/components/settings/GovernedKeyPicker";
-import { BrandingCard, CompanyNameCard, CustomLogoCard } from "@/components/settings/styling";
-import { Separator } from "@/components/ui/separator";
+import { BrandingCard, ThemeCard } from "@/components/settings/styling";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -2817,7 +2816,7 @@ function DangerZoneCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "styling" | "tags" | "danger";
+type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "customisation" | "tags" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2848,7 +2847,7 @@ function ConfigPage() {
       { id: "compute", label: t("config.tabCompute"), icon: Cpu },
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "governance", label: t("config.tabGovernance"), icon: Scale },
-      { id: "styling", label: t("config.tabStyling"), icon: Palette },
+      { id: "customisation", label: t("config.tabCustomisation"), icon: Palette },
       { id: "tags", label: t("config.tabTags"), icon: Tags },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
@@ -2873,9 +2872,8 @@ function ConfigPage() {
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
-      { id: "companyName", tab: "styling", title: t("config.styling.companyNameTitle"), keywords: t("config.kwCompanyName"), render: () => <CompanyNameCard /> },
-      { id: "customLogo", tab: "styling", title: t("config.styling.customLogoTitle"), keywords: t("config.kwCustomLogo"), render: () => <CustomLogoCard /> },
-      { id: "branding", tab: "styling", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
+      { id: "branding", tab: "customisation", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
+      { id: "theme", tab: "customisation", title: t("config.styling.themeTitle"), keywords: t("config.kwTheme"), render: () => <ThemeCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
@@ -2978,9 +2976,9 @@ function ConfigPage() {
                         tab.label
                       )}
                     </TabsTrigger>
-                    {/* data-[orientation] variant so it beats the primitive's h-full (no definite height here). */}
+                    {/* Same divider as the monitored-table tab bar: bg-border matches the bg-muted track, so it can't be used here. */}
                     {tab.id === "general" && (
-                      <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-5" aria-hidden="true" />
+                      <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
                     )}
                     </Fragment>
                   );
@@ -2988,13 +2986,11 @@ function ConfigPage() {
               </TabsList>
               {tabs.map((tab) => (
                 <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
-                  {tab.id === "styling" && (
-                    <p className="text-sm text-muted-foreground">{t("config.styling.appliesToEveryone")}</p>
-                  )}
                   {entries
                     .filter((e) => e.tab === tab.id)
-                    // Cards within each tab are ordered alphabetically by title.
-                    .sort((a, b) => a.title.localeCompare(b.title))
+                    // Cards within each tab are ordered alphabetically by title, except Customisation,
+                    // where Branding always comes before Theme.
+                    .sort((a, b) => (tab.id === "customisation" ? 0 : a.title.localeCompare(b.title)))
                     .map((e) => (
                       <FadeIn key={e.id}>
                         <SettingSection reset={reset}>{e.render()}</SettingSection>

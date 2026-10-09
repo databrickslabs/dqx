@@ -676,7 +676,7 @@ export interface BrandingCompanyNameIn {
 export type BrandingDarkInColors = {[key: string]: string};
 
 /**
- * Dark-mode colours; ignored unless *customised*.
+ * Dark-mode colours set on top of those generated from light; ignored unless *customised*.
  */
 export interface BrandingDarkIn {
   customised?: boolean;

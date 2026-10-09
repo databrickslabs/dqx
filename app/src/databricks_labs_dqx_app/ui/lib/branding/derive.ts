@@ -120,6 +120,23 @@ export function generateDark(light: GroupColors): GroupColors {
   return out;
 }
 
+/** Light counterpart of dark colours (the inverse of generateDark), only for groups that were set. */
+export function generateLight(dark: GroupColors): GroupColors {
+  const out: GroupColors = {};
+  for (const group of COLOR_GROUPS) {
+    const hex = dark[group];
+    if (!hex) continue;
+    const c = hexToOklch(hex);
+    if (group === "page_background") out[group] = oklchToHex({ l: Math.min(1, Math.max(0.96, 1 - c.l)), c: c.c * 0.5, h: c.h });
+    else if (group === "text") out[group] = oklchToHex({ l: Math.min(0.25, Math.max(0.13, 1 - c.l)), c: c.c * 0.5, h: c.h });
+    else if (group === "brand") out[group] = c.l > 0.7 ? withLightness(hex, 0.5) : hex;
+    // header, sidebar: a coloured bar works in both modes; a near-neutral dark one becomes light.
+    else out[group] = c.c < 0.03 && c.l < 0.4 ? oklchToHex({ l: 0.98, c: c.c, h: c.h }) : hex;
+  }
+  return out;
+}
+
+/** Dark colours generated from light, with any colours set for dark mode on top. */
 export function effectiveDark(light: GroupColors, darkCustomised: boolean, dark: GroupColors): GroupColors {
-  return darkCustomised ? dark : generateDark(light);
+  return darkCustomised ? { ...generateDark(light), ...dark } : generateDark(light);
 }

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { contrastRatio, hexToOklch } from "./color";
 import { DEFAULT_GROUPS } from "./groups";
-import { mutedForeground, deriveAllTokens, deriveOverrides, effectiveDark, generateDark, THEMABLE_TOKENS } from "./derive";
+import { mutedForeground, deriveAllTokens, deriveOverrides, effectiveDark, generateDark, generateLight, THEMABLE_TOKENS } from "./derive";
 
 const css = readFileSync(join(import.meta.dir, "../../styles/globals.css"), "utf8");
 function block(selector: string): string {
@@ -79,9 +79,17 @@ describe("dark mode", () => {
     expect(hexToOklch(d.page_background!).l).toBeLessThan(0.3);
     expect(hexToOklch(d.text!).l).toBeGreaterThan(0.8);
   });
-  test("effectiveDark uses custom colours only when customised", () => {
+  test("effectiveDark layers custom colours over the generated ones when customised", () => {
     expect(effectiveDark({ brand: "#FF3621" }, true, { brand: "#00FF00" })).toEqual({ brand: "#00FF00" });
+    expect(effectiveDark({ text: "#111111" }, true, { brand: "#00FF00" })).toEqual({ ...generateDark({ text: "#111111" }), brand: "#00FF00" });
     expect(effectiveDark({}, false, { brand: "#00FF00" })).toEqual({});
+  });
+  test("generateLight turns dark surfaces light and keeps coloured bars", () => {
+    const l = generateLight({ page_background: "#1A1D21", text: "#EEEEEE", header: "#3F0E40", sidebar: "#121212" });
+    expect(hexToOklch(l.page_background!).l).toBeGreaterThan(0.95);
+    expect(hexToOklch(l.text!).l).toBeLessThan(0.3);
+    expect(l.header).toBe("#3F0E40");
+    expect(hexToOklch(l.sidebar!).l).toBeGreaterThan(0.95);
   });
   test("deriveAllTokens is complete for every mode", () => {
     for (const mode of ["light", "dark"] as const) {

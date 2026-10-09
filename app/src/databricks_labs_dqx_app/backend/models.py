@@ -3089,7 +3089,7 @@ class BrandingModeColorsIn(BaseModel):
 
 
 class BrandingDarkIn(BaseModel):
-    """Dark-mode colours; ignored unless *customised*."""
+    """Dark-mode colours set on top of those generated from light; ignored unless *customised*."""
 
     customised: bool = False
     colors: dict[str, str] = Field(default_factory=dict)
