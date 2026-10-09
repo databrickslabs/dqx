@@ -146,7 +146,8 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <div className="space-y-2">
+          {/* Column stretches to the preview's height; the picker fills it so both bottoms line up. */}
+          <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <SectionLabel>{t("config.styling.colorsLabel")}</SectionLabel>
               <div className="flex gap-1" role="group" aria-label={t("config.styling.modeToggleLabel")}>
@@ -185,6 +186,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
               defaults={DEFAULT_GROUPS[mode]}
               disabled={busy}
               onChange={(group, hex) => setDraft((d) => setGroup(d, mode, group, hex))}
+              className="flex-1"
             />
           </div>
 

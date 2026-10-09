@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { parseHexInput, type ColorGroup, type GroupColors } from "@/lib/branding";
 
 /** Display order, top of the app to the content. */
@@ -73,18 +74,20 @@ interface ColorGroupPickerProps {
   defaults: Record<ColorGroup, string>;
   disabled?: boolean;
   onChange: (group: ColorGroup, hex: string) => void;
+  className?: string;
 }
 
-export function ColorGroupPicker({ idPrefix, colors, defaults, disabled, onChange }: ColorGroupPickerProps) {
+/** Rows share any extra height evenly, so the list can stretch to match a taller neighbour. */
+export function ColorGroupPicker({ idPrefix, colors, defaults, disabled, onChange, className }: ColorGroupPickerProps) {
   const { t } = useTranslation();
   return (
-    <div className="divide-y rounded-md border">
+    <div className={cn("flex flex-col divide-y rounded-md border", className)}>
       {PICKER_ORDER.map((group) => {
         const value = (colors[group] ?? defaults[group]).toUpperCase();
         const label = t(`config.styling.group_${group}`);
         const id = `${idPrefix}-${group}`;
         return (
-          <div key={group} className="flex items-center justify-between gap-4 px-3 py-2">
+          <div key={group} className="flex flex-1 items-center justify-between gap-4 px-3 py-2">
             <div className="min-w-0 space-y-0.5">
               <Label htmlFor={id} className="text-sm">
                 {label}
