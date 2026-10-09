@@ -1512,6 +1512,64 @@ def is_not_in_range(
 
 
 @register_rule("row")
+def has_num_decimal_places(
+    column: str | Column,
+    limit: int | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether numeric values in the input column have no more than the given number of decimal places.
+
+    Column values are converted to strings before checking. A value whose string form is non-numeric fails-fast
+    and skips the decimal-place check. A numeric value passes when it has *limit* or fewer decimal places, counted
+    from its string form, and fails otherwise.
+
+    The *limit* may be a literal or a column expression and is evaluated lazily, so it is not validated up-front.
+
+    Args:
+        column: column to check; can be a string column name or a column expression.
+        limit: maximum number of decimal places allowed; a non-negative integer, column name, or sql expression.
+        allow_nulls: if True (default), null values pass the check; if False, null values fail the check.
+
+    Returns:
+        Column object for condition.
+
+    Raises:
+        MissingParameterError: if the limit is not provided.
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    str_expr = col_expr.cast("string")
+
+    is_numeric = str_expr.rlike(r"^-?\d+(\.\d+)?$")
+    has_numeric_precision = F.length(F.regexp_extract(str_expr, r"\.(\d+)", 1)) <= limit_expr
+
+    condition = ~is_numeric | ~has_numeric_precision
+    message = F.when(
+        ~is_numeric,
+        F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' is not numeric")),
+    ).otherwise(
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            str_expr,
+            F.lit(f"' in Column '{col_expr_str}' has more than "),
+            limit_expr.cast("string"),
+            F.lit(" decimal places"),
+        )
+    )
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        message,
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "num_decimal_places_greater_than_limit",
+    )
+
+
+@register_rule("row")
 def regex_match(column: str | Column, regex: str, negate: bool = False) -> Column:
     """Checks whether the values in the input column matches a given regex.
 

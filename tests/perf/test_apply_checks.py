@@ -744,6 +744,21 @@ def test_benchmark_foreach_is_not_greater_than(benchmark, ws, generated_integer_
     assert result == EXPECTED_ROWS
 
 
+def test_benchmark_has_num_decimal_places(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_num_decimal_places,
+            column="col2",
+            check_func_kwargs={"limit": 2},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_is_in_range(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
