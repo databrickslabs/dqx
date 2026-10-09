@@ -1,0 +1,1 @@
+import{b6 as t}from"./index-82S_G6xW.js";import{u as p}from"./use-permissions-Bcw6sanI.js";function i(){const{data:e}=t({query:{staleTime:1/0}}),{canApproveRules:a}=p(),o=e?.data?.mode,s=o==="auto_bypass"||o==="disabled"?o:"enabled";return{mode:s,willAutoApprove:s==="disabled"||s==="auto_bypass"&&a}}export{i as u};

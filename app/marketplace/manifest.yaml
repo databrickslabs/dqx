@@ -1,0 +1,30 @@
+version: 1
+name: dqx-studio
+description: Databricks DQX Studio for Data Quality Monitoring
+user_api_scopes:
+  - sql
+  - sql.alerts
+  - sql.alerts-legacy
+  - sql.dashboards
+  - sql.data-sources
+  - sql.dbsql-permissions
+  - sql.queries
+  - sql.queries-legacy
+  - sql.query-history
+  - sql.statement-execution
+  - sql.warehouses
+  - vectorsearch.vector-search-endpoints
+  - vectorsearch.vector-search-indexes
+  - serving.serving-endpoints
+  - files.files
+  - genie
+  - catalog.catalogs:read
+  - catalog.schemas:read
+  - catalog.tables:read
+resource_specs:
+  - name: dqx-sql-warehouse
+    sql_warehouse_spec:
+      permission: CAN_MANAGE
+  - name: dqx-lakebase
+    postgres_spec:
+      permission: CAN_CONNECT_AND_CREATE
