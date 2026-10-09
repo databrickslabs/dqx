@@ -18883,10 +18883,10 @@ export function useListValidationRunsSuspense<TData = Awaited<ReturnType<typeof 
  * Return recently-failed validation runs, bounded to the most recent *N*.
 
 Intended for the app-wide toast watcher: returns FAILED runs only with
-minimal fields (run_id, source_table_fqn, status, created_at). The
-endpoint is cheap by construction — no error_message, no counts, no
-review-status join. The full run history is still available via
-``GET /dryrun/runs`` for the Runs History page.
+minimal fields (run_id, source_table_fqn, status, created_at). Every open
+tab polls this, so it reads the task-runner job runs from the Jobs API
+instead of ``dq_validation_runs`` and never keeps the SQL warehouse awake.
+The full run history is still available via ``GET /dryrun/runs``.
  * @summary List Recent Validation Failures
  */
 export const listRecentValidationFailures = (
@@ -19707,8 +19707,9 @@ export function useListProfileRunsSuspense<TData = Awaited<ReturnType<typeof lis
  * Return recently-failed profiler runs, bounded to the most recent *N*.
 
 Intended for the app-wide toast watcher: returns FAILED runs only with
-minimal fields (run_id, source_table_fqn, status, created_at). The
-endpoint is cheap by construction — no summary_json, no generated rules.
+minimal fields (run_id, source_table_fqn, status, created_at). Every open
+tab polls this, so it reads the task-runner job runs from the Jobs API
+instead of ``dq_profiling_results`` and never keeps the SQL warehouse awake.
 The full profiler run history is still available via ``GET /profiler/runs``.
  * @summary List Recent Profile Failures
  */

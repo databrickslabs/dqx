@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+from databricks_labs_dqx_app.backend.services.task_runner_runs import list_active_app_run_ids
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
@@ -81,6 +82,13 @@ _FAILURE_BACKOFF = timedelta(hours=1)
 # be re-checked on every tick forever; 24h comfortably outlives any real
 # validation run.
 _SCORE_REFRESH_TTL = timedelta(hours=24)
+
+# A tracked run is looked up in ``dq_validation_runs`` only once its job has
+# finished, read from the Jobs API so a pending run costs no warehouse time.
+# A run the Jobs API has never listed as active is treated as finished only
+# after this grace period, covering a run-set member recorded just before its
+# job was submitted.
+_JOB_STATE_GRACE = timedelta(minutes=2)
 
 # Recent-run-set sweep bounds (P5.3). Every tick, one bounded OLTP query
 # lists the member run ids of run sets created inside this window so
@@ -367,6 +375,11 @@ class SchedulerService:
         self._pending_score_runs: dict[str, datetime] = {}
         self._completed_view_fqns_buffer: list[str] = []
         self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Tracked runs the Jobs API has listed as active at least once, and
+        # those whose finished job had no terminal row on the last lookup
+        # (dropped if the next lookup still finds none).
+        self._score_runs_seen_active: set[str] = set()
+        self._score_runs_missing_row: set[str] = set()
         # Run-set sweep state (P5.3): run ids already tracked or
         # processed this boot, so the recurring 24h-window query never
         # re-tracks a run it has already handled. Pruned every sweep to
@@ -1370,7 +1383,10 @@ class SchedulerService:
 
         The expiry + batched terminal lookup extracted from
         :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
-        can fold the completed runs' tables into its own recompute.
+        can fold the completed runs' tables into its own recompute. Only
+        runs whose job the Jobs API reports finished are looked up, so a
+        run still executing (or one that never writes a row) does not cost
+        a warehouse query on every tick.
         """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -1381,12 +1397,16 @@ class SchedulerService:
 
         expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
         for rid in expired:
-            del self._pending_score_runs[rid]
+            self._forget_score_run(rid)
             logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
         if not self._pending_score_runs:
             return set()
 
-        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        finished = self._score_runs_with_finished_jobs(now)
+        if not finished:
+            return set()
+
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in sorted(finished))
         sql = (
             f"SELECT DISTINCT run_id, source_table_fqn, view_fqn FROM {self._runs_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
@@ -1398,14 +1418,51 @@ class SchedulerService:
             run_id = row[0] if row else None
             if not run_id:
                 continue
-            self._pending_score_runs.pop(run_id, None)
+            self._forget_score_run(run_id)
             fqn = row[1] if len(row) > 1 else None
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
             view_fqn = row[2] if len(row) > 2 else None
             if isinstance(view_fqn, str) and view_fqn:
                 self._completed_view_fqns_buffer.append(view_fqn)
+
+        # A finished job with no terminal row will never get one: drop it after
+        # a second empty lookup instead of re-querying until the 24h TTL.
+        for run_id in finished & set(self._pending_score_runs):
+            if run_id in self._score_runs_missing_row:
+                self._forget_score_run(run_id)
+                logger.warning(
+                    "Run %s finished without a terminal result row; dropping its score-refresh tracking", run_id
+                )
+            else:
+                self._score_runs_missing_row.add(run_id)
         return fqns
+
+    def _score_runs_with_finished_jobs(self, now: datetime) -> set[str]:
+        """Return the tracked runs whose task-runner job has finished, per the Jobs API.
+
+        Falls back to every tracked run (the previous behaviour) when the job id
+        is unset or the Jobs API call fails, so completion is never missed.
+        """
+        pending = set(self._pending_score_runs)
+        if not self._job_id:
+            return pending
+        try:
+            active = list_active_app_run_ids(self._ws, int(self._job_id))
+        except Exception:
+            logger.warning("Could not list active task-runner runs; checking every tracked run", exc_info=True)
+            return pending
+        self._score_runs_seen_active |= active & pending
+        return {
+            run_id
+            for run_id in pending - active
+            if run_id in self._score_runs_seen_active or now - self._pending_score_runs[run_id] >= _JOB_STATE_GRACE
+        }
+
+    def _forget_score_run(self, run_id: str) -> None:
+        self._pending_score_runs.pop(run_id, None)
+        self._score_runs_seen_active.discard(run_id)
+        self._score_runs_missing_row.discard(run_id)
 
     def _drop_completed_run_views(self, view_fqns: list[str]) -> None:
         """Best-effort drop of temp views for runs observed terminal this tick.
