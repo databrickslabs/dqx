@@ -26,6 +26,8 @@ PRESET_IDS: tuple[str, ...] = (
     "solarized",
     "dracula",
 )
+MAX_CUSTOM_PRESETS = 20
+CUSTOM_PRESET_PREFIX = "custom-"
 LOGO_SLOTS: tuple[str, ...] = ("light", "dark")
 LOGO_MODES: tuple[str, ...] = ("shared", "separate")
 MAX_LOGO_BYTES = 262144
@@ -33,6 +35,7 @@ MAX_COMPANY_NAME_LENGTH = 60
 MAX_LOGO_BASE64_LENGTH = (MAX_LOGO_BYTES * 4) // 3 + 4
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_CUSTOM_PRESET_RE = re.compile(r"^custom-([1-9][0-9]{0,3})$")
 _LOGO_HASH_RE = re.compile(r"^[0-9a-f]{16}$")
 _SUPPORTED_MIME = ("image/png", "image/jpeg", "image/webp")
 
@@ -105,13 +108,30 @@ def sanitize_company_name(value: object) -> str | None:
     return cleaned
 
 
-def validate_preset(value: object) -> str | None:
-    """Validate a preset id (None allowed)."""
+def validate_preset(value: object, custom_ids: tuple[str, ...] = ()) -> str | None:
+    """Validate a preset id (None allowed).
+
+    Args:
+        value: Candidate preset id.
+        custom_ids: Ids of the saved custom presets, which are also accepted.
+
+    Returns:
+        The preset id, or None.
+
+    Raises:
+        BrandingValidationError: If *value* is neither a built-in nor a saved custom preset.
+    """
     if value is None:
         return None
-    if value not in PRESET_IDS:
+    if value not in PRESET_IDS and value not in custom_ids:
         raise BrandingValidationError("Unknown preset.")
     return str(value)
+
+
+def custom_preset_number(preset_id: str) -> int | None:
+    """Return N for a custom preset id "custom-N", or None for any other string."""
+    match = _CUSTOM_PRESET_RE.fullmatch(preset_id)
+    return int(match.group(1)) if match else None
 
 
 def validate_logo_mode(value: object) -> str:
@@ -179,6 +199,7 @@ def default_branding() -> dict[str, object]:
         "light": {"colors": {}},
         "dark": {"customised": False, "colors": {}},
         "logos": {slot: None for slot in LOGO_SLOTS},
+        "custom_presets": [],
     }
 
 
@@ -213,6 +234,40 @@ def _safe_logo_hashes(value: object) -> dict[str, str | None]:
     return hashes
 
 
+def _safe_dark(value: object) -> dict[str, object]:
+    dark_dict = value if isinstance(value, dict) else {}
+    customised = dark_dict.get("customised")
+    return {
+        "customised": customised if isinstance(customised, bool) else False,
+        "colors": _safe_colors(dark_dict.get("colors"), "dark"),
+    }
+
+
+def _safe_custom_presets(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    presets: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in value[:MAX_CUSTOM_PRESETS]:
+        preset_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or not isinstance(preset_id, str) or preset_id in seen:
+            logger.warning("Dropped an invalid stored custom preset")
+            continue
+        if custom_preset_number(preset_id) is None:
+            logger.warning("Dropped an invalid stored custom preset")
+            continue
+        light = item.get("light")
+        seen.add(preset_id)
+        presets.append(
+            {
+                "id": preset_id,
+                "light": {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None, "light")},
+                "dark": _safe_dark(item.get("dark")),
+            }
+        )
+    return presets
+
+
 def parse_stored_branding(raw: str | None) -> dict[str, object]:
     """Parse a stored branding value, dropping anything invalid.
 
@@ -240,8 +295,11 @@ def parse_stored_branding(raw: str | None) -> dict[str, object]:
         result["company_name"] = sanitize_company_name(data.get("company_name"))
     except BrandingValidationError:
         logger.warning("Dropped an invalid stored company name")
+    custom_presets = _safe_custom_presets(data.get("custom_presets"))
+    result["custom_presets"] = custom_presets
+    custom_ids = {str(c["id"]) for c in custom_presets}
     preset = data.get("preset")
-    if preset is not None and preset not in PRESET_IDS:
+    if preset is not None and preset not in PRESET_IDS and preset not in custom_ids:
         logger.warning("Dropped an invalid stored preset")
         preset = None
     result["preset"] = preset
@@ -251,12 +309,6 @@ def parse_stored_branding(raw: str | None) -> dict[str, object]:
     result["logo_mode"] = mode if mode in LOGO_MODES else "shared"
     light = data.get("light")
     result["light"] = {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None, "light")}
-    dark = data.get("dark")
-    dark_dict = dark if isinstance(dark, dict) else {}
-    customised = dark_dict.get("customised")
-    result["dark"] = {
-        "customised": customised if isinstance(customised, bool) else False,
-        "colors": _safe_colors(dark_dict.get("colors"), "dark"),
-    }
+    result["dark"] = _safe_dark(data.get("dark"))
     result["logos"] = _safe_logo_hashes(data.get("logos"))
     return result

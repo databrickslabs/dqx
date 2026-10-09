@@ -278,7 +278,7 @@
         "dracula": "Dracula"
       },
       "themeTitle": "Theme",
-      "themeDescription": "Choose a preset or set your own colours. Changing a colour in one mode updates the other mode too, until you set that one yourself.",
+      "themeDescription": "Choose a preset or set your own colours. Changing a colour in one mode updates the other mode too, until you set that one yourself. Saving changes to a preset adds it as Custom 1, Custom 2 and so on.",
       "companyNameReset": "Reset company name",
       "logoLabel": "Logo",
       "logoTileLight": "Light",
@@ -288,7 +288,13 @@
       "logoReset": "Reset logo",
       "colorsLabelMode": "Colours ({{mode}})",
       "editMode": "Edit colours ({{mode}})",
-      "modeToggleLabel": "Mode"
+      "modeToggleLabel": "Mode",
+      "customPresetName": "Custom {{number}}",
+      "customPresetDelete": "Delete {{name}}",
+      "customPresetDeleteConfirm": "Delete this preset for everyone? The colours in use now stay as they are.",
+      "delete": "Delete",
+      "customPresetDeleted": "Preset deleted",
+      "themeSavedAsCustom": "Colours saved as Custom {{number}}"
     },
     "breadcrumb": "Admin Settings",
     "title": "Admin Settings",

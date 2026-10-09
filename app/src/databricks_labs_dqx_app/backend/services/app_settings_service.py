@@ -10,8 +10,12 @@ from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
 from databricks_labs_dqx_app.backend.common.branding import (
+    CUSTOM_PRESET_PREFIX,
     LOGO_SLOTS,
+    MAX_CUSTOM_PRESETS,
     BrandingValidationError,
+    custom_preset_number,
+    default_branding,
     logo_hash,
     normalize_colors,
     parse_stored_branding,
@@ -1346,11 +1350,51 @@ class AppSettingsService:
         *,
         user_email: str | None = None,
     ) -> dict[str, object]:
-        """Validate and store the colour theme."""
+        """Validate and store the colour theme.
+
+        A theme with colours but no preset (an edited preset) is also kept as a custom preset,
+        "Custom N", reusing an existing custom preset with the same colours.
+        """
         branding = self.get_branding()
-        branding["preset"] = validate_preset(preset)
-        branding["light"] = {"colors": normalize_colors(light_colors)}
-        branding["dark"] = {"customised": bool(dark_customised), "colors": normalize_colors(dark_colors)}
+        custom = branding_custom_presets(branding)
+        dark_map = normalize_colors(dark_colors)
+        light: dict[str, object] = {"colors": normalize_colors(light_colors)}
+        dark: dict[str, object] = {"customised": bool(dark_customised) and bool(dark_map), "colors": dark_map}
+        chosen = validate_preset(preset, tuple(str(c["id"]) for c in custom))
+        if chosen is None and (light["colors"] or dark_map):
+            chosen = self._custom_preset_for(custom, light, dark)
+        branding["preset"] = chosen
+        branding["light"] = light
+        branding["dark"] = dark
+        branding["custom_presets"] = custom
+        return self._save_branding(branding, user_email)
+
+    @staticmethod
+    def _custom_preset_for(
+        custom: list[dict[str, object]], light: dict[str, object], dark: dict[str, object]
+    ) -> str:
+        for existing in custom:
+            if existing["light"] == light and existing["dark"] == dark:
+                return str(existing["id"])
+        if len(custom) >= MAX_CUSTOM_PRESETS:
+            raise BrandingValidationError(
+                f"You can keep up to {MAX_CUSTOM_PRESETS} custom presets. Delete one to save a new one."
+            )
+        numbers = [custom_preset_number(str(c["id"])) or 0 for c in custom]
+        preset_id = f"{CUSTOM_PRESET_PREFIX}{max(numbers, default=0) + 1}"
+        custom.append({"id": preset_id, "light": light, "dark": dark})
+        return preset_id
+
+    def delete_branding_custom_preset(self, preset_id: str, *, user_email: str | None = None) -> dict[str, object]:
+        """Delete a saved custom preset; the current colours are kept even if they came from it."""
+        branding = self.get_branding()
+        custom = branding_custom_presets(branding)
+        remaining = [c for c in custom if c["id"] != preset_id]
+        if len(remaining) == len(custom):
+            raise BrandingValidationError("Unknown custom preset.")
+        branding["custom_presets"] = remaining
+        if branding.get("preset") == preset_id:
+            branding["preset"] = None
         return self._save_branding(branding, user_email)
 
     def save_branding_logo_mode(self, mode: object, *, user_email: str | None = None) -> dict[str, object]:
@@ -1404,10 +1448,29 @@ class AppSettingsService:
         return branding_logo_hashes(self.get_branding())
 
     def reset_branding(self) -> None:
-        """Remove all branding (company name, theme and logos)."""
-        self.delete_setting(_BRANDING_KEY)
+        """Remove all branding (company name, theme and logos). Saved custom presets are kept."""
+        custom = branding_custom_presets(self.get_branding())
+        if custom:
+            branding = default_branding()
+            branding["custom_presets"] = custom
+            self.save_setting(_BRANDING_KEY, json.dumps(branding))
+        else:
+            self.delete_setting(_BRANDING_KEY)
         for slot in LOGO_SLOTS:
             self.delete_setting(self._logo_key(slot))
+
+
+def branding_custom_presets(branding: dict[str, object]) -> list[dict[str, object]]:
+    """Return the saved custom presets held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        A new list of custom presets, each with *id*, *light* and *dark*.
+    """
+    stored = branding.get("custom_presets")
+    return [c for c in stored if isinstance(c, dict)] if isinstance(stored, list) else []
 
 
 def branding_logo_hashes(branding: dict[str, object]) -> dict[str, str | None]:

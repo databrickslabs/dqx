@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { generateDark, generateLight } from "./derive";
-import { applyPreset, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
+import { applyCustomPreset, applyPreset, customPresetNumber, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
 
 describe("theme editor helpers", () => {
   test("applyPreset loads both modes and records the preset", () => {
@@ -41,6 +41,30 @@ describe("theme editor helpers", () => {
       logos: {},
     });
     expect(d).toEqual({ preset: null, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
+  });
+});
+
+describe("custom presets", () => {
+  const custom = {
+    id: "custom-2",
+    light: { colors: { brand: "#112233" } },
+    dark: { customised: true, colors: { brand: "#445566" } },
+  };
+  test("applyCustomPreset loads its colours and records it", () => {
+    expect(applyCustomPreset(custom)).toEqual({
+      preset: "custom-2",
+      light: { brand: "#112233" },
+      dark: { brand: "#445566" },
+      manual: { light: [], dark: [] },
+    });
+  });
+  test("editing a custom preset detaches it", () => {
+    expect(setGroup(applyCustomPreset(custom), "light", "text", "#000000").preset).toBeNull();
+  });
+  test("customPresetNumber", () => {
+    expect(customPresetNumber("custom-12")).toBe(12);
+    expect(customPresetNumber("nord")).toBeNull();
+    expect(customPresetNumber("custom-0")).toBeNull();
   });
 });
 

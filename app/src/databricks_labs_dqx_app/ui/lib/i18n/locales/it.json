@@ -278,7 +278,7 @@
         "dracula": "Dracula"
       },
       "themeTitle": "Tema",
-      "themeDescription": "Scegli una preimpostazione o imposta i tuoi colori. Modificare un colore in una modalità aggiorna anche l'altra, finché non lo imposti tu.",
+      "themeDescription": "Scegli una preimpostazione o imposta i tuoi colori. Modificare un colore in una modalità aggiorna anche l'altra, finché non lo imposti tu. Salvare le modifiche a una preimpostazione la aggiunge come Personalizzato 1, Personalizzato 2 e così via.",
       "companyNameReset": "Reimposta nome azienda",
       "logoLabel": "Logo",
       "logoTileLight": "Chiaro",
@@ -288,7 +288,13 @@
       "logoReset": "Reimposta logo",
       "colorsLabelMode": "Colori ({{mode}})",
       "editMode": "Modifica colori ({{mode}})",
-      "modeToggleLabel": "Modalità"
+      "modeToggleLabel": "Modalità",
+      "customPresetName": "Personalizzato {{number}}",
+      "customPresetDelete": "Elimina {{name}}",
+      "customPresetDeleteConfirm": "Eliminare questa preimpostazione per tutti? I colori in uso restano invariati.",
+      "delete": "Elimina",
+      "customPresetDeleted": "Preimpostazione eliminata",
+      "themeSavedAsCustom": "Colori salvati come Personalizzato {{number}}"
     },
     "breadcrumb": "Impostazioni amministratore",
     "title": "Impostazioni amministratore",

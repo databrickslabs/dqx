@@ -673,6 +673,15 @@ export interface BrandingCompanyNameIn {
   company_name?: BrandingCompanyNameInCompanyName;
 }
 
+/**
+ * A theme an admin saved after editing a preset, shown as "Custom N".
+ */
+export interface BrandingCustomPresetOut {
+  id: string;
+  light: BrandingModeColorsOut;
+  dark: BrandingDarkOut;
+}
+
 export type BrandingDarkInColors = {[key: string]: string};
 
 /**
@@ -753,6 +762,7 @@ export interface BrandingOut {
   light: BrandingModeColorsOut;
   dark: BrandingDarkOut;
   logos: BrandingLogosOut;
+  custom_presets?: BrandingCustomPresetOut[];
 }
 
 export type BrandingThemeInPreset = string | null;
@@ -6805,6 +6815,68 @@ export const useSaveBrandingTheme = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getSaveBrandingThemeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a saved custom preset (admin only). The current colours are kept.
+ * @summary Delete Custom Preset
+ */
+export const deleteBrandingCustomPreset = (
+    presetId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/config/branding/presets/${presetId}`,options
+    );
+  }
+
+
+
+export const getDeleteBrandingCustomPresetMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext> => {
+
+const mutationKey = ['deleteBrandingCustomPreset'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, {presetId: string}> = (props) => {
+          const {presetId} = props ?? {};
+
+          return  deleteBrandingCustomPreset(presetId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteBrandingCustomPresetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>>
+    
+    export type DeleteBrandingCustomPresetMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Custom Preset
+ */
+export const useDeleteBrandingCustomPreset = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteBrandingCustomPreset>>,
+        TError,
+        {presetId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteBrandingCustomPresetMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

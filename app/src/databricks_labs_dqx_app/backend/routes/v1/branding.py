@@ -12,6 +12,7 @@ from databricks_labs_dqx_app.backend.dependencies import get_app_settings_servic
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BrandingCompanyNameIn,
+    BrandingCustomPresetOut,
     BrandingDarkOut,
     BrandingLogoIn,
     BrandingLogoModeIn,
@@ -20,7 +21,11 @@ from databricks_labs_dqx_app.backend.models import (
     BrandingOut,
     BrandingThemeIn,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService, branding_logo_hashes
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    AppSettingsService,
+    branding_custom_presets,
+    branding_logo_hashes,
+)
 
 router = APIRouter()
 
@@ -30,19 +35,30 @@ _SERVED_LOGO_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})
 _ADMIN = [require_role(UserRole.ADMIN)]
 
 
-def _to_out(svc: AppSettingsService) -> BrandingOut:
-    branding = svc.get_branding()
-    light = branding["light"]
-    dark = branding["dark"]
+def _mode_out(light: object, dark: object) -> tuple[BrandingModeColorsOut, BrandingDarkOut]:
     if not isinstance(light, dict) or not isinstance(dark, dict):
         raise RuntimeError("Stored branding is malformed.")
+    return (
+        BrandingModeColorsOut(colors=dict(light["colors"])),
+        BrandingDarkOut(customised=bool(dark["customised"]), colors=dict(dark["colors"])),
+    )
+
+
+def _to_out(svc: AppSettingsService) -> BrandingOut:
+    branding = svc.get_branding()
+    light, dark = _mode_out(branding["light"], branding["dark"])
+    custom = []
+    for preset in branding_custom_presets(branding):
+        preset_light, preset_dark = _mode_out(preset["light"], preset["dark"])
+        custom.append(BrandingCustomPresetOut(id=str(preset["id"]), light=preset_light, dark=preset_dark))
     return BrandingOut(
         company_name=branding["company_name"] if isinstance(branding["company_name"], str) else None,
         preset=branding["preset"] if isinstance(branding["preset"], str) else None,
         logo_mode=str(branding["logo_mode"]),
-        light=BrandingModeColorsOut(colors=dict(light["colors"])),
-        dark=BrandingDarkOut(customised=bool(dark["customised"]), colors=dict(dark["colors"])),
+        light=light,
+        dark=dark,
         logos=BrandingLogosOut(**branding_logo_hashes(branding)),
+        custom_presets=custom,
     )
 
 
@@ -83,6 +99,19 @@ def save_theme(body: BrandingThemeIn, svc: SettingsDep, email: EmailDep) -> Bran
     except BrandingValidationError as e:
         raise _bad_request(e) from e
     logger.info(f"Saved branding theme (by={email})")
+    return _to_out(svc)
+
+
+@router.delete(
+    "/presets/{preset_id}", response_model=BrandingOut, operation_id="deleteBrandingCustomPreset", dependencies=_ADMIN
+)
+def delete_custom_preset(preset_id: str, svc: SettingsDep, email: EmailDep) -> BrandingOut:
+    """Delete a saved custom preset (admin only). The current colours are kept."""
+    try:
+        svc.delete_branding_custom_preset(preset_id, user_email=email)
+    except BrandingValidationError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    logger.info(f"Deleted a custom branding preset (by={email})")
     return _to_out(svc)
 
 

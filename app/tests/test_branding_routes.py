@@ -75,6 +75,7 @@ class TestRead:
             "light": {"colors": {}},
             "dark": {"customised": False, "colors": {}},
             "logos": {"light": None, "dark": None},
+            "custom_presets": [],
         }
         assert resp.headers["etag"]
 
@@ -98,6 +99,7 @@ class TestRoles:
             ("put", "/api/v1/config/branding/logo/light", {"content_type": "image/png", "data_base64": ""}),
             ("delete", "/api/v1/config/branding/logo/light", None),
             ("delete", "/api/v1/config/branding", None),
+            ("delete", "/api/v1/config/branding/presets/custom-1", None),
         ],
     )
     def test_viewer_cannot_mutate(self, viewer, method, path, body):
@@ -128,6 +130,15 @@ class TestMutations:
         assert out["preset"] == "nord"
         assert out["light"]["colors"] == {"brand": "#5E81AC"}
         assert out["dark"] == {"customised": True, "colors": {"brand": "#88C0D0"}}
+
+    def test_custom_preset_saved_and_deleted(self, admin):
+        body = {"preset": None, "light": {"colors": {"brand": "#112233"}}, "dark": {"customised": False, "colors": {}}}
+        out = admin.put("/api/v1/config/branding/theme", json=body).json()
+        assert out["preset"] == "custom-1"
+        assert [c["id"] for c in out["custom_presets"]] == ["custom-1"]
+        out = admin.delete("/api/v1/config/branding/presets/custom-1").json()
+        assert out["preset"] is None and out["custom_presets"] == []
+        assert admin.delete("/api/v1/config/branding/presets/custom-1").status_code == 404
 
     def test_logo_upload_and_fetch(self, admin, viewer):
         out = admin.put(

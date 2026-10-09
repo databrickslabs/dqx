@@ -1,4 +1,4 @@
-import type { BrandingOut } from "@/lib/api";
+import type { BrandingCustomPresetOut, BrandingOut } from "@/lib/api";
 import { checkContrast, type ContrastWarning } from "./contrast";
 import { deriveAllTokens, effectiveDark, generateDark, generateLight } from "./derive";
 import { COLOR_GROUPS, type ColorGroup, type GroupColors, type Mode } from "./groups";
@@ -43,15 +43,29 @@ export function applyPreset(id: string): ThemeDraft {
   return { preset: id, light: { ...p.light }, dark: { ...p.dark }, manual: NO_MANUAL };
 }
 
+/** Loads a saved custom preset ("Custom N"). */
+export function applyCustomPreset(p: BrandingCustomPresetOut): ThemeDraft {
+  return {
+    preset: p.id,
+    light: { ...(p.light.colors as GroupColors) },
+    dark: p.dark.customised ? { ...(p.dark.colors as GroupColors) } : {},
+    manual: NO_MANUAL,
+  };
+}
+
+/** "custom-3" -> 3; null for built-in presets. */
+export function customPresetNumber(id: string): number | null {
+  const m = /^custom-([1-9][0-9]{0,3})$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Sets one colour by hand; the draft stops being a preset as soon as it differs from it. The same
  * colour in the other mode is regenerated from this one unless it was set by hand.
  */
 export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: string): ThemeDraft {
   const value = hex.toUpperCase();
-  const p = d.preset ? presetById(d.preset) : undefined;
-  const presetValue = p ? (p[mode] as GroupColors)[group] : undefined;
-  if (presetValue?.toUpperCase() === value && d[mode][group] === presetValue) return d;
+  if (d[mode][group]?.toUpperCase() === value) return d;
   const other: Mode = mode === "light" ? "dark" : "light";
   const manual = { ...d.manual, [mode]: d.manual[mode].includes(group) ? d.manual[mode] : [...d.manual[mode], group] };
   const light = { ...d.light };

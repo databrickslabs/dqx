@@ -278,7 +278,7 @@
         "dracula": "Dracula"
       },
       "themeTitle": "Tema",
-      "themeDescription": "Elige un ajuste predefinido o define tus propios colores. Cambiar un color en un modo también actualiza el otro, hasta que lo definas tú.",
+      "themeDescription": "Elige un ajuste predefinido o define tus propios colores. Cambiar un color en un modo también actualiza el otro, hasta que lo definas tú. Al guardar cambios en un ajuste predefinido, se añade como Personalizado 1, Personalizado 2, etc.",
       "companyNameReset": "Restablecer nombre de la empresa",
       "logoLabel": "Logotipo",
       "logoTileLight": "Claro",
@@ -288,7 +288,13 @@
       "logoReset": "Restablecer logotipo",
       "colorsLabelMode": "Colores ({{mode}})",
       "editMode": "Editar colores ({{mode}})",
-      "modeToggleLabel": "Modo"
+      "modeToggleLabel": "Modo",
+      "customPresetName": "Personalizado {{number}}",
+      "customPresetDelete": "Eliminar {{name}}",
+      "customPresetDeleteConfirm": "¿Eliminar este ajuste predefinido para todos? Los colores en uso no cambian.",
+      "delete": "Eliminar",
+      "customPresetDeleted": "Ajuste predefinido eliminado",
+      "themeSavedAsCustom": "Colores guardados como Personalizado {{number}}"
     },
     "breadcrumb": "Configuración de administrador",
     "title": "Configuración de administrador",

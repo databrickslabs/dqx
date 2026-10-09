@@ -18,10 +18,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsDarkMode } from "@/hooks/use-is-dark-mode";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useGetBranding, useResetBranding, useSaveBrandingTheme, type BrandingOut } from "@/lib/api";
+import {
+  useDeleteBrandingCustomPreset,
+  useGetBranding,
+  useResetBranding,
+  useSaveBrandingTheme,
+  type BrandingOut,
+} from "@/lib/api";
 import {
   DEFAULT_GROUPS,
+  applyCustomPreset,
   applyPreset,
+  customPresetNumber,
   deriveAllTokens,
   draftDark,
   draftFromApi,
@@ -61,6 +69,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   const preview = usePreviewState();
   const saveMutation = useSaveBrandingTheme();
   const resetMutation = useResetBranding();
+  const deletePresetMutation = useDeleteBrandingCustomPreset();
   const { applyResponse, applyReset } = useBrandingUpdate();
 
   const saved = useMemo(() => draftFromApi(server), [server]);
@@ -75,7 +84,8 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   );
   const warnings = useMemo(() => draftWarnings(draft), [draft]);
   const dirty = isDirty(draft, saved);
-  const busy = !isAdmin || saveMutation.isPending || resetMutation.isPending;
+  const busy = !isAdmin || saveMutation.isPending || resetMutation.isPending || deletePresetMutation.isPending;
+  const customPresets = server.custom_presets ?? [];
 
   // Share the unsaved theme with the Branding card's logo previews.
   useEffect(() => {
@@ -94,7 +104,30 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
         onSuccess: (response) => {
           applyResponse(response);
           setDraft(draftFromApi(response.data));
-          toast.success(t("config.styling.themeSaved"));
+          const number = draft.preset === null && response.data.preset ? customPresetNumber(response.data.preset) : null;
+          toast.success(
+            number === null ? t("config.styling.themeSaved") : t("config.styling.themeSavedAsCustom", { number }),
+          );
+        },
+        onError: (err) => toastSaveError(t, err),
+      },
+    );
+  };
+
+  const selectPreset = (id: string) => {
+    const custom = customPresets.find((c) => c.id === id);
+    setDraft(custom ? applyCustomPreset(custom) : applyPreset(id));
+  };
+
+  const deletePreset = (id: string) => {
+    deletePresetMutation.mutate(
+      { presetId: id },
+      {
+        onSuccess: (response) => {
+          applyResponse(response);
+          // Keep unsaved edits; only forget the deleted preset.
+          setDraft((d) => (d.preset === id ? { ...d, preset: null } : d));
+          toast.success(t("config.styling.customPresetDeleted"));
         },
         onError: (err) => toastSaveError(t, err),
       },
@@ -127,7 +160,13 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
 
         <div className="space-y-2">
           <SectionLabel>{t("config.styling.presetsLabel")}</SectionLabel>
-          <PresetGrid selected={selectedPreset(draft)} disabled={busy} onSelect={(id) => setDraft(applyPreset(id))} />
+          <PresetGrid
+            selected={selectedPreset(draft)}
+            custom={customPresets}
+            disabled={busy}
+            onSelect={selectPreset}
+            onDelete={deletePreset}
+          />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">

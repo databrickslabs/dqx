@@ -3142,6 +3142,14 @@ class BrandingLogosOut(BaseModel):
     dark: str | None = None
 
 
+class BrandingCustomPresetOut(BaseModel):
+    """A theme an admin saved after editing a preset, shown as "Custom N"."""
+
+    id: str
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
 class BrandingOut(BaseModel):
     """Full branding as seen by the UI."""
 
@@ -3151,3 +3159,4 @@ class BrandingOut(BaseModel):
     light: BrandingModeColorsOut
     dark: BrandingDarkOut
     logos: BrandingLogosOut
+    custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
