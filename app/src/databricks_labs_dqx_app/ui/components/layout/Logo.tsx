@@ -23,26 +23,29 @@ interface LogoContentProps {
 
 function LogoContent({ className, showText, company, companyLogoSrc, onCompanyLogoError }: LogoContentProps) {
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
+    <div className={`flex min-w-0 items-center gap-2 ${className}`}>
       {companyLogoSrc ? (
         <img
           src={companyLogoSrc}
-          alt={company ?? ""}
-          className="h-6 w-auto max-w-40 object-contain"
+          // The name is already read out as text next to the logo, so the image is decorative then.
+          alt={showText ? "" : (company ?? "")}
+          className="h-6 w-auto max-w-40 shrink-0 object-contain"
           onError={onCompanyLogoError}
         />
       ) : (
-        <img src="/dqx-logo.svg" alt="DQX Studio logo" className="h-6 w-6" />
+        <img src="/dqx-logo.svg" alt="DQX Studio logo" className="h-6 w-6 shrink-0" />
       )}
       {showText && (
-        <span className="font-semibold text-lg">
-          {__APP_NAME__}
+        <span className="flex min-w-0 items-center font-semibold text-lg">
+          <span className="shrink-0">{__APP_NAME__}</span>
           {company && (
             <>
-              <span className="mx-2 opacity-60" aria-hidden="true">
+              <span className="mx-2 shrink-0 opacity-60" aria-hidden="true">
                 |
               </span>
-              <span>{company}</span>
+              <span className="truncate max-w-[16rem]" title={company}>
+                {company}
+              </span>
             </>
           )}
         </span>
@@ -78,7 +81,7 @@ function Logo({ to = "/home", className = "", showText = true, branded = true }:
 
   if (to) {
     return (
-      <Link to={to} className="hover:opacity-80 transition-opacity">
+      <Link to={to} className="min-w-0 hover:opacity-80 transition-opacity">
         {content}
       </Link>
     );

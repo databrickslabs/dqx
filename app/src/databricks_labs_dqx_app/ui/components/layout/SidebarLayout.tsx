@@ -21,12 +21,13 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
     <div className="flex flex-col h-screen overflow-x-hidden">
       {/* Fixed top banner — independent of sidebar, never shifts */}
       <header className="sticky top-0 z-50 bg-header text-header-foreground border-b shrink-0">
-        <div className="flex h-12 items-center justify-between px-4">
-          <div className="flex items-center gap-3">
+        <div className="flex h-12 items-center justify-between gap-2 px-4">
+          <div className="flex min-w-0 items-center gap-3">
             <Logo />
           </div>
-          <div className="flex items-center gap-1">
-            <ModeToggle />
+          <div className="flex shrink-0 items-center gap-1">
+            {/* Header-scoped hover: the global accent is near-white and unreadable on a dark header. */}
+            <ModeToggle className="text-header-foreground hover:bg-header-foreground/10 hover:text-header-foreground dark:hover:bg-header-foreground/10" />
             <HeaderUserMenu />
           </div>
         </div>
