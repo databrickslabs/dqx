@@ -154,7 +154,39 @@ class TestParseStoredBranding:
             "logo_mode": "shared",
             "light": {"colors": {}},
             "dark": {"customised": False, "colors": {}},
+            "logos": {"light": None, "dark": None},
         }
+
+    def test_logo_hashes_round_trip(self):
+        raw = json.dumps({"logos": {"light": "0123456789abcdef", "dark": None}})
+        assert parse_stored_branding(raw)["logos"] == {"light": "0123456789abcdef", "dark": None}
+
+    @pytest.mark.parametrize("digest", ["ABCDEF0123456789", "short", 7, "0123456789abcdef0"])
+    def test_invalid_logo_hash_dropped(self, digest):
+        raw = json.dumps({"logos": {"light": digest, "dark": "0123456789abcdef"}})
+        assert parse_stored_branding(raw)["logos"] == {"light": None, "dark": "0123456789abcdef"}
+
+    def test_missing_logos_treated_as_unset(self):
+        raw = json.dumps({"company_name": "Acme"})
+        assert parse_stored_branding(raw)["logos"] == {"light": None, "dark": None}
+
+    def test_dropped_fields_are_logged_without_values(self, caplog):
+        raw = json.dumps(
+            {
+                "company_name": "Acme",
+                "preset": "neon-secret",
+                "logo_mode": "tiled-secret",
+                "light": {"colors": {"header": "red-secret"}},
+            }
+        )
+        with caplog.at_level("WARNING"):
+            parse_stored_branding(raw)
+        messages = " ".join(record.getMessage() for record in caplog.records)
+        assert "preset" in messages
+        assert "logo mode" in messages
+        assert "light colour" in messages
+        assert "secret" not in messages
+        assert "Acme" not in messages
 
     def test_corrupt_json_gives_default(self):
         assert parse_stored_branding("{not json") == default_branding()

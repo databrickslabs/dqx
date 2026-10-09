@@ -30,8 +30,10 @@ LOGO_SLOTS: tuple[str, ...] = ("light", "dark")
 LOGO_MODES: tuple[str, ...] = ("shared", "separate")
 MAX_LOGO_BYTES = 262144
 MAX_COMPANY_NAME_LENGTH = 60
+MAX_LOGO_BASE64_LENGTH = (MAX_LOGO_BYTES * 4) // 3 + 4
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_LOGO_HASH_RE = re.compile(r"^[0-9a-f]{16}$")
 _SUPPORTED_MIME = ("image/png", "image/jpeg", "image/webp")
 
 
@@ -148,7 +150,7 @@ def decode_logo(content_type: str, data_base64: str) -> tuple[str, bytes]:
     """
     if content_type not in _SUPPORTED_MIME:
         raise BrandingValidationError("Logos must be PNG, JPEG or WebP images.")
-    if len(data_base64) > (MAX_LOGO_BYTES * 4) // 3 + 4:
+    if len(data_base64) > MAX_LOGO_BASE64_LENGTH:
         raise BrandingValidationError("Logos must be 256 KB or smaller.")
     try:
         raw = base64.b64decode(data_base64, validate=True)
@@ -176,17 +178,39 @@ def default_branding() -> dict[str, object]:
         "logo_mode": "shared",
         "light": {"colors": {}},
         "dark": {"customised": False, "colors": {}},
+        "logos": {slot: None for slot in LOGO_SLOTS},
     }
 
 
-def _safe_colors(value: object) -> dict[str, str]:
+def _safe_colors(value: object, mode: str) -> dict[str, str]:
+    if value is None:
+        return {}
     if not isinstance(value, dict):
+        logger.warning(f"Dropped invalid stored {mode} colours")
         return {}
     colors: dict[str, str] = {}
+    dropped = 0
     for group, color in value.items():
         if group in COLOR_GROUPS and isinstance(color, str) and _HEX_RE.fullmatch(color):
             colors[group] = color.upper()
+        else:
+            dropped += 1
+    if dropped:
+        logger.warning(f"Dropped {dropped} invalid stored {mode} colour(s)")
     return colors
+
+
+def _safe_logo_hashes(value: object) -> dict[str, str | None]:
+    hashes: dict[str, str | None] = {slot: None for slot in LOGO_SLOTS}
+    if not isinstance(value, dict):
+        return hashes
+    for slot in LOGO_SLOTS:
+        digest = value.get(slot)
+        if isinstance(digest, str) and _LOGO_HASH_RE.fullmatch(digest):
+            hashes[slot] = digest
+        elif digest is not None:
+            logger.warning(f"Dropped an invalid stored {slot} logo hash")
+    return hashes
 
 
 def parse_stored_branding(raw: str | None) -> dict[str, object]:
@@ -210,22 +234,29 @@ def parse_stored_branding(raw: str | None) -> dict[str, object]:
         logger.warning("Stored branding is not valid JSON; using DQX Default")
         return result
     if not isinstance(data, dict):
+        logger.warning("Stored branding is not an object; using DQX Default")
         return result
     try:
         result["company_name"] = sanitize_company_name(data.get("company_name"))
     except BrandingValidationError:
         logger.warning("Dropped an invalid stored company name")
     preset = data.get("preset")
-    result["preset"] = preset if preset in PRESET_IDS else None
+    if preset is not None and preset not in PRESET_IDS:
+        logger.warning("Dropped an invalid stored preset")
+        preset = None
+    result["preset"] = preset
     mode = data.get("logo_mode")
+    if mode is not None and mode not in LOGO_MODES:
+        logger.warning("Dropped an invalid stored logo mode")
     result["logo_mode"] = mode if mode in LOGO_MODES else "shared"
     light = data.get("light")
-    result["light"] = {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None)}
+    result["light"] = {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None, "light")}
     dark = data.get("dark")
     dark_dict = dark if isinstance(dark, dict) else {}
     customised = dark_dict.get("customised")
     result["dark"] = {
         "customised": customised if isinstance(customised, bool) else False,
-        "colors": _safe_colors(dark_dict.get("colors")),
+        "colors": _safe_colors(dark_dict.get("colors"), "dark"),
     }
+    result["logos"] = _safe_logo_hashes(data.get("logos"))
     return result

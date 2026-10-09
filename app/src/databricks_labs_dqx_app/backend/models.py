@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
+from .common.branding import MAX_LOGO_BASE64_LENGTH
 from .config import AI_SAMPLE_ROW_LIMIT
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
@@ -3118,7 +3119,7 @@ class BrandingLogoIn(BaseModel):
     """Logo upload as base64."""
 
     content_type: str
-    data_base64: str
+    data_base64: str = Field(max_length=MAX_LOGO_BASE64_LENGTH)
 
 
 class BrandingModeColorsOut(BaseModel):

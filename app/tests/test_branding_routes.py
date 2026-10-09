@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.common.branding import MAX_LOGO_BASE64_LENGTH
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, get_user_role
 from databricks_labs_dqx_app.backend.routes.v1.branding import router
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -140,6 +141,24 @@ class TestMutations:
         assert resp.headers["content-type"] == "image/png"
         assert resp.headers["x-content-type-options"] == "nosniff"
         assert "immutable" in resp.headers["cache-control"]
+
+    def test_logo_fetch_with_stale_version_404(self, admin, viewer):
+        admin.put("/api/v1/config/branding/logo/light", json={"content_type": "image/png", "data_base64": _b64(PNG)})
+        assert viewer.get("/api/v1/config/branding/logo/light?v=0000000000000000").status_code == 404
+
+    def test_logo_fetch_without_version_is_not_immutable(self, admin, viewer):
+        admin.put("/api/v1/config/branding/logo/light", json={"content_type": "image/png", "data_base64": _b64(PNG)})
+        resp = viewer.get("/api/v1/config/branding/logo/light")
+        assert resp.status_code == 200
+        assert resp.content == PNG
+        assert resp.headers["cache-control"] == "no-cache"
+
+    def test_oversized_base64_rejected_before_decoding(self, admin):
+        resp = admin.put(
+            "/api/v1/config/branding/logo/light",
+            json={"content_type": "image/png", "data_base64": "A" * (MAX_LOGO_BASE64_LENGTH + 1)},
+        )
+        assert resp.status_code == 422
 
     def test_svg_disguised_as_png_rejected(self, admin):
         resp = admin.put(

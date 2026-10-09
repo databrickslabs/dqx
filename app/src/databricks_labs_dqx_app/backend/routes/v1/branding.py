@@ -20,7 +20,7 @@ from databricks_labs_dqx_app.backend.models import (
     BrandingOut,
     BrandingThemeIn,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService, branding_logo_hashes
 
 router = APIRouter()
 
@@ -42,7 +42,7 @@ def _to_out(svc: AppSettingsService) -> BrandingOut:
         logo_mode=str(branding["logo_mode"]),
         light=BrandingModeColorsOut(colors=dict(light["colors"])),
         dark=BrandingDarkOut(customised=bool(dark["customised"]), colors=dict(dark["colors"])),
-        logos=BrandingLogosOut(**svc.get_branding_logo_hashes()),
+        logos=BrandingLogosOut(**branding_logo_hashes(branding)),
     )
 
 
@@ -109,10 +109,10 @@ def upload_logo(slot: str, body: BrandingLogoIn, svc: SettingsDep, email: EmailD
 
 
 @router.delete("/logo/{slot}", response_model=BrandingOut, operation_id="deleteBrandingLogo", dependencies=_ADMIN)
-def delete_logo(slot: str, svc: SettingsDep) -> BrandingOut:
+def delete_logo(slot: str, svc: SettingsDep, email: EmailDep) -> BrandingOut:
     """Remove a logo (admin only)."""
     try:
-        svc.delete_branding_logo(slot)
+        svc.delete_branding_logo(slot, user_email=email)
     except BrandingValidationError as e:
         raise _bad_request(e) from e
     logger.info(f"Removed {slot} branding logo")
@@ -120,21 +120,25 @@ def delete_logo(slot: str, svc: SettingsDep) -> BrandingOut:
 
 
 @router.get("/logo/{slot}", operation_id="getBrandingLogo", response_class=Response)
-def get_logo(slot: str, svc: SettingsDep) -> Response:
-    """Return a logo's bytes. The URL carries a content hash, so it can be cached forever."""
+def get_logo(slot: str, svc: SettingsDep, v: str | None = None) -> Response:
+    """Return a logo's bytes.
+
+    When *v* (the content hash) is given it must match the stored logo, and the response
+    can then be cached forever. Without *v* the response must be revalidated.
+    """
     try:
         logo = svc.get_branding_logo(slot)
     except BrandingValidationError as e:
         raise _bad_request(e) from e
     if logo is None or logo.mime not in _SERVED_LOGO_MIMES:
         raise HTTPException(status_code=404, detail="No logo is set.")
+    if v is not None and v != logo.hash:
+        raise HTTPException(status_code=404, detail="This logo version is no longer available.")
+    cache_control = "public, max-age=31536000, immutable" if v is not None else "no-cache"
     return Response(
         content=logo.data,
         media_type=logo.mime,
-        headers={
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "public, max-age=31536000, immutable",
-        },
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": cache_control},
     )
 
 

@@ -698,6 +698,7 @@ export interface BrandingDarkOut {
  */
 export interface BrandingLogoIn {
   content_type: string;
+  /** @maxLength 349529 */
   data_base64: string;
 }
 
@@ -5344,6 +5345,10 @@ export interface WorkspaceHostOut {
   job_id?: string;
 }
 
+export type GetBrandingLogoParams = {
+v?: string | null;
+};
+
 export type SetSchedulePaused200 = {[key: string]: boolean};
 
 export type DeleteSchedule200 = {[key: string]: string};
@@ -6994,39 +6999,47 @@ export const useDeleteBrandingLogo = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Return a logo's bytes. The URL carries a content hash, so it can be cached forever.
+ * Return a logo's bytes.
+
+When *v* (the content hash) is given it must match the stored logo, and the response
+can then be cached forever. Without *v* the response must be revalidated.
  * @summary Get Logo
  */
 export const getBrandingLogo = (
-    slot: string, options?: AxiosRequestConfig
+    slot: string,
+    params?: GetBrandingLogoParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<void>> => {
     
     
     return axios.default.get(
-      `/api/v1/config/branding/logo/${slot}`,options
+      `/api/v1/config/branding/logo/${slot}`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getGetBrandingLogoQueryKey = (slot?: string,) => {
+export const getGetBrandingLogoQueryKey = (slot?: string,
+    params?: GetBrandingLogoParams,) => {
     return [
-    `/api/v1/config/branding/logo/${slot}`
+    `/api/v1/config/branding/logo/${slot}`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetBrandingLogoQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetBrandingLogoQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot);
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot,params, { signal, ...axiosOptions });
 
       
 
@@ -7040,7 +7053,8 @@ export type GetBrandingLogoQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
+ slot: string,
+    params: undefined |  GetBrandingLogoParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBrandingLogo>>,
           TError,
@@ -7050,7 +7064,8 @@ export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBranding
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBrandingLogo>>,
           TError,
@@ -7060,7 +7075,8 @@ export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBranding
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -7068,11 +7084,12 @@ export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBranding
  */
 
 export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetBrandingLogoQueryOptions(slot,options)
+  const queryOptions = getGetBrandingLogoQueryOptions(slot,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -7084,16 +7101,17 @@ export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBranding
 
 
 
-export const getGetBrandingLogoSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetBrandingLogoSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot);
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot,params, { signal, ...axiosOptions });
 
       
 
@@ -7107,15 +7125,18 @@ export type GetBrandingLogoSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
 export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params: undefined |  GetBrandingLogoParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -7123,11 +7144,12 @@ export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof get
  */
 
 export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
- slot: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetBrandingLogoSuspenseQueryOptions(slot,options)
+  const queryOptions = getGetBrandingLogoSuspenseQueryOptions(slot,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

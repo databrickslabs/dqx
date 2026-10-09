@@ -86,6 +86,20 @@ class TestBrandingSettings:
         svc.save_branding_logo("dark", "image/png", PNG)
         svc.delete_branding_logo("dark")
         assert svc.get_branding_logo("dark") is None
+        assert svc.get_branding_logo_hashes() == {"light": None, "dark": None}
+
+    def test_logo_hashes_read_from_branding_value_only(self, svc, sql_executor_mock):
+        saved = svc.save_branding_logo("light", "image/png", PNG)
+        sql_executor_mock.query.reset_mock()
+        assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
+        assert sql_executor_mock.query.call_count == 1
+
+    def test_logo_hash_survives_other_saves(self, svc):
+        saved = svc.save_branding_logo("light", "image/png", PNG)
+        svc.save_branding_company_name("Acme")
+        svc.save_branding_theme("nord", {}, False, {})
+        svc.save_branding_logo_mode("separate")
+        assert svc.get_branding_logo_hashes() == {"light": saved.hash, "dark": None}
 
     def test_unknown_slot_rejected(self, svc):
         with pytest.raises(BrandingValidationError):
@@ -97,3 +111,4 @@ class TestBrandingSettings:
         svc.reset_branding()
         assert svc.get_branding() == default_branding()
         assert svc.get_branding_logo("light") is None
+        assert svc.get_branding_logo_hashes() == {"light": None, "dark": None}

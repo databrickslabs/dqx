@@ -1318,8 +1318,9 @@ class AppSettingsService:
 
     # ------------------------------------------------------------------
     # Branding — company name, header logos and colour theme (custom styling).
-    # ``branding_v1`` holds the JSON value; each logo has its own key so the
-    # (small) branding read never carries image bytes.
+    # ``branding_v1`` holds the JSON value, including each logo's content hash;
+    # each logo's bytes have their own key so the (small) branding read never
+    # carries image bytes.
     # ------------------------------------------------------------------
 
     def get_branding(self) -> dict[str, object]:
@@ -1383,25 +1384,48 @@ class AppSettingsService:
         digest = logo_hash(raw)
         payload = {"content_type": mime, "data_base64": base64.b64encode(raw).decode(), "sha256": digest}
         self.save_setting(key, json.dumps(payload), user_email=user_email)
+        self._set_branding_logo_hash(slot, digest, user_email)
         return StoredLogo(mime=mime, data=raw, hash=digest)
 
-    def delete_branding_logo(self, slot: str) -> None:
+    def delete_branding_logo(self, slot: str, *, user_email: str | None = None) -> None:
         """Remove the logo for *slot*."""
         self.delete_setting(self._logo_key(slot))
+        self._set_branding_logo_hash(slot, None, user_email)
+
+    def _set_branding_logo_hash(self, slot: str, digest: str | None, user_email: str | None) -> None:
+        branding = self.get_branding()
+        hashes = branding_logo_hashes(branding)
+        hashes[slot] = digest
+        branding["logos"] = hashes
+        self._save_branding(branding, user_email)
 
     def get_branding_logo_hashes(self) -> dict[str, str | None]:
-        """Return each slot's logo hash (None when unset)."""
-        hashes: dict[str, str | None] = {}
-        for slot in LOGO_SLOTS:
-            logo = self.get_branding_logo(slot)
-            hashes[slot] = logo.hash if logo else None
-        return hashes
+        """Return each slot's logo hash (None when unset), read from the small branding value."""
+        return branding_logo_hashes(self.get_branding())
 
     def reset_branding(self) -> None:
         """Remove all branding (company name, theme and logos)."""
         self.delete_setting(_BRANDING_KEY)
         for slot in LOGO_SLOTS:
             self.delete_setting(self._logo_key(slot))
+
+
+def branding_logo_hashes(branding: dict[str, object]) -> dict[str, str | None]:
+    """Return the per-slot logo hashes held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        Each logo slot mapped to its content hash, or None when unset.
+    """
+    stored = branding.get("logos")
+    hashes: dict[str, str | None] = {slot: None for slot in LOGO_SLOTS}
+    if isinstance(stored, dict):
+        for slot in LOGO_SLOTS:
+            digest = stored.get(slot)
+            hashes[slot] = digest if isinstance(digest, str) else None
+    return hashes
 
 
 def _sanitize_audit_identity(value: str | None) -> str | None:
