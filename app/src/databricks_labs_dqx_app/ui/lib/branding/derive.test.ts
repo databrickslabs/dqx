@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { hexToOklch } from "./color";
+import { contrastRatio, hexToOklch } from "./color";
 import { DEFAULT_GROUPS } from "./groups";
 import { mutedForeground, deriveAllTokens, deriveOverrides, effectiveDark, generateDark, THEMABLE_TOKENS } from "./derive";
 
