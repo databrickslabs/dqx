@@ -13,6 +13,24 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+# MLflow declares a pydantic field named *model_name*, which collides with pydantic's own ``model_``
+# protected namespace and warns at class-definition time. Traced to
+# ``mlflow.entities.model_registry.prompt_version.PromptModelConfig`` on a Databricks runtime
+# (mlflow 3.16.1, pydantic 2.8.2) by walking ``BaseModel.__subclasses__()``; it fires on ``import
+# mlflow`` itself, before any DQX module is imported, so nothing here causes it and nothing here can
+# fix it. It is suppressed rather than left alone because DQX imports mlflow on the user's behalf from
+# the anomaly modules, and DQX also calls ``logging.captureWarnings(True)`` below -- so without this
+# filter every anomaly user sees an MLflow internal naming detail, attributed to DQX's logging, that
+# they can do nothing about. Matched on the message so an unrelated pydantic warning still surfaces.
+# The wording differs across pydantic releases -- 2.8 says `has conflict with protected namespace`,
+# 2.9 onward `in '<Class>' conflicts with protected namespace` and quotes the field differently -- so the
+# pattern keys on the parts both spell the same way rather than on one release's sentence.
+warnings.filterwarnings(
+    "ignore",
+    message=r"""Field ["']model_name["'].*(conflict|conflicts) with protected namespace""",
+    category=UserWarning,
+)
+
 # Do not reconfigure the root logger on import (issue #1136); a library should leave logging
 # configuration to the application. We stay scoped to our OWN logger ("databricks.labs.dqx") and
 # never touch root. A bare NullHandler alone means that on runtimes where NO logger from ours up to
@@ -65,7 +83,6 @@ if not warnings_logger.handlers:
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
-logging.getLogger("mlflow").setLevel(logging.ERROR)
 # pyspark.pandas attaches a JVM-backed usage logger on import; under Spark Connect there is
 # no local JVM, so the attach fails and emits a harmless WARNING on every import. Suppress it.
 logging.getLogger("pyspark.pandas.usage_logger").setLevel(logging.ERROR)
@@ -80,9 +97,16 @@ try:
     mlflow.tracing.disable_notebook_display()
     # Disable automatic tracing for LangChain (source of the trace data)
     mlflow.langchain.autolog(disable=True)
+    # Quiet mlflow's own INFO chatter -- model-registration lines, tracing notices, autolog messages.
+    # This MUST come after `import mlflow`, not with the other logger levels above: mlflow configures
+    # its own logger while importing, so a level set beforehand is overwritten and every INFO line
+    # reaches the user anyway. Measured before this moved: NOTSET -> DQX sets ERROR -> mlflow's import
+    # puts it back to INFO. Setting it here sticks, and survives later `mlflow.*` submodule imports.
+    logging.getLogger("mlflow").setLevel(logging.ERROR)
 except Exception:
     # MLflow not installed, tracing not available, or configuration failed
-    # (e.g., Databricks auth not available in CI)
+    # (e.g., Databricks auth not available in CI). Nothing to quiet in that case: setting the level
+    # here would not survive a later `import mlflow` anyway, for the reason given above.
     pass
 
 ua.semver_pattern = re.compile(

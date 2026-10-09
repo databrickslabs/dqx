@@ -409,8 +409,8 @@ def is_sql_query_safe(query: str) -> bool:
     Returns True if the query contains no destructive SQL statement keyword, otherwise False.
 
     Quoted string literals and backtick-quoted identifiers are stripped before scanning so that a
-    forbidden keyword appearing as data (e.g. ``status = 'drop'``) or as a quoted column name
-    (e.g. `` `drop` ``) is not mistaken for a statement. Comments are checked two ways so both a
+    forbidden keyword appearing as data (e.g. ``status = 'drop'``) or as a backtick-quoted column named
+    *drop* is not mistaken for a statement. Comments are checked two ways so both a
     keyword *inside* a comment (e.g. ``/* delete */``) and a keyword *split* by a comment
     (e.g. ``dr/**/op``) are caught. ``SELECT`` is allowed: filters may legitimately use subqueries
     and are authored by trusted operators.
@@ -891,7 +891,7 @@ def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
 
 
 def _validate_variable_types(variables: dict[str, VariableValue]) -> None:
-    """Raise :class:`InvalidParameterError` if any variable value is not a supported scalar type."""
+    """Raise *InvalidParameterError* if any variable value is not a supported scalar type."""
     for key, val in variables.items():
         if not isinstance(val, _SCALAR_VARIABLE_TYPES):
             raise InvalidParameterError(

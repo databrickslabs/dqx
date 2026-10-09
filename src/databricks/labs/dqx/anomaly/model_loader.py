@@ -34,7 +34,7 @@ def load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomaly
         return mlflow.sklearn.load_model(model_uri)
     except (ValueError, AttributeError, TypeError) as e:
         error_msg = str(e)
-        trained_version = model_record.segmentation.sklearn_version or "unknown"
+        trained_version = model_record.grouping.sklearn_version or "unknown"
         current_version = sklearn.__version__
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 

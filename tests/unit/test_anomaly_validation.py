@@ -11,11 +11,11 @@ from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility, validate_training_params
-from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -441,66 +441,63 @@ def test_error_message_formats():
 
 
 def test_validate_training_params_accepts_defaults():
-    """Default AnomalyParams with a valid expected_anomaly_rate should not raise."""
-    validate_training_params(AnomalyParams(), expected_anomaly_rate=0.02)
+    """Default AnomalyParams should not raise."""
+    validate_training_params(AnomalyParams())
 
 
 def test_validate_training_params_rejects_non_numeric_sample_fraction():
     """Test that non-numeric sample_fraction raises (validation.py 64-65)."""
     params = AnomalyParams(sample_fraction="0.5")  # type: ignore[arg-type]
     with pytest.raises(InvalidParameterError, match="must be a numeric value"):
-        validate_training_params(params, expected_anomaly_rate=0.02)
+        validate_training_params(params)
 
 
 def test_validate_training_params_rejects_bool_sample_fraction():
     """Test that bool sample_fraction raises."""
     params = AnomalyParams(sample_fraction=True)  # type: ignore[arg-type]
     with pytest.raises(InvalidParameterError, match="must be a numeric value"):
-        validate_training_params(params, expected_anomaly_rate=0.02)
+        validate_training_params(params)
 
 
 def test_validate_training_params_rejects_zero_sample_fraction():
     with pytest.raises(InvalidParameterError, match="params.sample_fraction"):
-        validate_training_params(AnomalyParams(sample_fraction=0.0), expected_anomaly_rate=0.02)
+        validate_training_params(AnomalyParams(sample_fraction=0.0))
 
 
 def test_validate_training_params_rejects_sample_fraction_above_one():
     with pytest.raises(InvalidParameterError, match="params.sample_fraction"):
-        validate_training_params(AnomalyParams(sample_fraction=1.1), expected_anomaly_rate=0.02)
+        validate_training_params(AnomalyParams(sample_fraction=1.1))
 
 
-def test_validate_training_params_rejects_zero_expected_anomaly_rate():
-    with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
-        validate_training_params(AnomalyParams(), expected_anomaly_rate=0.0)
-
-
-def test_validate_training_params_rejects_expected_anomaly_rate_above_half():
-    with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
-        validate_training_params(AnomalyParams(), expected_anomaly_rate=0.6)
+def test_validate_training_params_still_range_checks_contamination():
+    """The removed `expected_anomaly_rate` used to fill contamination. Setting it directly is now the
+    only route, so its bounds matter more than before, not less."""
+    with pytest.raises(InvalidParameterError, match="contamination"):
+        validate_training_params(AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.9)))
 
 
 def test_validate_training_params_rejects_non_integer_max_rows():
     """Test that non-integer max_rows raises."""
     params = AnomalyParams(max_rows=1000.5)  # type: ignore[arg-type]
     with pytest.raises(InvalidParameterError, match="must be an integer"):
-        validate_training_params(params, expected_anomaly_rate=0.02)
+        validate_training_params(params)
 
 
 def test_validate_training_params_rejects_bool_max_rows():
     """Test that bool max_rows raises."""
     params = AnomalyParams(max_rows=True)  # type: ignore[arg-type]
     with pytest.raises(InvalidParameterError, match="must be an integer"):
-        validate_training_params(params, expected_anomaly_rate=0.02)
+        validate_training_params(params)
 
 
 def test_validate_training_params_rejects_zero_max_rows():
     with pytest.raises(InvalidParameterError, match="params.max_rows"):
-        validate_training_params(AnomalyParams(max_rows=0), expected_anomaly_rate=0.02)
+        validate_training_params(AnomalyParams(max_rows=0))
 
 
 def test_validate_training_params_rejects_zero_ensemble_size():
     with pytest.raises(InvalidParameterError, match="params.ensemble_size"):
-        validate_training_params(AnomalyParams(ensemble_size=0), expected_anomaly_rate=0.02)
+        validate_training_params(AnomalyParams(ensemble_size=0))
 
 
 # ============================================================================
@@ -523,7 +520,7 @@ def _make_record(sklearn_version: str | None) -> AnomalyModelRecord:
             training_time=datetime.now(),
         ),
         features=FeatureEngineering(),
-        segmentation=SegmentationConfig(sklearn_version=sklearn_version),
+        grouping=GroupingConfig(sklearn_version=sklearn_version),
     )
 
 

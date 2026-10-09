@@ -18,7 +18,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
-    SegmentationConfig,
+    GroupingConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
@@ -28,8 +28,8 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     create_null_scored_dataframe,
     create_udf_schema,
 )
-from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
@@ -128,7 +128,7 @@ def test_config_hash_mismatch_raises(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.config_hash = 'bogus' "
+        f"SET grouping.config_hash = 'bogus' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -214,8 +214,7 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
             features STRUCT<mode: STRING, column_types: MAP<STRING, STRING>,
                           feature_metadata: STRING, feature_importance: MAP<STRING, DOUBLE>,
                           temporal_config: STRING>,
-            segmentation STRUCT<segment_by: ARRAY<STRING>, segment_values: MAP<STRING, STRING>,
-                              is_global_model: BOOLEAN, sklearn_version: STRING, config_hash: STRING>
+            grouping STRUCT<baseline_by: ARRAY<STRING>, sklearn_version: STRING, config_hash: STRING>
         ) USING DELTA
     """
     )
@@ -261,25 +260,90 @@ def test_internal_row_id_collision(ws, spark: SparkSession, make_random, anomaly
     assert "_dqx_row_id" in str(exc.value)
 
 
-def test_internal_score_column_collision(ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
-    """Ensure existing anomaly_score columns are preserved and _dq_info is still added."""
-    model_name = f"{anomaly_registry_prefix}.test_score_collision_{make_random(4).lower()}"
+@pytest.mark.parametrize("driver_only", [False, True])
+@pytest.mark.parametrize("ensemble_size", [None, 3], ids=["single", "ensemble"])
+def test_internal_score_column_collision(
+    ws, spark: SparkSession, quick_model_factory, driver_only: bool, ensemble_size: int | None
+):
+    """All four scorer paths preserve input fields across consecutive contribution-enabled checks."""
+    model_name, registry_table, _ = quick_model_factory(
+        spark,
+        params=AnomalyParams(
+            ensemble_size=ensemble_size, algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42)
+        ),
+    )
+    original = (1, 1000.0, 20.0, 0.42, 0.1, {"original": 0.2}, {"original basis": 0.3}, 12.0)
+    df = spark.createDataFrame(
+        [original, original],
+        "transaction_id int, amount double, quantity double, anomaly_score double, anomaly_score_std double, "
+        "anomaly_contributions map<string,double>, anomaly_basis_contributions map<string,double>, "
+        "severity_percentile double",
+    )
+    checks = [
+        {
+            "name": f"anomaly_check_{index}",
+            "criticality": "warn",
+            "check": {
+                "function": "has_no_row_anomalies",
+                "arguments": {
+                    "model_name": model_name,
+                    "registry_table": registry_table,
+                    "threshold": 0.0,
+                    "driver_only": driver_only,
+                    "enable_contributions": True,
+                    "enable_ai_explanation": False,
+                },
+            },
+        }
+        for index in range(2)
+    ]
+    dq_engine = DQEngine(ws, spark)
+    result = dq_engine.apply_checks_by_metadata(df, checks)
+    rows = result.collect()
+
+    assert len(rows) == 2
+    assert result.select(*df.columns).collect() == df.collect()
+    assert set(result.columns) == {*df.columns, "_errors", "_warnings", "_dq_info"}
+    for row in rows:
+        assert len(row["_dq_info"]) == 2
+        assert len(row["_warnings"]) == 2
+        for info in row["_dq_info"]:
+            assert info["anomaly"]["is_anomaly"] is True
+            assert info["anomaly"]["contributions"] is not None
+
+
+def test_training_refuses_a_frame_where_a_derived_feature_would_overwrite_a_real_column(
+    spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix
+):
+    """The wiring the unit tests cannot show: that ``train`` actually reaches the collision check.
+
+    Before this refused, the run succeeded and lost data silently. ``amount_rel_baseline`` is a real
+    column here, so the group-relative transform overwrote it, appended its name to the positional
+    feature list a second time, and fitted the model on two copies of the derived value with the user's
+    own column gone. Nothing downstream could detect that, and attribution then named the wrong source.
+
+    The unit suite pins the predicate; only this pins that the predicate is consulted.
+    """
+    model_name = f"{anomaly_registry_prefix}.test_feature_collision_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.t{make_random(8).lower()}_registry"
 
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
-
     df = spark.createDataFrame(
-        [(1, 100.0, 2.0, 0.42, 0.1, {"amount": 0.2})],
-        "transaction_id int, amount double, quantity double, anomaly_score double, anomaly_score_std double, "
-        "anomaly_contributions map<string,double>",
+        [(100.0 + i, 0.5, "eu") for i in range(60)],
+        "amount double, amount_rel_baseline double, region string",
     )
 
-    dq_engine = DQEngine(ws, spark)
-    check = create_anomaly_dataset_rule(model_name, registry_table)
-    with pytest.raises(Exception) as exc:
-        dq_engine.apply_checks(df, [check])
+    with pytest.raises(InvalidParameterError) as exc:
+        anomaly_engine.train(
+            df=df,
+            columns=["amount", "amount_rel_baseline"],
+            model_name=model_name,
+            registry_table=registry_table,
+            baseline_by=["region"],
+        )
 
-    assert "ambiguous" in str(exc.value).lower()
+    message = str(exc.value)
+    assert "amount_rel_baseline" in message
+    assert "overwritten" in message
 
 
 def test_has_no_row_anomalies_requires_fully_qualified_model_name():
@@ -305,13 +369,6 @@ def test_has_no_row_anomalies_invalid_inputs(kwargs, match):
             registry_table="catalog.schema.table",
             **kwargs,
         )
-
-
-def test_build_segment_filter_handles_none_and_multi_key():
-    """Test segment filter construction handles None and multiple keys."""
-    assert build_segment_filter(None) is None
-    expr = build_segment_filter({"region": "US", "product": "A"})
-    assert expr is not None
 
 
 def test_row_filter_scores_only_matching_rows(
@@ -387,7 +444,13 @@ def test_create_udf_schema_includes_contributions():
     schema_without = create_udf_schema(enable_contributions=False)
     schema_with = create_udf_schema(enable_contributions=True)
     assert [field.name for field in schema_without.fields] == ["anomaly_score"]
-    assert [field.name for field in schema_with.fields] == ["anomaly_score", "anomaly_contributions"]
+    # The basis split rides with the contributions rather than behind a flag of its own: it is derived from
+    # the attribution enable_contributions already pays for, so there is nothing to switch off separately.
+    assert [field.name for field in schema_with.fields] == [
+        "anomaly_score",
+        "anomaly_contributions",
+        "anomaly_basis_contributions",
+    ]
 
 
 def test_sklearn_version_mismatch_warns(
@@ -407,7 +470,7 @@ def test_sklearn_version_mismatch_warns(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.sklearn_version = '0.0' "
+        f"SET grouping.sklearn_version = '0.0' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -442,7 +505,7 @@ def test_sklearn_version_parse_error_silently_skips(
 
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET segmentation.sklearn_version = 'bad.version' "
+        f"SET grouping.sklearn_version = 'bad.version' "
         f"WHERE identity.model_name = '{full_model_name}'"
     )
 
@@ -478,7 +541,7 @@ def test_validate_sklearn_compatibility_skips_when_missing_version():
             training_time=datetime.now(timezone.utc),
         ),
         features=FeatureEngineering(feature_metadata=None),
-        segmentation=SegmentationConfig(sklearn_version=None),
+        grouping=GroupingConfig(sklearn_version=None),
     )
     validate_sklearn_compatibility(record)
 
