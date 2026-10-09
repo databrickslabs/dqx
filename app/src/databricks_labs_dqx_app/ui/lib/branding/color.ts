@@ -95,9 +95,9 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const NEAR_BLACK = "#0A0A0A";
-const NEAR_WHITE = "#FAFAFA";
+const BLACK = "#000000";
+const WHITE = "#FFFFFF";
 
 export function readableOn(bg: string): string {
-  return contrastRatio(bg, NEAR_BLACK) >= contrastRatio(bg, NEAR_WHITE) ? NEAR_BLACK : NEAR_WHITE;
+  return contrastRatio(bg, BLACK) >= contrastRatio(bg, WHITE) ? BLACK : WHITE;
 }

@@ -26,9 +26,18 @@ describe("mix / withLightness / tint", () => {
     expect(mix("#000000", "#FFFFFF", 0)).toBe("#000000");
     expect(mix("#000000", "#FFFFFF", 1)).toBe("#FFFFFF");
   });
-  test("withLightness changes only lightness", () => {
-    const out = hexToOklch(withLightness("#1164A3", 0.3));
-    expect(out.l).toBeCloseTo(0.3, 1);
+  test("withLightness preserves hue and chroma (in-gamut)", () => {
+    const before = hexToOklch("#6B7A8F");
+    const out = hexToOklch(withLightness("#6B7A8F", 0.45));
+    expect(out.l).toBeCloseTo(0.45, 2);
+    expect(out.c).toBeCloseTo(before.c, 2);
+    expect(Math.abs(out.h - before.h)).toBeLessThan(2);
+  });
+  test("withLightness clamps out-of-gamut targets", () => {
+    const result = withLightness("#1164A3", 0.3);
+    expect(isHex(result)).toBe(true);
+    const out = hexToOklch(result);
+    expect(Math.abs(out.l - 0.3)).toBeLessThan(0.06);
   });
   test("tint with a grey brand leaves the colour unchanged", () => {
     expect(tint("#F5F5F5", "#333333", 0.1)).toBe("#F5F5F5");
@@ -41,7 +50,7 @@ describe("mix / withLightness / tint", () => {
 describe("contrast", () => {
   test("black on white is 21:1", () => expect(contrastRatio("#000000", "#FFFFFF")).toBeCloseTo(21, 1));
   test("same colour is 1:1", () => expect(contrastRatio("#777777", "#777777")).toBeCloseTo(1, 5));
-  test.each(["#000000", "#FFFFFF", "#FF3621", "#3F0E40", "#808080", "#FDF6E3", "#1164A3"])(
+  test.each(["#000000", "#FFFFFF", "#FF3621", "#3F0E40", "#808080", "#FDF6E3", "#1164A3", "#757575", "#777777", "#7A7A7A", "#E0457B"])(
     "readableOn(%s) gives at least 4.5:1",
     (bg) => expect(contrastRatio(bg, readableOn(bg))).toBeGreaterThanOrEqual(4.5),
   );
