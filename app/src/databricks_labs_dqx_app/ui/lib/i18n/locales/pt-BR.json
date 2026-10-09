@@ -2077,7 +2077,7 @@
     "colMean": "Média",
     "colStddev": "Desvio padrão",
     "profileHeaderLastProfile": "Último perfil",
-    "profileHeaderRows": "Linhas",
+    "profileHeaderRows": "Linhas perfiladas",
     "profileHeaderColumns": "Colunas",
     "profileHeaderDuration": "Duração",
     "profilePrimaryKeyBadge": "Chave primária: {{columns}}",

@@ -1,6 +1,8 @@
 """Tests for oversized run-config staging (Databricks 10k job-parameter limit)."""
 
+import base64
 import json
+import re
 from unittest.mock import create_autospec
 
 import pytest
@@ -10,7 +12,6 @@ from databricks_labs_dqx_app.backend.run_config_store import (
     MANIFEST_CONFIG_KEY,
     RunConfigError,
     RunConfigStagingError,
-    RunConfigStagingUnavailableError,
     RunConfigTooLargeError,
     delete_staged_config,
     job_parameters_size,
@@ -32,16 +33,18 @@ def _base_params() -> dict[str, str]:
     }
 
 
-def _oltp_mock():
-    """OLTP executor mock — run_config_store only calls ``fqn`` and ``upsert``.
-
-    Defaults to the Postgres dialect: staging only happens when Lakebase is
-    enabled, so that is the case the staging tests exercise.
-    """
+def _sql_mock():
+    """Delta executor mock — run_config_store only calls ``fqn``, ``upsert``, and ``delete``."""
     sql = create_autospec(SqlExecutor, instance=True)
-    sql.fqn.side_effect = lambda t: f"dqx_studio.{t}"
-    sql.dialect = "postgres"
+    sql.fqn.side_effect = lambda t: f"main.dqx_studio.{t}"
     return sql
+
+
+def _staged_config(value: RawSql) -> dict:
+    """Decode the base64 payload the config was staged as."""
+    match = re.fullmatch(r"decode\(unbase64\('([A-Za-z0-9+/=]*)'\), 'UTF-8'\)", value.expr)
+    assert match, value.expr
+    return json.loads(base64.b64decode(match.group(1)).decode("utf-8"))
 
 
 def _big_config() -> dict:
@@ -59,7 +62,7 @@ class TestJobParametersSize:
 
 class TestPrepareConfigJson:
     def test_inline_when_under_limit(self) -> None:
-        sql = _oltp_mock()
+        sql = _sql_mock()
         config = {"checks": [{"name": "c1"}]}
         result = prepare_config_json(
             sql,
@@ -72,7 +75,7 @@ class TestPrepareConfigJson:
         sql.upsert.assert_not_called()
 
     def test_stages_when_over_limit(self) -> None:
-        sql = _oltp_mock()
+        sql = _sql_mock()
         config = _big_config()
         base = _base_params()
         inline = json.dumps(config, separators=(",", ":"))
@@ -90,12 +93,31 @@ class TestPrepareConfigJson:
         sql.upsert.assert_called_once()
         kwargs = sql.upsert.call_args.kwargs
         assert kwargs["key_cols"] == {"run_id": "run123"}
-        assert json.loads(kwargs["value_cols"]["config"]) == config
+        assert _staged_config(kwargs["value_cols"]["config"]) == config
+
+    def test_stub_carries_the_fields_jobs_api_readers_need(self) -> None:
+        # The failure toast reads a staged run's table and preview flag from
+        # the job parameters, so they must survive staging (no SQL lookup).
+        config = {**_big_config(), "source_table_fqn": "main.sales.orders", "skip_history": True, "run_type": "preview"}
+
+        result = prepare_config_json(
+            _sql_mock(),
+            run_id="run123",
+            config=config,
+            job_parameters_without_config=_base_params(),
+        )
+
+        assert json.loads(result) == {
+            MANIFEST_CONFIG_KEY: True,
+            "source_table_fqn": "main.sales.orders",
+            "skip_history": True,
+            "run_type": "preview",
+        }
 
     def test_stub_stays_within_the_job_parameter_limit(self) -> None:
         # Regression guard: the stub plus base params must always fit, so a
         # staged config never re-trips the limit it was meant to dodge.
-        sql = _oltp_mock()
+        sql = _sql_mock()
         config = {"checks": [{"name": f"rule_{i}"} for i in range(500)]}
         result = prepare_config_json(
             sql,
@@ -106,10 +128,10 @@ class TestPrepareConfigJson:
         assert job_parameters_size({**_base_params(), "config_json": result}) <= JOB_PARAMETERS_CHAR_LIMIT
 
     def test_staging_failure_raises_actionable_error(self) -> None:
-        # A missing table / unreachable Lakebase surfaces as an actionable
+        # A missing table / unreachable warehouse surfaces as an actionable
         # RunConfigStagingError, not a raw SQL exception.
-        sql = _oltp_mock()
-        sql.upsert.side_effect = RuntimeError('relation "dq_run_configs" does not exist')
+        sql = _sql_mock()
+        sql.upsert.side_effect = RuntimeError("TABLE_OR_VIEW_NOT_FOUND dq_run_configs\nSQL: MERGE INTO ...")
         with pytest.raises(RunConfigStagingError) as excinfo:
             prepare_config_json(
                 sql,
@@ -120,47 +142,29 @@ class TestPrepareConfigJson:
         msg = str(excinfo.value)
         assert "run123" in msg
         assert "migrations" in msg  # tells the operator what to check
-        assert isinstance(excinfo.value, RunConfigError)
-
-    def test_fails_fast_when_lakebase_disabled(self) -> None:
-        # With the Delta OLTP fallback (Lakebase disabled) the runner has no
-        # Postgres connection to read a staged config, so an oversized config
-        # must fail fast with actionable guidance instead of staging to a table
-        # the runner can never read.
-        sql = _oltp_mock()
-        sql.dialect = "delta"
-        with pytest.raises(RunConfigStagingUnavailableError) as excinfo:
-            prepare_config_json(
-                sql,
-                run_id="run123",
-                config=_big_config(),
-                job_parameters_without_config=_base_params(),
-            )
-        # Nothing is staged when Lakebase is unavailable.
-        sql.upsert.assert_not_called()
-        msg = str(excinfo.value)
-        assert "Lakebase" in msg  # points the operator at the real cause
-        assert "delta" in msg  # reports the active OLTP backend
+        assert "MERGE INTO" not in msg  # the staged SQL (and its config) stays out of the error
         assert isinstance(excinfo.value, RunConfigError)
 
 
 class TestStageConfigToTable:
-    def test_upserts_config_payload_verbatim(self) -> None:
-        # A regex check body carries backslashes and quotes; the portable upsert
-        # binds the JSON as a literal, so it must round-trip without hand-escaping.
-        sql = _oltp_mock()
-        config = {"checks": [{"name": "it's", "pattern": "\\d+"}]}
+    def test_upserts_config_payload_round_trip(self) -> None:
+        # A regex or multiline check body carries backslashes, quotes, and
+        # non-ASCII text, which must all survive staging intact.
+        sql = _sql_mock()
+        config = {
+            "checks": [{"name": "it's", "pattern": "\\d+", "sql_query": "SELECT 'a'\nFROM t", "note": "ünïcode ✓"}]
+        }
         stage_config_to_table(sql, "run123", config)
         kwargs = sql.upsert.call_args.kwargs
         assert kwargs["key_cols"] == {"run_id": "run123"}
-        assert json.loads(kwargs["value_cols"]["config"]) == config
+        assert _staged_config(kwargs["value_cols"]["config"]) == config
         # created_at is a portable RawSql the executor rewrites per dialect.
         assert isinstance(kwargs["value_cols"]["created_at"], RawSql)
 
     def test_rejects_malformed_run_id(self) -> None:
         # run_id is validated before use, so a value that isn't an app-minted id
         # is rejected rather than reaching the executor.
-        sql = _oltp_mock()
+        sql = _sql_mock()
         with pytest.raises(ValueError):
             stage_config_to_table(sql, "run\\", {"checks": []})
         sql.upsert.assert_not_called()
@@ -170,22 +174,22 @@ class TestDeleteStagedConfig:
     def test_deletes_row_by_run_id(self) -> None:
         # Called when submission fails after staging, so an orphaned row is
         # removed rather than left for the retention sweep.
-        sql = _oltp_mock()
+        sql = _sql_mock()
         delete_staged_config(sql, "run123")
         sql.delete.assert_called_once()
         args, kwargs = sql.delete.call_args
-        assert args[0] == "dqx_studio.dq_run_configs"
+        assert args[0] == "main.dqx_studio.dq_run_configs"
         assert kwargs["where"] == {"run_id": "run123"}
 
     def test_rejects_malformed_run_id(self) -> None:
-        sql = _oltp_mock()
+        sql = _sql_mock()
         delete_staged_config(sql, "run\\")
         sql.delete.assert_not_called()
 
     def test_swallows_delete_failure(self) -> None:
         # The caller is already handling a submit error, so a failed cleanup
         # must not mask it with a second exception.
-        sql = _oltp_mock()
+        sql = _sql_mock()
         sql.delete.side_effect = RuntimeError("connection reset")
         delete_staged_config(sql, "run123")  # does not raise
 

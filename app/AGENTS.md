@@ -73,6 +73,7 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_validation_runs           (Delta) dryrun + scheduled run history
  │   ├── dq_quarantine_records        (Delta) invalid rows captured by runs
  │   ├── dq_metrics                   (Delta) per-run quality metrics for trend tracking
+ │   ├── dq_run_configs               (Delta) staged run configs too large to inline in job params
  │   ├── dq_app_settings              (OLTP*) key/value app configuration
  │   ├── dq_resolved_rules             (OLTP*) active/approved rules
  │   ├── dq_rules_core                 (VIEW, Lakebase) dqx-core-compatible read view over approved dq_resolved_rules — external pipelines load it via DQEngine.load_checks(LakebaseChecksStorageConfig)
@@ -82,7 +83,6 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_schedule_configs          (OLTP*) per-schedule config (cron/interval, target rules)
  │   ├── dq_schedule_configs_history  (OLTP*) schedule config change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
- │   ├── dq_run_configs               (OLTP*) staged run configs too large to inline in job params
  │   └── dq_migrations                (Delta) Delta migration version tracker
  ├── dqx_studio_tmp                   ← temp views created via OBO for profiler/dryrun jobs
  └── dqx_studio.wheels (volume)       ← DQX + task-runner wheels uploaded at app startup
@@ -92,14 +92,11 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules, 
          |   dq_resolved_rules, dq_quality_rules_history, dq_comments, 
-         |   dq_schedule_configs, dq_schedule_configs_history, dq_schedule_runs, 
-         |   dq_run_configs
+         |   dq_schedule_configs, dq_schedule_configs_history, dq_schedule_runs
          └── dq_migrations             (Postgres migration version tracker)
 ```
 
-`(OLTP*)` = lives in **Lakebase Postgres** when
-`lakebase_endpoint` is set, otherwise **Delta** (the
-`v2: Delta OLTP fallback` migration).
+`(OLTP*)` = lives in **Lakebase Postgres**.
 
 ## Key Decisions
 
@@ -513,14 +510,12 @@ choice is driven entirely by `databricks.yml`:
 
 | Backend | Tables | Why |
 |---------|--------|-----|
-| **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | Spark task runner writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs`, `dq_run_configs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`, `dq_run_configs` | Spark task runner reads/writes these; high-volume append-mostly; columnar reads. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
-When Lakebase is **disabled** (no `lakebase_endpoint` set), the OLTP
-tables fall back to Delta — `MigrationRunner` runs both
-`v1: Delta analytical baseline` *and* `v2: Delta OLTP fallback`. When
-Lakebase is **enabled**, only `v1` runs on Delta and `PgMigrationRunner`
-provisions the OLTP tables in Postgres.
+`MigrationRunner` creates the Delta tables (`v1` analytical baseline,
+`v2` staged run configs) and `PgMigrationRunner` provisions the OLTP
+tables in Postgres.
 
 ### Key types
 

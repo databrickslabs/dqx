@@ -8,10 +8,27 @@ suite runs offline in <1s.
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Require deliberate CLI consent before running live Studio fixtures."""
+    parser.addoption("--studio-integration", action="store_true", default=False)
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip live resource tests before fixtures unless the CLI opt-in is set."""
+    if config.getoption("studio_integration"):
+        return
+    integration_dir = Path(__file__).parent / "integration"
+    for item in items:
+        if item.path.is_relative_to(integration_dir):
+            item.add_marker(pytest.mark.skip(reason="Use make app-integration PROFILE=<profile> for live tests."))
+
 
 # ---------------------------------------------------------------------------
 # Module-level env shim: ensure the AppConfig import has predictable values.
@@ -287,6 +304,7 @@ def make_scheduler():
         monitored_table_service: Any | None = None,
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
+        job_id: str = "test-job-0",
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -325,13 +343,14 @@ def make_scheduler():
             else:
                 oltp.select_json_text.side_effect = lambda c: f"to_json({c})"
 
+        ws = MagicMock(name="WorkspaceClient")
         svc = SchedulerService(
-            ws=MagicMock(name="WorkspaceClient"),
+            ws=ws,
             warehouse_id="test-wh",
             catalog=catalog,
             schema=schema,
             tmp_schema=tmp_schema if tmp_schema is not None else f"{schema}_tmp",
-            job_id="test-job-0",
+            job_id=job_id,
             oltp_sql=oltp,
             data_product_service=data_product_service,
             binding_run_service=binding_run_service,
@@ -341,7 +360,7 @@ def make_scheduler():
             reconcile_scores_on_start=reconcile_scores_on_start,
         )
 
-        mocks = SimpleNamespace(oltp=oltp)
+        mocks = SimpleNamespace(oltp=oltp, ws=ws)
         # The analytical and tmp executors have no constructor seam
         # today (the constructor builds them from ``ws + warehouse_id +
         # {schema,tmp_schema}``). Tests that need to assert on their

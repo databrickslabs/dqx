@@ -22,6 +22,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,15 @@ class SetupCheckers(Protocol):
     def check_volume(self) -> SetupStep: ...
 
     def check_unity_catalog(self) -> SetupStep: ...
+
+    def check_runner_access(
+        self,
+        job_id: int,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+        include_outputs: bool = False,
+    ) -> SetupStep: ...
 
     def ensure_sibling_schemas(self) -> SetupStep: ...
 
@@ -126,8 +136,20 @@ class SetupOrchestrator:
         self.activation = activation
         self.app_sp_id = _sanitize_identity(app_sp_id) or ""
 
-    async def reconcile(self, setup_user: str | None = None) -> SetupReport:
-        """Run retry-safe setup actions serially and activate only after migrations."""
+    async def reconcile(
+        self,
+        setup_user: str | None = None,
+        reader_ws: WorkspaceClient | None = None,
+        reader_sql: SqlExecutor | None = None,
+    ) -> SetupReport:
+        """Run retry-safe setup actions serially and activate only after migrations.
+
+        Args:
+            setup_user: Authenticated administrator performing setup, if present.
+            reader_ws: Request-scoped administrator client for read-only runner
+                privilege inspection. Jobs operations and writes remain app-authenticated.
+            reader_sql: Request-scoped administrator SQL executor for inspecting grants.
+        """
         async with self.runtime.activation_lock:
             actor = _sanitize_identity(setup_user)
             current_report = self.runtime.report()
@@ -161,7 +183,7 @@ class SetupOrchestrator:
             if stopped := self._append_and_stop(steps, step):
                 return stopped
 
-            task_step = await self._reconcile_job(actor)
+            task_step = await self._reconcile_job(actor, reader_ws, reader_sql)
             if stopped := self._append_and_stop(steps, task_step):
                 return stopped
 
@@ -174,6 +196,15 @@ class SetupOrchestrator:
                 return stopped
 
             job_id = self.runtime.require_job_id()
+            task_step = await asyncio.to_thread(
+                self.checkers.check_runner_access,
+                job_id,
+                reader_ws=reader_ws,
+                reader_sql=reader_sql,
+                include_outputs=True,
+            )
+            if stopped := self._replace_and_stop(steps, task_step):
+                return stopped
             try:
                 await asyncio.to_thread(
                     self.app_settings.record_setup_completion,
@@ -239,14 +270,21 @@ class SetupOrchestrator:
             )
         return report
 
-    async def _reconcile_job(self, setup_user: str | None) -> SetupStep:
+    async def _reconcile_job(
+        self, setup_user: str | None, reader_ws: WorkspaceClient | None, reader_sql: SqlExecutor | None
+    ) -> SetupStep:
         configured = str(self.runtime.job_id) if self.runtime.job_id is not None else self.resources.job_id
         try:
             resolved = await asyncio.to_thread(self.jobs.resolve, configured)
             self.runtime.job_id = resolved.job_id
             if setup_user is not None:
                 await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
-            return await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            if step.state != StepState.PASSED:
+                return step
+            return await asyncio.to_thread(
+                self.checkers.check_runner_access, resolved.job_id, reader_ws=reader_ws, reader_sql=reader_sql
+            )
         except Exception:
             return _failed(
                 SetupStepId.TASK_RUNNER,
@@ -309,8 +347,9 @@ class SetupOrchestrator:
         return None
 
     def _replace_and_stop(self, steps: list[SetupStep], step: SetupStep) -> SetupReport | None:
-        if steps and steps[-1].id == step.id:
-            steps[-1] = step
+        existing_index = next((index for index, existing in enumerate(steps) if existing.id == step.id), None)
+        if existing_index is not None:
+            steps[existing_index] = step
         else:
             steps.append(step)
         if step.state != StepState.PASSED:

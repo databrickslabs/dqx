@@ -2077,7 +2077,7 @@
     "colMean": "Moyenne",
     "colStddev": "Écart-type",
     "profileHeaderLastProfile": "Dernier profil",
-    "profileHeaderRows": "Lignes",
+    "profileHeaderRows": "Lignes profilées",
     "profileHeaderColumns": "Colonnes",
     "profileHeaderDuration": "Durée",
     "profilePrimaryKeyBadge": "Clé primaire : {{columns}}",

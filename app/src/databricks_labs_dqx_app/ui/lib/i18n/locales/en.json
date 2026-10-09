@@ -2077,7 +2077,7 @@
     "colMean": "Mean",
     "colStddev": "Std dev",
     "profileHeaderLastProfile": "Last profile",
-    "profileHeaderRows": "Rows",
+    "profileHeaderRows": "Rows profiled",
     "profileHeaderColumns": "Columns",
     "profileHeaderDuration": "Duration",
     "profilePrimaryKeyBadge": "Primary key: {{columns}}",

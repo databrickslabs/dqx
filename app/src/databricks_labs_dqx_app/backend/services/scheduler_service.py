@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+from databricks_labs_dqx_app.backend.services.task_runner_runs import list_active_app_run_ids
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
@@ -81,6 +82,13 @@ _FAILURE_BACKOFF = timedelta(hours=1)
 # be re-checked on every tick forever; 24h comfortably outlives any real
 # validation run.
 _SCORE_REFRESH_TTL = timedelta(hours=24)
+
+# A tracked run is looked up in ``dq_validation_runs`` only once its job has
+# finished, read from the Jobs API so a pending run costs no warehouse time.
+# A run the Jobs API has never listed as active is treated as finished only
+# after this grace period, covering a run-set member recorded just before its
+# job was submitted.
+_JOB_STATE_GRACE = timedelta(minutes=2)
 
 # Recent-run-set sweep bounds (P5.3). Every tick, one bounded OLTP query
 # lists the member run ids of run sets created inside this window so
@@ -233,11 +241,11 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_profiling_results", "created_at"),
     (_QUARANTINE_TABLE_NAME, "created_at"),
     ("dq_metrics", "run_time"),
+    ("dq_run_configs", "created_at"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
-    ("dq_run_configs", "created_at"),
 )
 
 
@@ -367,6 +375,11 @@ class SchedulerService:
         self._pending_score_runs: dict[str, datetime] = {}
         self._completed_view_fqns_buffer: list[str] = []
         self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Tracked runs the Jobs API has listed as active at least once, and
+        # those whose finished job had no terminal row on the last lookup
+        # (dropped if the next lookup still finds none).
+        self._score_runs_seen_active: set[str] = set()
+        self._score_runs_missing_row: set[str] = set()
         # Run-set sweep state (P5.3): run ids already tracked or
         # processed this boot, so the recurring 24h-window query never
         # re-tracks a run it has already handled. Pruned every sweep to
@@ -1370,7 +1383,10 @@ class SchedulerService:
 
         The expiry + batched terminal lookup extracted from
         :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
-        can fold the completed runs' tables into its own recompute.
+        can fold the completed runs' tables into its own recompute. Only
+        runs whose job the Jobs API reports finished are looked up, so a
+        run still executing (or one that never writes a row) does not cost
+        a warehouse query on every tick.
         """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -1381,12 +1397,16 @@ class SchedulerService:
 
         expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
         for rid in expired:
-            del self._pending_score_runs[rid]
+            self._forget_score_run(rid)
             logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
         if not self._pending_score_runs:
             return set()
 
-        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        finished = self._score_runs_with_finished_jobs(now)
+        if not finished:
+            return set()
+
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in sorted(finished))
         sql = (
             f"SELECT DISTINCT run_id, source_table_fqn, view_fqn FROM {self._runs_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
@@ -1398,14 +1418,51 @@ class SchedulerService:
             run_id = row[0] if row else None
             if not run_id:
                 continue
-            self._pending_score_runs.pop(run_id, None)
+            self._forget_score_run(run_id)
             fqn = row[1] if len(row) > 1 else None
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
             view_fqn = row[2] if len(row) > 2 else None
             if isinstance(view_fqn, str) and view_fqn:
                 self._completed_view_fqns_buffer.append(view_fqn)
+
+        # A finished job with no terminal row will never get one: drop it after
+        # a second empty lookup instead of re-querying until the 24h TTL.
+        for run_id in finished & set(self._pending_score_runs):
+            if run_id in self._score_runs_missing_row:
+                self._forget_score_run(run_id)
+                logger.warning(
+                    "Run %s finished without a terminal result row; dropping its score-refresh tracking", run_id
+                )
+            else:
+                self._score_runs_missing_row.add(run_id)
         return fqns
+
+    def _score_runs_with_finished_jobs(self, now: datetime) -> set[str]:
+        """Return the tracked runs whose task-runner job has finished, per the Jobs API.
+
+        Falls back to every tracked run (the previous behaviour) when the job id
+        is unset or the Jobs API call fails, so completion is never missed.
+        """
+        pending = set(self._pending_score_runs)
+        if not self._job_id:
+            return pending
+        try:
+            active = list_active_app_run_ids(self._ws, int(self._job_id))
+        except Exception:
+            logger.warning("Could not list active task-runner runs; checking every tracked run", exc_info=True)
+            return pending
+        self._score_runs_seen_active |= active & pending
+        return {
+            run_id
+            for run_id in pending - active
+            if run_id in self._score_runs_seen_active or now - self._pending_score_runs[run_id] >= _JOB_STATE_GRACE
+        }
+
+    def _forget_score_run(self, run_id: str) -> None:
+        self._pending_score_runs.pop(run_id, None)
+        self._score_runs_seen_active.discard(run_id)
+        self._score_runs_missing_row.discard(run_id)
 
     def _drop_completed_run_views(self, view_fqns: list[str]) -> None:
         """Best-effort drop of temp views for runs observed terminal this tick.
@@ -2524,6 +2581,7 @@ class SchedulerService:
     def _create_view(self, source_table_fqn: str) -> str:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
+        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
@@ -2531,7 +2589,7 @@ class SchedulerService:
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
+        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
@@ -2546,24 +2604,51 @@ class SchedulerService:
                 "The SQL query contains prohibited statements and cannot be used to create a view."
             )
 
+        runner = self._resolve_view_runner()
         view_id = self._generate_tmp_view_id()
         view_name = f"{self._catalog}.{self._tmp_schema}.tmp_view_{view_id}"
         quoted_view = quote_fqn(view_name)
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
+        self._grant_view(view_name, runner)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
 
-    def _grant_view(self, view_name: str) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+    def _resolve_view_runner(self) -> str:
+        """Resolve the job's current run-as identity before creating a view."""
+        from databricks_labs_dqx_app.backend.services.view_service import quote_view_principal
 
         try:
-            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
-        except Exception as e:
-            logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
+            job = self._ws.jobs.get(job_id=int(self._job_id))
+            run_as = job.settings.run_as if job.settings else None
+            if run_as is None or run_as.group_name:
+                raise RuntimeError("Missing direct job run-as identity")
+            principals = [name for name in (run_as.service_principal_name, run_as.user_name) if name]
+            if len(principals) != 1:
+                raise RuntimeError("Ambiguous job run-as identity")
+            return quote_view_principal(principals[0])
+        except Exception:
+            raise RuntimeError(
+                "Cannot resolve a valid task-runner identity for temporary view permissions. "
+                "Verify the job run-as configuration and job read access."
+            ) from None
+
+    def _grant_view(self, view_name: str, runner: str) -> None:
+        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
+
+        quoted_view = quote_fqn(view_name)
+        try:
+            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quoted_view} TO {runner}")
+        except Exception:
+            try:
+                self._tmp_sql.execute(f"DROP VIEW IF EXISTS {quoted_view}")
+            except Exception:
+                logger.warning("Scheduler temporary view cleanup failed after a permission failure")
+            raise RuntimeError(
+                "Cannot grant temporary view access to the task runner. View cleanup was attempted."
+            ) from None
 
     _tmp_schema_ensured = False
 

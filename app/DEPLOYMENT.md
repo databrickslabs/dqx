@@ -8,13 +8,30 @@ Production deployment uses [Declarative Automation Bundles](https://docs.databri
 
 **Marketplace installation** requires three existing resource bindings and a workspace service principal for the task-runner job. Bind a SQL warehouse, a Lakebase Postgres endpoint, and a Unity Catalog volume; the bound volume determines the main catalog and schema. Create the workspace service principal before installation and grant the installing identity the Service Principal: User role on it. The principal is assigned as the job's `run_as` identity in the Jobs UI, not in the Marketplace resource picker. Before opening the app, ensure an administrator is a member of the workspace group named by `DQX_ADMIN_GROUP`. The setup wizard verifies the three bindings, creates the sibling schemas, runs migrations, publishes wheels, gives precise grant instructions when a capability is missing, and links to the Jobs UI for the service principal assignment.
 
-The Marketplace app derives sibling schema names from the volume's schema: a volume under `/Volumes/<catalog>/<schema>/<volume>` uses `<schema>_tmp` for temporary views and `<schema>_genie` for Genie-facing views. The data schema is always `<schema>` from that bound path. `DQX_TMP_SCHEMA` and `DQX_GENIE_SCHEMA` remain available as deployment environment overrides; changing the volume binding or an override after installation changes where Studio looks for its objects. DAB deployments retain their explicit schema overrides. Setup checks the app service principal's `USE SCHEMA` and `CREATE TABLE` privileges on both sibling schemas, including schemas that already existed. End-user permissions never block setup: catalog access can be granted to the intended user groups rather than all `account users`. Setup attempts `USE SCHEMA` and `CREATE TABLE` grants on the temporary schema; activation attempts `USE SCHEMA` on the Genie schema and SELECT only on five approved Genie views and two metadata tables (`dim_dq_rules` and `dim_dq_monitored_tables`). Failed user grants are logged without blocking readiness, and no schema-wide Genie SELECT is granted. A failed score or entitlement object creation keeps setup from reporting ready and reports the required Unity Catalog privileges. End users also need `CAN_USE` on the bound SQL warehouse for OBO previews; grant that through the warehouse permissions UI if it is absent.
+The Marketplace app derives sibling schema names from the volume's schema: a volume under `/Volumes/<catalog>/<schema>/<volume>` uses `<schema>_tmp` for temporary views and `<schema>_genie` for Genie-facing views. The data schema is always `<schema>` from that bound path. `DQX_TMP_SCHEMA` and `DQX_GENIE_SCHEMA` remain available as deployment environment overrides; changing the volume binding or an override after installation changes where Studio looks for its objects. DAB deployments retain their explicit schema overrides. Setup checks the app service principal's `USE SCHEMA` and `CREATE TABLE` privileges on both sibling schemas, including schemas that already existed. A failed score or entitlement object creation keeps setup from reporting ready and reports the required Unity Catalog privileges.
+
+**Marketplace install permissions gaps after removing `account users`:** configure a scoped audience and provision runner access explicitly; do not restore broad grants to make setup pass. The installing administrator needs grant authority (`MANAGE` on the bound catalog, schema, and volume, or corresponding ownership/admin authority), not just `USE CATALOG`, `USE SCHEMA`, and volume data access. This lets the installer establish the app's required access when broad inherited grants are absent.
+
+`DQX_USER_GROUPS` accepts a JSON list of scoped workspace group names, for example `["dqx-studio-users"]`, or simple unquoted comma-separated names, for example `studio-authors,studio-viewers`. Use JSON for names containing commas or quotes. Its default is `[]`: audience permissions are then administrator-managed, not granted to everyone. Startup warns that no audience grants will be applied when the list is empty; existing grants are not revoked. Built-in `users` and `account users` groups are rejected. For configured groups, setup attempts `USE SCHEMA` and `CREATE TABLE` on the temporary schema; activation attempts `USE SCHEMA` on the Genie schema and `SELECT` only on five approved views and two metadata tables (`dim_dq_rules` and `dim_dq_monitored_tables`). Audience grants are best effort and do not block readiness. Administrators must also provide audience app access, warehouse `CAN_USE`, SQL access entitlement, and parent catalog usage. No whole-schema Genie `SELECT` or entitlement-table grant is applied.
+
+After assigning the task-runner service principal in the Jobs UI, setup resolves the job's actual `run_as` and verifies these requirements on **every cold startup**:
+
+| Resource | Required runner access |
+|---|---|
+| Bound catalog | `USE CATALOG` |
+| Main and temporary schemas | `USE SCHEMA` on both |
+| Wheels volume | `READ VOLUME` |
+| Main schema | Schema-level `SELECT` and `MODIFY`, covering current and future tables |
+
+Checks include inherited permissions and ownership; table-specific output grants alone do not satisfy the main-schema requirement. Schema ownership alone does not establish `SELECT` or `MODIFY` on its tables. Schema-level runner access avoids maintaining a per-table checklist, and applies to every table in that schema, so bind a dedicated Studio schema rather than one containing unrelated data. Missing or uninspectable UC permissions keep setup action-required. Setup neither automatically grants UC runner privileges nor changes `run_as`; verification is never cached across startups. Source-data access remains run-specific. The runner needs no Lakebase access; oversized run configs are staged in the Delta `dq_run_configs` table in the main schema.
+
+Setup first tries effective UC grant inspection with app credentials. If unavailable, the setup administrator's request-scoped OBO SQL executor inspects `SHOW GRANTS` on the target and parent containers using the supported `sql` OAuth scope. Column names are matched case-insensitively, and group grants require independently verified runner membership. SQL inspection reads every result chunk and rejects truncated or incomplete results. Job management and writes remain under the app SP. The administrator needs ownership, `READ METADATA`, `MANAGE`, or metastore administration to inspect grants, plus warehouse `CAN_USE` and parent `USE CATALOG` / `USE SCHEMA` (including the temporary schema). If unattended startup cannot inspect access as the app SP, open setup as an authorized administrator and verify again after each restart. Unknown permissions are distinguished from confirmed missing grants. DAB grants do not replace the catalog prerequisite.
 
 An explicitly configured `DQX_SCHEMA` that differs from the bound volume schema produces a warning; the volume still determines application storage. Successful metadata-dimension refreshes retry the two explicit metadata-table SELECT grants, including when a startup refresh failed before creating the tables.
 
-If an earlier build granted schema-wide Genie SELECT, an administrator should revoke that grant and reapply only the approved object grants listed below. Removing the grant from startup does not revoke privileges already present in Unity Catalog.
+On upgrade, existing broad grants are **not automatically revoked**. An administrator must review and revoke legacy `users` / `account users` ACLs and UC grants on the catalog, schemas, volume, temporary views, warehouse, app, dashboard, and Genie space as applicable, including schema-wide Genie `SELECT`. Reapply only the scoped audience and approved object grants below. For existing OBO-created views that need orphan cleanup, explicitly grant runner `SELECT` and app-SP `MANAGE` on each view; do not restore broad access or grant schema-wide cleanup rights.
 
-Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
+Lakebase is mandatory. Delta-backed application (OLTP) state was removed and cannot be migrated. Marketplace currently supports replacing the SQL warehouse; rebind reconciles the Genie space's compute with the new warehouse. Swapping the Lakebase endpoint or volume, and smoke-validating the task runner, are planned follow-up capabilities.
 
 Marketplace releases use published, pinned DQX Core packages from public PyPI. Main tracks the canonical application source and Marketplace templates but excludes the generated `app/marketplace/` artifact. `app/scripts/release_marketplace.sh studio-vX.Y.Z` validates the requested version against the application at `HEAD`, creates `dqx-studio/marketplace/vX.Y.Z`, builds and force-stages the complete self-contained source, signs and verifies its local commit, then creates and verifies the annotated signed Studio version tag on that generated commit. This ordering is required because Marketplace checks out the tag and deploys the configured `app/marketplace/` source path. The build **copies** the committed, self-contained lock at `app/marketplace_templates/uv.lock` (a tracked template) rather than re-resolving: it runs no `uv lock` and downloads no wheels, so the artifact can't drift with the package index or a `uv` version, and needs no network. A test (`test_marketplace_template_lock_matches_app_runtime_closure`) keeps that template in step with the app's runtime dependencies. To refresh it after a dependency or DQX-version change, regenerate it deliberately in an environment with public-PyPI (or proxy) access — resolve the release dependencies with `uv lock` and normalize the URLs to public PyPI — then commit the result. Because `databricks-labs-dqx` currently pins `litellm<=1.82.6` (which has no Python 3.13/3.14 wheels), that regeneration must temporarily cap the app's `requires-python` to `<3.13` to avoid an unsolvable resolver fork; revert the cap after regenerating. The script never pushes; inspect the branch, then explicitly push both refs with `git push origin dqx-studio/marketplace/vX.Y.Z` and `git push origin studio-vX.Y.Z`. The DAB `release` target consumes this same prebuilt artifact; source-build targets continue to use `.build/`.
 
@@ -76,13 +93,11 @@ The deploying user (you) needs the permissions below. Both `databricks bundle de
 | 6 | **USE CATALOG** + **CREATE SCHEMA** on `<catalog_name>` | Your user or an admin group you're in | `bundle deploy` of the `schemas` and `volumes` resources | `Error: User does not have CREATE_SCHEMA on catalog '<catalog>'` |
 | 7 | **MANAGE** on `<catalog_name>` (or be the catalog owner) | Your user or an admin group you're in | The one-time `GRANT USE CATALOG` to the intended **user groups**, the **app SP**, and the **task-runner SP** (see [The USE CATALOG prerequisite](#the-use-catalog-prerequisite)) | `Error: User does not have privilege MANAGE on catalog '<catalog>'` |
 | 8 | **Service Principal: User** role on the task-runner SP | Your user, on the SP you'll use as `dqx_service_principal_application_id` | `bundle deploy` of the `jobs.dqx_task_runner` resource (sets `run_as.service_principal_name`) | `Error: User is not authorized to use this service principal` |
-| 9 | **Service Principal: Manager** role on the task-runner SP, *or* a pre-shared OAuth client secret | Your user, on the same SP | Only needed if you want to **mint a fresh OAuth secret yourself** for the task-runner (e.g. via `databricks service-principal-secrets-proxy create <sp-id>`) | `Error: User is not authorized to perform this operation` when minting a new secret |
-| 10 | **Account admin** (one-time, post-deploy) | Account level | Updating the app's OAuth custom-app integration to include the `all-apis` scope (see [Expand OAuth Scopes](#optional-expand-oauth-scopes)) | Some app features (job submission, advanced SCIM lookups) return 403 |
 
 **Two convenience patterns** that reduce the per-user grants in rows 6 and 7:
 
-- **Make the catalog ownership easy:** ask an admin to add you to an existing UC-admin group that already holds `MANAGE` (or `ALL PRIVILEGES`) on `<catalog_name>`. This unlocks rows 6 and 7 in one membership change instead of two per-object grants.
-- **Workspace admin shortcut:** if you become workspace admin, rows 1–5 + 8–9 collapse automatically. Rows 6 and 7 (UC) and 10 (account admin) still need to be granted explicitly — workspace admin does **not** confer Unity Catalog or account-level rights.
+- **Use a scoped UC-admin group:** ask an admin for membership in a group with the required catalog usage, schema creation, and `MANAGE` privileges. `ALL PRIVILEGES` does not include `MANAGE`.
+- **Keep permission domains separate:** workspace administration does not automatically confer Unity Catalog ownership or Lakebase role/grant authority.
 
 ### Workspace features that must be enabled
 
@@ -135,13 +150,13 @@ You'll see `prevent_destroy: true` on `schemas.main_schema`, `schemas.tmp_schema
 
 What this means in practice:
 
-- **Deploy** — `make app-deploy` does everything in one command: `databricks bundle deploy` provisions the schemas → volume → Lakebase project (+ endpoint + the app SP's Postgres role) → SQL warehouse → job → app in dependency order, and applies all Unity Catalog grants **natively** (no post-deploy script). Then `bundle run` starts the app.
+- **Deploy** — `make app-deploy` builds, deploys the resources in dependency order, applies bundle-declared grants natively, then starts the app. Catalog usage remains an administrator prerequisite.
 - **Schema drift** — if you change `catalog_name`, `schema_name`, or the Lakebase project id in a way that would force the bundle to delete and recreate the resource, `prevent_destroy` blocks the destroy step and the deploy fails fast (good — the alternative is silent data loss). Treat those names as immutable.
 - **Intentional teardown** — to drop a protected resource, remove `lifecycle.prevent_destroy: true` from `databricks.yml`, run `databricks bundle deployment unbind <key> -t <target>` to detach it from bundle state, then destroy it manually.
 
 ### The USE CATALOG prerequisite
 
-`bundle deploy` applies the declared schema- and volume-level grants natively (via `grants:` on the resources); startup grants SELECT on five approved Genie views and two metadata tables. The bundle does not manage the pre-existing, user-selected catalog, so grant `USE CATALOG` once per catalog to the app and task-runner principals. For OBO previews and Genie queries, grant catalog access to your intended user groups; a grant to all `account users` is not a readiness prerequisite. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment:
+`bundle deploy` applies the declared schema- and volume-level grants natively (via `grants:` on the resources); startup attempts `SELECT` on five approved Genie views and two metadata tables for configured audience groups. The bundle does not manage the pre-existing, user-selected catalog, so grant `USE CATALOG` once per catalog to the app and task-runner principals and the scoped audience. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment:
 
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `<studio-user-group>`;
@@ -149,7 +164,7 @@ GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
 ```
 
-The app SP also receives `USE CATALOG` through its wheels-volume binding; the explicit grant above preserves the original installation sequence. Everything else (ALL PRIVILEGES on the schemas + volume for both SPs, USE SCHEMA + CREATE TABLE on the tmp schema for `account users`, the deployer's dashboard SELECT, and warehouse `CAN_USE`) is declared in `databricks.yml` and applied by `bundle deploy`.
+The app SP also receives `USE CATALOG` through its wheels-volume binding; keep the explicit grant alongside the other principals. Bundle audience grants use `studio_user_group`, not broad built-in groups.
 
 ## Step 4: Configure `databricks.yml`
 
@@ -158,7 +173,7 @@ Add or update a deploy target. Only two variables are **required**:
 - `catalog_name` — the existing Unity Catalog catalog to create schemas/volume in
 - `dqx_service_principal_application_id` — the task-runner SP from [Step 1](#step-1-create-a-service-principal)
 
-The bundle manages its own SQL warehouse and Lakebase project, so there is nothing else to supply. Everything else has a sensible default and can be overridden per target. The repo ships a single canonical target, **`dev`** (marked `default: true`). A minimal target looks like this:
+The bundle manages its own SQL warehouse and Lakebase project. Its `studio_user_group` defaults to `dqx-studio-users`, which **must already exist**; override it with your approved scoped group if needed. It is wired into `DQX_USER_GROUPS` as a JSON audience list and used for all bundle warehouse, app, dashboard, and schema audience grants. The repo ships a canonical source target, **`dev`** (marked `default: true`). A minimal target looks like this:
 
 ```yaml
 targets:
@@ -169,13 +184,14 @@ targets:
     variables:
       catalog_name: <your-catalog>
       dqx_service_principal_application_id: <your-sp-application-id>
+      studio_user_group: dqx-studio-users
     presets:
       trigger_pause_status: PAUSED
 ```
 
 ### SQL warehouse
 
-The bundle **always** creates and manages a dedicated serverless warehouse (`resources.sql_warehouses.dqx_sql_warehouse`) — there is no "bring your own warehouse" mode. Its `permissions:` block grants `CAN_USE` to the app SP (explicitly, so the app binding doesn't override it) and to `account users` (for end-user OBO dry-run/preview queries), all applied by `bundle deploy`. Tune it per target with `sql_warehouse_name` and `sql_warehouse_size`; `bundle destroy` deletes it.
+The bundle **always** creates and manages a dedicated serverless warehouse (`resources.sql_warehouses.dqx_sql_warehouse`) — there is no "bring your own warehouse" mode. Its `permissions:` block grants `CAN_USE` to the app SP and `studio_user_group` for end-user OBO queries. Tune it per target with `sql_warehouse_name` and `sql_warehouse_size`; `bundle destroy` deletes it. Marketplace uses an existing bound warehouse and administrator-managed ACLs.
 
 ### Lakebase
 
@@ -191,6 +207,7 @@ All target-level variables, their defaults, and what they control:
 |---|---|---|---|
 | `catalog_name` | `dqx` | **Yes** | Unity Catalog catalog where schemas and the wheels volume are created. **Must already exist** — the bundle does not create the catalog itself. |
 | `dqx_service_principal_application_id` | `00000000-…` | **Yes** | Application ID of the service principal that runs the task-runner job. Created in [Step 1](#step-1-create-a-service-principal). The placeholder default fails validation. |
+| `studio_user_group` | `dqx-studio-users` | Must exist | Scoped audience group for warehouse, app, dashboard, and schema access; supplied to `DQX_USER_GROUPS` as a JSON list. Built-in `users` / `account users` are not valid audiences. |
 | `admin_group` | `proj_dbw_dev_dg_admins-data_ug` (bundle) / `admins` (local Python) | Yes for prod | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path). The bundle ships with a non-production placeholder — override per target with your real admin group (e.g. `dqx-admins-prod`). In every path, `AppConfig` defaults to the workspace `admins` group; `DQX_ADMIN_GROUP` overrides that default for local testing or deployment. Additional roles are assigned at runtime via the in-app Role Management UI. |
 | `app_name` | `dqx-studio` | No | Deployed Databricks App name. Override per target (e.g. `dqx-studio-dev`, `dqx-studio-prod`) when deploying multiple targets to the same workspace, or for personal sandboxes. |
 | `sql_warehouse_name` | `dqx-studio-sql-warehouse` | No | Name of the bundle-managed SQL warehouse. Override per target to avoid duplicates in shared workspaces. |
@@ -259,10 +276,10 @@ The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.
 
 `make app-deploy` runs the following steps automatically:
 1. `make app-build` — builds the frontend and wheels.
-2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **all Unity Catalog grants natively** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
+2. `databricks bundle deploy` — provisions or updates the schemas, wheels volume, Lakebase project (+ endpoint + the app SP's Postgres role), the SQL warehouse, the task-runner job, and the Databricks App in dependency order, and applies **bundle-declared grants** via the `grants:` / `permissions:` blocks in `databricks.yml`. Stateful resources carry `lifecycle.prevent_destroy: true` so a future destroy can't drop them — see [Step 3](#step-3-stateful-storage-and-destroy-protection).
 3. `databricks bundle run` — starts the app.
 
-Remember the one manual prerequisite: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) on your catalog to the **app SP** and **task-runner SP**, plus the intended **user groups** for OBO previews and Genie queries.
+Remember the manual prerequisites: [`GRANT USE CATALOG`](#the-use-catalog-prerequisite) for the app SP, task-runner SP, and scoped audience. Cold-start UC checks must pass before Studio is ready.
 
 > **First start**: The app runs Delta analytical and Lakebase application migrations on startup, and publishes the task-runner wheel to the UC volume. Wait for the setup checks to report that wheel publishing is ready before triggering runs. Also wait for `"Lakebase OLTP routing enabled"` before opening the UI. If Lakebase initialization fails, the app refuses to start and the Apps platform restarts the container. It never falls back to Delta-backed application state.
 
@@ -276,7 +293,7 @@ make app-build
 
 # Deploy the bundle (creates / updates schemas, volume, Lakebase project +
 # endpoint + role, the SQL warehouse, task-runner job, and app, and applies
-# all UC grants natively)
+# bundle-declared grants natively)
 cd app && databricks bundle deploy -p <your-profile> -t <your-target>
 
 # Start the app
@@ -285,34 +302,36 @@ cd app && databricks bundle run dqx-studio -p <your-profile> -t <your-target>
 
 ### Grants reference
 
-`bundle deploy` applies the schema and volume grants below natively; activation attempts the five Genie view and two metadata-table grants best effort. This section is for reference / manual recovery. Grant [`USE CATALOG`](#the-use-catalog-prerequisite) separately (the bundle doesn't manage the catalog), and reapply object grants manually if the app lacks grant authority.
+`bundle deploy` applies its declared schema and volume grants natively; activation attempts the five Genie view and two metadata-table audience grants best effort. The narrow runner grants below are sufficient for setup and manual recovery even if a DAB deployment declares wider SP access. Grant [`USE CATALOG`](#the-use-catalog-prerequisite) separately, and reapply audience object grants manually if the app lacks grant authority. Substitute your configured main, temporary, and Genie schema names.
 
 The reference below includes bundle-managed grants and the best-effort Genie view grants applied during activation. `<app-sp-id>` is the app's auto-created SP (`databricks apps get dqx-studio` → `service_principal_client_id`); `<job-sp-id>` is the task-runner SP from [Step 1](#step-1-create-a-service-principal).
 
 ```sql
--- App SP + task-runner SP: full privileges on the schemas + volume
+-- App SP: application storage and migration privileges.
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio     TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio_tmp TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON SCHEMA <catalog>.<genie_schema_name> TO `<app-sp-id>`;
 GRANT ALL PRIVILEGES ON VOLUME <catalog>.dqx_studio.wheels TO `<app-sp-id>`;
-GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio     TO `<job-sp-id>`;
-GRANT ALL PRIVILEGES ON SCHEMA <catalog>.dqx_studio_tmp TO `<job-sp-id>`;
-GRANT ALL PRIVILEGES ON SCHEMA <catalog>.<genie_schema_name> TO `<job-sp-id>`;
-GRANT ALL PRIVILEGES ON VOLUME <catalog>.dqx_studio.wheels TO `<job-sp-id>`;
+
+-- Runner: schema-wide storage access, applied by an authorized administrator.
+-- Use a dedicated Studio schema: SELECT/MODIFY cover its current and future tables.
+GRANT USE SCHEMA, SELECT, MODIFY ON SCHEMA <catalog>.dqx_studio TO `<job-sp-id>`;
+GRANT USE SCHEMA ON SCHEMA <catalog>.dqx_studio_tmp TO `<job-sp-id>`;
+GRANT READ VOLUME ON VOLUME <catalog>.dqx_studio.wheels TO `<job-sp-id>`;
 
 -- End users create dry-run / preview temp views (via their OBO token) in the
 -- tmp schema, so they need USE SCHEMA + CREATE TABLE there.
-GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.dqx_studio_tmp TO `account users`;
+GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.dqx_studio_tmp TO `<studio-user-group>`;
 -- Genie SELECT is restricted to these five views and two metadata tables.
 -- Never grant schema-wide SELECT or access to dq_user_table_entitlements.
-GRANT USE SCHEMA ON SCHEMA <catalog>.<genie_schema_name> TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.mv_dq_scores TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_results TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_results_asof TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_attribution TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_failing_rows TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.dim_dq_rules TO `account users`;
-GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.dim_dq_monitored_tables TO `account users`;
+GRANT USE SCHEMA ON SCHEMA <catalog>.<genie_schema_name> TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.mv_dq_scores TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_results TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_results_asof TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_check_attribution TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.v_dq_failing_rows TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.dim_dq_rules TO `<studio-user-group>`;
+GRANT SELECT ON TABLE <catalog>.<genie_schema_name>.dim_dq_monitored_tables TO `<studio-user-group>`;
 
 -- Deployer needs SELECT for the embed-credentials Insights dashboard
 -- (bundle uses ${workspace.current_user.userName}).
@@ -325,11 +344,27 @@ GRANT USE CATALOG ON CATALOG <catalog> TO `<app-sp-client-id>`;
 GRANT USE CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
 ```
 
-Warehouse `CAN_USE` (app SP + `account users`) is likewise applied natively via the `permissions:` block on the bundle-managed warehouse.
+Warehouse `CAN_USE` (app SP + `studio_user_group`) is applied natively by the bundle. Its app and dashboard audience ACLs also use that scoped group.
 
-> **Lakebase access.** The app SP's Postgres role is created by the `postgres_roles.app_sp` resource with `DATABRICKS_SUPERUSER` membership, which confers the `CREATE SCHEMA` privilege the app needs on first connect (`PgMigrationRunner` runs `CREATE SCHEMA dqx_studio` inside `databricks_postgres`). This is fully declarative — a single `bundle deploy` provisions the project, the app, *and* the role, with no follow-up `psql`/console step. It requires **Databricks CLI v1.4.0 or newer**; on older CLIs the `postgres_projects` / `postgres_roles` fields are rejected at `bundle validate`.
+### Temporary views and schedules
 
-To grant app access to end users, go to **Apps → `<app-name>` → Permissions** and assign `Can Use`. Replace `<app-name>` with the value of `app_name` configured for your target (default `dqx-studio`).
+User-initiated views are created under OBO. Each view grants `SELECT` directly to the job's resolved runner and `MANAGE` to the app SP for orphan cleanup. Grant failures block submission. Cleanup rights are **per view**, not schema-wide, and no `account users` grant is restored:
+
+```sql
+-- Apply to an existing OBO-owned view only if these narrow grants are missing.
+GRANT SELECT ON VIEW <catalog>.<tmp_schema>.<view_name> TO `<job-sp-id>`;
+GRANT MANAGE ON VIEW <catalog>.<tmp_schema>.<view_name> TO `<app-sp-id>`;
+```
+
+Schedule creation/update inspects access using OBO SQL `SHOW GRANTS`, not the grants REST API. Source catalog `USE CATALOG`, source schema `USE SCHEMA`, and table `SELECT` are verified for the app scheduler and actual job runner per schedule. If missing, an authorized caller must establish those grants; failed runner grants block the schedule rather than allowing a later run to fail. These source grants are separate from the fixed startup output checks.
+
+### Genie audience access
+
+Configured `DQX_USER_GROUPS` receive scoped Genie space `CAN_RUN` ACLs; with `[]`, an administrator manages the audience ACLs and UC object grants. If reconciliation fails, an administrator must apply the scoped ACLs. Genie consumers need Consumer access or Databricks SQL access entitlement, parent catalog/schema usage, and the five approved view plus two dimension-table grants above. Genie embeds the author's compute credentials; consumers do not need direct warehouse access for Genie alone. Studio's OBO previews and SQL workflows additionally need SQL access entitlement and warehouse `CAN_USE`. In-app roles or object permissions alone do not provide this external access. Never grant whole-schema Genie `SELECT` or audience access to `dq_user_table_entitlements`.
+
+Both DAB and Marketplace use the `genie` user-authorization scope. Existing installations need renewed user consent after the scope changes; restart/redeploy and sign in again. Replacing the bound warehouse reconciles the Genie space's compute; verify app-SP `CAN_USE` and the OBO audience's SQL access on the replacement warehouse.
+
+To grant app access in Marketplace or recover an ACL, go to **Apps → `<app-name>` → Permissions** and assign `Can Use` to the scoped audience. DAB applies this via `studio_user_group`. Replace `<app-name>` with the configured app name (default `dqx-studio`).
 
 Access the app at:
 ```
@@ -342,71 +377,18 @@ DQX Studio stores its **OLTP state** — rules catalog, app settings, RBAC, comm
 
 | Backend | Tables | Why |
 |---|---|---|
-| Delta Lake | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics` | High-volume append; Spark task runner writes them; columnar reads. |
+| Delta Lake | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`, `dq_run_configs` | High-volume append; Spark task runner reads and writes them; columnar reads. |
 | Lakebase Postgres | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_quality_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | OLTP — sub-ms reads from FastAPI handlers, row-level upserts, primary keys. |
 
-Lakebase is declared as a Postgres *project* bundle resource (`postgres_projects.dqx_studio`, plus `postgres_roles.app_sp`) and provisioned by `databricks bundle deploy` with `lifecycle.prevent_destroy: true` — see [Step 3](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start; nothing else needs to be provisioned.
+Lakebase is declared as a Postgres *project* bundle resource (`postgres_projects.dqx_studio`, plus `postgres_roles.app_sp`) and provisioned by `databricks bundle deploy` with `lifecycle.prevent_destroy: true` — see [Step 3](#step-3-stateful-storage-and-destroy-protection). The app connects to the always-present `databricks_postgres` admin database via the project endpoint (`DQX_LAKEBASE_ENDPOINT`) and creates its own `dqx_studio` Postgres schema there on first start. The bundle creates the app SP's migration role. The task runner does not connect to Lakebase.
 
 ### Lakebase token rotation
 
 Lakebase OAuth tokens expire after one hour. The app's `PgExecutor` runs a background daemon thread that refreshes the password every `DQX_LAKEBASE_TOKEN_REFRESH_MINUTES` minutes (default 50). Existing connections age out via `psycopg_pool.ConnectionPool.max_lifetime` so a long-running app can stay up indefinitely without reconnecting.
 
-## (Optional) Expand OAuth Scopes
+## OAuth scopes and consent
 
-> **Most deployments don't need this step.** The OAuth scopes configured automatically by DABs (`sql`, `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`, `serving.serving-endpoints`, `dashboards.genie`) plus the identity scopes Databricks Apps grants implicitly are sufficient for all DQX Studio features on a standard workspace. `dashboards.genie` is required because the in-app Ask Genie chat runs as the signed-in user (on-behalf-of), so answers respect that user's own table permissions; without it the chat falls back to the app service principal and row-level answers stay empty.
->
-> Only follow this section if, after deploying, you see specific features returning `403` / permission errors in the app logs that look like missing OAuth scopes (for example, REST calls the baseline scopes do not cover). Expanding scopes requires **account admin** access.
-
-The scopes are managed at the **account** level, not the workspace. You need a CLI profile authenticated against the accounts host.
-
-**1. Log in at the account level:**
-
-```bash
-databricks auth login \
-  --host https://accounts.cloud.databricks.com \
-  --account-id <your-databricks-account-id> \
-  --profile <account-profile-name>
-```
-
-Replace `accounts.cloud.databricks.com` with the account host for your cloud (`accounts.azuredatabricks.net` for Azure, `accounts.gcp.databricks.com` for GCP).
-
-**2. Find the app's OAuth client ID:**
-
-```bash
-databricks account custom-app-integration list -p <account-profile-name>
-```
-
-Look for the integration whose name matches your deployed app (default `dqx-studio`, or whatever you set `app_name` to). Copy its `integration_id` — this is the `<oauth2-app-client-id>` used in the next step.
-
-You can also find it in the workspace UI under **Apps → `<app-name>` → User authorization**.
-
-**3. Update the OAuth scopes:**
-
-```bash
-databricks account custom-app-integration update '<oauth2-app-client-id>' \
-  -p <account-profile-name> \
-  --json '{
-    "scopes": [
-      "openid",
-      "profile",
-      "email",
-      "all-apis",
-      "offline_access",
-      "iam.current-user"
-    ]
-  }'
-```
-
-**4. Restart the app** so the new scopes take effect:
-
-```bash
-databricks apps stop  <app-name> -p <your-profile>
-databricks apps start <app-name> -p <your-profile>
-```
-
-After the app restarts, sign in again in the browser — you'll be prompted to re-consent to the expanded scopes.
-
-> **Why this isn't a default step:** Declarative Automation Bundles can only configure a baseline set of scopes. Broader scopes (`all-apis`, `iam.current-user`) are governed at the account level and can only be set by an account admin. In practice, the baseline is sufficient for the DQX Studio features in tree — this section exists as a fallback for workspaces where stricter OAuth-integration defaults require explicit scope grants.
+DAB and Marketplace declare the supported user scopes, including `sql` for OBO queries and grant inspection and `genie` for Ask Genie. Check **Apps → `<app-name>` → User authorization** if a feature reports missing consent, then sign in again to approve updated scopes after deployment. OAuth consent does not grant UC privileges, warehouse access, or Genie space access; apply the scoped permissions described above. Runner setup and schedule grant inspection use SQL rather than requiring broader grants REST API scopes.
 
 ## Redeploying After Code Changes
 
@@ -442,7 +424,11 @@ databricks bundle deploy -p <your-profile> --force          # or force deploy
 **Profiler or dry-run not starting:**
 1. Check `DQX_JOB_ID` is set (visible in the app's environment config in the UI)
 2. Confirm the job exists: `databricks jobs list -p <your-profile>`
-3. Confirm the SP has `CAN_MANAGE` on the job (set automatically by DABs)
+3. Confirm the app SP has `CAN_MANAGE` on the job (set automatically by DABs), and the actual `run_as` runner passes the cold-start UC checks.
+4. For OBO views, confirm runner `SELECT` and app-SP `MANAGE` were granted on the specific view; do not restore `account users` access.
+
+**An oversized-config run fails while reading its staged configuration:**
+The runner reads the row from `<catalog>.<schema>.dq_run_configs`. Confirm the Delta migrations have run (the table exists) and that the actual Jobs `run_as` principal has schema-level `SELECT` / `MODIFY` on the main schema.
 
 **Job fails with "file not found" on wheel:**
 The task-runner job installs wheels from the UC volume. If the volume is empty the job fails. Start the app and wait for the wheel upload to complete:

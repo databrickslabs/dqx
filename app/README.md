@@ -28,7 +28,8 @@ The app uses a two-tier model — no admin-scoped REST calls are made by the app
 Operations that must respect the logged-in user's permissions use the `X-Forwarded-Access-Token` header, injected automatically by Databricks when running on the platform:
 
 - **Unity Catalog browsing** (catalogs, schemas, tables, columns)
-- **Temporary view creation** — the view inherits the user's table permissions so the job can only read data the user can access
+- **Temporary view creation** — source access is checked as the user; each view grants `SELECT` directly to the job's actual `run_as` runner and per-view `MANAGE` to the app SP for orphan cleanup. Failed grants block submission; no broad built-in audience grant is used.
+- **Schedule permission checks** — OBO SQL inspects grants and verifies source catalog/schema usage plus `SELECT` for the app scheduler and runner; failed runner grants block scheduling.
 
 #### SP (Service Principal) — app identity
 
@@ -61,7 +62,7 @@ Trigger (user request OR scheduler tick)
     │              ├─ Reads from the temporary view
     │              ├─ Runs profiler / dry-run / scheduled checks (PySpark)
     │              ├─ Writes results, metrics, quarantine rows to Delta tables
-    │              └─ Drops the temporary view (finally block)
+    │              └─ Cleanup drops the view; app SP has per-view MANAGE for orphan cleanup
     │
     └─ Return run_id + job_run_id
            └─ Frontend (or scheduler) polls /status until complete
@@ -69,6 +70,14 @@ Trigger (user request OR scheduler tick)
 ```
 
 `DQX_JOB_ID` identifies which job to submit runs to (injected by DABs in production; set manually in `.env` for local dev).
+
+### Setup Permissions and Audience
+
+On every cold startup, setup resolves the task-runner job's actual `run_as` and checks `USE CATALOG`, `USE SCHEMA` on main and temporary schemas, wheel-volume `READ VOLUME`, and schema-level `SELECT` / `MODIFY` on the main schema. Schema grants cover current and future tables; table-specific grants alone do not satisfy setup. Schema ownership alone does not establish data access to its tables. Missing or uninspectable UC access blocks readiness; checks are not cached and setup does not automatically grant UC runner privileges. The runner needs no Lakebase access: run configs too large for job parameters are staged in the Delta `dq_run_configs` table in the main schema, which the main-schema `SELECT` / `MODIFY` grants already cover.
+
+`DQX_USER_GROUPS` accepts a JSON list of scoped group names or simple unquoted comma-separated names, default `[]` for administrator-managed audience access. Startup warns when no audience groups are configured and does not revoke existing grants. Built-in `users` / `account users` audiences are rejected. DAB's `studio_user_group` defaults to the existing group `dqx-studio-users` and drives the JSON config plus warehouse, app, dashboard, and schema audience grants. Configured audience grants are best effort and do not gate setup readiness.
+
+Genie audience access requires scoped space `CAN_RUN`, Consumer access or Databricks SQL access entitlement, parent usages, and only the five approved view plus two dimension-table grants, never whole-schema `SELECT` or access to the entitlement table. Genie uses embedded compute credentials; Studio's OBO SQL workflows additionally require SQL access entitlement and warehouse `CAN_USE`. Both DAB and Marketplace use the `genie` OAuth scope; upgraded users must renew consent. Warehouse rebind reconciles Genie compute. Existing broad grants are not automatically revoked: administrators must remove legacy broad access and retain only scoped grants, including per-view runner `SELECT` and app-SP cleanup `MANAGE`. See [the deployment grants reference](DEPLOYMENT.md#grants-reference).
 
 ### Startup Wheel Sync
 

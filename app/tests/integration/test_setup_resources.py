@@ -7,14 +7,16 @@ from collections.abc import Callable
 import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import InvalidParameterValue, PermissionDenied
+from databricks.sdk.service.catalog import PermissionsChange, Privilege
 from databricks.sdk.service.jobs import JobRunAs
 
-from tests.integration.conftest import AppLiveSetup, LiveJob, LiveResources
+from tests.integration.conftest import AppLiveSetup, LiveJob, LiveResources, grant_runner_wheel_privileges
 
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
 from databricks_labs_dqx_app.backend.setup.models import SetupState, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.startup import publish_wheels_to_volume
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 _EXPECTED_OLTP_TABLES = (
     "dq_migrations",
@@ -107,7 +109,7 @@ def test_job_setup_admin_grant_is_observable_when_profile_permits(live_job: Live
     assert any(
         entry.user_name == live_job.admin_user
         and any(
-            getattr(permission.permission_level, "value", permission.permission_level) == "CAN_MANAGE"
+            getattr(permission.permission_level, "value", permission.permission_level) in {"CAN_MANAGE", "IS_OWNER"}
             for permission in entry.all_permissions or []
         )
         for entry in permissions
@@ -136,6 +138,43 @@ def test_job_runner_validation_requires_a_preconfigured_external_service_princip
     assert result.state == StepState.PASSED
 
 
+@pytest.mark.parametrize("can_read_volume", [False, True])
+def test_runner_volume_readiness_uses_external_principal_grants(
+    live_resources: LiveResources,
+    make_preconfigured_job: Callable[..., int],
+    make_setup_schema: Callable[..., str],
+    can_read_volume: bool,
+) -> None:
+    """Wheel readiness requires volume reads and usage on the existing temporary schema."""
+    runner_principal = os.environ.get("DQX_TEST_RUNNER_SERVICE_PRINCIPAL", "").strip()
+    if not runner_principal:
+        pytest.skip("Set DQX_TEST_RUNNER_SERVICE_PRINCIPAL to a usable external runner service principal.")
+    try:
+        job_id = make_preconfigured_job(run_as=JobRunAs(service_principal_name=runner_principal))
+    except (InvalidParameterValue, PermissionDenied):
+        pytest.skip("PROFILE must permit a factory job with the external runner service principal.")
+    resources = live_resources.resources
+    make_setup_schema(catalog=resources.volume.catalog, schema=resources.tmp_schema)
+    grant_runner_wheel_privileges(live_resources.workspace, resources, runner_principal)
+    if not can_read_volume:
+        volume = live_resources.volume
+        live_resources.workspace.grants.update(
+            "VOLUME",
+            f"{volume.catalog}.{volume.schema}.{volume.volume}",
+            changes=[PermissionsChange(principal=runner_principal, remove=[Privilege.READ_VOLUME])],
+        )
+
+    result = live_resources.checkers.check_runner_access(job_id)
+
+    assert result.id == SetupStepId.TASK_RUNNER
+    if can_read_volume:
+        assert result.state == StepState.PASSED
+    else:
+        assert result.state == StepState.ACTION_REQUIRED
+        assert result.code == "task_runner_permissions_missing"
+        assert "READ VOLUME" in " ".join(result.instructions)
+
+
 def test_postgres_migrations_create_oltp_tables(live_resources: LiveResources) -> None:
     """A real Lakebase endpoint receives every production OLTP migration table."""
     applied = PgMigrationRunner(live_resources.pg).run_all()
@@ -151,7 +190,19 @@ def test_postgres_migrations_create_oltp_tables(live_resources: LiveResources) -
 
 def test_reconcile_applies_real_setup_actions(app_live_setup: AppLiveSetup) -> None:
     """An explicitly configured app-SP client reconciles the complete setup path."""
-    report = asyncio.run(app_live_setup.orchestrator.reconcile(setup_user=None))
+    reader_ws = app_live_setup.setup_workspace
+    if token := os.environ.get("DQX_TEST_APPS_OBO_TOKEN"):
+        reader_ws = WorkspaceClient(host=reader_ws.config.host, token=token, auth_type="pat")
+    resources = app_live_setup.resources
+    reader_sql = SqlExecutor(
+        ws=reader_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
+    report = asyncio.run(
+        app_live_setup.orchestrator.reconcile(setup_user=None, reader_ws=reader_ws, reader_sql=reader_sql)
+    )
 
     assert report.state == SetupState.READY
     for step_id in (
