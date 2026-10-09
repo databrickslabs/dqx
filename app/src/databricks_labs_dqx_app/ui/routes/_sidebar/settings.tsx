@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Palette, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -45,6 +45,8 @@ import {
 } from "@/lib/label-definition-drafts";
 import { resolveCriticality } from "@/lib/registry-rule-conversion";
 import { GovernedKeyPicker, type GovernedKeySeed } from "@/components/settings/GovernedKeyPicker";
+import { BrandingCard, CompanyNameCard, CustomLogoCard } from "@/components/settings/styling";
+import { Separator } from "@/components/ui/separator";
 import {
   useGetAiSettings,
   useSaveAiSettings,
@@ -104,7 +106,7 @@ import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
 import { sampleValueForKind } from "@/lib/sampling";
-import { Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
+import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -2815,7 +2817,7 @@ function DangerZoneCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "tags" | "danger";
+type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "styling" | "tags" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2846,6 +2848,7 @@ function ConfigPage() {
       { id: "compute", label: t("config.tabCompute"), icon: Cpu },
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "governance", label: t("config.tabGovernance"), icon: Scale },
+      { id: "styling", label: t("config.tabStyling"), icon: Palette },
       { id: "tags", label: t("config.tabTags"), icon: Tags },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
@@ -2870,6 +2873,9 @@ function ConfigPage() {
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
+      { id: "companyName", tab: "styling", title: t("config.styling.companyNameTitle"), keywords: t("config.kwCompanyName"), render: () => <CompanyNameCard /> },
+      { id: "customLogo", tab: "styling", title: t("config.styling.customLogoTitle"), keywords: t("config.kwCustomLogo"), render: () => <CustomLogoCard /> },
+      { id: "branding", tab: "styling", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
@@ -2948,8 +2954,8 @@ function ConfigPage() {
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
+                    <Fragment key={tab.id}>
                     <TabsTrigger
-                      key={tab.id}
                       value={tab.id}
                       className={cn(
                         "gap-1.5",
@@ -2972,6 +2978,11 @@ function ConfigPage() {
                         tab.label
                       )}
                     </TabsTrigger>
+                    {/* data-[orientation] variant so it beats the primitive's h-full (no definite height here). */}
+                    {tab.id === "general" && (
+                      <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-5" aria-hidden="true" />
+                    )}
+                    </Fragment>
                   );
                 })}
               </TabsList>
