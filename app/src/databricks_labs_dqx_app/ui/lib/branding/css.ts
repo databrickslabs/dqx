@@ -1,6 +1,6 @@
 import { isHex } from "./color";
 import { deriveOverrides, effectiveDark, THEMABLE_TOKENS } from "./derive";
-import type { GroupColors } from "./groups";
+import { COLOR_GROUPS, DEFAULT_GROUPS, type GroupColors } from "./groups";
 
 export type BrandingTheme = { light: GroupColors; darkCustomised: boolean; dark: GroupColors };
 export type ThemeOverrides = { light: Record<string, string>; dark: Record<string, string> };
@@ -9,11 +9,17 @@ export const BRANDING_STYLE_ID = "dqx-branding";
 const TOKEN_RE = /^--[a-z][a-z0-9-]*$/;
 const ALLOWED = new Set(THEMABLE_TOKENS);
 
+/**
+ * Dark overrides cover every group set in either mode: a group customised only in light
+ * takes DQX Default's dark value, so each light-overridden token is also declared for dark
+ * and nothing from the light theme can show through in dark mode.
+ */
 export function themeOverrides(theme: BrandingTheme): ThemeOverrides {
-  return {
-    light: deriveOverrides("light", theme.light),
-    dark: deriveOverrides("dark", effectiveDark(theme.light, theme.darkCustomised, theme.dark)),
-  };
+  const dark: GroupColors = { ...effectiveDark(theme.light, theme.darkCustomised, theme.dark) };
+  for (const group of COLOR_GROUPS) {
+    if (theme.light[group] !== undefined && dark[group] === undefined) dark[group] = DEFAULT_GROUPS.dark[group];
+  }
+  return { light: deriveOverrides("light", theme.light), dark: deriveOverrides("dark", dark) };
 }
 
 function rule(selector: string, tokens: Record<string, string>): string {
@@ -24,9 +30,13 @@ function rule(selector: string, tokens: Record<string, string>): string {
   return body ? `${selector}{${body}}` : "";
 }
 
-/** html:root / html.dark out-rank globals.css :root / .dark regardless of load order. */
+/** Light rule selector: never matches in dark mode, and out-ranks globals.css :root. */
+export const LIGHT_SELECTOR = "html:root:not(.dark)";
+/** Dark rule selector: out-ranks globals.css .dark regardless of load order. */
+export const DARK_SELECTOR = "html.dark";
+
 export function toStyleSheet(o: ThemeOverrides): string {
-  return rule("html:root", o.light) + rule("html.dark", o.dark);
+  return rule(LIGHT_SELECTOR, o.light) + rule(DARK_SELECTOR, o.dark);
 }
 
 export function applyStyleSheet(css: string, doc: Document = document): void {

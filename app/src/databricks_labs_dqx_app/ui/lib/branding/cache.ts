@@ -14,6 +14,14 @@ export type BrandingSnapshot = {
   logos: { light: string | null; dark: string | null };
 };
 
+/** DQX Default (nothing customised). Cached explicitly so a default install doesn't wait for branding at load. */
+export const DEFAULT_BRANDING_SNAPSHOT: BrandingSnapshot = {
+  overrides: { light: {}, dark: {} },
+  companyName: null,
+  logoMode: "shared",
+  logos: { light: null, dark: null },
+};
+
 function validTokens(v: unknown): v is Record<string, string> {
   return (
     !!v &&

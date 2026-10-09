@@ -30,8 +30,9 @@
       // dqx-branding-bootstrap
       // Apply the cached company theme before React mounts so the loading screen
       // is already themed. Token names must match THEMABLE_TOKENS in
-      // lib/branding/derive.ts (enforced by index-html-bootstrap.test.ts); any
-      // invalid entry discards the whole cache.
+      // lib/branding/derive.ts and the selectors must match lib/branding/css.ts
+      // (both enforced by index-html-bootstrap.test.ts); any invalid entry
+      // discards the whole cache. A cached DQX Default applies nothing.
       (function (win) {
         try {
           var raw = win.localStorage.getItem("dqx.branding.v1");
@@ -78,7 +79,7 @@
             }
             return body ? sel + "{" + body + "}" : "";
           };
-          var light = build("html:root", s && s.overrides && s.overrides.light);
+          var light = build("html:root:not(.dark)", s && s.overrides && s.overrides.light);
           var dark = build("html.dark", s && s.overrides && s.overrides.dark);
           if (light === null || dark === null) return;
           var css = light + dark;

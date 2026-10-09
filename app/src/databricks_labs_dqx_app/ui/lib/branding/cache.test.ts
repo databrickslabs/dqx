@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { CACHE_KEY, clearBrandingCache, readBrandingCache, snapshotFromApi, writeBrandingCache, type BrandingSnapshot } from "./cache";
+import {
+  CACHE_KEY,
+  clearBrandingCache,
+  DEFAULT_BRANDING_SNAPSHOT,
+  readBrandingCache,
+  snapshotFromApi,
+  writeBrandingCache,
+  type BrandingSnapshot,
+} from "./cache";
 
 class MemoryStorage implements Storage {
   private m = new Map<string, string>();
@@ -47,6 +55,21 @@ describe("branding cache", () => {
     writeBrandingCache(good, s);
     clearBrandingCache(s);
     expect(readBrandingCache(s)).toBeNull();
+  });
+  test("DQX Default snapshot is a valid cache entry", () => {
+    const s = new MemoryStorage();
+    writeBrandingCache(DEFAULT_BRANDING_SNAPSHOT, s);
+    expect(readBrandingCache(s)).toEqual(DEFAULT_BRANDING_SNAPSHOT);
+  });
+  test("snapshotFromApi of an uncustomised install equals the DQX Default snapshot", () => {
+    const snap = snapshotFromApi({
+      company_name: null,
+      logo_mode: "shared",
+      light: { colors: {} },
+      dark: { customised: false, colors: {} },
+      logos: { light: null, dark: null },
+    });
+    expect(snap).toEqual(DEFAULT_BRANDING_SNAPSHOT);
   });
   test("snapshotFromApi maps the API shape", () => {
     const snap = snapshotFromApi({

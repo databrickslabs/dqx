@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CACHE_KEY } from "./cache";
+import { CACHE_KEY, DEFAULT_BRANDING_SNAPSHOT } from "./cache";
+import { DARK_SELECTOR, LIGHT_SELECTOR, themeOverrides, toStyleSheet } from "./css";
 import { THEMABLE_TOKENS } from "./derive";
 
 const html = readFileSync(join(import.meta.dir, "../../index.html"), "utf8");
@@ -27,12 +28,21 @@ function runShipped(cached: string | null) {
 }
 
 const logos = { light: null, dark: null };
-const cache = (light: Record<string, string>) =>
-  JSON.stringify({ overrides: { light, dark: {} }, companyName: null, logoMode: "shared", logos });
+const cache = (light: Record<string, string>, dark: Record<string, string> = {}) =>
+  JSON.stringify({ overrides: { light, dark }, companyName: null, logoMode: "shared", logos });
 
 describe("shipped index.html branding bootstrap", () => {
   test("applies a valid cache", () => {
-    expect(runShipped(cache({ "--header": "#3F0E40" }))[0].textContent).toBe("html:root{--header:#3F0E40;}");
+    expect(runShipped(cache({ "--header": "#3F0E40" }))[0].textContent).toBe("html:root:not(.dark){--header:#3F0E40;}");
+  });
+  test("produces the same stylesheet as toStyleSheet", () => {
+    const o = themeOverrides({ light: { header: "#3F0E40", page_background: "#FFF8E7" }, darkCustomised: true, dark: {} });
+    expect(runShipped(cache(o.light, o.dark))[0].textContent).toBe(toStyleSheet(o));
+    expect(shippedBootstrapBody()).toContain(`"${LIGHT_SELECTOR}"`);
+    expect(shippedBootstrapBody()).toContain(`"${DARK_SELECTOR}"`);
+  });
+  test("cached DQX Default applies nothing", () => {
+    expect(runShipped(JSON.stringify(DEFAULT_BRANDING_SNAPSHOT))).toEqual([]);
   });
   test("ignores a tampered cache", () => {
     expect(runShipped(cache({ "--header": "red;}body{display:none" }))).toEqual([]);

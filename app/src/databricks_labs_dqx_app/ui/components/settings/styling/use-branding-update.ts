@@ -7,7 +7,7 @@ import { getGetBrandingQueryKey, type BrandingOut } from "@/lib/api";
 import { extractApiError } from "@/lib/api-error";
 import {
   applyStyleSheet,
-  clearBrandingCache,
+  DEFAULT_BRANDING_SNAPSHOT,
   snapshotFromApi,
   toStyleSheet,
   writeBrandingCache,
@@ -31,7 +31,7 @@ export function useBrandingUpdate(): {
   const applyReset = useCallback(
     (response: AxiosResponse<BrandingOut>) => {
       queryClient.setQueryData(getGetBrandingQueryKey(), response);
-      clearBrandingCache();
+      writeBrandingCache(DEFAULT_BRANDING_SNAPSHOT);
       applyStyleSheet("");
     },
     [queryClient],
