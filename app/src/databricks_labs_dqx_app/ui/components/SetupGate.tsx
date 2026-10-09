@@ -12,7 +12,9 @@ import {
   configureSetup,
   getGetSetupStatusQueryKey,
   getSetupStatus,
+  overrideSetupStep,
   reconcileSetup,
+  type SetupStepId,
 } from "@/lib/api";
 import {
   setupView,
@@ -88,6 +90,11 @@ export function SetupGate({ children }: SetupGateProps) {
   const reconciliation = useMutation(
     reconciliationMutationOptions(queryClient, () => reconcileSetup()),
   );
+  const override = useMutation({
+    mutationFn: (stepId: SetupStepId) =>
+      overrideSetupStep({ step_id: stepId }),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
   const configuration = useMutation({
     mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
     onSettled: () => invalidateSetupStatus(queryClient),
@@ -98,7 +105,7 @@ export function SetupGate({ children }: SetupGateProps) {
     refetchInterval: (query) =>
       setupPollingInterval(
         query.state.data?.data.report.state,
-        reconciliation.isPending,
+        reconciliation.isPending || override.isPending,
       ),
     refetchIntervalInBackground: setupPollingInBackground(),
   });
@@ -133,7 +140,9 @@ export function SetupGate({ children }: SetupGateProps) {
       workspaceHost={workspaceHost.data?.workspace_host}
       isReconciling={reconciliation.isPending}
       onReconcile={() => reconciliation.mutate()}
-      reconciliationFailed={reconciliation.isError}
+      reconciliationFailed={reconciliation.isError || override.isError}
+      onOverride={(stepId) => override.mutate(stepId)}
+      isOverriding={override.isPending}
       onAcknowledgeWarnings={onAcknowledgeWarnings}
       onConfigure={(values) => configuration.mutate(values)}
       isConfiguring={configuration.isPending}

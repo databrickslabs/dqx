@@ -19,6 +19,7 @@ _ALLOWED_BEFORE_READY = frozenset(
         ("GET", "/api/v1/setup/status"),
         ("POST", "/api/v1/setup/reconcile"),
         ("POST", "/api/v1/setup/configuration"),
+        ("POST", "/api/v1/setup/override"),
     }
 )
 

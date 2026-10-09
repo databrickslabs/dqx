@@ -4438,6 +4438,7 @@ export const SetupActionId = {
   reconcile: 'reconcile',
   verify_again: 'verify_again',
   configure: 'configure',
+  override: 'override',
 } as const;
 
 /**
@@ -4473,6 +4474,13 @@ export interface SetupConfigurationView {
   schemas?: string[];
   broad_audience?: boolean;
   locked?: boolean;
+}
+
+/**
+ * Administrator confirmation that a step's requirement was met in a way Studio cannot see.
+ */
+export interface SetupOverrideRequest {
+  step_id: SetupStepId;
 }
 
 export type SetupReportCurrentStep = SetupStepId | null;
@@ -4543,6 +4551,7 @@ export const SetupStepId = {
   migrations: 'migrations',
   activation: 'activation',
   access: 'access',
+  ai: 'ai',
   app_sharing: 'app_sharing',
 } as const;
 
@@ -4589,6 +4598,7 @@ export const StepState = {
   action_required: 'action_required',
   failed: 'failed',
   warning: 'warning',
+  overridden: 'overridden',
 } as const;
 
 /**
@@ -6469,6 +6479,69 @@ export const useReconcileSetup = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getReconcileSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Continue past a step an administrator confirmed is set up in a way Studio cannot see.
+ * @summary Override Setup Step
+ */
+export const overrideSetupStep = (
+    setupOverrideRequest: SetupOverrideRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/override`,
+      setupOverrideRequest,options
+    );
+  }
+
+
+
+export const getOverrideSetupStepMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext> => {
+
+const mutationKey = ['overrideSetupStep'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof overrideSetupStep>>, {data: SetupOverrideRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  overrideSetupStep(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type OverrideSetupStepMutationResult = NonNullable<Awaited<ReturnType<typeof overrideSetupStep>>>
+    export type OverrideSetupStepMutationBody = SetupOverrideRequest
+    export type OverrideSetupStepMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Override Setup Step
+ */
+export const useOverrideSetupStep = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof overrideSetupStep>>,
+        TError,
+        {data: SetupOverrideRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getOverrideSetupStepMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

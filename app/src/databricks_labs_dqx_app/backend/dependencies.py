@@ -25,7 +25,8 @@ from .runtime import rt
 from .sanitization import replace_control_characters
 from .setup.runtime import setup_runtime
 from .setup.configuration import SetupConfigurationStore
-from .setup.orchestrator import SetupOrchestrator
+from .setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
+from .setup.resources import ActiveResources
 from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
@@ -1362,24 +1363,26 @@ def get_setup_configuration_store(request: Request) -> SetupConfigurationStore:
     return store
 
 
-def get_optional_setup_sql_executor(
+def get_setup_sql_reader_factory(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
-) -> SqlExecutor | None:
-    """Return an OBO SQL executor for setup grant inspection, or *None* before storage is bound.
+) -> ReaderSqlFactory:
+    """Return a builder of OBO SQL executors for setup grant inspection on given storage.
 
-    Reconciliation must always reach the orchestrator so an administrator can retry
-    bootstrap steps (identity, Lakebase, configuration) that run before storage exists.
+    Setup binds storage during a run (for example right after new choices are saved), so
+    the orchestrator builds the executor once it knows which storage is bound.
     """
-    bound = orchestrator.bound
-    if bound is None:
-        return None
-    return SqlExecutor(
-        ws=obo_ws,
-        warehouse_id=orchestrator.bootstrap.warehouse_id,
-        catalog=bound.resources.volume.catalog,
-        schema=bound.resources.tmp_schema,
-    )
+    warehouse_id = orchestrator.bootstrap.warehouse_id
+
+    def build(resources: ActiveResources) -> SqlExecutor | None:
+        return SqlExecutor(
+            ws=obo_ws,
+            warehouse_id=warehouse_id,
+            catalog=resources.volume.catalog,
+            schema=resources.tmp_schema,
+        )
+
+    return build
 
 
 def sanitize_setup_display(value: str | None) -> str | None:

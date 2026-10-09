@@ -350,6 +350,10 @@ describe("setup configuration", () => {
   });
 });
 
+function escapeHtml(text: string): string {
+  return renderToStaticMarkup(<>{text}</>);
+}
+
 function readyWithWarning(canManage: boolean): SetupStatusResponse {
   return {
     can_manage: canManage,
@@ -364,7 +368,7 @@ function readyWithWarning(canManage: boolean): SetupStatusResponse {
           code: "app_sharing_unverified",
           summary: "Could not verify that Studio users can open the app.",
           instructions: ["Share the app dqx-studio with group data-team."],
-          actions: ["verify_again"],
+          actions: ["override"],
         },
       ],
     },
@@ -382,7 +386,8 @@ describe("setup warnings review", () => {
       "Could not verify that Studio users can open the app.",
     );
     expect(markup).toContain("Share the app dqx-studio with group data-team.");
-    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).toContain(escapeHtml(en.setup.override.button.app_sharing));
+    expect(markup).not.toContain(`>${en.setup.actions.verify_again}</button>`);
     expect(markup).toContain(en.setup.warningsReview.acknowledge);
   });
 
@@ -451,5 +456,93 @@ describe("editable saved configuration", () => {
     status.report.steps[1] = { id: "configuration", state: "passed" };
 
     expect(renderWizard(status)).not.toContain('name="catalog"');
+  });
+});
+
+describe("setup overrides", () => {
+  function blockedStatus(
+    stepId: SetupStatusResponse["report"]["steps"][number]["id"],
+  ): SetupStatusResponse {
+    return {
+      can_manage: true,
+      admin_group: "dqx-admins",
+      report: {
+        state: "setup_required",
+        current_step: stepId,
+        steps: [
+          {
+            id: stepId,
+            state: "action_required",
+            code: "catalog_permissions_missing",
+            summary: "Studio users don't have the permissions they need.",
+            actions: ["verify_again", "override"],
+          },
+        ],
+      },
+    };
+  }
+
+  function renderWithOverride(status: SetupStatusResponse): string {
+    return renderSetup(
+      <SetupWizard
+        view={setupView(status)}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        onOverride={() => undefined}
+        reconciliationFailed={false}
+      />,
+    );
+  }
+
+  test("offers continue anyway with an explanation of inherited grants", () => {
+    const markup = renderWithOverride(blockedStatus("unity_catalog"));
+
+    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).toContain(en.setup.override.button.default);
+    expect(markup).toContain(escapeHtml(en.setup.override.help.default));
+  });
+
+  test("uses AI-specific wording for the AI step", () => {
+    const markup = renderWithOverride(blockedStatus("ai"));
+
+    expect(markup).toContain(en.setup.override.button.ai);
+    expect(markup).toContain(en.setup.steps.ai);
+  });
+
+  test("hides the override without a handler", () => {
+    const markup = renderSetup(
+      <SetupWizard
+        view={setupView(blockedStatus("warehouse"))}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        reconciliationFailed={false}
+      />,
+    );
+
+    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).not.toContain(en.setup.override.button.default);
+  });
+
+  test("never offers overrides to non-administrators", () => {
+    const status = blockedStatus("access");
+    status.can_manage = false;
+
+    expect(renderGate(status)).not.toContain(en.setup.override.button.default);
+  });
+
+  test("labels overridden steps as confirmed by an administrator", () => {
+    const status = blockedStatus("warehouse");
+    status.report.state = "ready";
+    status.report.steps = [
+      {
+        id: "warehouse",
+        state: "overridden",
+        summary: "An administrator confirmed this is set up.",
+        actions: ["verify_again"],
+      },
+    ];
+    const markup = renderWithOverride(status);
+
+    expect(markup).toContain(en.setup.states.overridden);
   });
 });

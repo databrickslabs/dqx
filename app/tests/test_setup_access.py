@@ -15,7 +15,7 @@ from databricks.sdk.service.iam import PermissionLevel
 
 from databricks_labs_dqx_app.backend.setup.access import GENIE_ALLOWLIST, AudienceAccess
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
-from databricks_labs_dqx_app.backend.setup.models import SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import (
     BootstrapResources,
     LakebaseConnection,
@@ -136,8 +136,8 @@ def test_access_applies_quoted_grants_to_every_uc_principal(workspace, sql) -> N
     _access(workspace, sql).reconcile_access()
 
     statements = _statements(sql)
-    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`" in statements
-    assert "GRANT CREATE TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`" in statements
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`" in statements
+    assert "GRANT CREATE_TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`" in statements
     assert "GRANT SELECT ON TABLE `main`.`dqx_studio_genie`.`mv_dq_scores` TO `data-team`" in statements
     assert "GRANT SELECT ON SCHEMA `main`.`dqx_studio_demo` TO `data-team`" in statements
     assert not any("ON SCHEMA `main`.`dqx_studio_genie` TO" in s and "SELECT" in s for s in statements)
@@ -150,7 +150,7 @@ def test_access_reports_missing_grants_with_statements(workspace, sql) -> None:
 
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "audience_grants_missing"
-    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
 
 
 def test_access_reports_uninspectable_grants_separately(workspace, sql) -> None:
@@ -160,7 +160,8 @@ def test_access_reports_uninspectable_grants_separately(workspace, sql) -> None:
 
     assert step.code == "audience_grant_check_failed"
     assert "denied" not in " ".join(step.instructions)
-    assert "READ METADATA" in step.instructions[0]
+    assert "metastore admin" in step.instructions[0]
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 
 
 def test_unknown_grants_take_precedence_over_missing_grants(workspace, sql) -> None:
@@ -174,7 +175,7 @@ def test_unknown_grants_take_precedence_over_missing_grants(workspace, sql) -> N
     step = _access(workspace, sql).reconcile_access()
 
     assert step.code == "audience_grant_check_failed"
-    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
 
 
 def test_grant_failures_are_ignored_and_verification_decides(workspace, sql) -> None:
@@ -332,7 +333,7 @@ def test_unconfigured_shared_resources_are_not_applicable(workspace, sql) -> Non
     step = _access(workspace, sql).reconcile_access()
 
     assert step.state == StepState.PASSED
-    assert "not applicable" in step.summary
+    assert "Skipped because they aren't set up" in step.summary
     workspace.permissions.get.assert_not_called()
 
 
@@ -366,7 +367,8 @@ def test_app_sharing_missing_blocks(workspace, sql) -> None:
 
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "app_sharing_missing"
-    assert any("data-team" in instruction and "CAN USE" in instruction for instruction in step.instructions)
+    assert any("data-team" in instruction and "Can use" in instruction for instruction in step.instructions)
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
     workspace.apps.update_permissions.assert_not_called()
     workspace.apps.set_permissions.assert_not_called()
 
@@ -389,6 +391,8 @@ def test_app_sharing_unreadable_is_a_warning(workspace, sql) -> None:
     assert step.state == StepState.WARNING
     assert step.code == "app_sharing_unverified"
     assert any("data-team" in instruction for instruction in step.instructions)
+    # Nobody can read the app ACL, so verifying again cannot help; only confirming does.
+    assert step.actions == (SetupActionId.OVERRIDE,)
     workspace.apps.update_permissions.assert_not_called()
 
 

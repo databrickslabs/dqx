@@ -304,23 +304,34 @@ async def test_startup_does_not_activate_when_required_view_fails(
         await startup.stop_studio(lifecycle)
 
 
-@pytest.mark.asyncio
-async def test_metadata_dimension_failure_blocks_activation_until_retry(
-    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A failed metadata-dimension refresh keeps Studio inactive so the next reconcile retries it."""
+def _patch_metadata_activation(
+    monkeypatch: pytest.MonkeyPatch, resources: ActiveResources, *, tables_exist: bool
+) -> tuple[dict[str, object], MagicMock, MagicMock]:
     from databricks_labs_dqx_app.backend import startup
-    from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
 
+    workspace = MagicMock()
+    workspace.tables.exists.return_value = SimpleNamespace(table_exists=tables_exist)
     metadata_dims = MagicMock()
     metadata_dims.refresh.side_effect = [RuntimeError("SQLSTATE 42501"), None]
-    captured = _patch_startup(monkeypatch, resources)
+    captured = _patch_startup(monkeypatch, resources, workspace=workspace)
     monkeypatch.setattr(startup, "MetadataDimService", lambda **_kwargs: metadata_dims)
     monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
     monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
     monkeypatch.setattr(startup, "_ensure_genie_space", lambda *_args: None)
     monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
     monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+    return captured, metadata_dims, workspace
+
+
+@pytest.mark.asyncio
+async def test_first_metadata_dimension_failure_blocks_activation_until_retry(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the metadata tables the access step cannot grant them, so activation must wait."""
+    from databricks_labs_dqx_app.backend import startup
+    from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+
+    captured, metadata_dims, _ = _patch_metadata_activation(monkeypatch, resources, tables_exist=False)
 
     lifecycle = await startup.start_studio(FastAPI())
     assert lifecycle is not None
@@ -332,6 +343,32 @@ async def test_metadata_dimension_failure_blocks_activation_until_retry(
 
         await bound.activation.activate()
         assert metadata_dims.refresh.call_count == 2
+        assert startup.application_runtime.require_resources() == resources
+    finally:
+        await startup.stop_studio(lifecycle)
+
+
+@pytest.mark.asyncio
+async def test_metadata_dimension_refresh_failure_keeps_activation_when_tables_exist(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient refresh failure after an earlier refresh must not take Studio down."""
+    from databricks_labs_dqx_app.backend import startup
+
+    captured, metadata_dims, workspace = _patch_metadata_activation(monkeypatch, resources, tables_exist=True)
+
+    lifecycle = await startup.start_studio(FastAPI())
+    assert lifecycle is not None
+    try:
+        bound = await captured["binder"].bind(resources)
+        await bound.activation.activate()
+
+        assert metadata_dims.refresh.call_count == 1
+        checked = {call.args[0] for call in workspace.tables.exists.call_args_list}
+        assert checked == {
+            f"{resources.volume.catalog}.{resources.genie_schema}.dim_dq_rules",
+            f"{resources.volume.catalog}.{resources.genie_schema}.dim_dq_monitored_tables",
+        }
         assert startup.application_runtime.require_resources() == resources
     finally:
         await startup.stop_studio(lifecycle)

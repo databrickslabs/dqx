@@ -2448,7 +2448,6 @@
       "noneForRule": "Cette règle n'est encore appliquée à aucune table."
     },
     "importButton": "Importer",
-    "colAppliedRules": "Règles appliquées",
     "groupByNone": "Aucun",
     "groupByDqScore": "Score DQ",
     "groupByCatalog": "Catalogue",
@@ -3022,6 +3021,7 @@
       "configuration": "Le catalogue, le préfixe de stockage et le groupe d'audience utilisés par Studio pour ses données et ses accès.",
       "storage": "Crée les schémas Unity Catalog et le volume de wheels qui contiennent l'état de Studio, les vues temporaires et les objets destinés à Genie.",
       "access": "Accorde au groupe d'audience et aux administrateurs l'accès à l'espace de travail et aux données nécessaire pour utiliser Studio.",
+      "ai": "Vérifie que les utilisateurs de Studio peuvent utiliser le modèle d'IA des suggestions de règles. Sinon, les fonctionnalités d'IA sont désactivées jusqu'à ce que l'accès soit corrigé.",
       "app_sharing": "Vérifie que le groupe d'audience peut ouvrir cette application. Le partage se gère dans les autorisations de l'application."
     },
     "steps": {
@@ -3036,6 +3036,7 @@
       "configuration": "Configuration de Studio",
       "storage": "Schémas et volume de stockage",
       "access": "Accès de l'audience",
+      "ai": "Fonctionnalités d'IA",
       "app_sharing": "Partage de l'application"
     },
     "states": {
@@ -3044,7 +3045,8 @@
       "passed": "Prêt",
       "action_required": "Action requise",
       "failed": "Attention requise",
-      "warning": "Avertissement"
+      "warning": "Avertissement",
+      "overridden": "Confirmé par un admin"
     },
     "actions": {
       "reconcile": "Lancer la configuration",
@@ -3078,6 +3080,18 @@
         "catalog_check_failed": "Le catalogue n'a pas pu être vérifié. Réessayez.",
         "group_check_failed": "Le groupe n'a pas pu être vérifié. Réessayez.",
         "default": "Impossible d'enregistrer la configuration."
+      }
+    },
+    "override": {
+      "button": {
+        "default": "Continuer quand même",
+        "app_sharing": "J'ai partagé l'application",
+        "ai": "Garder l'IA activée"
+      },
+      "help": {
+        "default": "Studio ne voit que les autorisations accordées directement à un utilisateur ou à un groupe. Si vous avez accordé cet accès via un groupe parent, ou manuellement dans l'espace de travail, il peut sembler manquant ici. Si vous êtes sûr qu'il est en place, vous pouvez continuer quand même.",
+        "app_sharing": "Studio n'est pas autorisé à lire avec qui l'application est partagée ; il ne peut donc pas le vérifier lui-même. Une fois l'application partagée avec vos utilisateurs, confirmez-le ici.",
+        "ai": "Si vos utilisateurs peuvent déjà utiliser ce modèle d'IA (par exemple via un groupe parent), vous pouvez garder les fonctionnalités d'IA activées."
       }
     }
   },

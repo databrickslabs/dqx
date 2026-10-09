@@ -533,9 +533,9 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
 
 5. Grant catalog access on your chosen catalog. The bundle cannot manage grants on a pre-existing catalog. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment, then run these once per catalog (`<audience>` is your `studio_user_group`, or `account users` in broad mode):
    ```sql
-   GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app-sp-client-id>`;
-   GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
-   GRANT USE CATALOG ON CATALOG <catalog> TO `<audience>`;
+   GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG <catalog> TO `<app-sp-client-id>`;
+   GRANT USE_CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
+   GRANT USE_CATALOG ON CATALOG <catalog> TO `<audience>`;
    ```
 
    The setup wizard verifies these and prints the exact `GRANT` statement for any that are still missing. With a custom `admin_group` account group, also grant it `USE CATALOG`: administrators then receive the same access as the audience. With the built-in `admins` group (the default), Unity Catalog cannot grant to it, so administrators must also belong to the audience group to use OBO features.

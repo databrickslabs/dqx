@@ -20,7 +20,7 @@ from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
-from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
@@ -155,16 +155,16 @@ def runner_checkers(checkers: ResourceCheckers, workspace: MagicMock) -> Resourc
 @pytest.mark.parametrize(
     ("securable_type", "full_name", "instruction"),
     [
-        ("CATALOG", "main", "GRANT USE CATALOG ON CATALOG `main` TO `11111111-2222-3333-4444-555555555555`;"),
+        ("CATALOG", "main", "GRANT USE_CATALOG ON CATALOG `main` TO `11111111-2222-3333-4444-555555555555`;"),
         (
             "SCHEMA",
             "main.dqx_studio",
-            "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
+            "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
         ),
         (
             "VOLUME",
             "main.dqx_studio.wheels",
-            "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `11111111-2222-3333-4444-555555555555`;",
+            "GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `11111111-2222-3333-4444-555555555555`;",
         ),
     ],
 )
@@ -187,8 +187,8 @@ def test_runner_missing_wheel_access_requires_specific_grant(
     assert result.id == SetupStepId.TASK_RUNNER
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
-    assert result.instructions == (instruction,)
-    assert result.actions == (SetupActionId.VERIFY_AGAIN,)
+    assert result.instructions == (RUN_GRANTS_AS_OWNER, instruction)
+    assert result.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 
 
 def test_runner_wheel_read_access_passes_without_write_access(runner_checkers: ResourceCheckers) -> None:
@@ -209,7 +209,8 @@ def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceChecker
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.instructions == (
-        "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
+        RUN_GRANTS_AS_OWNER,
+        "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -229,6 +230,7 @@ def test_runner_missing_temporary_schema_select_reports_schema_grant(
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
     assert result.instructions == (
+        RUN_GRANTS_AS_OWNER,
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -259,6 +261,7 @@ def test_runner_missing_schema_data_permission_blocks_readiness(
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.instructions == (
+        RUN_GRANTS_AS_OWNER,
         f"GRANT {missing.value} ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -350,6 +353,7 @@ def test_runner_schema_owner_still_requires_data_grants(
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
     assert result.instructions == (
+        RUN_GRANTS_AS_OWNER,
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
         "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
@@ -394,7 +398,7 @@ def test_runner_permission_lookup_failure_blocks_setup_without_raw_error(
     assert result.code == "task_runner_permission_check_failed"
     assert "sensitive platform payload" not in str(result)
     assert "Verify" in " ".join(result.instructions)
-    assert "READ METADATA" in " ".join(result.instructions)
+    assert "metastore admin" in " ".join(result.instructions)
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
 
 
@@ -532,6 +536,7 @@ def test_runner_schema_permissions_are_rechecked_after_success(
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.instructions == (
+        RUN_GRANTS_AS_OWNER,
         "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -586,7 +591,7 @@ def test_runner_sql_inspection_does_not_accept_another_principals_grants(
     result = runner_checkers.check_runner_access(42, reader_sql=runner_sql)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert any("GRANT READ VOLUME" in instruction for instruction in result.instructions)
+    assert any("GRANT READ_VOLUME" in instruction for instruction in result.instructions)
 
 
 def test_runner_sql_inspection_failure_reports_unknown_permissions(
@@ -655,7 +660,26 @@ def test_catalog_check_requires_app_sp_catalog_privileges(checkers: ResourceChec
 
     assert step.id == SetupStepId.UNITY_CATALOG
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == ("GRANT CREATE SCHEMA ON CATALOG `main` TO `app-sp-id`;",)
+    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;")
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
+
+
+def test_catalog_grant_instruction_uses_underscore_privilege_names(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    """Databricks GRANT SQL takes USE_CATALOG / CREATE_SCHEMA, not space-separated names."""
+
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions()
+        return _effective_permissions(Privilege.USE_CATALOG, principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+
+    step = checkers.check_unity_catalog()
+
+    assert "GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
+    assert not any("USE CATALOG" in instruction for instruction in step.instructions)
 
 
 def test_catalog_check_reports_missing_audience_usage(checkers: ResourceCheckers, workspace: MagicMock) -> None:
@@ -669,7 +693,7 @@ def test_catalog_check_reports_missing_audience_usage(checkers: ResourceCheckers
     step = checkers.check_unity_catalog()
 
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `data-team`;",)
+    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;")
 
 
 def test_catalog_check_grants_audience_usage_best_effort(
@@ -681,7 +705,7 @@ def test_catalog_check_grants_audience_usage_best_effort(
     step = checkers.check_unity_catalog()
 
     assert step.state == StepState.PASSED
-    sql.execute_no_schema.assert_called_once_with("GRANT USE CATALOG ON CATALOG `main` TO `data-team`")
+    sql.execute_no_schema.assert_called_once_with("GRANT USE_CATALOG ON CATALOG `main` TO `data-team`")
 
 
 def test_catalog_owner_passes_without_explicit_privileges(checkers: ResourceCheckers, workspace: MagicMock) -> None:
@@ -702,7 +726,7 @@ def test_catalog_check_unknown_when_grants_unreadable(checkers: ResourceCheckers
     step = checkers.check_unity_catalog()
 
     assert step.code == "catalog_permission_check_failed"
-    assert "READ METADATA" in "\n".join(step.instructions)
+    assert "metastore admin" in "\n".join(step.instructions)
 
 
 def test_catalog_check_reports_missing_group_usage_when_only_show_grants_is_readable(
@@ -718,7 +742,7 @@ def test_catalog_check_reports_missing_group_usage_when_only_show_grants_is_read
     step = checkers.check_unity_catalog(reader_sql=sql)
 
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == ("GRANT USE CATALOG ON CATALOG `main` TO `data-team`;",)
+    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;")
 
 
 def test_catalog_check_accepts_request_scoped_reader_sql(
@@ -783,27 +807,35 @@ def test_storage_schema_with_manage_only_requires_usage_grants(
     step = checkers.ensure_storage(provision=False)
 
     assert step.code == "storage_permissions_missing"
-    assert step.instructions[0] == "GRANT USE SCHEMA, CREATE TABLE ON SCHEMA `main`.`dqx_studio` TO `app-sp-id`;"
+    assert step.instructions[:2] == (
+        RUN_GRANTS_AS_OWNER,
+        "GRANT USE_SCHEMA, CREATE_TABLE ON SCHEMA `main`.`dqx_studio` TO `app-sp-id`;",
+    )
     sql.execute_no_schema.assert_not_called()
 
 
-def test_storage_schema_with_all_privileges_but_no_manage_is_a_collision(
+def test_storage_schema_with_all_privileges_but_no_explicit_manage_is_managed(
     checkers: ResourceCheckers, workspace: MagicMock
 ) -> None:
+    """ALL PRIVILEGES includes MANAGE, so such a schema is Studio-managed, not a collision."""
     workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
     workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
 
-    assert checkers.ensure_storage(provision=True).code == "storage_collision"
+    step = checkers.ensure_storage(provision=False)
+
+    assert step.code != "storage_collision"
+    assert step.state == StepState.PASSED
 
 
 def test_storage_schema_with_owner_unknown_relies_on_manage(checkers: ResourceCheckers, workspace: MagicMock) -> None:
     workspace.schemas.get.return_value = SimpleNamespace(owner=None)
     workspace.volumes.read.return_value = SimpleNamespace(owner="app-sp-id")
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES)
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.USE_SCHEMA, Privilege.CREATE_TABLE)
 
     assert checkers.ensure_storage(provision=False).code == "storage_collision"
-    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.ALL_PRIVILEGES, Privilege.MANAGE)
-    assert checkers.ensure_storage(provision=False).state == StepState.PASSED
+    workspace.grants.get_effective.return_value = _effective_permissions(Privilege.USE_SCHEMA, Privilege.MANAGE)
+    assert checkers.ensure_storage(provision=False).code == "storage_permissions_missing"
 
 
 def test_storage_schema_lookup_error_is_unknown(
@@ -908,7 +940,7 @@ def test_storage_reports_unknown_when_schema_grants_unreadable(
 
 @pytest.mark.parametrize(
     ("missing_privilege", "grant_privilege"),
-    [(Privilege.READ_VOLUME, "READ VOLUME"), (Privilege.WRITE_VOLUME, "WRITE VOLUME")],
+    [(Privilege.READ_VOLUME, "READ_VOLUME"), (Privilege.WRITE_VOLUME, "WRITE_VOLUME")],
 )
 def test_existing_volume_requires_read_and_write(
     checkers: ResourceCheckers, workspace: MagicMock, missing_privilege: Privilege, grant_privilege: str
@@ -921,7 +953,10 @@ def test_existing_volume_requires_read_and_write(
     step = checkers.ensure_storage(provision=False)
 
     assert step.code == "volume_permissions_missing"
-    assert step.instructions == (f"GRANT {grant_privilege} ON VOLUME `main`.`dqx_studio`.`wheels` TO `app-sp-id`;",)
+    assert step.instructions == (
+        RUN_GRANTS_AS_OWNER,
+        f"GRANT {grant_privilege} ON VOLUME `main`.`dqx_studio`.`wheels` TO `app-sp-id`;",
+    )
 
 
 @pytest.mark.parametrize("app_sp_id", ["", "   ", "app-sp\nid"])
@@ -959,7 +994,8 @@ def test_warehouse_requires_app_manage(checkers: ResourceCheckers, compute: Magi
     assert step.id == SetupStepId.WAREHOUSE
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "warehouse_permissions_missing"
-    assert "CAN MANAGE" in step.instructions[0]
+    assert "Can manage" in step.instructions[0]
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
     compute.reconcile_warehouse_audience.assert_not_called()
 
 
@@ -980,14 +1016,46 @@ def test_warehouse_audience_missing_lists_each_group(
     step = checkers.check_warehouse()
 
     assert step.code == "warehouse_audience_missing"
-    assert step.instructions == ("Grant CAN USE on SQL warehouse `warehouse-id` to group `data-team`.",)
+    assert step.instructions == (
+        "Give group `data-team` Can use on SQL warehouse `warehouse-id` "
+        "(SQL Warehouses > the warehouse > Permissions).",
+    )
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 
 
 def test_warehouse_audience_unknown_requires_action(checkers: ResourceCheckers, compute: MagicMock) -> None:
+    """The app can use the warehouse; only the audience is unconfirmed, and the admin can override."""
     compute.warehouse_access_status.return_value = "granted"
     compute.reconcile_warehouse_audience.return_value = "unknown"
 
-    assert checkers.check_warehouse().code == "warehouse_permission_unknown"
+    step = checkers.check_warehouse()
+
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "warehouse_audience_unverified"
+    assert any("data-team" in instruction for instruction in step.instructions)
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
+
+
+def test_warehouse_unreadable_app_access_is_unknown(checkers: ResourceCheckers, compute: MagicMock) -> None:
+    compute.warehouse_access_status.return_value = "unknown"
+
+    step = checkers.check_warehouse()
+
+    assert step.code == "warehouse_permission_unknown"
+    assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
+    compute.reconcile_warehouse_audience.assert_not_called()
+
+
+def test_warehouse_probe_without_audience_never_changes_permissions(
+    checkers: ResourceCheckers, compute: MagicMock
+) -> None:
+    """Probing a candidate warehouse must not grant the audience access to it."""
+    compute.warehouse_access_status.return_value = "granted"
+
+    step = checkers.check_warehouse("candidate-id", include_audience=False)
+
+    assert step.state == StepState.PASSED
+    compute.reconcile_warehouse_audience.assert_not_called()
 
 
 def test_warehouse_unreadable_acl_does_not_fall_back_to_query(
@@ -1115,10 +1183,10 @@ def test_runner_grants_are_least_privilege(checkers, workspace, sql) -> None:
     checkers.check_runner_access(27, include_outputs=True)
 
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
-    assert "GRANT USE SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
     assert "GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `runner-sp`" in statements
-    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
-    assert "GRANT READ VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner-sp`" in statements
+    assert "GRANT USE_SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
+    assert "GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner-sp`" in statements
     assert not any("ALL PRIVILEGES" in s or "genie" in s or "_demo" in s or "ON CATALOG" in s for s in statements)
 
 
@@ -1131,7 +1199,7 @@ def test_runner_data_grants_wait_for_outputs(checkers, workspace, sql) -> None:
     statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
     assert statements
     assert not any("MODIFY" in s for s in statements)
-    assert "GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
+    assert "GRANT USE_SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `runner-sp`" in statements
 
 
 def test_runner_grant_failures_are_ignored_and_verification_decides(checkers, workspace, sql) -> None:
@@ -1227,7 +1295,7 @@ def test_unattended_catalog_check_reuses_admin_verification(
     step = checkers.check_unity_catalog()
 
     assert step.state == StepState.PASSED
-    assert "verified by an administrator" in step.summary
+    assert "confirmed by an administrator" in step.summary
 
 
 def test_unattended_catalog_check_without_memo_requires_verification(
@@ -1310,9 +1378,9 @@ def test_missing_catalog_privilege_blocks_despite_memo(
 
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "catalog_permission_check_failed"
-    assert "verified by an administrator" not in step.summary
-    assert "GRANT CREATE SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
-    assert any("READ METADATA" in instruction for instruction in step.instructions)
+    assert "confirmed by an administrator" not in step.summary
+    assert "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
+    assert any("metastore admin" in instruction for instruction in step.instructions)
 
 
 def test_unattended_catalog_check_with_failing_settings_store_requires_verification(
@@ -1383,7 +1451,7 @@ def test_unattended_runner_check_reuses_admin_verification(
     step = checkers.check_runner_access(42, include_outputs=include_outputs)
 
     assert step.state == StepState.PASSED
-    assert "verified by an administrator" in step.summary
+    assert "confirmed by an administrator" in step.summary
 
 
 def test_runner_memo_is_scoped_to_output_requirements(
@@ -1447,7 +1515,7 @@ def test_missing_runner_privilege_blocks_despite_memo(
 
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "task_runner_permission_check_failed"
-    assert "verified by an administrator" not in step.summary
+    assert "confirmed by an administrator" not in step.summary
     assert any(instruction.startswith("GRANT SELECT ON SCHEMA") for instruction in step.instructions)
 
 
@@ -1472,4 +1540,4 @@ def test_unreadable_studio_object_grants_never_reuse_memo(
     step = checkers.check_runner_access(42, include_outputs=True)
 
     assert step.code == "task_runner_permission_check_failed"
-    assert "verified by an administrator" not in step.summary
+    assert "confirmed by an administrator" not in step.summary

@@ -26,7 +26,9 @@ _SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
 _SCHEMA_PRIVILEGE_ORDER = ("USE_SCHEMA", "CREATE_TABLE")
 _VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
 _RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
-_ADMIN_VERIFIED_SUFFIX = " was verified by an administrator; use Verify again to re-check."
+_ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Verify again to re-check it."
+_OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
+RUN_GRANTS_AS_OWNER = "Ask the owner of these objects to run the following in a SQL editor, then click Verify again:"
 logger = logging.getLogger(__name__)
 
 
@@ -128,26 +130,24 @@ class ResourceCheckers:
                 id=SetupStepId.UNITY_CATALOG,
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permission_check_failed",
-                summary="Could not verify the required Unity Catalog permissions.",
+                summary="Studio couldn't read the permissions on its catalog.",
                 instructions=(
-                    "Verify setup as an administrator with ownership or READ METADATA on CATALOG "
-                    f"{instruction_identifier(catalog)}, or as a metastore administrator, to inspect "
-                    "catalog grants.",
+                    _read_permissions_instruction("catalog", instruction_identifier(catalog)),
                     *_catalog_grant_instructions(catalog, missing_by_principal),
                 ),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                actions=_OVERRIDABLE,
             )
         if missing_by_principal:
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permissions_missing",
-                summary="The app service principal or an audience principal needs additional catalog permissions.",
-                instructions=_catalog_grant_instructions(catalog, missing_by_principal),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                summary="Studio or its users don't have the permissions they need on the catalog.",
+                instructions=(RUN_GRANTS_AS_OWNER, *_catalog_grant_instructions(catalog, missing_by_principal)),
+                actions=_OVERRIDABLE,
             )
         self._record_verification(SetupStepId.UNITY_CATALOG.value, fingerprint)
-        return _passed(SetupStepId.UNITY_CATALOG, "Required Unity Catalog permissions are available.")
+        return _passed(SetupStepId.UNITY_CATALOG, "Studio and its users can use the catalog.")
 
     def check_runner_access(
         self,
@@ -191,10 +191,16 @@ class ResourceCheckers:
             or _has_control_characters(principal)
             or principal.casefold() == app_sp.casefold()
         ):
-            return _action_required(
-                SetupStepId.TASK_RUNNER,
-                "task_runner_identity_unresolved",
-                "Could not resolve a task-runner service principal distinct from the app identity.",
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_identity_unresolved",
+                summary="Studio couldn't find the service principal that runs its jobs.",
+                instructions=(
+                    "Set the task-runner job to run as a service principal other than the app's own "
+                    "(Jobs > the Studio task runner > Run as), then click Verify again.",
+                ),
+                actions=(SetupActionId.VERIFY_AGAIN,),
             )
         self._grant_runner_access(principal, include_outputs=include_outputs)
         volume = self._resources.volume
@@ -203,8 +209,8 @@ class ResourceCheckers:
         quoted_volume = f"{schema}.{instruction_identifier(volume.volume)}"
         quoted_principal = instruction_identifier(principal)
         requirements = [
-            ("CATALOG", volume.catalog, "USE_CATALOG", "USE CATALOG", catalog),
-            ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE SCHEMA", schema),
+            ("CATALOG", volume.catalog, "USE_CATALOG", "USE_CATALOG", catalog),
+            ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE_SCHEMA", schema),
             *(
                 (
                     "SCHEMA",
@@ -213,9 +219,9 @@ class ResourceCheckers:
                     grant,
                     f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
                 )
-                for privilege, grant in (("USE_SCHEMA", "USE SCHEMA"), ("SELECT", "SELECT"))
+                for privilege, grant in (("USE_SCHEMA", "USE_SCHEMA"), ("SELECT", "SELECT"))
             ),
-            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ VOLUME", quoted_volume),
+            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ_VOLUME", quoted_volume),
         ]
         if include_outputs:
             requirements.extend(
@@ -243,12 +249,9 @@ class ResourceCheckers:
                 continue
             if privileges is None:
                 unknown_kinds.add(kind)
-                unknown.append(
-                    f"Verify setup as an administrator with ownership or READ METADATA on {kind} {quoted_name}, "
-                    "or as a metastore administrator, to inspect the runner's grants. "
-                    "SQL verification also requires CAN_USE on the bound warehouse and USE CATALOG/USE SCHEMA "
-                    "on the temporary schema and the object's parent containers."
-                )
+                guidance = _read_permissions_instruction(kind.lower(), quoted_name)
+                if guidance not in unknown:
+                    unknown.append(guidance)
                 continue
             instructions.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
         scope = _RUNNER_OUTPUTS_SCOPE if include_outputs else SetupStepId.TASK_RUNNER.value
@@ -273,21 +276,21 @@ class ResourceCheckers:
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
                 code="task_runner_permission_check_failed",
-                summary="Could not verify task-runner access to required Studio resources.",
+                summary="Studio couldn't read the task runner's permissions.",
                 instructions=(*unknown, *instructions),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                actions=_OVERRIDABLE,
             )
         if instructions:
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
                 code="task_runner_permissions_missing",
-                summary="The task-runner service principal needs access to required Studio resources.",
-                instructions=tuple(instructions),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                summary="The task runner doesn't have all the permissions it needs to run checks.",
+                instructions=(RUN_GRANTS_AS_OWNER, *instructions),
+                actions=_OVERRIDABLE,
             )
         self._record_verification(scope, fingerprint)
-        return _passed(SetupStepId.TASK_RUNNER, "The task-runner service principal has the required Studio access.")
+        return _passed(SetupStepId.TASK_RUNNER, "The task runner has the access it needs.")
 
     def _reuses_verification(
         self,
@@ -356,8 +359,8 @@ class ResourceCheckers:
                     id=SetupStepId.STORAGE,
                     state=StepState.ACTION_REQUIRED,
                     code="storage_missing",
-                    summary="Required Studio storage has not been deployed.",
-                    instructions=("Run make app-deploy again to create the Studio schemas and wheels volume.",),
+                    summary="Studio's schemas and wheels volume haven't been created yet.",
+                    instructions=("Run make app-deploy again to create them, then click Verify again.",),
                     actions=(SetupActionId.VERIFY_AGAIN,),
                 )
             created = self._create_storage(missing_schemas, volume_exists)
@@ -396,7 +399,7 @@ class ResourceCheckers:
         privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES | {"MANAGE"})
         if privileges is None:
             return "failed", frozenset()
-        if "MANAGE" not in privileges:
+        if not has_privilege(privileges, "MANAGE"):
             return "collision", frozenset()
         missing = frozenset(name for name in _SCHEMA_PRIVILEGES if not has_privilege(privileges, name))
         return ("incomplete", missing) if missing else ("ok", frozenset())
@@ -407,10 +410,10 @@ class ResourceCheckers:
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
             code="storage_collision",
-            summary="A schema with a Studio storage name already exists and is not managed by DQX Studio.",
+            summary="A schema with the name Studio wants to use already exists, and Studio doesn't manage it.",
             instructions=tuple(
                 f"Schema {catalog}.{instruction_identifier(schema)} already exists. Choose a different storage "
-                "prefix, or drop or rename the existing schema, then verify again."
+                "prefix, or rename or drop that schema, then click Verify again."
                 for schema in schemas
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
@@ -423,12 +426,15 @@ class ResourceCheckers:
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
             code="storage_permissions_missing",
-            summary="The app service principal needs additional permissions on a Studio schema.",
-            instructions=tuple(
-                "GRANT "
-                + ", ".join(name.replace("_", " ") for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
-                + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
-                for schema, missing in incomplete
+            summary="Studio needs more permissions on one of its schemas.",
+            instructions=(
+                RUN_GRANTS_AS_OWNER,
+                *(
+                    "GRANT "
+                    + ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
+                    + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
+                    for schema, missing in incomplete
+                ),
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
@@ -474,14 +480,15 @@ class ResourceCheckers:
                 id=SetupStepId.STORAGE,
                 state=StepState.ACTION_REQUIRED,
                 code="volume_permissions_missing",
-                summary="The app service principal needs access to the wheels volume.",
+                summary="Studio needs permission to read and write its wheels volume.",
                 instructions=(
-                    f"GRANT {', '.join(p.replace('_', ' ') for p in missing)} ON VOLUME {quoted_volume} "
+                    RUN_GRANTS_AS_OWNER,
+                    f"GRANT {', '.join(p for p in missing)} ON VOLUME {quoted_volume} "
                     f"TO {instruction_identifier(app_sp)};",
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
-        return _passed(SetupStepId.STORAGE, "Studio storage is available.")
+        return _passed(SetupStepId.STORAGE, "Studio's schemas and wheels volume are ready.")
 
     def _grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
         """Best-effort least-privilege grants for the task runner on Studio-managed objects.
@@ -500,11 +507,11 @@ class ResourceCheckers:
         except Exception:
             logger.warning("Could not grant the task runner access to Studio resources; verifying its access instead.")
             return
-        statements = [f"GRANT USE SCHEMA ON SCHEMA {main} TO {grantee}"]
+        statements = [f"GRANT USE_SCHEMA ON SCHEMA {main} TO {grantee}"]
         if include_outputs:
             statements.append(f"GRANT SELECT, MODIFY ON SCHEMA {main} TO {grantee}")
-        statements.append(f"GRANT USE SCHEMA, SELECT ON SCHEMA {tmp} TO {grantee}")
-        statements.append(f"GRANT READ VOLUME ON VOLUME {wheels} TO {grantee}")
+        statements.append(f"GRANT USE_SCHEMA, SELECT ON SCHEMA {tmp} TO {grantee}")
+        statements.append(f"GRANT READ_VOLUME ON VOLUME {wheels} TO {grantee}")
         for statement in statements:
             try:
                 self._sql.execute_no_schema(statement)
@@ -519,7 +526,7 @@ class ResourceCheckers:
             return
         for principal in self._resources.audience.uc_principals:
             try:
-                self._sql.execute_no_schema(f"GRANT USE CATALOG ON CATALOG {catalog} TO {self._sql.q(principal)}")
+                self._sql.execute_no_schema(f"GRANT USE_CATALOG ON CATALOG {catalog} TO {self._sql.q(principal)}")
             except Exception:
                 logger.warning("Could not grant an audience principal USE CATALOG; verifying its access instead.")
 
@@ -527,6 +534,8 @@ class ResourceCheckers:
         self,
         warehouse_id: str | None = None,
         reader_ws: WorkspaceClient | None = None,
+        *,
+        include_audience: bool = True,
     ) -> SetupStep:
         """Verify the app SP holds CAN_MANAGE on the SQL warehouse and the audience CAN_USE.
 
@@ -535,52 +544,80 @@ class ResourceCheckers:
                 omitted (the administrator's override, else the bound warehouse).
             reader_ws: Client permitted to inspect the candidate's access controls,
                 or the app service principal client when omitted.
+            include_audience: Grant the audience CAN_USE, then verify it. When false only the
+                app service principal's access is read, so probing a candidate warehouse
+                never changes its permissions.
         """
-        effective_warehouse_id = (warehouse_id or self._effective_warehouse_id()).strip()
+        effective_warehouse_id = (warehouse_id or self.effective_warehouse_id()).strip()
         effective_reader_ws = reader_ws or self._workspace
         warehouse = instruction_identifier(effective_warehouse_id)
         try:
             status = self._compute.warehouse_access_status(effective_warehouse_id, reader_ws=effective_reader_ws)
-            if status == "granted":
-                status = self._compute.reconcile_warehouse_audience(
-                    effective_warehouse_id, self._resources.audience.workspace_principals
-                )
-                if status == "missing":
-                    return SetupStep(
-                        id=SetupStepId.WAREHOUSE,
-                        state=StepState.ACTION_REQUIRED,
-                        code="warehouse_audience_missing",
-                        summary="Some Studio users cannot use the SQL warehouse.",
-                        instructions=tuple(
-                            f"Grant CAN USE on SQL warehouse {warehouse} to group {instruction_identifier(group)}."
-                            for group in self._resources.audience.workspace_principals
-                        ),
-                        actions=(SetupActionId.VERIFY_AGAIN,),
-                    )
-                if status == "granted":
-                    return _passed(SetupStepId.WAREHOUSE, "The SQL warehouse is ready for the app and its users.")
-            elif status == "missing":
+            if status == "missing":
                 return SetupStep(
                     id=SetupStepId.WAREHOUSE,
                     state=StepState.ACTION_REQUIRED,
                     code="warehouse_permissions_missing",
-                    summary="The app service principal needs CAN MANAGE on the SQL warehouse.",
-                    instructions=(f"Grant CAN MANAGE on SQL warehouse {warehouse} to the app service principal.",),
-                    actions=(SetupActionId.VERIFY_AGAIN,),
+                    summary="Studio needs the Can manage permission on its SQL warehouse.",
+                    instructions=(
+                        f"Give the app's service principal Can manage on SQL warehouse {warehouse} "
+                        "(SQL Warehouses > the warehouse > Permissions), then click Verify again.",
+                    ),
+                    actions=_OVERRIDABLE,
                 )
-        except Exception:
-            return _action_required(
-                SetupStepId.WAREHOUSE,
-                "warehouse_permission_check_failed",
-                "Could not verify SQL warehouse access.",
+            if status != "granted":
+                return SetupStep(
+                    id=SetupStepId.WAREHOUSE,
+                    state=StepState.ACTION_REQUIRED,
+                    code="warehouse_permission_unknown",
+                    summary="Studio couldn't read the permissions on its SQL warehouse.",
+                    instructions=(
+                        f"Make sure the app's service principal has Can manage on SQL warehouse {warehouse}, "
+                        "then click Verify again while signed in as someone who can manage the warehouse.",
+                    ),
+                    actions=_OVERRIDABLE,
+                )
+            if not include_audience:
+                return _passed(SetupStepId.WAREHOUSE, "Studio can use the SQL warehouse.")
+            status = self._compute.reconcile_warehouse_audience(
+                effective_warehouse_id, self._resources.audience.workspace_principals
             )
-        return _action_required(
-            SetupStepId.WAREHOUSE,
-            "warehouse_permission_unknown",
-            "Could not determine SQL warehouse access.",
+        except Exception:
+            return SetupStep(
+                id=SetupStepId.WAREHOUSE,
+                state=StepState.ACTION_REQUIRED,
+                code="warehouse_permission_check_failed",
+                summary="Studio couldn't check the permissions on its SQL warehouse.",
+                instructions=(f"Check that SQL warehouse {warehouse} still exists, then click Verify again.",),
+                actions=_OVERRIDABLE,
+            )
+        if status == "granted":
+            return _passed(SetupStepId.WAREHOUSE, "Studio and its users can use the SQL warehouse.")
+        audience_instructions = tuple(
+            f"Give group {instruction_identifier(group)} Can use on SQL warehouse {warehouse} "
+            "(SQL Warehouses > the warehouse > Permissions)."
+            for group in self._resources.audience.workspace_principals
+        )
+        if status == "missing":
+            return SetupStep(
+                id=SetupStepId.WAREHOUSE,
+                state=StepState.ACTION_REQUIRED,
+                code="warehouse_audience_missing",
+                summary="Studio users can't use the SQL warehouse yet.",
+                instructions=audience_instructions,
+                actions=_OVERRIDABLE,
+            )
+        return SetupStep(
+            id=SetupStepId.WAREHOUSE,
+            state=StepState.ACTION_REQUIRED,
+            code="warehouse_audience_unverified",
+            summary="Studio can use the SQL warehouse, but couldn't confirm that Studio users can.",
+            instructions=audience_instructions,
+            actions=_OVERRIDABLE,
         )
 
-    def _effective_warehouse_id(self) -> str:
+    def effective_warehouse_id(self) -> str:
+        """Return the warehouse Studio runs SQL on: the administrator's choice, else the bound warehouse."""
         if self._configured_warehouse_id is not None:
             try:
                 configured = self._configured_warehouse_id()
@@ -613,9 +650,16 @@ class ResourceCheckers:
 def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
     quoted_catalog = instruction_identifier(catalog)
     return tuple(
-        f"GRANT {', '.join(name.replace('_', ' ') for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
+        f"GRANT {', '.join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
         f"ON CATALOG {quoted_catalog} TO {instruction_identifier(principal)};"
         for principal, privileges in missing
+    )
+
+
+def _read_permissions_instruction(kind: str, quoted_name: str) -> str:
+    return (
+        f"Sign in as the owner of {kind} {quoted_name} or a metastore admin, then click Verify again "
+        "so Studio can read its permissions. You also need access to Studio's SQL warehouse."
     )
 
 
@@ -623,7 +667,7 @@ def _creation_failed() -> SetupStep:
     return _action_required(
         SetupStepId.STORAGE,
         "storage_creation_failed",
-        "Could not create the required Studio schemas and wheels volume.",
+        "Studio couldn't create its schemas and wheels volume.",
         action=SetupActionId.RECONCILE,
     )
 
@@ -632,7 +676,7 @@ def _storage_check_failed() -> SetupStep:
     return _action_required(
         SetupStepId.STORAGE,
         "storage_permission_check_failed",
-        "Could not verify ownership or access of the Studio storage.",
+        "Studio couldn't check who owns its schemas and wheels volume.",
     )
 
 
@@ -660,7 +704,7 @@ def _identity_required(step_id: SetupStepId) -> SetupStep:
     return _action_required(
         step_id,
         "app_identity_unresolved",
-        "Could not resolve the app service principal identity.",
+        "Studio couldn't work out which service principal it runs as.",
     )
 
 

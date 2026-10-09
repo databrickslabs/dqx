@@ -15,7 +15,7 @@ from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_conf,
     get_obo_ws,
-    get_optional_setup_sql_executor,
+    get_setup_sql_reader_factory,
     get_setup_configuration_store,
     get_sp_ws,
 )
@@ -103,6 +103,11 @@ def reader_sql() -> MagicMock:
     return create_autospec(SqlExecutor, instance=True)
 
 
+@pytest.fixture
+def reader_sql_factory(reader_sql: MagicMock) -> MagicMock:
+    return MagicMock(return_value=reader_sql)
+
+
 class MemorySettings:
     """In-memory setup settings persistence."""
 
@@ -130,14 +135,18 @@ def sp_ws() -> MagicMock:
 
 @pytest.fixture
 def client(
-    obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock, sp_ws: MagicMock, settings: MemorySettings
+    obo_ws: MagicMock,
+    orchestrator: MagicMock,
+    reader_sql_factory: MagicMock,
+    sp_ws: MagicMock,
+    settings: MemorySettings,
 ) -> Iterator[TestClient]:
     """Expose the registered API with OBO identity and setup orchestration injected."""
     previous_report = setup_runtime.report()
     had_orchestrator = hasattr(app.state, "setup_orchestrator")
     previous_orchestrator = getattr(app.state, "setup_orchestrator", None)
     app.dependency_overrides[get_obo_ws] = lambda: obo_ws
-    app.dependency_overrides[get_optional_setup_sql_executor] = lambda: reader_sql
+    app.dependency_overrides[get_setup_sql_reader_factory] = lambda: reader_sql_factory
     app.dependency_overrides[get_conf] = lambda: AppConfig(admin_group="admins", catalog="")
     app.dependency_overrides[get_sp_ws] = lambda: sp_ws
     app.dependency_overrides[get_setup_configuration_store] = lambda: SetupConfigurationStore(settings)
@@ -160,7 +169,7 @@ def client(
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_obo_ws, None)
-        app.dependency_overrides.pop(get_optional_setup_sql_executor, None)
+        app.dependency_overrides.pop(get_setup_sql_reader_factory, None)
         app.dependency_overrides.pop(get_conf, None)
         app.dependency_overrides.pop(get_sp_ws, None)
         app.dependency_overrides.pop(get_setup_configuration_store, None)
@@ -223,29 +232,35 @@ def test_reconcile_requires_bootstrap_admin_group(client: TestClient, obo_ws: Ma
     assert response.status_code == 403
 
 
-def test_reconcile_sql_reader_does_not_require_activated_resources(client: TestClient, orchestrator: MagicMock) -> None:
-    app.dependency_overrides.pop(get_optional_setup_sql_executor)
+def test_reconcile_sql_reader_does_not_require_activated_resources(
+    client: TestClient, orchestrator: MagicMock, resources: ActiveResources
+) -> None:
+    app.dependency_overrides.pop(get_setup_sql_reader_factory)
     previous_resources = rt.resources
     rt.resources = None
     try:
         response = client.post("/api/v1/setup/reconcile")
         assert response.status_code == 200
-        assert isinstance(orchestrator.reconcile.call_args.kwargs["reader_sql"], SqlExecutor)
+        factory = orchestrator.reconcile.call_args.kwargs["reader_sql_factory"]
+        assert isinstance(factory(resources), SqlExecutor)
         assert rt.resources is None
     finally:
         rt.resources = previous_resources
 
 
-def test_unbound_reconcile_reaches_orchestrator_without_sql_reader(client: TestClient, orchestrator: MagicMock) -> None:
+def test_unbound_reconcile_reaches_orchestrator_with_a_deferred_sql_reader(
+    client: TestClient, orchestrator: MagicMock
+) -> None:
     """A pre-bind bootstrap failure must not lock administrators out of retrying setup."""
-    app.dependency_overrides.pop(get_optional_setup_sql_executor)
+    app.dependency_overrides.pop(get_setup_sql_reader_factory)
     orchestrator.bound = None
 
     response = client.post("/api/v1/setup/reconcile")
 
     assert response.status_code == 200
     orchestrator.reconcile.assert_awaited_once()
-    assert orchestrator.reconcile.call_args.kwargs["reader_sql"] is None
+    assert "reader_sql" not in orchestrator.reconcile.call_args.kwargs
+    assert callable(orchestrator.reconcile.call_args.kwargs["reader_sql_factory"])
 
 
 def test_reconcile_does_not_trust_cached_setup_access(client: TestClient, obo_ws: MagicMock) -> None:
@@ -261,19 +276,19 @@ def test_reconcile_does_not_trust_cached_setup_access(client: TestClient, obo_ws
 
 
 def test_reconcile_passes_authenticated_admin_to_orchestrator(
-    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql: MagicMock
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
 ) -> None:
     """The reconciliation transition must receive its trusted administrator actor."""
     response = client.post("/api/v1/setup/reconcile")
 
     assert response.status_code == 200
     orchestrator.reconcile.assert_awaited_once_with(
-        setup_user="admin@example.com", reader_ws=obo_ws, reader_sql=reader_sql
+        setup_user="admin@example.com", reader_ws=obo_ws, reader_sql_factory=reader_sql_factory
     )
 
 
 def test_reconcile_sanitizes_the_authenticated_administrator_name(
-    client: TestClient, obo_ws: MagicMock, orchestrator: MagicMock, reader_sql: MagicMock
+    client: TestClient, obo_ws: MagicMock, orchestrator: MagicMock, reader_sql_factory: MagicMock
 ) -> None:
     """Control characters in a trusted SCIM name must not reach setup side effects."""
     obo_ws.current_user.me.return_value = user_in_groups("admins", user_name=" admin\n@example.com ")
@@ -282,7 +297,7 @@ def test_reconcile_sanitizes_the_authenticated_administrator_name(
 
     assert response.status_code == 200
     orchestrator.reconcile.assert_awaited_once_with(
-        setup_user="admin @example.com", reader_ws=obo_ws, reader_sql=reader_sql
+        setup_user="admin @example.com", reader_ws=obo_ws, reader_sql_factory=reader_sql_factory
     )
 
 
@@ -432,10 +447,61 @@ def test_configuration_encodes_group_in_scim_filter(client: TestClient, sp_ws: M
 
 
 def test_configuration_saves_and_reconciles(
-    client: TestClient, obo_ws: MagicMock, orchestrator: MagicMock, settings: MemorySettings
+    client: TestClient,
+    obo_ws: MagicMock,
+    orchestrator: MagicMock,
+    settings: MemorySettings,
+    reader_sql_factory: MagicMock,
 ) -> None:
+    """Reconcile gets a factory so the first check inspects grants on the newly saved storage."""
     response = client.post(_CONFIG_URL, json=_VALID)
 
     assert response.status_code == 200
     assert settings.values["setup_audience_group"] == "data-team"
-    orchestrator.reconcile.assert_awaited_once_with(setup_user="admin@example.com", reader_ws=obo_ws, reader_sql=None)
+    orchestrator.reconcile.assert_awaited_once_with(
+        setup_user="admin@example.com", reader_ws=obo_ws, reader_sql_factory=reader_sql_factory
+    )
+
+
+_OVERRIDE_URL = "/api/v1/setup/override"
+
+
+def test_override_reruns_setup_for_the_confirmed_step(
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
+) -> None:
+    report = SetupReport(state=SetupState.READY, steps=())
+    orchestrator.override = AsyncMock(return_value=report)
+
+    response = client.post(_OVERRIDE_URL, json={"step_id": "warehouse"})
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "ready"
+    orchestrator.override.assert_awaited_once_with(
+        SetupStepId.WAREHOUSE,
+        setup_user="admin@example.com",
+        reader_ws=obo_ws,
+        reader_sql_factory=reader_sql_factory,
+    )
+
+
+def test_override_unavailable_step_is_a_conflict(client: TestClient, orchestrator: MagicMock) -> None:
+    orchestrator.override = AsyncMock(return_value=None)
+
+    response = client.post(_OVERRIDE_URL, json={"step_id": "storage"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "override_not_available"
+
+
+def test_override_requires_setup_admin(client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("users")
+    orchestrator.override = AsyncMock()
+
+    response = client.post(_OVERRIDE_URL, json={"step_id": "warehouse"})
+
+    assert response.status_code == 403
+    orchestrator.override.assert_not_awaited()
+
+
+def test_override_rejects_unknown_step(client: TestClient) -> None:
+    assert client.post(_OVERRIDE_URL, json={"step_id": "nope"}).status_code == 422

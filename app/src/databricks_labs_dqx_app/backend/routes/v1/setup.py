@@ -20,14 +20,18 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_setup_configuration_store,
     get_setup_orchestrator,
     get_sp_ws,
-    get_optional_setup_sql_executor,
+    get_setup_sql_reader_factory,
     require_setup_admin,
     sanitize_setup_display,
 )
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore, validate_choices
-from databricks_labs_dqx_app.backend.setup.models import SetupConfigurationRequest, SetupReport, SetupStatusResponse
-from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.setup.models import (
+    SetupConfigurationRequest,
+    SetupOverrideRequest,
+    SetupReport,
+    SetupStatusResponse,
+)
+from databricks_labs_dqx_app.backend.setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
 
 logger = logging.getLogger(__name__)
@@ -93,6 +97,7 @@ async def configure_setup(
     config: Annotated[AppConfig, Depends(get_conf)],
     reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
 ) -> SetupReport:
     """Validate and save catalog, prefix and audience group, then run the setup workflow."""
     if config.has_deployment_storage:
@@ -112,11 +117,11 @@ async def configure_setup(
     outcome = await orchestrator.save_configuration(store, choices, user_email=access.user_name)
     if outcome == "locked":
         raise _error(status.HTTP_409_CONFLICT, "configuration_locked")
-    # The administrator SQL reader is scoped to the bound storage, which reconcile only
-    # binds for the choices just saved; any reader built now would target the previous
-    # storage. Grant checks that need it report how to proceed, and the next
-    # "Verify again" (POST /reconcile) supplies a reader for the bound storage.
-    return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=None)
+    # Reconcile binds the storage for the choices just saved, then builds the
+    # administrator SQL reader for that storage, so the first check can inspect grants.
+    return await orchestrator.reconcile(
+        setup_user=access.user_name, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
+    )
 
 
 @router.post("/reconcile", response_model=SetupReport, operation_id="reconcileSetup")
@@ -124,7 +129,29 @@ async def reconcile_setup(
     access: Annotated[SetupAccess, require_setup_admin()],
     orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
     reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    reader_sql: Annotated[SqlExecutor | None, Depends(get_optional_setup_sql_executor)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
 ) -> SetupReport:
     """Run the serialized setup workflow as a bootstrap administrator."""
-    return await orchestrator.reconcile(setup_user=access.user_name, reader_ws=reader_ws, reader_sql=reader_sql)
+    return await orchestrator.reconcile(
+        setup_user=access.user_name, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
+    )
+
+
+@router.post("/override", response_model=SetupReport, operation_id="overrideSetupStep")
+async def override_setup_step(
+    body: SetupOverrideRequest,
+    access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
+) -> SetupReport:
+    """Continue past a step an administrator confirmed is set up in a way Studio cannot see."""
+    report = await orchestrator.override(
+        body.step_id,
+        setup_user=access.user_name,
+        reader_ws=reader_ws,
+        reader_sql_factory=reader_sql_factory,
+    )
+    if report is None:
+        raise _error(status.HTTP_409_CONFLICT, "override_not_available")
+    return report

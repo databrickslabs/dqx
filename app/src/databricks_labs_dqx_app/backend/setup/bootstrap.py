@@ -29,14 +29,17 @@ class BootstrapCheckers:
             return SetupStep(
                 id=SetupStepId.IDENTITY,
                 state=StepState.PASSED,
-                summary="The app service principal identity is available.",
+                summary="Studio knows which service principal it runs as.",
             )
         return SetupStep(
             id=SetupStepId.IDENTITY,
             state=StepState.ACTION_REQUIRED,
             code="app_identity_unresolved",
-            summary="Could not resolve the app service principal identity.",
-            instructions=("Verify the Databricks App service principal binding.",),
+            summary="Studio couldn't work out which service principal it runs as.",
+            instructions=(
+                "Check that the app has a service principal (Compute > Apps > the app > Authorization), "
+                "then click Verify again.",
+            ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
@@ -67,13 +70,13 @@ class BootstrapCheckers:
                 id=SetupStepId.LAKEBASE,
                 state=StepState.ACTION_REQUIRED,
                 code="lakebase_connectivity_failed",
-                summary="Could not connect to the configured Lakebase database.",
+                summary="Studio couldn't connect to its Lakebase database. If the database was idle, it may still be starting; click Verify again in a minute.",
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
         return SetupStep(
             id=SetupStepId.LAKEBASE,
             state=StepState.PASSED,
-            summary="Lakebase connectivity is available.",
+            summary="Studio is connected to Lakebase.",
         )
 
     def ensure_lakebase_schema(self) -> SetupStep:
@@ -86,11 +89,11 @@ class BootstrapCheckers:
                 id=SetupStepId.LAKEBASE,
                 state=StepState.ACTION_REQUIRED,
                 code="lakebase_schema_creation_failed",
-                summary="Could not create the required Lakebase schema.",
+                summary="Studio couldn't create its schema in the Lakebase database.",
                 actions=(SetupActionId.RECONCILE,),
             )
         return SetupStep(
             id=SetupStepId.LAKEBASE,
             state=StepState.PASSED,
-            summary="The required Lakebase schema is available.",
+            summary="Studio's Lakebase schema is ready.",
         )

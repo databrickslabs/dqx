@@ -1974,7 +1974,7 @@
     "ownerPlaceholder": "Owner",
     "colTable": "Table",
     "colStatus": "Status",
-    "colAppliedRules": "Applied rules",
+    "colAppliedRules": "Applied Rules",
     "colLastProfiled": "Last profiled",
     "colSteward": "Owner",
     "colActions": "Actions",
@@ -2448,7 +2448,6 @@
       "noneForRule": "This rule isn't applied to any tables yet."
     },
     "importButton": "Import",
-    "colAppliedRules": "Applied Rules",
     "groupByNone": "None",
     "groupByDqScore": "DQ score",
     "groupByCatalog": "Catalog",
@@ -3022,6 +3021,7 @@
       "configuration": "The catalog, storage prefix and audience group that Studio uses for its data and access.",
       "storage": "Creates the Unity Catalog schemas and wheels volume that hold Studio state, temporary views and Genie-facing objects.",
       "access": "Grants the audience group and administrators the workspace and data access they need to use Studio.",
+      "ai": "Checks that Studio users can use the AI model behind rule suggestions. If they can't, AI features are turned off until access is fixed.",
       "app_sharing": "Confirms that the audience group can open this app. Sharing is managed in the app permissions."
     },
     "steps": {
@@ -3036,6 +3036,7 @@
       "configuration": "Studio configuration",
       "storage": "Storage schemas and volume",
       "access": "Audience access",
+      "ai": "AI features",
       "app_sharing": "App sharing"
     },
     "states": {
@@ -3044,7 +3045,8 @@
       "passed": "Ready",
       "action_required": "Action required",
       "failed": "Needs attention",
-      "warning": "Warning"
+      "warning": "Warning",
+      "overridden": "Confirmed by admin"
     },
     "actions": {
       "reconcile": "Run setup",
@@ -3078,6 +3080,18 @@
         "catalog_check_failed": "The catalog could not be verified. Try again.",
         "group_check_failed": "The group could not be verified. Try again.",
         "default": "Could not save the configuration."
+      }
+    },
+    "override": {
+      "button": {
+        "default": "Continue anyway",
+        "app_sharing": "I've shared the app",
+        "ai": "Keep AI features on"
+      },
+      "help": {
+        "default": "Studio can only see permissions given directly to a user or group. If you gave this access through a parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
+        "app_sharing": "Studio isn't allowed to read who the app is shared with, so it can't check this itself. Once you've shared the app with your users, confirm it here.",
+        "ai": "If your users can already use this AI model (for example through a parent group), you can keep AI features on."
       }
     }
   },

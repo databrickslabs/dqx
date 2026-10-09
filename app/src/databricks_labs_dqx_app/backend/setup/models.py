@@ -29,6 +29,7 @@ class StepState(_StrEnum):
     ACTION_REQUIRED = "action_required"
     FAILED = "failed"
     WARNING = "warning"
+    OVERRIDDEN = "overridden"
 
 
 class SetupStepId(_StrEnum):
@@ -45,6 +46,7 @@ class SetupStepId(_StrEnum):
     MIGRATIONS = "migrations"
     ACTIVATION = "activation"
     ACCESS = "access"
+    AI = "ai"
     APP_SHARING = "app_sharing"
 
 
@@ -54,6 +56,7 @@ class SetupActionId(_StrEnum):
     RECONCILE = "reconcile"
     VERIFY_AGAIN = "verify_again"
     CONFIGURE = "configure"
+    OVERRIDE = "override"
 
 
 class _ImmutableModel(BaseModel):
@@ -116,6 +119,14 @@ class SetupConfigurationRequest(BaseModel):
     catalog: str = Field(max_length=255)
     prefix: str = Field(default="dqx_studio", max_length=64)
     audience_group: str = Field(max_length=255)
+
+
+class SetupOverrideRequest(BaseModel):
+    """Administrator confirmation that a step's requirement was met in a way Studio cannot see."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: SetupStepId
 
 
 class SetupStatusResponse(_ImmutableModel):

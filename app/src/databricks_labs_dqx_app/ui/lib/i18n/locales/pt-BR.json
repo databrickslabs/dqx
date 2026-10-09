@@ -2448,7 +2448,6 @@
       "noneForRule": "Esta regra ainda não está aplicada a nenhuma tabela."
     },
     "importButton": "Importar",
-    "colAppliedRules": "Regras aplicadas",
     "groupByNone": "Nenhum",
     "groupByDqScore": "Pontuação de qualidade",
     "groupByCatalog": "Catálogo",
@@ -3022,6 +3021,7 @@
       "configuration": "O catálogo, o prefixo de armazenamento e o grupo de público que o Studio usa para seus dados e acessos.",
       "storage": "Cria os esquemas do Unity Catalog e o volume de wheels que guardam o estado do Studio, as views temporárias e os objetos para o Genie.",
       "access": "Concede ao grupo de público e aos administradores o acesso ao workspace e aos dados de que precisam para usar o Studio.",
+      "ai": "Verifica se os usuários do Studio podem usar o modelo de IA das sugestões de regras. Caso não possam, os recursos de IA são desativados até que o acesso seja corrigido.",
       "app_sharing": "Confirma que o grupo de público pode abrir este aplicativo. O compartilhamento é gerenciado nas permissões do aplicativo."
     },
     "steps": {
@@ -3036,6 +3036,7 @@
       "configuration": "Configuração do Studio",
       "storage": "Esquemas e volume de armazenamento",
       "access": "Acesso do público",
+      "ai": "Recursos de IA",
       "app_sharing": "Compartilhamento do aplicativo"
     },
     "states": {
@@ -3044,7 +3045,8 @@
       "passed": "Pronto",
       "action_required": "Ação necessária",
       "failed": "Precisa de atenção",
-      "warning": "Aviso"
+      "warning": "Aviso",
+      "overridden": "Confirmado por um admin"
     },
     "actions": {
       "reconcile": "Executar configuração",
@@ -3078,6 +3080,18 @@
         "catalog_check_failed": "Não foi possível verificar o catálogo. Tente novamente.",
         "group_check_failed": "Não foi possível verificar o grupo. Tente novamente.",
         "default": "Não foi possível salvar a configuração."
+      }
+    },
+    "override": {
+      "button": {
+        "default": "Continuar mesmo assim",
+        "app_sharing": "Já compartilhei o app",
+        "ai": "Manter a IA ativada"
+      },
+      "help": {
+        "default": "O Studio só vê permissões concedidas diretamente a um usuário ou grupo. Se você concedeu esse acesso por meio de um grupo pai, ou configurou manualmente no workspace, ele pode parecer ausente aqui. Se tiver certeza de que está configurado, você pode continuar mesmo assim.",
+        "app_sharing": "O Studio não tem permissão para ler com quem o app está compartilhado, então não consegue verificar isso sozinho. Depois de compartilhar o app com seus usuários, confirme aqui.",
+        "ai": "Se seus usuários já podem usar este modelo de IA (por exemplo, por meio de um grupo pai), você pode manter os recursos de IA ativados."
       }
     }
   },

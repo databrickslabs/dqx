@@ -47,7 +47,11 @@ from databricks_labs_dqx_app.backend.services.compute_service import ComputeServ
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.metadata_dim_refresh import refresh_metadata_dims
-from databricks_labs_dqx_app.backend.services.metadata_dim_service import MetadataDimService
+from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
+    DIM_MONITORED_TABLES_TABLE_NAME,
+    DIM_RULES_TABLE_NAME,
+    MetadataDimService,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
@@ -61,6 +65,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import ScoreVie
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
+from databricks_labs_dqx_app.backend.setup.ai_access import AiAccess
 from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
 from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
@@ -80,6 +85,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
     StepState,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator, StudioActivation
+from databricks_labs_dqx_app.backend.setup.overrides import SetupOverrides
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources
 from databricks_labs_dqx_app.backend.setup.resources import resolve_lakebase_connection
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -265,6 +271,7 @@ class _Binder:
             delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
             activation=_Activation(context),
+            ai=AiAccess(resources=resources, workspace=sp_ws, settings=self.settings),
         )
         # Track the context only once every collaborator exists, so a failed bind leaves nothing behind.
         self.context = context
@@ -346,7 +353,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
         _publish_unavailable(
             SetupStepId.LAKEBASE,
             "lakebase_connection_unavailable",
-            "Could not open the required Lakebase connection.",
+            "Studio couldn't connect to its Lakebase database. Restart the app to try again.",
         )
         return None
 
@@ -380,6 +387,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
             app_sp_id=compute.sp_application_id(),
+            overrides=SetupOverrides(app_settings),
         )
         app.state.setup_orchestrator = orchestrator
         app.state.setup_configuration_store = configuration_store
@@ -417,7 +425,7 @@ def _resolve_bootstrap() -> BootstrapResources | None:
         _publish_unavailable(
             SetupStepId.LAKEBASE,
             "lakebase_binding_missing",
-            "A Lakebase connection is required for DQX Studio.",
+            "The app has no Lakebase database attached. Add a Lakebase resource to the app, then restart it.",
         )
         return None
 
@@ -428,7 +436,7 @@ def _resolve_bootstrap() -> BootstrapResources | None:
         _publish_unavailable(
             SetupStepId.WAREHOUSE,
             "warehouse_binding_missing",
-            "A SQL warehouse binding is required for DQX Studio.",
+            "The app has no SQL warehouse attached. Add a SQL warehouse resource to the app, then restart it.",
         )
         return None
 
@@ -537,7 +545,7 @@ async def _run_post_migration_startup(
 ) -> None:
     _mark_interrupted_admin_jobs(oltp)
     _ensure_score_views(delta_sql, resources)
-    await _ensure_metadata_dims(delta_sql, oltp, resources)
+    await _ensure_metadata_dims(workspace, delta_sql, oltp, resources)
     ensure_entitlement_objects(delta_sql, resources)
     targets = startup_tag_targets(
         resources,
@@ -587,6 +595,7 @@ def _ensure_score_views(delta_sql: SqlExecutor, resources: ActiveResources) -> N
 
 
 async def _ensure_metadata_dims(
+    workspace: WorkspaceClient,
     delta_sql: SqlExecutor,
     oltp: OltpExecutorProtocol,
     resources: ActiveResources,
@@ -602,10 +611,23 @@ async def _ensure_metadata_dims(
             )
         )
     except Exception as error:
-        # The access step grants and verifies these tables, so activation must not
-        # complete without them; the next reconcile retries the refresh.
         logger.warning("Could not refresh the DQ metadata dimensions (%s)", type(error).__name__)
-        raise RequiredViewSetupError() from None
+        # The access step grants and verifies these tables. A refresh that fails after an
+        # earlier one created them leaves slightly stale data, which the next refresh fixes;
+        # only a first refresh that never created them must block activation.
+        if not await asyncio.to_thread(_metadata_dims_exist, workspace, resources):
+            raise RequiredViewSetupError() from None
+
+
+def _metadata_dims_exist(workspace: WorkspaceClient, resources: ActiveResources) -> bool:
+    genie = f"{resources.volume.catalog}.{resources.genie_schema}"
+    try:
+        return all(
+            workspace.tables.exists(f"{genie}.{name}").table_exists
+            for name in (DIM_RULES_TABLE_NAME, DIM_MONITORED_TABLES_TABLE_NAME)
+        )
+    except Exception:
+        return False
 
 
 def ensure_entitlement_objects(delta_sql: SqlExecutor, resources: ActiveResources) -> None:

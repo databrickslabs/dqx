@@ -26,7 +26,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     SHAPING_VIEW_NAME,
 )
 from databricks_labs_dqx_app.backend.setup.acl import AccessStatus, group_levels, missing_principals
-from databricks_labs_dqx_app.backend.setup.checks import instruction_identifier
+from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, instruction_identifier
 from databricks_labs_dqx_app.backend.setup.configuration import SetupSettings
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
@@ -131,7 +131,7 @@ class AudienceAccess:
         dashboard_missing: list[str] = []
         genie_space_id = self._genie_space_id()
         if genie_space_id is None:
-            shared_unknown.append("Verify that the app service principal can read the Studio settings.")
+            shared_unknown.append("Studio couldn't read its own settings. Click Verify again in a minute.")
         elif not genie_space_id:
             not_applicable.append("Genie space sharing")
         else:
@@ -140,7 +140,7 @@ class AudienceAccess:
             )
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("Genie space", genie_space_id))
-            genie_missing.extend(_acl_instruction("CAN RUN", "Genie space", genie_space_id, group) for group in missing)
+            genie_missing.extend(_acl_instruction("Can run", "Genie space", genie_space_id, group) for group in missing)
         if not self._dashboard_id:
             not_applicable.append("dashboard sharing")
         else:
@@ -150,27 +150,44 @@ class AudienceAccess:
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("dashboard", self._dashboard_id))
             dashboard_missing.extend(
-                _acl_instruction("CAN READ", "dashboard", self._dashboard_id, group) for group in missing
+                _acl_instruction("Can view", "dashboard", self._dashboard_id, group) for group in missing
             )
 
         instructions = (*uc_unknown, *shared_unknown, *uc_missing, *genie_missing, *dashboard_missing)
+        if uc_missing:
+            instructions = (
+                *uc_unknown,
+                *shared_unknown,
+                RUN_GRANTS_AS_OWNER,
+                *uc_missing,
+                *genie_missing,
+                *dashboard_missing,
+            )
         if uc_unknown:
-            return _blocked("audience_grant_check_failed", "Could not verify Studio user access.", instructions)
+            return _blocked("audience_grant_check_failed", "Studio couldn't read its users' permissions.", instructions)
         if shared_unknown:
             return _blocked(
-                "shared_resource_check_failed", "Could not verify sharing of Studio resources.", instructions
+                "shared_resource_check_failed",
+                "Studio couldn't check who can open its Genie space or dashboard.",
+                instructions,
             )
         if uc_missing:
             return _blocked(
-                "audience_grants_missing", "Studio users or administrators need Unity Catalog grants.", instructions
+                "audience_grants_missing",
+                "Studio users or administrators don't have all the data permissions they need.",
+                instructions,
             )
         if genie_missing:
-            return _blocked("genie_space_sharing_missing", "Studio users cannot run the DQ Genie space.", instructions)
+            return _blocked(
+                "genie_space_sharing_missing", "Studio users can't use the DQ Genie space yet.", instructions
+            )
         if dashboard_missing:
-            return _blocked("dashboard_sharing_missing", "Studio users cannot view the Studio dashboard.", instructions)
-        summary = "Studio users and administrators have the required access."
+            return _blocked(
+                "dashboard_sharing_missing", "Studio users can't open the Studio dashboard yet.", instructions
+            )
+        summary = "Studio users and administrators have the access they need."
         if not_applicable:
-            summary += f" Not configured, so not applicable: {', '.join(not_applicable)}."
+            summary += f" Skipped because they aren't set up: {', '.join(not_applicable)}."
         return SetupStep(id=SetupStepId.ACCESS, state=StepState.PASSED, summary=summary)
 
     def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
@@ -191,13 +208,18 @@ class AudienceAccess:
         if entries is None and reader_ws is not None:
             entries = self._read_app_acl(reader_ws)
         if entries is None:
+            # Neither identity can read an app's permissions, so verifying again cannot
+            # help; the administrator confirms the sharing instead.
             return SetupStep(
                 id=SetupStepId.APP_SHARING,
                 state=StepState.WARNING,
                 code="app_sharing_unverified",
-                summary="Could not verify that Studio users can open the app. Share it manually if needed.",
+                summary=(
+                    "Studio can't check who the app is shared with. Make sure it's shared with your users, "
+                    "then confirm below."
+                ),
                 instructions=tuple(self._app_sharing_instruction(group) for group in principals),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                actions=(SetupActionId.OVERRIDE,),
             )
         absent = missing_principals(group_levels(entries), principals, _APP_USE_LEVELS)
         if absent:
@@ -205,14 +227,14 @@ class AudienceAccess:
                 id=SetupStepId.APP_SHARING,
                 state=StepState.ACTION_REQUIRED,
                 code="app_sharing_missing",
-                summary="Studio users or administrators cannot open the app.",
+                summary="Some Studio users or administrators can't open the app yet.",
                 instructions=tuple(self._app_sharing_instruction(group) for group in absent),
-                actions=(SetupActionId.VERIFY_AGAIN,),
+                actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
             )
         return SetupStep(
             id=SetupStepId.APP_SHARING,
             state=StepState.PASSED,
-            summary="Studio users and administrators can use the app.",
+            summary="Studio users and administrators can open the app.",
         )
 
     def _read_app_acl(self, client: WorkspaceClient) -> list[object] | None:
@@ -223,8 +245,8 @@ class AudienceAccess:
 
     def _app_sharing_instruction(self, group: str) -> str:
         return (
-            f"Share the app {instruction_identifier(self._app_name)} with group "
-            f"{instruction_identifier(group)} (CAN USE) in Compute > Apps > Permissions."
+            f"Give group {instruction_identifier(group)} Can use on app "
+            f"{instruction_identifier(self._app_name)} (Compute > Apps > the app > Permissions)."
         )
 
     def _apply_uc_grants(self, triples: Sequence[tuple[str, str, str]], principals: Sequence[str]) -> None:
@@ -236,9 +258,7 @@ class AudienceAccess:
                 continue
             for principal in principals:
                 try:
-                    self._sql.execute_no_schema(
-                        f"GRANT {privilege.replace('_', ' ')} ON {kind} {securable} TO {self._sql.q(principal)}"
-                    )
+                    self._sql.execute_no_schema(f"GRANT {privilege} ON {kind} {securable} TO {self._sql.q(principal)}")
                 except Exception:
                     logger.warning("Could not apply an audience Unity Catalog grant; verifying access instead.")
 
@@ -261,14 +281,14 @@ class AudienceAccess:
                 privileges = inspector.privileges(kind, full_name, principal, required=frozenset(required))
                 if privileges is None:
                     guidance = (
-                        "Verify setup as an administrator with ownership or READ METADATA on "
-                        f"{kind} {quoted_name}, or as a metastore administrator, to inspect Studio user grants."
+                        f"Sign in as the owner of {kind.lower()} {quoted_name} or a metastore admin, then click "
+                        "Verify again so Studio can read its permissions."
                     )
                     if guidance not in unknown:
                         unknown.append(guidance)
                     continue
                 missing.extend(
-                    f"GRANT {privilege.replace('_', ' ')} ON {kind} {quoted_name} TO {quoted_principal};"
+                    f"GRANT {privilege} ON {kind} {quoted_name} TO {quoted_principal};"
                     for privilege in required
                     if not has_privilege(privileges, privilege)
                 )
@@ -344,16 +364,16 @@ def _blocked(code: str, summary: str, instructions: tuple[str, ...]) -> SetupSte
         code=code,
         summary=summary,
         instructions=instructions,
-        actions=(SetupActionId.VERIFY_AGAIN,),
+        actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
     )
 
 
 def _acl_instruction(level: str, label: str, object_id: str, group: str) -> str:
-    return f"Grant {level} on {label} {instruction_identifier(object_id)} to group {instruction_identifier(group)}."
+    return f"Give group {instruction_identifier(group)} {level} on {label} {instruction_identifier(object_id)}."
 
 
 def _acl_check_instruction(label: str, object_id: str) -> str:
     return (
-        f"Verify that the app service principal can manage {label} {instruction_identifier(object_id)}, "
-        "or share it with the Studio audience manually."
+        f"Studio couldn't read who can use {label} {instruction_identifier(object_id)}. Give the app's service "
+        "principal Can manage on it, or share it with your Studio users yourself."
     )

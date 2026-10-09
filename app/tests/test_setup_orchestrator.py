@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
     StepState,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator
+from databricks_labs_dqx_app.backend.setup.overrides import SetupOverrides
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, BootstrapResources, LakebaseConnection
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 from databricks_labs_dqx_app.backend.setup.storage import derive_storage
@@ -101,6 +102,7 @@ class FakeBound:
     catalog_reader_ws: WorkspaceClient | None = None
     access_observer: Callable[[], None] | None = None
     access_reader: WorkspaceClient | None = None
+    warehouse_id: str = "warehouse-id"
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
@@ -117,8 +119,17 @@ class FakeBound:
         self.provisions.append(provision)
         return self._result(SetupStepId.STORAGE)
 
-    def check_warehouse(self, warehouse_id: str | None = None, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+    def check_warehouse(
+        self,
+        warehouse_id: str | None = None,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        include_audience: bool = True,
+    ) -> SetupStep:
         return self._result(SetupStepId.WAREHOUSE)
+
+    def effective_warehouse_id(self) -> str:
+        return self.warehouse_id
 
     def check_runner_access(
         self,
@@ -147,6 +158,35 @@ class FakeBound:
 
     def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
         return self._result(SetupStepId.APP_SHARING)
+
+
+@dataclass
+class FakeAi:
+    events: list[str]
+    result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.AI))
+    kept_enabled_by: list[str | None] = field(default_factory=list)
+    endpoints: tuple[str, ...] = ("chat-endpoint",)
+
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+        self.events.append("ai")
+        return self.result
+
+    def keep_enabled(self, *, user_email: str | None) -> None:
+        self.kept_enabled_by.append(user_email)
+
+    def endpoint_names(self) -> tuple[str, ...]:
+        return self.endpoints
+
+
+class MemorySettings:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get_setting(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def save_setting(self, key: str, value: str, *, user_email: str | None = None) -> None:
+        self.values[key] = value
 
 
 @dataclass
@@ -237,6 +277,7 @@ class FakeBinder:
     activation: FakeActivation
     publish_wheels: Callable[[], Awaitable[list[str]]]
     binds: list[ActiveResources] = field(default_factory=list)
+    ai: FakeAi | None = None
 
     async def bind(self, resources: ActiveResources) -> BoundSetup:
         self.binds.append(resources)
@@ -247,6 +288,7 @@ class FakeBinder:
             delta_migrations=self.delta,
             publish_wheels=self.publish_wheels,
             activation=self.activation,
+            ai=self.ai,
         )
 
 
@@ -272,6 +314,8 @@ def _harness(
     bootstrap: BootstrapResources = BOOTSTRAP,
     publish_wheels: Callable[[], Awaitable[list[str]]] | None = None,
     activation: FakeActivation | None = None,
+    overrides: SetupOverrides | None = None,
+    ai: FakeAi | None = None,
 ) -> Harness:
     events = [] if events is None else events
     runtime = SetupRuntime()
@@ -286,7 +330,7 @@ def _harness(
     activation_service.runtime = runtime
     delta = FakeMigrationRunner("delta", events)
     pg = FakeMigrationRunner("postgres", events)
-    binder = FakeBinder(bound, delta, activation_service, publish_wheels or default_publish)
+    binder = FakeBinder(bound, delta, activation_service, publish_wheels or default_publish, ai=ai)
     configuration = FakeConfiguration(resolved)
     bootstrap_checks = FakeBootstrap(events)
     jobs = FakeJobs(events)
@@ -300,6 +344,7 @@ def _harness(
         jobs=jobs,
         app_settings=FakeAppSettings(events),
         app_sp_id="app-service-principal",
+        overrides=overrides,
     )
     return Harness(orchestrator, runtime, bootstrap_checks, bound, binder, configuration, jobs, pg, delta, events)
 
@@ -1117,8 +1162,8 @@ async def test_required_view_failure_reports_uc_setup_instead_of_background_serv
     step = report.step(SetupStepId.ACTIVATION)
     assert step.state == StepState.FAILED
     assert step.code == "required_views_creation_failed"
-    assert "CREATE TABLE" in " ".join(step.instructions)
-    assert "Genie schema" in step.summary
+    assert "create and replace tables and views" in " ".join(step.instructions)
+    assert "Genie" in step.summary
     assert not any(event.startswith("background:") for event in harness.events)
     assert "access" not in harness.events
 
@@ -1133,7 +1178,7 @@ async def test_required_view_failure_mentions_metadata_dimensions_and_recovers_o
     step = failed.step(SetupStepId.ACTIVATION)
     assert step.code == "required_views_creation_failed"
     assert step.actions == (SetupActionId.RECONCILE,)
-    assert "metadata dimension" in step.summary
+    assert "Genie" in step.summary
 
     activation.activation_failure = None
     report = await harness.orchestrator.reconcile()
@@ -1288,3 +1333,206 @@ async def test_save_configuration_rechecks_lock_after_waiting_for_activation_loc
 
     assert await pending == "locked"
     assert settings.values["setup_audience_group"] == "other"
+
+
+# ---------------------------------------------------------------------------
+# Administrator overrides, the AI step and the deferred SQL reader
+# ---------------------------------------------------------------------------
+
+
+def _overridable(step_id: SetupStepId, code: str, state: StepState = StepState.ACTION_REQUIRED) -> SetupStep:
+    return SetupStep(
+        id=step_id,
+        state=state,
+        code=code,
+        summary=f"{step_id.value} could not be confirmed",
+        actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
+    )
+
+
+@pytest.mark.asyncio
+async def test_override_lets_setup_continue_past_an_unverifiable_step() -> None:
+    settings = MemorySettings()
+    harness = _harness(
+        bound_results={SetupStepId.ACCESS: _overridable(SetupStepId.ACCESS, "audience_grant_check_failed")},
+        overrides=SetupOverrides(settings),
+    )
+    blocked = await harness.orchestrator.reconcile()
+    assert blocked.state == SetupState.SETUP_REQUIRED
+    assert blocked.current_step == SetupStepId.ACCESS
+
+    report = await harness.orchestrator.override(SetupStepId.ACCESS, setup_user="admin@example.com")
+
+    assert report is not None
+    assert report.state == SetupState.READY
+    step = report.step(SetupStepId.ACCESS)
+    assert step.state == StepState.OVERRIDDEN
+    assert step.code == "audience_grant_check_failed"
+    assert step.actions == (SetupActionId.VERIFY_AGAIN,)
+    assert "An administrator confirmed" in step.summary
+
+
+@pytest.mark.asyncio
+async def test_override_survives_an_unattended_restart() -> None:
+    """A restart with no administrator present must not block on an overridden step."""
+    settings = MemorySettings()
+    results = {SetupStepId.UNITY_CATALOG: _overridable(SetupStepId.UNITY_CATALOG, "catalog_permission_check_failed")}
+    first = _harness(bound_results=results, overrides=SetupOverrides(settings))
+    await first.orchestrator.reconcile()
+    await first.orchestrator.override(SetupStepId.UNITY_CATALOG, setup_user="admin@example.com")
+
+    restarted = _harness(bound_results=results, overrides=SetupOverrides(settings))
+    report = await restarted.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.UNITY_CATALOG).state == StepState.OVERRIDDEN
+
+
+@pytest.mark.asyncio
+async def test_step_that_passes_on_its_own_clears_its_override() -> None:
+    settings = MemorySettings()
+    harness = _harness(
+        bound_results={SetupStepId.ACCESS: _overridable(SetupStepId.ACCESS, "audience_grants_missing")},
+        overrides=SetupOverrides(settings),
+    )
+    await harness.orchestrator.reconcile()
+    await harness.orchestrator.override(SetupStepId.ACCESS, setup_user="admin@example.com")
+
+    harness.bound.results[SetupStepId.ACCESS] = _passed(SetupStepId.ACCESS)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.bound.results[SetupStepId.ACCESS] = _overridable(SetupStepId.ACCESS, "audience_grants_missing")
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.step(SetupStepId.ACCESS).state == StepState.ACTION_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_warehouse_override_does_not_apply_to_a_different_warehouse() -> None:
+    settings = MemorySettings()
+    harness = _harness(
+        bound_results={SetupStepId.WAREHOUSE: _overridable(SetupStepId.WAREHOUSE, "warehouse_permission_unknown")},
+        overrides=SetupOverrides(settings),
+    )
+    await harness.orchestrator.reconcile()
+    overridden = await harness.orchestrator.override(SetupStepId.WAREHOUSE, setup_user="admin@example.com")
+    assert overridden is not None and overridden.state == SetupState.READY
+
+    harness.bound.warehouse_id = "another-warehouse"
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.state == SetupState.SETUP_REQUIRED
+    assert report.step(SetupStepId.WAREHOUSE).state == StepState.ACTION_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_override_is_refused_for_a_step_without_the_override_action() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.ACCESS: _action_required(SetupStepId.ACCESS, "audience_grants_missing")},
+        overrides=SetupOverrides(MemorySettings()),
+    )
+    await harness.orchestrator.reconcile()
+
+    assert await harness.orchestrator.override(SetupStepId.ACCESS, setup_user="admin@example.com") is None
+
+
+@pytest.mark.asyncio
+async def test_override_is_refused_for_a_non_overridable_step() -> None:
+    """Storage problems (for example a schema collision) are never confirmable by an administrator."""
+    harness = _harness(
+        bound_results={SetupStepId.STORAGE: _overridable(SetupStepId.STORAGE, "storage_collision")},
+        overrides=SetupOverrides(MemorySettings()),
+    )
+    report = await harness.orchestrator.reconcile()
+    assert report.current_step == SetupStepId.STORAGE
+
+    assert await harness.orchestrator.override(SetupStepId.STORAGE, setup_user="admin@example.com") is None
+
+
+@pytest.mark.asyncio
+async def test_override_is_refused_for_a_step_missing_from_the_report() -> None:
+    harness = _harness(overrides=SetupOverrides(MemorySettings()))
+
+    assert await harness.orchestrator.override(SetupStepId.ACCESS, setup_user="admin@example.com") is None
+
+
+@pytest.mark.asyncio
+async def test_override_is_refused_without_an_override_store() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.ACCESS: _overridable(SetupStepId.ACCESS, "audience_grants_missing")},
+    )
+    await harness.orchestrator.reconcile()
+
+    assert await harness.orchestrator.override(SetupStepId.ACCESS, setup_user="admin@example.com") is None
+
+
+@pytest.mark.asyncio
+async def test_ai_step_runs_between_access_and_app_sharing_and_its_warning_does_not_block() -> None:
+    events: list[str] = []
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_unverified", StepState.WARNING))
+    harness = _harness(events, ai=ai)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.AI).state == StepState.WARNING
+    assert events.index("access") < events.index("ai") < events.index("app_sharing")
+    step_ids = [step.id for step in report.steps]
+    assert step_ids.index(SetupStepId.ACCESS) < step_ids.index(SetupStepId.AI) < step_ids.index(SetupStepId.APP_SHARING)
+
+
+@pytest.mark.asyncio
+async def test_ai_override_keeps_ai_on_and_marks_the_step_overridden() -> None:
+    events: list[str] = []
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
+    await harness.orchestrator.reconcile()
+
+    report = await harness.orchestrator.override(SetupStepId.AI, setup_user="admin@example.com")
+
+    assert report is not None
+    assert ai.kept_enabled_by == ["admin@example.com"]
+    assert report.step(SetupStepId.AI).state == StepState.OVERRIDDEN
+
+
+@pytest.mark.asyncio
+async def test_ai_override_stops_applying_when_the_endpoint_changes() -> None:
+    events: list[str] = []
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
+    await harness.orchestrator.reconcile()
+    await harness.orchestrator.override(SetupStepId.AI, setup_user="admin@example.com")
+
+    ai.endpoints = ("other-endpoint",)
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.AI).state == StepState.WARNING
+
+
+@pytest.mark.asyncio
+async def test_reader_sql_factory_builds_the_reader_for_the_bound_storage() -> None:
+    harness = _harness()
+    reader = create_autospec(SqlExecutor, instance=True)
+    built_for: list[ActiveResources] = []
+
+    def factory(resources: ActiveResources) -> SqlExecutor:
+        built_for.append(resources)
+        return reader
+
+    await harness.orchestrator.reconcile(setup_user="admin@example.com", reader_sql_factory=factory)
+
+    assert harness.binder.binds and built_for == [harness.binder.binds[-1]]
+    assert harness.bound.catalog_reader_sql is reader
+    assert harness.bound.runner_sql is reader
+
+
+@pytest.mark.asyncio
+async def test_explicit_reader_sql_takes_precedence_over_the_factory() -> None:
+    harness = _harness()
+    reader = create_autospec(SqlExecutor, instance=True)
+    factory = create_autospec(lambda resources: None)
+
+    await harness.orchestrator.reconcile(reader_sql=reader, reader_sql_factory=factory)
+
+    factory.assert_not_called()
+    assert harness.bound.catalog_reader_sql is reader

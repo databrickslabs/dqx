@@ -20,7 +20,7 @@ Both paths finish in the same readiness workflow (setup page). Studio APIs stay 
 2. **Share the app** with the audience group and the administrator group: **Compute > Apps > `<app-name>` > Permissions**, assign `Can Use`. Studio cannot always read or change its own app sharing, so this is a manual step (see [App sharing](#app-sharing)).
 3. **Open Studio as a workspace administrator** (a member of `admins` or of the group named by `DQX_ADMIN_GROUP`).
 4. In the setup form, enter the **catalog**, the **storage prefix** (default `dqx_studio`), and the **audience group**, then submit.
-5. **Run the printed `GRANT` statements** if setup reports missing access. The app service principal needs `USE CATALOG` and `CREATE SCHEMA` on the catalog, and the audience (and a custom admin group) needs `USE CATALOG`. Setup attempts the audience grants first; the app service principal and runner grants need an administrator with grant authority. Choose **Verify again** after each change. Assign the task-runner service principal as the job's `run_as` identity when prompted.
+5. **Run the printed `GRANT` statements** if setup reports missing access. The app service principal needs `USE CATALOG` and `CREATE SCHEMA` on the catalog, and the audience (and a custom admin group) needs `USE CATALOG`. Setup attempts the audience grants first; the app service principal and runner grants need an administrator with grant authority. Choose **Verify again** after each change. Assign the task-runner service principal as the job's `run_as` identity when prompted. Studio can only see grants made directly to a principal: if you granted access through a parent group, or set it up by hand (for example the warehouse or app sharing), choose **Continue anyway** on that step. Studio records the override and stops blocking on it until the catalog, prefix, audience, warehouse or AI endpoint changes. If Studio users can't query the AI model endpoints, setup turns AI features off with a warning; fix the access and choose **Verify again**, choose **Keep AI features on**, or turn AI back on in **Settings**.
 6. **Assign roles**: in Studio open **Admin Settings > Entitlements** and map the audience groups to the Author, Approver, and Viewer roles. Onboarding afterwards is group membership.
 
 ### DAB
@@ -243,11 +243,11 @@ What this means in practice:
 `bundle deploy` applies the declared schema- and volume-level grants natively (via `grants:` on the resources). The bundle does not manage the pre-existing, user-selected catalog, so an administrator with grant authority on it runs the catalog grants once. Get the app SP's client ID with `databricks apps get dqx-studio` after deployment. Setup verifies catalog access on every start for both paths, and the app SP needs both `USE CATALOG` and `CREATE SCHEMA` (DAB's wheels-volume binding also auto-grants `USE CATALOG`, but Marketplace has no such binding, so grant both explicitly):
 
 ```sql
-GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app-sp-client-id>`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<uc-audience-principal>`;
+GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG <catalog> TO `<app-sp-client-id>`;
+GRANT USE_CATALOG ON CATALOG <catalog> TO `<task-runner-sp-application-id>`;
+GRANT USE_CATALOG ON CATALOG <catalog> TO `<uc-audience-principal>`;
 -- Only with a custom DQX_ADMIN_GROUP account group (never for `admins`):
-GRANT USE CATALOG ON CATALOG <catalog> TO `<admin-group>`;
+GRANT USE_CATALOG ON CATALOG <catalog> TO `<admin-group>`;
 ```
 
 `<uc-audience-principal>` is `studio_user_group`, or `account users` in broad mode (`studio_uc_principal`). Setup attempts the audience grants itself when the app SP has grant authority, then verifies them; anything it cannot apply is printed as a `GRANT` statement and blocks readiness until done. Separately provision the runner's Lakebase role and scoped grants below.
@@ -403,17 +403,17 @@ GRANT ALL PRIVILEGES ON VOLUME <catalog>.<prefix>.wheels         TO `<app-sp-id>
 
 -- Runner (least privilege): schema-wide storage access.
 -- Use a dedicated Studio schema: SELECT/MODIFY cover its current and future tables.
-GRANT USE SCHEMA, SELECT, MODIFY ON SCHEMA <catalog>.<prefix> TO `<job-sp-id>`;
+GRANT USE_SCHEMA, SELECT, MODIFY ON SCHEMA <catalog>.<prefix> TO `<job-sp-id>`;
 -- Schema-level SELECT on _tmp lets the runner read any OBO temp view there.
-GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_tmp     TO `<job-sp-id>`;
-GRANT READ VOLUME ON VOLUME <catalog>.<prefix>.wheels         TO `<job-sp-id>`;
+GRANT USE_SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_tmp     TO `<job-sp-id>`;
+GRANT READ_VOLUME ON VOLUME <catalog>.<prefix>.wheels         TO `<job-sp-id>`;
 
 -- Audience: end users create dry-run / preview temp views (via their OBO token)
 -- in the tmp schema, so they need USE SCHEMA + CREATE TABLE there.
-GRANT USE SCHEMA, CREATE TABLE ON SCHEMA <catalog>.<prefix>_tmp TO `<uc-audience>`;
+GRANT USE_SCHEMA, CREATE_TABLE ON SCHEMA <catalog>.<prefix>_tmp TO `<uc-audience>`;
 -- Genie SELECT is restricted to these five views and two metadata tables.
 -- Never grant schema-wide SELECT or access to dq_user_table_entitlements.
-GRANT USE SCHEMA ON SCHEMA <catalog>.<prefix>_genie TO `<uc-audience>`;
+GRANT USE_SCHEMA ON SCHEMA <catalog>.<prefix>_genie TO `<uc-audience>`;
 GRANT SELECT ON TABLE <catalog>.<prefix>_genie.mv_dq_scores             TO `<uc-audience>`;
 GRANT SELECT ON TABLE <catalog>.<prefix>_genie.v_dq_check_results       TO `<uc-audience>`;
 GRANT SELECT ON TABLE <catalog>.<prefix>_genie.v_dq_check_results_asof  TO `<uc-audience>`;
@@ -422,16 +422,16 @@ GRANT SELECT ON TABLE <catalog>.<prefix>_genie.v_dq_failing_rows        TO `<uc-
 GRANT SELECT ON TABLE <catalog>.<prefix>_genie.dim_dq_rules             TO `<uc-audience>`;
 GRANT SELECT ON TABLE <catalog>.<prefix>_genie.dim_dq_monitored_tables  TO `<uc-audience>`;
 -- Demo content is meant to be explored.
-GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_demo TO `<uc-audience>`;
+GRANT USE_SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_demo TO `<uc-audience>`;
 
 -- DAB only: the deployer needs SELECT for the embed-credentials Insights dashboard
 -- (the bundle uses ${workspace.current_user.userName}).
-GRANT USE SCHEMA, SELECT ON SCHEMA <catalog>.<prefix> TO `<deployer>`;
+GRANT USE_SCHEMA, SELECT ON SCHEMA <catalog>.<prefix> TO `<deployer>`;
 
 -- Catalog access (see the USE CATALOG prerequisite).
-GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app-sp-id>`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
-GRANT USE CATALOG ON CATALOG <catalog> TO `<uc-audience>`;
+GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG <catalog> TO `<app-sp-id>`;
+GRANT USE_CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
+GRANT USE_CATALOG ON CATALOG <catalog> TO `<uc-audience>`;
 ```
 
 Warehouse ACLs (app SP `CAN_MANAGE`; audience and admin group `CAN_USE`) are applied natively by the bundle, and by setup for Marketplace. DAB's authoritative grants: the bundle declares only the audience and app/runner grants; the **administrator-group** UC grants are intentionally not declared (the admin group may be the built-in `admins`, which can never receive UC grants) and are re-applied and verified by the app after each deploy restart.

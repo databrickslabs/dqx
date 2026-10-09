@@ -49,6 +49,10 @@ def gated_app() -> tuple[FastAPI, SetupRuntime, list[str]]:
     def configuration() -> dict[str, str]:
         return {"state": runtime.report().state}
 
+    @app.post("/api/v1/setup/override")
+    def override() -> dict[str, str]:
+        return {"state": runtime.report().state}
+
     @app.get("/api/v1/config/workspace-host")
     def workspace_host() -> dict[str, str]:
         return {"workspace_host": "https://workspace.example.com"}
@@ -91,6 +95,8 @@ def test_gate_allows_exact_setup_authentication_and_health_routes(gated_client: 
     assert gated_client.get("/api/v1/setup/status").status_code == 200
     assert gated_client.post("/api/v1/setup/reconcile").status_code == 200
     assert gated_client.post("/api/v1/setup/configuration").status_code == 200
+    # Overriding a blocked step is how an administrator gets past it, so it must work before READY.
+    assert gated_client.post("/api/v1/setup/override").status_code == 200
     assert gated_client.get("/api/v1/config/workspace-host").status_code == 200
 
 

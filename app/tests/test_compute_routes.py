@@ -1,7 +1,7 @@
 """Tests for the compute routes (P22-B) — settings, listings, warehouse access/grant."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, call, create_autospec
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -203,7 +203,8 @@ class TestSettings:
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "warehouse_permissions_missing"
         route_app_settings.save_sql_warehouse_id.assert_not_called()
-        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
+        # The probe is read-only: it never grants the audience access to a rejected warehouse.
+        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws, include_audience=False)
 
     def test_save_warehouse_persists_candidate_after_readiness_passes(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock, obo_ws: MagicMock
@@ -212,25 +213,28 @@ class TestSettings:
         response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
 
         assert response.status_code == 200
-        checkers.check_warehouse.assert_called_once_with("new-warehouse", reader_ws=obo_ws)
         route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
+        # Probe first (read-only), then grant the audience access once the warehouse is adopted.
+        assert checkers.check_warehouse.call_args_list == [
+            call("new-warehouse", reader_ws=obo_ws, include_audience=False),
+            call("new-warehouse", reader_ws=obo_ws),
+        ]
 
-    def test_save_warehouse_rejects_candidate_when_access_is_unverifiable(
+    def test_save_warehouse_accepts_candidate_when_access_is_unverifiable(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock
     ) -> None:
-        """An unverifiable warehouse cannot be bound: the app needs CAN_MANAGE and the audience CAN_USE."""
+        """Access given through a group can't be read; the administrator's choice is accepted."""
         checkers.check_warehouse.return_value = SetupStep(
             id=SetupStepId.WAREHOUSE,
             state=StepState.ACTION_REQUIRED,
             code="warehouse_permission_unknown",
-            summary="Could not determine app service principal access to the SQL warehouse.",
+            summary="Studio couldn't read the permissions on its SQL warehouse.",
         )
 
         response = client.put("/api/v1/compute/settings", json={"sql_warehouse_id": "new-warehouse"})
 
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "warehouse_permission_unknown"
-        route_app_settings.save_sql_warehouse_id.assert_not_called()
+        assert response.status_code == 200
+        route_app_settings.save_sql_warehouse_id.assert_called_once_with("new-warehouse", user_email="admin@x")
 
     def test_clear_warehouse_override_skips_validation_and_returns_to_bound_default(
         self, client: TestClient, checkers: MagicMock, route_app_settings: MagicMock

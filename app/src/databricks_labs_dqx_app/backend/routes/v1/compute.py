@@ -33,6 +33,7 @@ warehouse it doesn't own). All routes are ADMIN-gated.
 """
 
 import asyncio
+from functools import partial
 from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient
@@ -61,6 +62,10 @@ from databricks_labs_dqx_app.backend.setup.models import StepState
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 
 router = APIRouter()
+
+# The app service principal's access could not be read (for example it was given through a
+# group); the warehouse may well work, so the administrator's choice is accepted.
+_TOLERATED_WAREHOUSE_CODES = frozenset({"warehouse_permission_unknown"})
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +275,11 @@ async def save_compute_settings(
             bound = orchestrator.bound
             if bound is None:
                 raise HTTPException(status_code=503, detail="DQX Studio storage is not configured.")
-            step = await asyncio.to_thread(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
-            if step.state != StepState.PASSED:
+            # Probe the candidate read-only: the audience is only granted access once it is adopted.
+            step = await asyncio.to_thread(
+                partial(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws, include_audience=False)
+            )
+            if step.state != StepState.PASSED and step.code not in _TOLERATED_WAREHOUSE_CODES:
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -281,6 +289,10 @@ async def save_compute_settings(
                     },
                 )
         app_settings.save_sql_warehouse_id(body.sql_warehouse_id, user_email=email)
+        if warehouse_id and (bound := orchestrator.bound) is not None:
+            adopted = await asyncio.to_thread(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
+            if adopted.state != StepState.PASSED:
+                logger.warning("Saved the SQL warehouse, but Studio users may not be able to use it yet")
     if body.jobs_compute is not None:
         app_settings.save_jobs_compute(body.jobs_compute.model_dump(), user_email=email)
     logger.info("Saved compute settings (by=%s)", email)
