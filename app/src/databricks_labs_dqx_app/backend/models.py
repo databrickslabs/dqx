@@ -3079,3 +3079,74 @@ class DemoContentStatusOut(BaseModel):
     message: str
     started_at: str
     updated_at: str
+
+
+class BrandingModeColorsIn(BaseModel):
+    """Colour groups for one mode."""
+
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingDarkIn(BaseModel):
+    """Dark-mode colours; ignored unless *customised*."""
+
+    customised: bool = False
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingThemeIn(BaseModel):
+    """Theme update."""
+
+    preset: str | None = None
+    light: BrandingModeColorsIn = Field(default_factory=BrandingModeColorsIn)
+    dark: BrandingDarkIn = Field(default_factory=BrandingDarkIn)
+
+
+class BrandingCompanyNameIn(BaseModel):
+    """Company name update (empty or null clears it)."""
+
+    company_name: str | None = None
+
+
+class BrandingLogoModeIn(BaseModel):
+    """Logo mode update."""
+
+    logo_mode: str
+
+
+class BrandingLogoIn(BaseModel):
+    """Logo upload as base64."""
+
+    content_type: str
+    data_base64: str
+
+
+class BrandingModeColorsOut(BaseModel):
+    """Stored colour groups for one mode."""
+
+    colors: dict[str, str]
+
+
+class BrandingDarkOut(BaseModel):
+    """Stored dark-mode colours."""
+
+    customised: bool
+    colors: dict[str, str]
+
+
+class BrandingLogosOut(BaseModel):
+    """Logo content hashes per slot (None when unset)."""
+
+    light: str | None = None
+    dark: str | None = None
+
+
+class BrandingOut(BaseModel):
+    """Full branding as seen by the UI."""
+
+    company_name: str | None = None
+    preset: str | None = None
+    logo_mode: str = "shared"
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+    logos: BrandingLogosOut

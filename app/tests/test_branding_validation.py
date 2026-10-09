@@ -175,3 +175,8 @@ class TestParseStoredBranding:
         assert parsed["logo_mode"] == "shared"
         assert parsed["light"] == {"colors": {"header": "#123456"}}
         assert parsed["dark"] == {"customised": False, "colors": {"brand": "#ABCDEF"}}
+
+
+def test_decode_logo_rejects_huge_base64_before_decoding():
+    with pytest.raises(BrandingValidationError, match="256 KB"):
+        decode_logo("image/png", "A" * (MAX_LOGO_BYTES * 2))

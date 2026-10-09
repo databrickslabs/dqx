@@ -148,6 +148,8 @@ def decode_logo(content_type: str, data_base64: str) -> tuple[str, bytes]:
     """
     if content_type not in _SUPPORTED_MIME:
         raise BrandingValidationError("Logos must be PNG, JPEG or WebP images.")
+    if len(data_base64) > (MAX_LOGO_BYTES * 4) // 3 + 4:
+        raise BrandingValidationError("Logos must be 256 KB or smaller.")
     try:
         raw = base64.b64decode(data_base64, validate=True)
     except (binascii.Error, ValueError) as e:
