@@ -48,9 +48,10 @@ export function deriveAllTokens(mode: Mode, set: GroupColors): Record<string, st
   const sidebarActive = mix(g.sidebar, sidebarFg, s.sidebarActive);
   const ring = mix(g.brand, g.page_background, 0.35);
   const border = mix(g.page_background, g.text, s.border);
+  const header = set.header ?? g.page_background;
   return {
-    "--header": g.header,
-    "--header-foreground": readableOn(g.header),
+    "--header": header,
+    "--header-foreground": readableOn(header),
     "--background": g.page_background,
     "--card": g.page_background,
     "--popover": g.page_background,

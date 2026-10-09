@@ -88,4 +88,7 @@ describe("dark mode", () => {
       expect(Object.keys(deriveAllTokens(mode, {})).sort()).toEqual([...THEMABLE_TOKENS].sort());
     }
   });
+  test("header falls back to the effective page background", () => {
+    expect(deriveAllTokens("light", { page_background: "#FDF6E3" })["--header"]).toBe("#FDF6E3");
+  });
 });
