@@ -100,7 +100,7 @@ function HeaderUserMenuContent() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors outline-none data-[state=open]:bg-accent"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-header-foreground hover:bg-header-foreground/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-header-foreground/40 data-[state=open]:bg-header-foreground/15"
         >
           <Avatar className="h-7 w-7 rounded-full">
             <AvatarFallback className="rounded-full text-[11px] font-medium">
@@ -110,7 +110,7 @@ function HeaderUserMenuContent() {
           <span className="hidden sm:inline truncate max-w-[120px] text-sm font-medium">
             {user.display_name ?? user.user_name}
           </span>
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronDown className="h-3.5 w-3.5 opacity-70" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">

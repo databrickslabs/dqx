@@ -664,6 +664,133 @@ export interface BatchSaveRulesOut {
   failed?: BatchSaveRulesOutFailedItem[];
 }
 
+export type BrandingCompanyNameInCompanyName = string | null;
+
+/**
+ * Company name update (empty or null clears it).
+ */
+export interface BrandingCompanyNameIn {
+  company_name?: BrandingCompanyNameInCompanyName;
+}
+
+export type BrandingCustomPresetOutName = string | null;
+
+/**
+ * A theme an admin saved after editing a preset, shown as "Custom N".
+ */
+export interface BrandingCustomPresetOut {
+  id: string;
+  name?: BrandingCustomPresetOutName;
+  light: BrandingModeColorsOut;
+  dark: BrandingDarkOut;
+}
+
+export type BrandingCustomPresetRenameInName = string | null;
+
+/**
+ * Custom preset rename (empty or null shows it as "Custom N").
+ */
+export interface BrandingCustomPresetRenameIn {
+  name?: BrandingCustomPresetRenameInName;
+}
+
+export type BrandingDarkInColors = {[key: string]: string};
+
+/**
+ * Dark-mode colours set on top of those generated from light; ignored unless *customised*.
+ */
+export interface BrandingDarkIn {
+  customised?: boolean;
+  colors?: BrandingDarkInColors;
+}
+
+export type BrandingDarkOutColors = {[key: string]: string};
+
+/**
+ * Stored dark-mode colours.
+ */
+export interface BrandingDarkOut {
+  customised: boolean;
+  colors: BrandingDarkOutColors;
+}
+
+/**
+ * Saved colours of a built-in preset an admin has edited.
+ */
+export interface BrandingEditedPresetOut {
+  id: string;
+  light: BrandingModeColorsOut;
+  dark: BrandingDarkOut;
+}
+
+/**
+ * Logo upload as base64.
+ */
+export interface BrandingLogoIn {
+  content_type: string;
+  /** @maxLength 349529 */
+  data_base64: string;
+}
+
+export type BrandingLogosOutLight = string | null;
+
+export type BrandingLogosOutDark = string | null;
+
+/**
+ * Logo content hashes per slot (None when unset).
+ */
+export interface BrandingLogosOut {
+  light?: BrandingLogosOutLight;
+  dark?: BrandingLogosOutDark;
+}
+
+export type BrandingModeColorsInColors = {[key: string]: string};
+
+/**
+ * Colour groups for one mode.
+ */
+export interface BrandingModeColorsIn {
+  colors?: BrandingModeColorsInColors;
+}
+
+export type BrandingModeColorsOutColors = {[key: string]: string};
+
+/**
+ * Stored colour groups for one mode.
+ */
+export interface BrandingModeColorsOut {
+  colors: BrandingModeColorsOutColors;
+}
+
+export type BrandingOutCompanyName = string | null;
+
+export type BrandingOutPreset = string | null;
+
+/**
+ * Full branding as seen by the UI.
+ */
+export interface BrandingOut {
+  company_name?: BrandingOutCompanyName;
+  preset?: BrandingOutPreset;
+  logo_mode?: string;
+  light: BrandingModeColorsOut;
+  dark: BrandingDarkOut;
+  logos: BrandingLogosOut;
+  custom_presets?: BrandingCustomPresetOut[];
+  edited_presets?: BrandingEditedPresetOut[];
+}
+
+export type BrandingThemeInPreset = string | null;
+
+/**
+ * Theme update.
+ */
+export interface BrandingThemeIn {
+  preset?: BrandingThemeInPreset;
+  light?: BrandingModeColorsIn;
+  dark?: BrandingDarkIn;
+}
+
 /**
  * Owner's email/username applied to all
  */
@@ -5118,6 +5245,31 @@ export interface ValidationRunSummaryOut {
   review_status_updated_at?: ValidationRunSummaryOutReviewStatusUpdatedAt;
 }
 
+export type ValidationStatusOutErrorRows = number | null;
+
+export type ValidationStatusOutWarningRows = number | null;
+
+export type ValidationStatusOutUpdatedAt = string | null;
+
+/**
+ * Pass/fail status for a single validation run, for external uptime monitors.
+
+Deliberately minimal — an uptime monitor (e.g. Site24x7) only needs the
+status and enough context to identify the run, not the full
+``ValidationRunSummaryOut`` shape.
+ */
+export interface ValidationStatusOut {
+  /** Validation run status: SUCCESS | FAILED | CANCELED */
+  status: string;
+  source_table_fqn: string;
+  run_id: string;
+  error_rows?: ValidationStatusOutErrorRows;
+  warning_rows?: ValidationStatusOutWarningRows;
+  updated_at?: ValidationStatusOutUpdatedAt;
+  /** True when the run completed longer ago than the caller's max_age_minutes */
+  stale?: boolean;
+}
+
 export interface VersionOut {
   version: string;
   core_version: string;
@@ -5217,6 +5369,10 @@ export interface WorkspaceHostOut {
   /** Task-runner Databricks job id (``DQX_JOB_ID``). Combined with the host and a run's ``job_run_id`` the UI builds a deep link to the run page: ``{workspace_host}/jobs/{job_id}/runs/{job_run_id}``. Empty when unset (local dev / job not configured). */
   job_id?: string;
 }
+
+export type GetBrandingLogoParams = {
+v?: string | null;
+};
 
 export type SetSchedulePaused200 = {[key: string]: boolean};
 
@@ -5687,6 +5843,13 @@ q: string;
  * @maximum 50
  */
 limit?: number;
+};
+
+export type GetValidationStatusByTableParams = {
+/**
+ * Report 503 when the latest completed run finished longer ago than this
+ */
+max_age_minutes?: number | null;
 };
 
 /**
@@ -6336,6 +6499,695 @@ export const useReconcileSetup = <TError = AxiosError<HTTPValidationError>,
       return useMutation(mutationOptions, queryClient);
     }
     
+/**
+ * Return the company branding. Available to every signed-in user.
+ * @summary Get Branding
+ */
+export const getBranding = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/branding`,options
+    );
+  }
+
+
+
+
+export const getGetBrandingQueryKey = () => {
+    return [
+    `/api/v1/config/branding`
+    ] as const;
+    }
+
+    
+export const getGetBrandingQueryOptions = <TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBranding>>> = ({ signal }) => getBranding({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBrandingQueryResult = NonNullable<Awaited<ReturnType<typeof getBranding>>>
+export type GetBrandingQueryError = AxiosError<unknown>
+
+
+export function useGetBranding<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBranding>>,
+          TError,
+          Awaited<ReturnType<typeof getBranding>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBranding<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBranding>>,
+          TError,
+          Awaited<ReturnType<typeof getBranding>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBranding<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Branding
+ */
+
+export function useGetBranding<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBrandingQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetBrandingSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBranding>>> = ({ signal }) => getBranding({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBrandingSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getBranding>>>
+export type GetBrandingSuspenseQueryError = AxiosError<unknown>
+
+
+export function useGetBrandingSuspense<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingSuspense<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingSuspense<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Branding
+ */
+
+export function useGetBrandingSuspense<TData = Awaited<ReturnType<typeof getBranding>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBranding>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBrandingSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Set or clear the company name (admin only).
+ * @summary Save Company Name
+ */
+export const saveBrandingCompanyName = (
+    brandingCompanyNameIn: BrandingCompanyNameIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/branding/company-name`,
+      brandingCompanyNameIn,options
+    );
+  }
+
+
+
+export const getSaveBrandingCompanyNameMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingCompanyName>>, TError,{data: BrandingCompanyNameIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveBrandingCompanyName>>, TError,{data: BrandingCompanyNameIn}, TContext> => {
+
+const mutationKey = ['saveBrandingCompanyName'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveBrandingCompanyName>>, {data: BrandingCompanyNameIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveBrandingCompanyName(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveBrandingCompanyNameMutationResult = NonNullable<Awaited<ReturnType<typeof saveBrandingCompanyName>>>
+    export type SaveBrandingCompanyNameMutationBody = BrandingCompanyNameIn
+    export type SaveBrandingCompanyNameMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Company Name
+ */
+export const useSaveBrandingCompanyName = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingCompanyName>>, TError,{data: BrandingCompanyNameIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveBrandingCompanyName>>,
+        TError,
+        {data: BrandingCompanyNameIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveBrandingCompanyNameMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Save the colour theme (admin only).
+ * @summary Save Theme
+ */
+export const saveBrandingTheme = (
+    brandingThemeIn: BrandingThemeIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/branding/theme`,
+      brandingThemeIn,options
+    );
+  }
+
+
+
+export const getSaveBrandingThemeMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingTheme>>, TError,{data: BrandingThemeIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveBrandingTheme>>, TError,{data: BrandingThemeIn}, TContext> => {
+
+const mutationKey = ['saveBrandingTheme'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveBrandingTheme>>, {data: BrandingThemeIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveBrandingTheme(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveBrandingThemeMutationResult = NonNullable<Awaited<ReturnType<typeof saveBrandingTheme>>>
+    export type SaveBrandingThemeMutationBody = BrandingThemeIn
+    export type SaveBrandingThemeMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Theme
+ */
+export const useSaveBrandingTheme = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveBrandingTheme>>, TError,{data: BrandingThemeIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveBrandingTheme>>,
+        TError,
+        {data: BrandingThemeIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveBrandingThemeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Rename a saved custom preset (admin only).
+ * @summary Rename Custom Preset
+ */
+export const renameBrandingCustomPreset = (
+    presetId: string,
+    brandingCustomPresetRenameIn: BrandingCustomPresetRenameIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/branding/presets/${presetId}`,
+      brandingCustomPresetRenameIn,options
+    );
+  }
+
+
+
+export const getRenameBrandingCustomPresetMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext> => {
+
+const mutationKey = ['renameBrandingCustomPreset'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, {presetId: string;data: BrandingCustomPresetRenameIn}> = (props) => {
+          const {presetId,data} = props ?? {};
+
+          return  renameBrandingCustomPreset(presetId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RenameBrandingCustomPresetMutationResult = NonNullable<Awaited<ReturnType<typeof renameBrandingCustomPreset>>>
+    export type RenameBrandingCustomPresetMutationBody = BrandingCustomPresetRenameIn
+    export type RenameBrandingCustomPresetMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Rename Custom Preset
+ */
+export const useRenameBrandingCustomPreset = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof renameBrandingCustomPreset>>,
+        TError,
+        {presetId: string;data: BrandingCustomPresetRenameIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRenameBrandingCustomPresetMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a saved custom preset (admin only). The current colours are kept.
+ * @summary Delete Custom Preset
+ */
+export const deleteBrandingCustomPreset = (
+    presetId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/config/branding/presets/${presetId}`,options
+    );
+  }
+
+
+
+export const getDeleteBrandingCustomPresetMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext> => {
+
+const mutationKey = ['deleteBrandingCustomPreset'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, {presetId: string}> = (props) => {
+          const {presetId} = props ?? {};
+
+          return  deleteBrandingCustomPreset(presetId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteBrandingCustomPresetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>>
+    
+    export type DeleteBrandingCustomPresetMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Custom Preset
+ */
+export const useDeleteBrandingCustomPreset = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingCustomPreset>>, TError,{presetId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteBrandingCustomPreset>>,
+        TError,
+        {presetId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteBrandingCustomPresetMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Upload a PNG, JPEG or WebP logo of up to 256 KB (admin only).
+ * @summary Upload Logo
+ */
+export const uploadBrandingLogo = (
+    slot: string,
+    brandingLogoIn: BrandingLogoIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/branding/logo/${slot}`,
+      brandingLogoIn,options
+    );
+  }
+
+
+
+export const getUploadBrandingLogoMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadBrandingLogo>>, TError,{slot: string;data: BrandingLogoIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadBrandingLogo>>, TError,{slot: string;data: BrandingLogoIn}, TContext> => {
+
+const mutationKey = ['uploadBrandingLogo'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadBrandingLogo>>, {slot: string;data: BrandingLogoIn}> = (props) => {
+          const {slot,data} = props ?? {};
+
+          return  uploadBrandingLogo(slot,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadBrandingLogoMutationResult = NonNullable<Awaited<ReturnType<typeof uploadBrandingLogo>>>
+    export type UploadBrandingLogoMutationBody = BrandingLogoIn
+    export type UploadBrandingLogoMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Upload Logo
+ */
+export const useUploadBrandingLogo = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadBrandingLogo>>, TError,{slot: string;data: BrandingLogoIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof uploadBrandingLogo>>,
+        TError,
+        {slot: string;data: BrandingLogoIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUploadBrandingLogoMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Remove a logo (admin only).
+ * @summary Delete Logo
+ */
+export const deleteBrandingLogo = (
+    slot: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/config/branding/logo/${slot}`,options
+    );
+  }
+
+
+
+export const getDeleteBrandingLogoMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingLogo>>, TError,{slot: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingLogo>>, TError,{slot: string}, TContext> => {
+
+const mutationKey = ['deleteBrandingLogo'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteBrandingLogo>>, {slot: string}> = (props) => {
+          const {slot} = props ?? {};
+
+          return  deleteBrandingLogo(slot,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteBrandingLogoMutationResult = NonNullable<Awaited<ReturnType<typeof deleteBrandingLogo>>>
+    
+    export type DeleteBrandingLogoMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Logo
+ */
+export const useDeleteBrandingLogo = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteBrandingLogo>>, TError,{slot: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteBrandingLogo>>,
+        TError,
+        {slot: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteBrandingLogoMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Return a logo's bytes.
+
+When *v* (the content hash) is given it must match the stored logo, and the response
+can then be cached forever. Without *v* the response must be revalidated.
+ * @summary Get Logo
+ */
+export const getBrandingLogo = (
+    slot: string,
+    params?: GetBrandingLogoParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/config/branding/logo/${slot}`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetBrandingLogoQueryKey = (slot?: string,
+    params?: GetBrandingLogoParams,) => {
+    return [
+    `/api/v1/config/branding/logo/${slot}`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetBrandingLogoQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(slot), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBrandingLogoQueryResult = NonNullable<Awaited<ReturnType<typeof getBrandingLogo>>>
+export type GetBrandingLogoQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params: undefined |  GetBrandingLogoParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBrandingLogo>>,
+          TError,
+          Awaited<ReturnType<typeof getBrandingLogo>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getBrandingLogo>>,
+          TError,
+          Awaited<ReturnType<typeof getBrandingLogo>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Logo
+ */
+
+export function useGetBrandingLogo<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBrandingLogoQueryOptions(slot,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetBrandingLogoSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBrandingLogoQueryKey(slot,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBrandingLogo>>> = ({ signal }) => getBrandingLogo(slot,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetBrandingLogoSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getBrandingLogo>>>
+export type GetBrandingLogoSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params: undefined |  GetBrandingLogoParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Logo
+ */
+
+export function useGetBrandingLogoSuspense<TData = Awaited<ReturnType<typeof getBrandingLogo>>, TError = AxiosError<HTTPValidationError>>(
+ slot: string,
+    params?: GetBrandingLogoParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getBrandingLogo>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetBrandingLogoSuspenseQueryOptions(slot,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
 /**
  * Load workspace config from application state (admin only).
  * @summary Get Config
@@ -29506,3 +30358,320 @@ export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationErr
 
       return useMutation(mutationOptions, queryClient);
     }
+    
+/**
+ * Return the latest completed run's pass/fail status for a table.
+
+Meant for external polling (e.g. a Site24x7 REST monitor authenticating
+with a Databricks OAuth token) — 200 on a clean run, 503 on a failed one.
+In-progress and canceled runs are skipped: they say nothing about the data.
+
+Set *max_age_minutes* to a little more than the table's schedule interval
+so a validation job that stops running is reported as down (503 with
+``stale: true``) instead of returning its last result indefinitely.
+400 for a malformed table name.
+ * @summary Get Validation Status By Table
+ */
+export const getValidationStatusByTable = (
+    tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ValidationStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitoring/status/table/${tableFqn}`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetValidationStatusByTableQueryKey = (tableFqn?: string,
+    params?: GetValidationStatusByTableParams,) => {
+    return [
+    `/api/v1/monitoring/status/table/${tableFqn}`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetValidationStatusByTableQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByTableQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByTable>>> = ({ signal }) => getValidationStatusByTable(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(tableFqn), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByTableQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByTable>>>
+export type GetValidationStatusByTableQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetValidationStatusByTableParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByTable>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByTable>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Table
+ */
+
+export function useGetValidationStatusByTable<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByTableQueryOptions(tableFqn,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetValidationStatusByTableSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByTableQueryKey(tableFqn,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByTable>>> = ({ signal }) => getValidationStatusByTable(tableFqn,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByTableSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByTable>>>
+export type GetValidationStatusByTableSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params: undefined |  GetValidationStatusByTableParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Table
+ */
+
+export function useGetValidationStatusByTableSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByTable>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetValidationStatusByTableParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByTable>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByTableSuspenseQueryOptions(tableFqn,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Return a specific run's pass/fail status.
+
+Same 200/503 contract as ``getValidationStatusByTable`` but keyed by
+``run_id`` instead of table name; a canceled run is reported as such (503).
+400 for a malformed run id.
+ * @summary Get Validation Status By Run
+ */
+export const getValidationStatusByRun = (
+    runId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ValidationStatusOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitoring/status/run/${runId}`,options
+    );
+  }
+
+
+
+
+export const getGetValidationStatusByRunQueryKey = (runId?: string,) => {
+    return [
+    `/api/v1/monitoring/status/run/${runId}`
+    ] as const;
+    }
+
+    
+export const getGetValidationStatusByRunQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByRunQueryKey(runId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByRun>>> = ({ signal }) => getValidationStatusByRun(runId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(runId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByRunQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByRun>>>
+export type GetValidationStatusByRunQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getValidationStatusByRun>>,
+          TError,
+          Awaited<ReturnType<typeof getValidationStatusByRun>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Run
+ */
+
+export function useGetValidationStatusByRun<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByRunQueryOptions(runId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetValidationStatusByRunSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidationStatusByRunQueryKey(runId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidationStatusByRun>>> = ({ signal }) => getValidationStatusByRun(runId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetValidationStatusByRunSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getValidationStatusByRun>>>
+export type GetValidationStatusByRunSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Validation Status By Run
+ */
+
+export function useGetValidationStatusByRunSuspense<TData = Awaited<ReturnType<typeof getValidationStatusByRun>>, TError = AxiosError<HTTPValidationError>>(
+ runId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getValidationStatusByRun>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetValidationStatusByRunSuspenseQueryOptions(runId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}

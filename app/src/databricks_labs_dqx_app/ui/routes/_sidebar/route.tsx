@@ -241,7 +241,7 @@ function Layout() {
                   <BookOpen />
                   <span className="flex-1">{t("sidebar.documentation")}</span>
                   <ExternalLink
-                    className="text-muted-foreground"
+                    className="text-sidebar-foreground/60"
                     aria-hidden
                   />
                 </a>

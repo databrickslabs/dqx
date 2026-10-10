@@ -2294,7 +2294,7 @@ function ProfileResults({
                             checked={selectedRules.has(idx)}
                             onChange={() => toggleRule(idx)}
                             disabled={added}
-                            className="h-3.5 w-3.5 rounded border-gray-300 cursor-pointer"
+                            className="h-3.5 w-3.5 rounded border-border cursor-pointer"
                             onClick={(e) => e.stopPropagation()}
                           />
                         )}

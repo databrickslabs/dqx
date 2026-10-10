@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
+from .common.branding import MAX_LOGO_BASE64_LENGTH
 from .config import AI_SAMPLE_ROW_LIMIT
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
@@ -3079,3 +3080,93 @@ class DemoContentStatusOut(BaseModel):
     message: str
     started_at: str
     updated_at: str
+
+
+class BrandingModeColorsIn(BaseModel):
+    """Colour groups for one mode."""
+
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingDarkIn(BaseModel):
+    """Dark-mode colours set on top of those generated from light; ignored unless *customised*."""
+
+    customised: bool = False
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingThemeIn(BaseModel):
+    """Theme update."""
+
+    preset: str | None = None
+    light: BrandingModeColorsIn = Field(default_factory=BrandingModeColorsIn)
+    dark: BrandingDarkIn = Field(default_factory=BrandingDarkIn)
+
+
+class BrandingCustomPresetRenameIn(BaseModel):
+    """Custom preset rename (empty or null shows it as "Custom N")."""
+
+    name: str | None = None
+
+
+class BrandingCompanyNameIn(BaseModel):
+    """Company name update (empty or null clears it)."""
+
+    company_name: str | None = None
+
+
+class BrandingLogoIn(BaseModel):
+    """Logo upload as base64."""
+
+    content_type: str
+    data_base64: str = Field(max_length=MAX_LOGO_BASE64_LENGTH)
+
+
+class BrandingModeColorsOut(BaseModel):
+    """Stored colour groups for one mode."""
+
+    colors: dict[str, str]
+
+
+class BrandingDarkOut(BaseModel):
+    """Stored dark-mode colours."""
+
+    customised: bool
+    colors: dict[str, str]
+
+
+class BrandingLogosOut(BaseModel):
+    """Logo content hashes per slot (None when unset)."""
+
+    light: str | None = None
+    dark: str | None = None
+
+
+class BrandingCustomPresetOut(BaseModel):
+    """A theme an admin saved after editing a preset, shown as "Custom N"."""
+
+    id: str
+    name: str | None = None
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingEditedPresetOut(BaseModel):
+    """Saved colours of a built-in preset an admin has edited."""
+
+    id: str
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingOut(BaseModel):
+    """Full branding as seen by the UI."""
+
+    company_name: str | None = None
+    preset: str | None = None
+    logo_mode: str = "shared"
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+    logos: BrandingLogosOut
+    custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
+    edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)
