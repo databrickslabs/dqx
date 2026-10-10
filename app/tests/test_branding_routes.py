@@ -98,6 +98,7 @@ class TestRoles:
             ("put", "/api/v1/config/branding/logo/light", {"content_type": "image/png", "data_base64": ""}),
             ("delete", "/api/v1/config/branding/logo/light", None),
             ("delete", "/api/v1/config/branding/presets/custom-1", None),
+            ("put", "/api/v1/config/branding/presets/custom-1", {"name": "Night"}),
         ],
     )
     def test_viewer_cannot_mutate(self, viewer, method, path, body):
@@ -134,6 +135,10 @@ class TestMutations:
         out = admin.put("/api/v1/config/branding/theme", json=body).json()
         assert out["preset"] == "custom-1"
         assert [c["id"] for c in out["custom_presets"]] == ["custom-1"]
+        out = admin.put("/api/v1/config/branding/presets/custom-1", json={"name": "Night"}).json()
+        assert out["custom_presets"][0]["name"] == "Night"
+        assert admin.put("/api/v1/config/branding/presets/custom-1", json={"name": "x" * 41}).status_code == 400
+        assert admin.put("/api/v1/config/branding/presets/custom-9", json={"name": "Night"}).status_code == 404
         out = admin.delete("/api/v1/config/branding/presets/custom-1").json()
         assert out["preset"] is None and out["custom_presets"] == []
         assert admin.delete("/api/v1/config/branding/presets/custom-1").status_code == 404

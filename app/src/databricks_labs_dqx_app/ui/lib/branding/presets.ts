@@ -1,7 +1,7 @@
 import type { ColorGroup } from "./groups";
 
 export const PRESET_IDS = [
-  "dqx-default", "databricks", "high-contrast", "aubergine", "dimmed", "dracula", "nord", "ocean", "solarized",
+  "dqx-default", "databricks", "high-contrast", "aubergine", "dracula", "nord", "ocean", "solarized",
 ] as const;
 export type PresetId = (typeof PRESET_IDS)[number];
 type Full = Record<ColorGroup, string>;
@@ -23,11 +23,6 @@ export const PRESETS: readonly Preset[] = [
     id: "aubergine",
     light: { header: "#3F0E40", page_background: "#FFFFFF", text: "#1D1C1D", brand: "#1164A3", sidebar: "#3F0E40" },
     dark: { header: "#2C092D", page_background: "#1A1D21", text: "#D1D2D3", brand: "#1D9BD1", sidebar: "#3F0E40" },
-  },
-  {
-    id: "dimmed",
-    light: { header: "#F6F8FA", page_background: "#F6F8FA", text: "#24292F", brand: "#0969DA", sidebar: "#EAEEF2" },
-    dark: { header: "#2D333B", page_background: "#22272E", text: "#ADBAC7", brand: "#539BF5", sidebar: "#2D333B" },
   },
   {
     id: "dracula",

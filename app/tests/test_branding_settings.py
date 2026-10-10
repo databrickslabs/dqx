@@ -133,7 +133,12 @@ class TestCustomPresets:
         out = svc.save_branding_theme(None, {"brand": "#112233"}, False, {})
         assert out["preset"] == "custom-1"
         assert svc.get_branding()["custom_presets"] == [
-            {"id": "custom-1", "light": {"colors": {"brand": "#112233"}}, "dark": {"customised": False, "colors": {}}}
+            {
+                "id": "custom-1",
+                "name": None,
+                "light": {"colors": {"brand": "#112233"}},
+                "dark": {"customised": False, "colors": {}},
+            }
         ]
 
     def test_same_colours_reuse_the_custom_preset(self, svc):
@@ -160,6 +165,33 @@ class TestCustomPresets:
         out = svc.save_branding_theme("custom-1", {"brand": "#111111"}, False, {})
         assert out["preset"] == "custom-1"
 
+    def test_saving_a_custom_preset_updates_it(self, svc):
+        svc.save_branding_theme(None, {"brand": "#111111"}, False, {})
+        out = svc.save_branding_theme("custom-1", {"brand": "#222222"}, True, {"text": "#EEEEEE"})
+        assert out["preset"] == "custom-1"
+        assert out["custom_presets"] == [
+            {
+                "id": "custom-1",
+                "name": None,
+                "light": {"colors": {"brand": "#222222"}},
+                "dark": {"customised": True, "colors": {"text": "#EEEEEE"}},
+            }
+        ]
+
+    def test_rename(self, svc):
+        svc.save_branding_theme(None, {"brand": "#111111"}, False, {})
+        out = svc.rename_branding_custom_preset("custom-1", "  Acme   night ")
+        assert out["custom_presets"][0]["name"] == "Acme night"
+        assert svc.get_branding()["custom_presets"][0]["name"] == "Acme night"
+        assert svc.rename_branding_custom_preset("custom-1", "")["custom_presets"][0]["name"] is None
+
+    def test_rename_rejects_long_names_and_unknown_presets(self, svc):
+        svc.save_branding_theme(None, {"brand": "#111111"}, False, {})
+        with pytest.raises(BrandingValidationError):
+            svc.rename_branding_custom_preset("custom-1", "x" * 41)
+        with pytest.raises(LookupError):
+            svc.rename_branding_custom_preset("custom-9", "Night")
+
     def test_unknown_custom_preset_rejected(self, svc):
         with pytest.raises(BrandingValidationError):
             svc.save_branding_theme("custom-9", {"brand": "#111111"}, False, {})
@@ -172,7 +204,7 @@ class TestCustomPresets:
         assert out["custom_presets"] == []
 
     def test_delete_unknown_rejected(self, svc):
-        with pytest.raises(BrandingValidationError):
+        with pytest.raises(LookupError):
             svc.delete_branding_custom_preset("custom-1")
 
     def test_limit(self, svc):
@@ -188,5 +220,5 @@ class TestCustomPresets:
         branding = svc.get_branding()
         assert branding["preset"] == "custom-2"
         assert branding["custom_presets"] == [
-            {"id": "custom-2", "light": {"colors": {}}, "dark": {"customised": False, "colors": {}}}
+            {"id": "custom-2", "name": None, "light": {"colors": {}}, "dark": {"customised": False, "colors": {}}}
         ]

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { generateDark, generateLight } from "./derive";
-import { applyCustomPreset, applyPreset, customPresetNumber, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
+import { applyCustomPreset, applyPreset, blankDraft, customPresetNumber, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
 
 describe("theme editor helpers", () => {
   test("applyPreset loads both modes and records the preset", () => {
@@ -10,7 +10,7 @@ describe("theme editor helpers", () => {
     expect(d.dark.header).toBe("#2C092D");
   });
   test("dqx-default clears colours", () => {
-    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", base: "dqx-default", light: {}, dark: {}, manual: { light: [], dark: [] } });
+    expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", base: "dqx-default", blank: false, light: {}, dark: {}, manual: { light: [], dark: [] } });
   });
   test("editing a colour detaches the preset", () => {
     const d = setGroup(applyPreset("nord"), "light", "brand", "#000000");
@@ -40,7 +40,7 @@ describe("theme editor helpers", () => {
       dark: { customised: false, colors: {} },
       logos: {},
     });
-    expect(d).toEqual({ preset: null, base: null, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
+    expect(d).toEqual({ preset: null, base: null, blank: false, light: { brand: "#112233" }, dark: {}, manual: { light: ["brand"], dark: [] } });
   });
 });
 
@@ -54,13 +54,21 @@ describe("custom presets", () => {
     expect(applyCustomPreset(custom)).toEqual({
       preset: "custom-2",
       base: null,
+      blank: false,
       light: { brand: "#112233" },
       dark: { brand: "#445566" },
       manual: { light: [], dark: [] },
     });
   });
-  test("editing a custom preset detaches it", () => {
-    expect(setGroup(applyCustomPreset(custom), "light", "text", "#000000").preset).toBeNull();
+  test("editing a custom preset keeps it selected, so saving updates it", () => {
+    expect(setGroup(applyCustomPreset(custom), "light", "text", "#000000").preset).toBe("custom-2");
+  });
+  test("a blank draft has no colours and stays blank while filled in", () => {
+    const d = setGroup(blankDraft(), "light", "header", "#3F0E40");
+    expect(d.blank).toBe(true);
+    expect(d.light).toEqual({ header: "#3F0E40" });
+    expect(Object.keys(draftDark(d))).toEqual(["header"]);
+    expect(draftToTheme(d).preset).toBeNull();
   });
   test("an edited built-in preset remembers it for Reset theme", () => {
     const d = setGroup(applyPreset("aubergine"), "light", "text", "#000000");

@@ -39,7 +39,6 @@ class TestConstants:
             "databricks",
             "aubergine",
             "ocean",
-            "dimmed",
             "high-contrast",
             "nord",
             "solarized",

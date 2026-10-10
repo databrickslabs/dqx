@@ -20,7 +20,6 @@ PRESET_IDS: tuple[str, ...] = (
     "databricks",
     "aubergine",
     "ocean",
-    "dimmed",
     "high-contrast",
     "nord",
     "solarized",
@@ -32,6 +31,7 @@ LOGO_SLOTS: tuple[str, ...] = ("light", "dark")
 LOGO_MODES: tuple[str, ...] = ("shared", "separate")
 MAX_LOGO_BYTES = 262144
 MAX_COMPANY_NAME_LENGTH = 60
+MAX_PRESET_NAME_LENGTH = 40
 MAX_LOGO_BASE64_LENGTH = (MAX_LOGO_BYTES * 4) // 3 + 4
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -83,6 +83,20 @@ def normalize_colors(value: object) -> dict[str, str]:
     return colors
 
 
+def _clean_text(value: object, max_length: int, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise BrandingValidationError(f"{label} must be text.")
+    cleaned = "".join(ch for ch in value if unicodedata.category(ch)[0] != "C").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return None
+    if len(cleaned) > max_length:
+        raise BrandingValidationError(f"{label} must be {max_length} characters or fewer.")
+    return cleaned
+
+
 def sanitize_company_name(value: object) -> str | None:
     """Trim, strip control characters and length-check a company name.
 
@@ -95,17 +109,22 @@ def sanitize_company_name(value: object) -> str | None:
     Raises:
         BrandingValidationError: If the value is not a string or exceeds the length limit.
     """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise BrandingValidationError("Company name must be text.")
-    cleaned = "".join(ch for ch in value if unicodedata.category(ch)[0] != "C").strip()
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    if not cleaned:
-        return None
-    if len(cleaned) > MAX_COMPANY_NAME_LENGTH:
-        raise BrandingValidationError(f"Company name must be {MAX_COMPANY_NAME_LENGTH} characters or fewer.")
-    return cleaned
+    return _clean_text(value, MAX_COMPANY_NAME_LENGTH, "Company name")
+
+
+def sanitize_preset_name(value: object) -> str | None:
+    """Trim, strip control characters and length-check a custom preset name.
+
+    Args:
+        value: Candidate name.
+
+    Returns:
+        The cleaned name, or None when empty (the UI then shows "Custom N").
+
+    Raises:
+        BrandingValidationError: If the value is not a string or exceeds the length limit.
+    """
+    return _clean_text(value, MAX_PRESET_NAME_LENGTH, "Theme name")
 
 
 def validate_preset(value: object, custom_ids: tuple[str, ...] = ()) -> str | None:
@@ -250,10 +269,16 @@ def _safe_custom_presets(value: object) -> list[dict[str, object]]:
             logger.warning("Dropped an invalid stored custom preset")
             continue
         light = item.get("light")
+        try:
+            name = sanitize_preset_name(item.get("name"))
+        except BrandingValidationError:
+            logger.warning("Dropped an invalid stored custom preset name")
+            name = None
         seen.add(preset_id)
         presets.append(
             {
                 "id": preset_id,
+                "name": name,
                 "light": {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None, "light")},
                 "dark": _safe_dark(item.get("dark")),
             }

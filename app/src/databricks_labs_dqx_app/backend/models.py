@@ -3103,6 +3103,12 @@ class BrandingThemeIn(BaseModel):
     dark: BrandingDarkIn = Field(default_factory=BrandingDarkIn)
 
 
+class BrandingCustomPresetRenameIn(BaseModel):
+    """Custom preset rename (empty or null shows it as "Custom N")."""
+
+    name: str | None = None
+
+
 class BrandingCompanyNameIn(BaseModel):
     """Company name update (empty or null clears it)."""
 
@@ -3140,6 +3146,7 @@ class BrandingCustomPresetOut(BaseModel):
     """A theme an admin saved after editing a preset, shown as "Custom N"."""
 
     id: str
+    name: str | None = None
     light: BrandingModeColorsOut
     dark: BrandingDarkOut
 

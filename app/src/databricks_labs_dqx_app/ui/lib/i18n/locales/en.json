@@ -267,7 +267,6 @@
         "databricks": "Databricks",
         "aubergine": "Aubergine",
         "ocean": "Ocean",
-        "dimmed": "Dimmed",
         "high-contrast": "High contrast",
         "nord": "Nord",
         "solarized": "Solarized",
@@ -291,7 +290,12 @@
       "customPresetDeleted": "Preset deleted",
       "themeSavedAsCustom": "Colours saved as Custom {{number}}",
       "resetTheme": "Reset theme",
-      "colorsLabel": "Colours"
+      "colorsLabel": "Colours",
+      "addNewTheme": "Add new",
+      "customPresetRename": "Click to rename",
+      "customPresetNameLabel": "Theme name",
+      "notSet": "Not set",
+      "colorNotSet": "{{group}}: not set"
     },
     "breadcrumb": "Admin Settings",
     "title": "Admin Settings",

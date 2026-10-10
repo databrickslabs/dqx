@@ -673,13 +673,25 @@ export interface BrandingCompanyNameIn {
   company_name?: BrandingCompanyNameInCompanyName;
 }
 
+export type BrandingCustomPresetOutName = string | null;
+
 /**
  * A theme an admin saved after editing a preset, shown as "Custom N".
  */
 export interface BrandingCustomPresetOut {
   id: string;
+  name?: BrandingCustomPresetOutName;
   light: BrandingModeColorsOut;
   dark: BrandingDarkOut;
+}
+
+export type BrandingCustomPresetRenameInName = string | null;
+
+/**
+ * Custom preset rename (empty or null shows it as "Custom N").
+ */
+export interface BrandingCustomPresetRenameIn {
+  name?: BrandingCustomPresetRenameInName;
 }
 
 export type BrandingDarkInColors = {[key: string]: string};
@@ -6746,6 +6758,70 @@ export const useSaveBrandingTheme = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getSaveBrandingThemeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Rename a saved custom preset (admin only).
+ * @summary Rename Custom Preset
+ */
+export const renameBrandingCustomPreset = (
+    presetId: string,
+    brandingCustomPresetRenameIn: BrandingCustomPresetRenameIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<BrandingOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/config/branding/presets/${presetId}`,
+      brandingCustomPresetRenameIn,options
+    );
+  }
+
+
+
+export const getRenameBrandingCustomPresetMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext> => {
+
+const mutationKey = ['renameBrandingCustomPreset'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, {presetId: string;data: BrandingCustomPresetRenameIn}> = (props) => {
+          const {presetId,data} = props ?? {};
+
+          return  renameBrandingCustomPreset(presetId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RenameBrandingCustomPresetMutationResult = NonNullable<Awaited<ReturnType<typeof renameBrandingCustomPreset>>>
+    export type RenameBrandingCustomPresetMutationBody = BrandingCustomPresetRenameIn
+    export type RenameBrandingCustomPresetMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Rename Custom Preset
+ */
+export const useRenameBrandingCustomPreset = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameBrandingCustomPreset>>, TError,{presetId: string;data: BrandingCustomPresetRenameIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof renameBrandingCustomPreset>>,
+        TError,
+        {presetId: string;data: BrandingCustomPresetRenameIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRenameBrandingCustomPresetMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

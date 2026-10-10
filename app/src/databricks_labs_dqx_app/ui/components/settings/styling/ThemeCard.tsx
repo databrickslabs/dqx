@@ -9,6 +9,7 @@ import { useIsDarkMode } from "@/hooks/use-is-dark-mode";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   useDeleteBrandingCustomPreset,
+  useRenameBrandingCustomPreset,
   useGetBranding,
   useSaveBrandingTheme,
   type BrandingOut,
@@ -17,6 +18,7 @@ import {
   DEFAULT_GROUPS,
   applyCustomPreset,
   applyPreset,
+  blankDraft,
   customPresetNumber,
   deriveAllTokens,
   draftDark,
@@ -33,13 +35,14 @@ import selector from "@/lib/selector";
 import { cn } from "@/lib/utils";
 import { ColorGroupPicker } from "./ColorGroupPicker";
 import { ContrastWarnings } from "./ContrastWarnings";
-import { PresetGrid } from "./PresetGrid";
+import { NEW_THEME_ID, PresetGrid } from "./PresetGrid";
 import { publishPreview, usePreviewState } from "./preview-store";
 import { ThemeMock } from "./ThemeMock";
 import { toastSaveError, useBrandingUpdate } from "./use-branding-update";
 
 /** A draft with no colours at all is DQX Default, whether or not the preset was recorded. */
 function selectedPreset(d: ThemeDraft): string | null {
+  if (d.blank) return NEW_THEME_ID;
   if (d.preset) return d.preset;
   return Object.keys(d.light).length === 0 && Object.keys(d.dark).length === 0 ? "dqx-default" : null;
 }
@@ -57,6 +60,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   const preview = usePreviewState();
   const saveMutation = useSaveBrandingTheme();
   const deletePresetMutation = useDeleteBrandingCustomPreset();
+  const renamePresetMutation = useRenameBrandingCustomPreset();
   const { applyResponse } = useBrandingUpdate();
 
   const saved = useMemo(() => draftFromApi(server), [server]);
@@ -70,7 +74,9 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
     [colors],
   );
   const warnings = useMemo(() => draftWarnings(draft), [draft]);
-  const dirty = isDirty(draft, saved);
+  const hasColours = Object.keys(draft.light).length > 0 || Object.keys(draft.dark).length > 0;
+  // A new theme with nothing set yet has nothing to save.
+  const dirty = isDirty(draft, saved) && !(draft.blank && !hasColours);
   const busy = !isAdmin || saveMutation.isPending || deletePresetMutation.isPending;
   const customPresets = server.custom_presets ?? [];
 
@@ -104,6 +110,16 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   const selectPreset = (id: string) => {
     const custom = customPresets.find((c) => c.id === id);
     setDraft(custom ? applyCustomPreset(custom) : applyPreset(id));
+  };
+
+  const renamePreset = (id: string, name: string) => {
+    renamePresetMutation.mutate(
+      { presetId: id, data: { name: name || null } },
+      {
+        onSuccess: (response) => applyResponse(response),
+        onError: (err) => toastSaveError(t, err),
+      },
+    );
   };
 
   const deletePreset = (id: string) => {
@@ -141,6 +157,8 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
             custom={customPresets}
             disabled={busy}
             onSelect={selectPreset}
+            onAddNew={() => setDraft(blankDraft())}
+            onRename={renamePreset}
             onDelete={deletePreset}
           />
         </div>
@@ -184,6 +202,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
               idPrefix={`branding-${mode}`}
               colors={colors[mode]}
               defaults={DEFAULT_GROUPS[mode]}
+              showUnset={draft.blank}
               disabled={busy}
               onChange={(group, hex) => setDraft((d) => setGroup(d, mode, group, hex))}
               className="flex-1"
@@ -226,7 +245,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
           <Button size="sm" onClick={save} disabled={busy || !dirty}>
             {t("config.styling.save")}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setDraft(saved)} disabled={!dirty || saveMutation.isPending}>
+          <Button size="sm" variant="outline" onClick={() => setDraft(saved)} disabled={!isDirty(draft, saved) || saveMutation.isPending}>
             {t("config.styling.cancel")}
           </Button>
         </div>

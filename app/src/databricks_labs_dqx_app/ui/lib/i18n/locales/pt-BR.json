@@ -267,7 +267,6 @@
         "databricks": "Databricks",
         "aubergine": "Berinjela",
         "ocean": "Oceano",
-        "dimmed": "Atenuado",
         "high-contrast": "Alto contraste",
         "nord": "Nord",
         "solarized": "Solarized",
@@ -291,7 +290,12 @@
       "customPresetDeleted": "Predefinição excluída",
       "themeSavedAsCustom": "Cores salvas como Personalizado {{number}}",
       "resetTheme": "Redefinir tema",
-      "colorsLabel": "Cores"
+      "colorsLabel": "Cores",
+      "addNewTheme": "Adicionar",
+      "customPresetRename": "Clique para renomear",
+      "customPresetNameLabel": "Nome do tema",
+      "notSet": "Não definido",
+      "colorNotSet": "{{group}}: não definido"
     },
     "breadcrumb": "Configurações de administrador",
     "title": "Configurações de administrador",

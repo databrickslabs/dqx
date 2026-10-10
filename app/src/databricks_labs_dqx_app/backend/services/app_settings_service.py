@@ -19,6 +19,7 @@ from databricks_labs_dqx_app.backend.common.branding import (
     normalize_colors,
     parse_stored_branding,
     sanitize_company_name,
+    sanitize_preset_name,
     validate_preset,
 )
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
@@ -1350,7 +1351,8 @@ class AppSettingsService:
     ) -> dict[str, object]:
         """Validate and store the colour theme.
 
-        A theme with colours but no preset (an edited preset) is also kept as a custom preset,
+        Saving with a custom preset selected updates that preset's colours. A theme with colours but
+        no preset (an edited built-in preset or a new theme) is kept as a new custom preset,
         "Custom N", reusing an existing custom preset with the same colours.
         """
         branding = self.get_branding()
@@ -1361,6 +1363,11 @@ class AppSettingsService:
         chosen = validate_preset(preset, tuple(str(c["id"]) for c in custom))
         if chosen is None and (light["colors"] or dark_map):
             chosen = self._custom_preset_for(custom, light, dark)
+        else:
+            for existing in custom:
+                if existing["id"] == chosen:
+                    existing["light"] = light
+                    existing["dark"] = dark
         branding["preset"] = chosen
         branding["light"] = light
         branding["dark"] = dark
@@ -1380,8 +1387,21 @@ class AppSettingsService:
             )
         numbers = [custom_preset_number(str(c["id"])) or 0 for c in custom]
         preset_id = f"{CUSTOM_PRESET_PREFIX}{max(numbers, default=0) + 1}"
-        custom.append({"id": preset_id, "light": light, "dark": dark})
+        custom.append({"id": preset_id, "name": None, "light": light, "dark": dark})
         return preset_id
+
+    def rename_branding_custom_preset(
+        self, preset_id: str, name: object, *, user_email: str | None = None
+    ) -> dict[str, object]:
+        """Rename a saved custom preset; an empty name shows it as "Custom N" again."""
+        branding = self.get_branding()
+        custom = branding_custom_presets(branding)
+        target = next((c for c in custom if c["id"] == preset_id), None)
+        if target is None:
+            raise LookupError("Unknown custom preset.")
+        target["name"] = sanitize_preset_name(name)
+        branding["custom_presets"] = custom
+        return self._save_branding(branding, user_email)
 
     def delete_branding_custom_preset(self, preset_id: str, *, user_email: str | None = None) -> dict[str, object]:
         """Delete a saved custom preset; the current colours are kept even if they came from it."""
@@ -1389,7 +1409,7 @@ class AppSettingsService:
         custom = branding_custom_presets(branding)
         remaining = [c for c in custom if c["id"] != preset_id]
         if len(remaining) == len(custom):
-            raise BrandingValidationError("Unknown custom preset.")
+            raise LookupError("Unknown custom preset.")
         branding["custom_presets"] = remaining
         if branding.get("preset") == preset_id:
             branding["preset"] = None

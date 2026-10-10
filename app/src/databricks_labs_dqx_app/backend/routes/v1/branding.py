@@ -13,6 +13,7 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     BrandingCompanyNameIn,
     BrandingCustomPresetOut,
+    BrandingCustomPresetRenameIn,
     BrandingDarkOut,
     BrandingLogoIn,
     BrandingLogosOut,
@@ -49,7 +50,15 @@ def _to_out(svc: AppSettingsService) -> BrandingOut:
     custom = []
     for preset in branding_custom_presets(branding):
         preset_light, preset_dark = _mode_out(preset["light"], preset["dark"])
-        custom.append(BrandingCustomPresetOut(id=str(preset["id"]), light=preset_light, dark=preset_dark))
+        name = preset.get("name")
+        custom.append(
+            BrandingCustomPresetOut(
+                id=str(preset["id"]),
+                name=name if isinstance(name, str) else None,
+                light=preset_light,
+                dark=preset_dark,
+            )
+        )
     return BrandingOut(
         company_name=branding["company_name"] if isinstance(branding["company_name"], str) else None,
         preset=branding["preset"] if isinstance(branding["preset"], str) else None,
@@ -101,6 +110,23 @@ def save_theme(body: BrandingThemeIn, svc: SettingsDep, email: EmailDep) -> Bran
     return _to_out(svc)
 
 
+@router.put(
+    "/presets/{preset_id}", response_model=BrandingOut, operation_id="renameBrandingCustomPreset", dependencies=_ADMIN
+)
+def rename_custom_preset(
+    preset_id: str, body: BrandingCustomPresetRenameIn, svc: SettingsDep, email: EmailDep
+) -> BrandingOut:
+    """Rename a saved custom preset (admin only)."""
+    try:
+        svc.rename_branding_custom_preset(preset_id, body.name, user_email=email)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except BrandingValidationError as e:
+        raise _bad_request(e) from e
+    logger.info(f"Renamed a custom branding preset (by={email})")
+    return _to_out(svc)
+
+
 @router.delete(
     "/presets/{preset_id}", response_model=BrandingOut, operation_id="deleteBrandingCustomPreset", dependencies=_ADMIN
 )
@@ -108,7 +134,7 @@ def delete_custom_preset(preset_id: str, svc: SettingsDep, email: EmailDep) -> B
     """Delete a saved custom preset (admin only). The current colours are kept."""
     try:
         svc.delete_branding_custom_preset(preset_id, user_email=email)
-    except BrandingValidationError as e:
+    except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     logger.info(f"Deleted a custom branding preset (by={email})")
     return _to_out(svc)
