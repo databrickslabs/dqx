@@ -226,7 +226,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
                     onClick={() => setMode(m)}
                     className={cn(
                       "block w-full rounded-md text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      mode === m ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "opacity-80 hover:opacity-100",
+                      mode === m && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                     )}
                   >
                     <ThemeMock
