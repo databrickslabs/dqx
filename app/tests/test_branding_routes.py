@@ -76,6 +76,7 @@ class TestRead:
             "dark": {"customised": False, "colors": {}},
             "logos": {"light": None, "dark": None},
             "custom_presets": [],
+            "edited_presets": [],
         }
         assert resp.headers["etag"]
 

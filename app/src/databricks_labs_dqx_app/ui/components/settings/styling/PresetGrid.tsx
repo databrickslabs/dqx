@@ -13,7 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import type { BrandingCustomPresetOut } from "@/lib/api";
+import type { BrandingCustomPresetOut, BrandingEditedPresetOut } from "@/lib/api";
 import { PRESETS, customPresetNumber, deriveAllTokens, effectiveDark, type GroupColors } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import { ThemeMock } from "./ThemeMock";
@@ -30,14 +30,15 @@ type Thumb = {
   name: string | null;
 };
 
-/** Built-in thumbnails are static, so derive them once. */
-const BUILT_IN_THUMBS: Thumb[] = PRESETS.map((p) => ({
-  id: p.id,
-  light: deriveAllTokens("light", p.light),
-  dark: deriveAllTokens("dark", p.dark),
-  custom: false,
-  name: null,
-}));
+function thumb(id: string, light: GroupColors, darkCustomised: boolean, dark: GroupColors, custom: boolean, name: string | null): Thumb {
+  return {
+    id,
+    light: deriveAllTokens("light", light),
+    dark: deriveAllTokens("dark", effectiveDark(light, darkCustomised, dark)),
+    custom,
+    name,
+  };
+}
 
 /** Name shown in place; click to edit, Enter or blur saves, Escape cancels. */
 function EditableName({
@@ -107,6 +108,8 @@ function EditableName({
 interface PresetGridProps {
   selected: string | null;
   custom: BrandingCustomPresetOut[];
+  /** Saved edits of built-in presets; their thumbnails show the edited colours. */
+  edited: BrandingEditedPresetOut[];
   disabled?: boolean;
   onSelect: (id: string) => void;
   onAddNew: () => void;
@@ -114,23 +117,21 @@ interface PresetGridProps {
   onDelete: (id: string) => void;
 }
 
-export function PresetGrid({ selected, custom, disabled, onSelect, onAddNew, onRename, onDelete }: PresetGridProps) {
+export function PresetGrid({ selected, custom, edited, disabled, onSelect, onAddNew, onRename, onDelete }: PresetGridProps) {
   const { t } = useTranslation();
   const thumbs = useMemo<Thumb[]>(
     () => [
-      ...BUILT_IN_THUMBS,
-      ...custom.map((c) => {
-        const light = c.light.colors as GroupColors;
-        return {
-          id: c.id,
-          light: deriveAllTokens("light", light),
-          dark: deriveAllTokens("dark", effectiveDark(light, !!c.dark.customised, c.dark.colors as GroupColors)),
-          custom: true,
-          name: c.name ?? null,
-        };
+      ...PRESETS.map((p) => {
+        const e = edited.find((x) => x.id === p.id);
+        return e
+          ? thumb(p.id, e.light.colors as GroupColors, !!e.dark.customised, e.dark.colors as GroupColors, false, null)
+          : thumb(p.id, p.light, Object.keys(p.dark).length > 0, p.dark, false, null);
       }),
+      ...custom.map((c) =>
+        thumb(c.id, c.light.colors as GroupColors, !!c.dark.customised, c.dark.colors as GroupColors, true, c.name ?? null),
+      ),
     ],
-    [custom],
+    [custom, edited],
   );
   const defaultName = (id: string) => {
     const n = customPresetNumber(id);
@@ -152,45 +153,41 @@ export function PresetGrid({ selected, custom, disabled, onSelect, onAddNew, onR
               disabled && "opacity-60",
             )}
           >
+            {/* The whole card selects the theme; only the name (custom) and delete sit above it. */}
             <button
               type="button"
               aria-pressed={isSelected}
               aria-label={displayName(p)}
               disabled={disabled}
               onClick={() => onSelect(p.id)}
-              className="block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
-            >
+              className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+            />
+            <div className="pointer-events-none relative">
               <div className="grid grid-cols-2 gap-1.5">
                 <ThemeMock tokens={p.light} size="thumb" />
                 <ThemeMock tokens={p.dark} size="thumb" />
               </div>
-            </button>
+              <div className="mt-2 flex h-6 items-center gap-2 pr-7 text-sm font-medium">
+                {p.custom ? (
+                  <span className="pointer-events-auto min-w-0">
+                    <EditableName
+                      name={p.name ?? ""}
+                      placeholder={defaultName(p.id)}
+                      disabled={disabled}
+                      onRename={(name) => onRename(p.id, name)}
+                    />
+                  </span>
+                ) : (
+                  <span className="truncate">{displayName(p)}</span>
+                )}
+                {p.id === "dqx-default" && <Badge variant="secondary">{t("config.styling.presetDefaultBadge")}</Badge>}
+              </div>
+            </div>
             {isSelected && (
               <span className="pointer-events-none absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <Check className="h-3.5 w-3.5" />
               </span>
             )}
-            <div className="mt-2 flex h-6 items-center gap-2 pr-7 text-sm font-medium">
-              {p.custom ? (
-                <EditableName
-                  name={p.name ?? ""}
-                  placeholder={defaultName(p.id)}
-                  disabled={disabled}
-                  onRename={(name) => onRename(p.id, name)}
-                />
-              ) : (
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onSelect(p.id)}
-                  tabIndex={-1}
-                  className="truncate text-left disabled:pointer-events-none"
-                >
-                  {displayName(p)}
-                </button>
-              )}
-              {p.id === "dqx-default" && <Badge variant="secondary">{t("config.styling.presetDefaultBadge")}</Badge>}
-            </div>
             {p.custom && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -199,7 +196,7 @@ export function PresetGrid({ selected, custom, disabled, onSelect, onAddNew, onR
                     disabled={disabled}
                     aria-label={t("config.styling.customPresetDelete", { name: displayName(p) })}
                     title={t("config.styling.customPresetDelete", { name: displayName(p) })}
-                    className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none"
+                    className="absolute bottom-2 right-2 z-10 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>

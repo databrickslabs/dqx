@@ -26,6 +26,7 @@ import {
   draftToTheme,
   draftWarnings,
   isDirty,
+  sameColours,
   setGroup,
   type Mode,
   type ThemeDraft,
@@ -79,6 +80,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
   const dirty = isDirty(draft, saved) && !(draft.blank && !hasColours);
   const busy = !isAdmin || saveMutation.isPending || deletePresetMutation.isPending;
   const customPresets = server.custom_presets ?? [];
+  const editedPresets = server.edited_presets ?? [];
 
   // Share the unsaved theme with the Branding card's logo previews.
   useEffect(() => {
@@ -109,7 +111,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
 
   const selectPreset = (id: string) => {
     const custom = customPresets.find((c) => c.id === id);
-    setDraft(custom ? applyCustomPreset(custom) : applyPreset(id));
+    setDraft(custom ? applyCustomPreset(custom) : applyPreset(id, editedPresets.find((e) => e.id === id)));
   };
 
   const renamePreset = (id: string, name: string) => {
@@ -155,6 +157,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
           <PresetGrid
             selected={selectedPreset(draft)}
             custom={customPresets}
+            edited={editedPresets}
             disabled={busy}
             onSelect={selectPreset}
             onAddNew={() => setDraft(blankDraft())}
@@ -189,7 +192,7 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
                   size="sm"
                   variant="ghost"
                   className="ml-auto h-7 px-2 text-xs"
-                  disabled={busy || !isDirty(draft, applyPreset(draft.base))}
+                  disabled={busy || sameColours(draft, applyPreset(draft.base))}
                   onClick={() => setDraft((d) => (d.base ? applyPreset(d.base) : d))}
                 >
                   <RotateCcw className="h-3.5 w-3.5" />

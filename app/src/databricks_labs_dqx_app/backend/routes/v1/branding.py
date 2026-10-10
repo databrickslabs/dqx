@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.models import (
     BrandingCustomPresetOut,
     BrandingCustomPresetRenameIn,
     BrandingDarkOut,
+    BrandingEditedPresetOut,
     BrandingLogoIn,
     BrandingLogosOut,
     BrandingModeColorsOut,
@@ -24,6 +25,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.services.app_settings_service import (
     AppSettingsService,
     branding_custom_presets,
+    branding_edited_presets,
     branding_logo_hashes,
 )
 
@@ -59,6 +61,10 @@ def _to_out(svc: AppSettingsService) -> BrandingOut:
                 dark=preset_dark,
             )
         )
+    edited = []
+    for preset in branding_edited_presets(branding):
+        preset_light, preset_dark = _mode_out(preset["light"], preset["dark"])
+        edited.append(BrandingEditedPresetOut(id=str(preset["id"]), light=preset_light, dark=preset_dark))
     return BrandingOut(
         company_name=branding["company_name"] if isinstance(branding["company_name"], str) else None,
         preset=branding["preset"] if isinstance(branding["preset"], str) else None,
@@ -67,6 +73,7 @@ def _to_out(svc: AppSettingsService) -> BrandingOut:
         dark=dark,
         logos=BrandingLogosOut(**branding_logo_hashes(branding)),
         custom_presets=custom,
+        edited_presets=edited,
     )
 
 

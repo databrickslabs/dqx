@@ -160,6 +160,27 @@ class TestCustomPresets:
         svc.save_branding_theme("nord", {"brand": "#5E81AC"}, False, {})
         assert svc.get_branding()["custom_presets"] == []
 
+    def test_saving_a_built_in_preset_updates_its_edit(self, svc):
+        svc.save_branding_theme("solarized", {"brand": "#111111"}, False, {})
+        out = svc.save_branding_theme("solarized", {"brand": "#222222"}, True, {"text": "#EEEEEE"})
+        assert out["preset"] == "solarized"
+        assert out["custom_presets"] == []
+        assert out["edited_presets"] == [
+            {
+                "id": "solarized",
+                "light": {"colors": {"brand": "#222222"}},
+                "dark": {"customised": True, "colors": {"text": "#EEEEEE"}},
+            }
+        ]
+        svc.save_branding_theme("nord", {"brand": "#5E81AC"}, False, {})
+        assert [e["id"] for e in svc.get_branding()["edited_presets"]] == ["solarized", "nord"]
+
+    def test_invalid_stored_preset_edits_dropped(self, svc, store):
+        store["branding_v1"] = json.dumps({"edited_presets": [{"id": "neon"}, {"id": "nord", "light": {"colors": {"brand": "#5E81AC"}}}]})
+        assert svc.get_branding()["edited_presets"] == [
+            {"id": "nord", "light": {"colors": {"brand": "#5E81AC"}}, "dark": {"customised": False, "colors": {}}}
+        ]
+
     def test_selecting_a_custom_preset(self, svc):
         svc.save_branding_theme(None, {"brand": "#111111"}, False, {})
         out = svc.save_branding_theme("custom-1", {"brand": "#111111"}, False, {})

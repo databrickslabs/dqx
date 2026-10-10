@@ -715,6 +715,15 @@ export interface BrandingDarkOut {
 }
 
 /**
+ * Saved colours of a built-in preset an admin has edited.
+ */
+export interface BrandingEditedPresetOut {
+  id: string;
+  light: BrandingModeColorsOut;
+  dark: BrandingDarkOut;
+}
+
+/**
  * Logo upload as base64.
  */
 export interface BrandingLogoIn {
@@ -768,6 +777,7 @@ export interface BrandingOut {
   dark: BrandingDarkOut;
   logos: BrandingLogosOut;
   custom_presets?: BrandingCustomPresetOut[];
+  edited_presets?: BrandingEditedPresetOut[];
 }
 
 export type BrandingThemeInPreset = string | null;

@@ -1,4 +1,4 @@
-import type { BrandingCustomPresetOut, BrandingOut } from "@/lib/api";
+import type { BrandingCustomPresetOut, BrandingEditedPresetOut, BrandingOut } from "@/lib/api";
 import { checkContrast, type ContrastWarning } from "./contrast";
 import { deriveAllTokens, effectiveDark, generateDark, generateLight } from "./derive";
 import { COLOR_GROUPS, type ColorGroup, type GroupColors, type Mode } from "./groups";
@@ -44,10 +44,29 @@ export function draftFromApi(b: BrandingOut): ThemeDraft {
   return { preset, base, blank: false, light, dark, manual };
 }
 
-export function applyPreset(id: string): ThemeDraft {
+/**
+ * Loads a built-in preset: its saved edit when there is one, otherwise its original colours
+ * (which is what "Reset theme" restores).
+ */
+export function applyPreset(id: string, edit?: BrandingEditedPresetOut): ThemeDraft {
   const p = presetById(id);
+  if (edit && p) {
+    return {
+      preset: id,
+      base: id,
+      blank: false,
+      light: { ...(edit.light.colors as GroupColors) },
+      dark: edit.dark.customised ? { ...(edit.dark.colors as GroupColors) } : {},
+      manual: NO_MANUAL,
+    };
+  }
   if (!p || id === "dqx-default") return { preset: "dqx-default", base: "dqx-default", blank: false, light: {}, dark: {}, manual: NO_MANUAL };
   return { preset: id, base: id, blank: false, light: { ...p.light }, dark: { ...p.dark }, manual: NO_MANUAL };
+}
+
+/** True when both drafts show the same colours in both modes. */
+export function sameColours(a: ThemeDraft, b: ThemeDraft): boolean {
+  return JSON.stringify([a.light, draftDark(a)]) === JSON.stringify([b.light, draftDark(b)]);
 }
 
 /** Loads a saved custom preset ("Custom N"). */
@@ -74,9 +93,8 @@ export function customPresetNumber(id: string): number | null {
 }
 
 /**
- * Sets one colour by hand. A built-in preset stops being selected as soon as the colours differ
- * from it (saving then adds a custom preset); a custom preset stays selected, so saving updates
- * it. The same colour in the other mode is regenerated from this one unless it was set by hand.
+ * Sets one colour by hand. The selected preset stays selected, so saving updates it. The same
+ * colour in the other mode is regenerated from this one unless it was set by hand.
  */
 export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: string): ThemeDraft {
   const value = hex.toUpperCase();
@@ -92,8 +110,7 @@ export function setGroup(d: ThemeDraft, mode: Mode, group: ColorGroup, hex: stri
     if (mode === "light") delete dark[group];
     else light[group] = generateLight({ [group]: value })[group];
   }
-  const preset = d.preset && customPresetNumber(d.preset) !== null ? d.preset : null;
-  return { ...d, preset, light, dark, manual };
+  return { ...d, light, dark, manual };
 }
 
 /** The dark colours the draft shows: generated from light, with the dark overrides on top. */

@@ -147,6 +147,7 @@ class TestParseStoredBranding:
             "dark": {"customised": False, "colors": {}},
             "logos": {"light": None, "dark": None},
             "custom_presets": [],
+            "edited_presets": [],
         }
 
     def test_logo_hashes_round_trip(self):

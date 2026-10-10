@@ -212,6 +212,7 @@ def default_branding() -> dict[str, object]:
         "dark": {"customised": False, "colors": {}},
         "logos": {slot: None for slot in LOGO_SLOTS},
         "custom_presets": [],
+        "edited_presets": [],
     }
 
 
@@ -286,6 +287,28 @@ def _safe_custom_presets(value: object) -> list[dict[str, object]]:
     return presets
 
 
+def _safe_edited_presets(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    edited: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in value:
+        preset_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or preset_id not in PRESET_IDS or preset_id in seen:
+            logger.warning("Dropped an invalid stored preset edit")
+            continue
+        light = item.get("light")
+        seen.add(str(preset_id))
+        edited.append(
+            {
+                "id": str(preset_id),
+                "light": {"colors": _safe_colors(light.get("colors") if isinstance(light, dict) else None, "light")},
+                "dark": _safe_dark(item.get("dark")),
+            }
+        )
+    return edited
+
+
 def parse_stored_branding(raw: str | None) -> dict[str, object]:
     """Parse a stored branding value, dropping anything invalid.
 
@@ -315,6 +338,7 @@ def parse_stored_branding(raw: str | None) -> dict[str, object]:
         logger.warning("Dropped an invalid stored company name")
     custom_presets = _safe_custom_presets(data.get("custom_presets"))
     result["custom_presets"] = custom_presets
+    result["edited_presets"] = _safe_edited_presets(data.get("edited_presets"))
     custom_ids = {str(c["id"]) for c in custom_presets}
     preset = data.get("preset")
     if preset is not None and preset not in PRESET_IDS and preset not in custom_ids:

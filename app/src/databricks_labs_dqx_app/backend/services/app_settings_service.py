@@ -12,6 +12,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, norma
 from databricks_labs_dqx_app.backend.common.branding import (
     CUSTOM_PRESET_PREFIX,
     LOGO_SLOTS,
+    PRESET_IDS,
     MAX_CUSTOM_PRESETS,
     BrandingValidationError,
     custom_preset_number,
@@ -1351,9 +1352,10 @@ class AppSettingsService:
     ) -> dict[str, object]:
         """Validate and store the colour theme.
 
-        Saving with a custom preset selected updates that preset's colours. A theme with colours but
-        no preset (an edited built-in preset or a new theme) is kept as a new custom preset,
-        "Custom N", reusing an existing custom preset with the same colours.
+        Saving with a preset selected updates that preset: a custom preset's colours, or the saved
+        edit of a built-in preset (its original colours stay available to "Reset theme"). A theme
+        with colours but no preset (a new theme) is kept as a new custom preset, "Custom N",
+        reusing an existing custom preset with the same colours.
         """
         branding = self.get_branding()
         custom = branding_custom_presets(branding)
@@ -1368,6 +1370,10 @@ class AppSettingsService:
                 if existing["id"] == chosen:
                     existing["light"] = light
                     existing["dark"] = dark
+        edited = branding_edited_presets(branding)
+        if chosen in PRESET_IDS:
+            edited = [e for e in edited if e["id"] != chosen] + [{"id": chosen, "light": light, "dark": dark}]
+        branding["edited_presets"] = edited
         branding["preset"] = chosen
         branding["light"] = light
         branding["dark"] = dark
@@ -1481,6 +1487,19 @@ class AppSettingsService:
     def get_branding_logo_hashes(self) -> dict[str, str | None]:
         """Return each slot's logo hash (None when unset), read from the small branding value."""
         return branding_logo_hashes(self.get_branding())
+
+
+def branding_edited_presets(branding: dict[str, object]) -> list[dict[str, object]]:
+    """Return the saved edits of built-in presets held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        A new list of edits, each with a built-in preset *id*, *light* and *dark*.
+    """
+    stored = branding.get("edited_presets")
+    return [e for e in stored if isinstance(e, dict)] if isinstance(stored, list) else []
 
 
 def branding_custom_presets(branding: dict[str, object]) -> list[dict[str, object]]:

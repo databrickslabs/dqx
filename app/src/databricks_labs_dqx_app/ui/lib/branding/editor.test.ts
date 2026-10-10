@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { generateDark, generateLight } from "./derive";
-import { applyCustomPreset, applyPreset, blankDraft, customPresetNumber, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
+import { applyCustomPreset, applyPreset, blankDraft, sameColours, customPresetNumber, draftDark, draftFromApi, draftToTheme, draftWarnings, fileToLogoPayload, isDirty, MAX_LOGO_BYTES, setGroup } from "./editor";
 
 describe("theme editor helpers", () => {
   test("applyPreset loads both modes and records the preset", () => {
@@ -12,10 +12,17 @@ describe("theme editor helpers", () => {
   test("dqx-default clears colours", () => {
     expect(applyPreset("dqx-default")).toEqual({ preset: "dqx-default", base: "dqx-default", blank: false, light: {}, dark: {}, manual: { light: [], dark: [] } });
   });
-  test("editing a colour detaches the preset", () => {
+  test("editing a colour keeps the preset selected, so saving updates it", () => {
     const d = setGroup(applyPreset("nord"), "light", "brand", "#000000");
-    expect(d.preset).toBeNull();
+    expect(d.preset).toBe("nord");
+    expect(d.base).toBe("nord");
     expect(d.light.brand).toBe("#000000");
+  });
+  test("a saved edit of a built-in preset loads its colours; without it the originals load", () => {
+    const edit = { id: "nord", light: { colors: { brand: "#000000" } }, dark: { customised: false, colors: {} } };
+    expect(applyPreset("nord", edit).light).toEqual({ brand: "#000000" });
+    expect(sameColours(applyPreset("nord", edit), applyPreset("nord"))).toBe(false);
+    expect(sameColours(setGroup(applyPreset("nord"), "light", "text", "#2E3440"), applyPreset("nord"))).toBe(true);
   });
   test("setting a colour to the preset's own value keeps the preset", () => {
     const d = setGroup(applyPreset("nord"), "light", "brand", "#5e81ac");
@@ -72,7 +79,6 @@ describe("custom presets", () => {
   });
   test("an edited built-in preset remembers it for Reset theme", () => {
     const d = setGroup(applyPreset("aubergine"), "light", "text", "#000000");
-    expect(d.preset).toBeNull();
     expect(d.base).toBe("aubergine");
   });
   test("customPresetNumber", () => {

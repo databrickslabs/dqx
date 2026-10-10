@@ -3151,6 +3151,14 @@ class BrandingCustomPresetOut(BaseModel):
     dark: BrandingDarkOut
 
 
+class BrandingEditedPresetOut(BaseModel):
+    """Saved colours of a built-in preset an admin has edited."""
+
+    id: str
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
 class BrandingOut(BaseModel):
     """Full branding as seen by the UI."""
 
@@ -3161,3 +3169,4 @@ class BrandingOut(BaseModel):
     dark: BrandingDarkOut
     logos: BrandingLogosOut
     custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
+    edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)
