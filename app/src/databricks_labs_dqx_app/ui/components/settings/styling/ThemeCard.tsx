@@ -150,8 +150,6 @@ function ThemeEditor({ server }: { server: BrandingOut }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">{t("config.styling.themeDescription")}</p>
-
         <div className="space-y-2">
           <SectionLabel>{t("config.styling.presetsLabel")}</SectionLabel>
           <PresetGrid
