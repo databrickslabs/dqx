@@ -8,10 +8,9 @@ import pytest
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError, OperationFailed
-from databricks.sdk.service.jobs import PerformanceTarget, RunResultState
+from databricks.sdk.service.jobs import PerformanceTarget, RunResultState, RunTask
 
-from tests.anomaly_diagnostics import worker_traceback
-from tests.anomaly_e2e import PackagedAnomalyCase, safe_packaged_result
+from tests.anomaly_e2e import PackagedAnomalyCase, safe_packaged_result, safe_packaged_task_failure
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +32,17 @@ def test_run_anomaly_distributed_scoring_notebook(
     if packaged_anomaly_case.serverless:
         assert run.effective_performance_target == PerformanceTarget.STANDARD
     assert run.tasks and len(run.tasks) == 2, "Both packaged anomaly tasks must be present"
+    failed_tasks = [task for task in run.tasks if not task.state or task.state.result_state != RunResultState.SUCCESS]
+    for task in failed_tasks:
+        _report_anomaly_task_failure(ws, task)
+    if failed_tasks:
+        raise AssertionError("Packaged anomaly task failed; sanitized worker frames are in the test log")
     completed = set()
     for task in run.tasks:
         assert task.run_id is not None
         output = ws.jobs.get_run_output(task.run_id)
         if not packaged_anomaly_case.serverless and task.cluster_instance and task.cluster_instance.cluster_id:
             assert task.cluster_instance.cluster_id == packaged_anomaly_case.cluster_id
-        if not task.state or task.state.result_state != RunResultState.SUCCESS:
-            logger.error(f"Packaged anomaly task failed: {json.dumps(worker_traceback(output.error_trace or ''))}")
-            raise AssertionError("Packaged anomaly task failed; sanitized worker frames are in the test log")
         assert task.task_key in {"train", "score"}
         assert output.notebook_output and output.notebook_output.result and not output.notebook_output.truncated
         evidence = safe_packaged_result(output.notebook_output.result, packaged_anomaly_case, task.task_key)
@@ -53,6 +54,20 @@ def test_run_anomaly_distributed_scoring_notebook(
         logger.info(f"Packaged anomaly provenance: {json.dumps(evidence, sort_keys=True)}")
         completed.add(task.task_key)
     assert completed == {"train", "score"}
+
+
+def _report_anomaly_task_failure(ws: WorkspaceClient, task: RunTask) -> None:
+    """Retain safe evidence even when task output is unavailable."""
+    output = None
+    output_error = None
+    if task.run_id is not None:
+        try:
+            output = ws.jobs.get_run_output(task.run_id)
+        except DatabricksError as error:
+            output_error = type(error).__name__
+    failure = safe_packaged_task_failure(task, output)
+    failure["output_error_type"] = output_error
+    logger.error(f"Packaged anomaly task failed: {json.dumps(failure, sort_keys=True)}")
 
 
 def _cancel_anomaly_run(ws: WorkspaceClient, run_id: int) -> None:

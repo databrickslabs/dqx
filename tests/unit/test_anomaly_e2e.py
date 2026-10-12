@@ -4,10 +4,35 @@ import hashlib
 import json
 from pathlib import Path
 from zipfile import ZipFile
+from unittest.mock import create_autospec
 
 import pytest
 
-from tests.anomaly_e2e import PackagedAnomalyCase, packaged_anomaly_tasks, safe_packaged_result, wheel_manifest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import OperationFailed, PermissionDenied
+from databricks.sdk.service.jobs import (
+    Run,
+    RunOutput,
+    RunTask,
+    RunState,
+    RunLifeCycleState,
+    RunResultState,
+    RunStatus,
+    TerminationDetails,
+    TerminationCodeCode,
+)
+
+from tests.anomaly_e2e import (
+    PackagedAnomalyCase,
+    packaged_anomaly_tasks,
+    safe_packaged_result,
+    safe_packaged_task_failure,
+    wheel_manifest,
+)
+
+from tests.e2e.test_anomaly_distributed_scoring import (
+    test_run_anomaly_distributed_scoring_notebook as run_packaged_anomaly,
+)
 
 pytest_plugins = ("pytester",)
 
@@ -120,6 +145,10 @@ def test_packaged_model_factory_cleans_remaining_resources_after_notfound(
 from pathlib import Path
 from unittest.mock import create_autospec
 import pytest
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import OperationFailed, PermissionDenied
+from databricks.sdk.service.jobs import Run, RunOutput, RunTask, RunState, RunLifeCycleState, RunResultState, RunStatus, TerminationDetails, TerminationCodeCode
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import ModelVersionInfo, SchemaInfo
@@ -171,3 +200,85 @@ def test_train(make_anomaly_model_intent):
     else:
         assert attempts.read_text().splitlines() == ["version-1", "version-2", "model"]
     assert "synthetic training failure" in result.stdout.str()
+
+
+@pytest.mark.parametrize("reverse_order,unreadable", [(False, False), (True, False), (True, True)])
+def test_packaged_failures_report_both_tasks_and_message_fallback(
+    caplog: pytest.LogCaptureFixture, reverse_order: bool, unreadable: bool
+) -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.jobs.run_now.return_value.run_id = 100
+    workspace.jobs.run_now.return_value.result.side_effect = OperationFailed("synthetic failed run")
+    tasks = [
+        RunTask(
+            task_key="train",
+            run_id=101,
+            state=RunState(
+                life_cycle_state=RunLifeCycleState.TERMINATED,
+                result_state=RunResultState.FAILED,
+                state_message="ModuleNotFoundError: No module named 'SENSITIVE_MODULE'",
+            ),
+        ),
+        RunTask(
+            task_key="score",
+            run_id=102,
+            state=RunState(
+                life_cycle_state=RunLifeCycleState.SKIPPED,
+                result_state=RunResultState.UPSTREAM_FAILED,
+            ),
+        ),
+    ]
+    workspace.jobs.get_run.return_value = Run(tasks=list(reversed(tasks)) if reverse_order else tasks)
+    outputs = {
+        101: RunOutput(error="ModuleNotFoundError: No module named 'SENSITIVE_MODULE'"),
+        102: RunOutput(),
+    }
+
+    def read_output(run_id: int) -> RunOutput:
+        if unreadable and run_id == 101:
+            raise PermissionDenied("SENSITIVE_PERMISSION_PAYLOAD")
+        return outputs[run_id]
+
+    workspace.jobs.get_run_output.side_effect = read_output
+    with pytest.raises(AssertionError, match="Packaged anomaly task failed"):
+        run_packaged_anomaly(workspace, PackagedAnomalyCase(1, "a" * 64, "b" * 40, False, "cluster"))
+    records = [
+        json.loads(record.message.split("Packaged anomaly task failed: ", 1)[1])
+        for record in caplog.records
+        if "Packaged anomaly task failed: " in record.message
+    ]
+    assert len(records) == 2
+    failures = {record["phase"]: record for record in records}
+    assert failures["train"]["result_state"] == "FAILED"
+    assert failures["score"]["result_state"] == "UPSTREAM_FAILED"
+    assert failures["train"]["diagnostics"]["error_types"] == ["ModuleNotFoundError"]
+    assert failures["train"]["diagnostics"]["hints"] == ["missing_python_dependency"]
+    assert failures["train"]["output_error_type"] == ("PermissionDenied" if unreadable else None)
+    assert "SENSITIVE_MODULE" not in caplog.text and "SENSITIVE_PERMISSION_PAYLOAD" not in caplog.text
+
+
+@pytest.mark.parametrize("channel", ["error", "state", "termination"])
+def test_task_failure_uses_available_message_channels_without_payloads(channel: str) -> None:
+    message = "ImportError: cannot import name 'SENSITIVE_NAME'"
+    task = RunTask(
+        task_key="train",
+        state=RunState(
+            life_cycle_state=RunLifeCycleState.INTERNAL_ERROR,
+            result_state=RunResultState.FAILED,
+            state_message=message if channel == "state" else None,
+        ),
+        status=RunStatus(
+            termination_details=TerminationDetails(
+                code=TerminationCodeCode.LIBRARY_INSTALLATION_ERROR,
+                message=message if channel == "termination" else None,
+            )
+        ),
+    )
+    output = RunOutput(error=message) if channel == "error" else None
+    failure = safe_packaged_task_failure(task, output)
+    assert failure["termination_code"] == "LIBRARY_INSTALLATION_ERROR"
+    diagnostics = failure["diagnostics"]
+    assert isinstance(diagnostics, dict)
+    assert diagnostics["error_types"] == ["ImportError"]
+    assert diagnostics["hints"] == ["python_import_failure"]
+    assert "SENSITIVE_NAME" not in json.dumps(failure)

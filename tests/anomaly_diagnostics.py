@@ -76,7 +76,10 @@ _WORKER_ERRORS = frozenset(
     )
 )
 _FRAME = re.compile(r'^\s*File "([^"\n]{1,1000})", line ([0-9]{1,6})(?:, in ([\w.<>]{1,100}))?')
-_ERROR = re.compile(r"^\s*([A-Za-z_][\w.]{0,150}):")
+_ERROR = re.compile(r"^\s*([A-Za-z_][\w.]{0,150})(?::|$)")
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_NOTEBOOK_FRAME = re.compile(r"^\s*(?:Cell In\[[0-9]+\]|File <command-[A-Za-z0-9_-]+>), line ([0-9]{1,6})")
+_IPYTHON_FRAME = re.compile(r"^\s*File ([^\n]{1,1000}?):([0-9]{1,6})(?:, in ([\w.<>]+))?")
 logger = logging.getLogger(__name__)
 
 
@@ -195,10 +198,14 @@ def worker_traceback(message: str) -> dict[str, object]:
     frames: deque[dict[str, object]] = deque(maxlen=40)
     errors: list[str] = []
     message = message[-100_000:]
-    for line in message.splitlines():
-        frame = _FRAME.match(line)
+    for raw_line in message.splitlines():
+        line = _ANSI.sub("", raw_line)
+        frame = _FRAME.match(line) or _IPYTHON_FRAME.match(line)
         if frame:
             frames.append(safe_traceback_frame(frame[1], int(frame[2]), frame[3] or "<unknown>"))
+        notebook_frame = _NOTEBOOK_FRAME.match(line)
+        if notebook_frame:
+            frames.append({"file": "<notebook>", "line": int(notebook_frame[1]), "function": "<module>"})
         error = _ERROR.match(line)
         if error and (name := error[1].rsplit(".", 1)[-1]) in _WORKER_ERRORS and name not in errors:
             errors.append(name)

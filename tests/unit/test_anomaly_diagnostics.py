@@ -559,3 +559,24 @@ def test_spark_condition_accessor_failure_cannot_replace_original_exception() ->
 
     assert result[0]["type"] == "FailingAccessor" and result[0]["spark_condition"] is None
     assert "private-" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("location", ["Cell In[7], line 123", "File <command-123456789>, line 123"])
+def test_notebook_traceback_retains_ansi_frames_and_message_free_assertions(location: str) -> None:
+    message = (
+        "\x1b[31m" + location + "\x1b[0m\n"
+        "----> 123 assert secret_rows == private_value\n"
+        "File /private/site-packages/mlflow/models/model.py:47, in load_model(path)\n"
+        "    secret_token = 'do-not-copy'\n"
+        "\x1b[31mAssertionError\x1b[0m\n"
+    )
+    result = worker_traceback(message)
+    assert result == {
+        "frames": [
+            {"file": "<notebook>", "line": 123, "function": "<module>"},
+            {"file": "mlflow/models/model.py", "line": 47, "function": "load_model"},
+        ],
+        "error_types": ["AssertionError"],
+        "hints": [],
+    }
+    assert "secret" not in json.dumps(result) and "private" not in json.dumps(result)

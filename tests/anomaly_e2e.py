@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile
 
-from databricks.sdk.service.jobs import NotebookTask, Task, TaskDependency
+from databricks.sdk.service.jobs import NotebookTask, RunOutput, RunTask, Task, TaskDependency
 
-from tests.anomaly_diagnostics import dependency_provenance
+from tests.anomaly_diagnostics import dependency_provenance, worker_traceback
 
 
 @dataclass(frozen=True, repr=False)
@@ -136,3 +136,27 @@ def _safe_environment(client: object, case: PackagedAnomalyCase) -> dict[str, ob
         revision=case.revision,
         source=str(source),
     )
+
+
+def safe_packaged_task_failure(task: RunTask, output: RunOutput | None) -> dict[str, object]:
+    """Retain task states and all available error channels without copying their payloads."""
+    state = task.state
+    details = task.status.termination_details if task.status else None
+    messages = {
+        "state_message": state.state_message if state else None,
+        "termination_message": details.message if details else None,
+        "error": output.error if output else None,
+        "error_trace": output.error_trace if output else None,
+    }
+    return {
+        "phase": task.task_key if task.task_key in {"train", "score"} else "unknown",
+        "life_cycle_state": state.life_cycle_state.value if state and state.life_cycle_state else None,
+        "result_state": state.result_state.value if state and state.result_state else None,
+        "termination_code": details.code.value if details and details.code else None,
+        "output_available": output is not None,
+        "message_channels": [name for name, message in messages.items() if message],
+        "message_sha256": {
+            name: hashlib.sha256(message.encode()).hexdigest() for name, message in messages.items() if message
+        },
+        "diagnostics": worker_traceback("\n".join(message for message in messages.values() if message)),
+    }

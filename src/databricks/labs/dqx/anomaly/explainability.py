@@ -16,7 +16,7 @@ Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -757,15 +757,24 @@ def format_contributions_map(contributions_map: dict[str, float | None] | None, 
         >>> format_contributions_map(dict(amount=85.0, quantity=10.0), 2)
         'amount (85%), quantity (10%)'
     """
-    if not contributions_map:
-        return ""
+    return _contributions_formatter(top_n)(contributions_map)
 
-    contributed = [(col, val) for col, val in contributions_map.items() if val is not None and val > 0.0]
-    # Rank by share, descending. Values are non-negative shares of the anomaly-driving evidence.
-    top_contribs = sorted(contributed, key=lambda item: item[1], reverse=True)[:top_n]
 
-    # Format as string: "amount (85%), quantity (10%), discount (5%)"
-    return ", ".join(f"{col} ({val:.0f}%)" for col, val in top_contribs)
+def _contributions_formatter(top_n: int) -> Callable[[dict[str, float | None] | None], str]:
+    """Capture only built-ins and the limit so Spark workers need no DQX installation."""
+
+    def format_map(contributions_map: dict[str, float | None] | None) -> str:
+        if not contributions_map:
+            return ""
+
+        contributed = [(col, val) for col, val in contributions_map.items() if val is not None and val > 0.0]
+        # Rank by share, descending. Values are non-negative shares of the anomaly-driving evidence.
+        top_contribs = sorted(contributed, key=lambda item: item[1], reverse=True)[:top_n]
+
+        # Format as string: "amount (85%), quantity (10%), discount (5%)"
+        return ", ".join(f"{col} ({val:.0f}%)" for col, val in top_contribs)
+
+    return format_map
 
 
 def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int = 3) -> DataFrame:
@@ -780,7 +789,7 @@ def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int 
     Returns:
         DataFrame with enhanced messages including top contributing features.
     """
-    format_udf = F.udf(lambda m: format_contributions_map(m, top_n), StringType())
+    format_udf = F.udf(_contributions_formatter(top_n), StringType())
 
     info_col = DefaultColumnNames.INFO.value
     if "severity_percentile" in df.columns:
