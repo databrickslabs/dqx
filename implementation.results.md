@@ -151,3 +151,20 @@ The first cleanup audit retained five failed job DELETE requests. A separate rea
 All eight implementation commits were reverified with good GPG signatures. Formatting and code-quality checks passed again before the separate evidence-only handoff commit. No changes were pushed, no reviewer replies were posted and no new GitHub workflow or action was added.
 
 The maintained behavior inventory is [ANOMALY_TEST_COVERAGE.md](tests/ANOMALY_TEST_COVERAGE.md).
+
+
+## CI follow-up on 12 October 2026
+
+The earlier handoff above is a historical snapshot. Its commits were subsequently pushed to PR #1489. The resulting acceptance run exposed three contributor-message failures on both integration computes and a separate classic packaged-scoring failure. The CI-tested merge revision was `b3f7cd8f18d43e9266e0a9f50204bc277434fbc1`; its anomaly code, E2E notebook and dependency locks match the PR head before this follow-up.
+
+Repair commit `21a10c9787f100e1a5157d42bb22cb177cd1d9b6` has a verified good GPG signature. Contributor formatting previously serialized a reference to a DQX module-level function, requiring workers to import DQX even though the formatter uses only Python built-ins. The UDF now captures a self-contained formatter while retaining the public helper and its formatting behavior. An isolated-process regression reproduces the original ModuleNotFoundError by denying DQX imports; all three regression variants failed before the repair and pass afterward. The unchanged maintained contributor integration cases passed on both classic and serverless in the separately authorized workspace: six first-attempt passes, all setup/call/teardown phases passed, no retries, skips or live AI calls.
+
+The packaged failure reporter now collects every unsuccessful task, retains safe state/termination/output error evidence, handles denied output retrieval and recognizes ANSI/IPython notebook assertion locations. Synthetic regressions demonstrate the old reporter lost evidence and verify the replacement without retaining exception payloads. No GitHub workflow or action was added or changed in this follow-up.
+
+Local validation passed: `make fmt`, `make test TEST_WORKERS=6` (3,214 passed, one skipped), the post-refactor focused suite (78 passed) and `make docs-build`. The exact repair wheel SHA-256 is `1ac6417deef95a4b5545be65edceed32ad8860248d247be53500209c2b568e7a`. The full unit run preceded extraction of the diagnostic logging helper; the focused 78-test run and formatting checks passed after that extraction.
+
+The follow-up workspace window began at 18:00:16 UTC with a fixed 18:30:16 UTC deadline. It reuses one explicitly owned classic cluster, disables AI and preserves evidence separately from the completed original campaign. The original CI scoring task remains inaccessible to the available account; no speculative scorer change was made.
+
+The maintained classic packaged E2E passed its first follow-up attempt: setup, call and teardown passed; both Jobs tasks finished SUCCESS. It ran the exact repair wheel on Spark 4.0.0 with verified driver/worker source bytes. Both phases recorded Python 3.12.3, MLflow 3.17.0, scikit-learn 1.6.1, SHAP 0.49.1, numba 0.68.0, NumPy 2.1.3, pandas 2.2.3, PyArrow 19.0.1 and cloudpickle 3.0.0. Coverage was unavailable in those processes; these records do not imply remote-worker coverage. This pass does not resolve the inaccessible original CI scoring exception. The expanded diagnostics are intended to make any recurrence actionable in the existing GitHub workflows.
+
+Follow-up cleanup completed before the deadline. Exact-resource reads confirmed the schema, volume, notebook, model, registry table and job absent; the experiment is deleted and the owned classic cluster is terminated. Volume-file cleanup is established by the parent volume's absence. No unresolved recorded resources remain. Public-safe follow-up evidence SHA-256: `c091e5ca6bbbedf0efa061034c49c4b9fdd01014a3ec62dd1fb94b76f9bf88eb`. Fresh GitHub acceptance and coverage gates remain pending.
