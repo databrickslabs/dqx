@@ -217,6 +217,25 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
     return result
 
 
+def _substitute_merge_column(column: str, group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
+    """The real column(s) a ``sql_query`` merge column names.
+
+    The editor saves a merge key as the bare slot name (``lead_id``), while
+    hand-written and low-code bodies use ``{{lead_id}}``; both resolve to the
+    slot's mapped column(s). Anything else is a literal column name.
+    """
+    name = column.strip()
+    slot = next((s for s in slots if s.name == name), None)
+    if slot is None:
+        return [_substitute_text(column, group, slots)]
+    if slot.name not in group:
+        raise ValueError(f"Mapping group is missing slot '{slot.name}'")
+    value = group[slot.name]
+    if slot.cardinality == "many":
+        return [c.strip() for c in value.split(",") if c.strip()]
+    return [value]
+
+
 def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
     """The real columns a SQL/lowcode check references, in slot-declaration order.
 
@@ -350,7 +369,9 @@ def render_check(
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
                 arguments["merge_columns"] = [
-                    _substitute_text(str(col), group, definition.slots) for col in merge_columns
+                    resolved
+                    for col in merge_columns
+                    for resolved in _substitute_merge_column(str(col), group, definition.slots)
                 ]
             for param in definition.parameters:
                 if param.value is not None:

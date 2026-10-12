@@ -625,6 +625,36 @@ class TestRenderCheckSqlMode:
         )
         assert check["check"]["arguments"]["negate"] is True
 
+    def _render_query_merge(self, merge_columns: list[str]) -> list[str]:
+        definition = self._sql_definition(
+            {
+                "sql_query": "SELECT {{lead_id}}, TRUE AS condition FROM {{input_view}}",
+                "merge_columns": merge_columns,
+            },
+            slot_name="lead_id",
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="sql",
+            version=version,
+            group={"lead_id": "leadId"},
+            effective_severity="High",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        return check["check"]["arguments"]["merge_columns"]
+
+    def test_a_merge_column_saved_as_the_bare_slot_name_maps_to_the_column(self):
+        """The editor saves merge keys as bare slot names; they must reach DQX as
+        the table's column, or the run fails on an unresolved column."""
+        assert self._render_query_merge(["lead_id"]) == ["leadId"]
+
+    def test_merge_columns_as_placeholders_or_real_columns_are_unchanged(self):
+        assert self._render_query_merge(["{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
+
     def test_joined_table_is_named_in_the_query_and_binds_nothing(self):
         """A cross-table rule names the table it joins in its own SQL.
 
