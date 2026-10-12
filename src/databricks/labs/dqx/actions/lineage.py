@@ -36,7 +36,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
 
@@ -591,58 +591,54 @@ def _collect_lineage_rows(
         mode would clobber prior lineage). *True* in all other cases, including "no branches
         attempted" (empty frame is a legitimate empty result, not a failure).
     """
-    common: dict[str, Any] = {
+    common: dict[str, str] = {
         "run_id": run_id,
         # run_time is an ISO-8601 string that Spark parses to TIMESTAMP on write.
         "run_time": run_time_iso,
         "source_table": source_table,
     }
-    result = _empty_lineage_df(spark)
-    enabled_count = 0
-    failed_count = 0
+    # Each enabled direction contributes one (DataFrame, succeeded) pair; collecting them in a
+    # list (rather than four near-identical inline blocks) keeps the branch/tally/union logic
+    # DRY and the function within the complexity budget. Column directions are only attempted
+    # when the failed-columns view exists.
+    branches: list[tuple[DataFrame, bool]] = []
     if config.upstream is not None:
-        enabled_count += 1
-        branch_df, succeeded = _collect_upstream_df(
-            spark=spark, source_table=source_table, search=config.upstream, common=common
+        branches.append(
+            _collect_upstream_df(spark=spark, source_table=source_table, search=config.upstream, common=common)
         )
-        if not succeeded:
-            failed_count += 1
-        result = result.unionByName(branch_df)
     if config.downstream is not None:
-        enabled_count += 1
-        branch_df, succeeded = _collect_downstream_df(
-            spark=spark, source_table=source_table, search=config.downstream, common=common
+        branches.append(
+            _collect_downstream_df(spark=spark, source_table=source_table, search=config.downstream, common=common)
         )
-        if not succeeded:
-            failed_count += 1
-        result = result.unionByName(branch_df)
     if failed_columns_view is not None:
         if config.column_upstream is not None:
-            enabled_count += 1
-            branch_df, succeeded = _column_direction_df(
-                spark=spark,
-                source_table=source_table,
-                failed_columns_view=failed_columns_view,
-                edge_type=_EDGE_COLUMN_UPSTREAM,
-                search=config.column_upstream,
-                common=common,
+            branches.append(
+                _column_direction_df(
+                    spark=spark,
+                    source_table=source_table,
+                    failed_columns_view=failed_columns_view,
+                    edge_type=_EDGE_COLUMN_UPSTREAM,
+                    search=config.column_upstream,
+                    common=common,
+                )
             )
-            if not succeeded:
-                failed_count += 1
-            result = result.unionByName(branch_df)
         if config.column_downstream is not None:
-            enabled_count += 1
-            branch_df, succeeded = _column_direction_df(
-                spark=spark,
-                source_table=source_table,
-                failed_columns_view=failed_columns_view,
-                edge_type=_EDGE_COLUMN_DOWNSTREAM,
-                search=config.column_downstream,
-                common=common,
+            branches.append(
+                _column_direction_df(
+                    spark=spark,
+                    source_table=source_table,
+                    failed_columns_view=failed_columns_view,
+                    edge_type=_EDGE_COLUMN_DOWNSTREAM,
+                    search=config.column_downstream,
+                    common=common,
+                )
             )
-            if not succeeded:
-                failed_count += 1
-            result = result.unionByName(branch_df)
+
+    result = _empty_lineage_df(spark)
+    for branch_df, _succeeded in branches:
+        result = result.unionByName(branch_df)
+    enabled_count = len(branches)
+    failed_count = sum(1 for _branch_df, succeeded in branches if not succeeded)
     collect_success = not (enabled_count > 0 and failed_count == enabled_count)
     if not collect_success:
         logger.warning(
@@ -693,7 +689,7 @@ def _collect_upstream_df(
     spark: SparkSession,
     source_table: str,
     search: LineageSearchConfig,
-    common: dict[str, Any],
+    common: dict[str, str],
 ) -> tuple[DataFrame, bool]:
     """Thin wrapper — upstream walk from *source_table* as a *LINEAGE_TABLE_SCHEMA* DataFrame.
 
@@ -717,7 +713,7 @@ def _collect_downstream_df(
     spark: SparkSession,
     source_table: str,
     search: LineageSearchConfig,
-    common: dict[str, Any],
+    common: dict[str, str],
 ) -> tuple[DataFrame, bool]:
     """Thin wrapper — downstream walk from *source_table* as a *LINEAGE_TABLE_SCHEMA* DataFrame.
 
@@ -742,7 +738,7 @@ def _walk_lineage(
     table_full_name: str,
     direction: str,
     search: LineageSearchConfig,
-    common: dict[str, Any],
+    common: dict[str, str],
 ) -> tuple[DataFrame, bool]:
     """Walk *table_full_name*'s upstream or downstream neighbours with a recursive CTE.
 
@@ -852,7 +848,7 @@ def _column_direction_df(
     failed_columns_view: str,
     edge_type: str,
     search: LineageSearchConfig,
-    common: dict[str, Any],
+    common: dict[str, str],
 ) -> tuple[DataFrame, bool]:
     """Recursive column-lineage walk for one direction, seeded from the failed-columns temp view.
 
@@ -884,12 +880,16 @@ def _column_direction_df(
     Returns:
         Tuple of (DataFrame conforming to *LINEAGE_TABLE_SCHEMA*, success flag).
     """
+    # system.access.column_lineage exposes the column names as *source_column_name* /
+    # *target_column_name* (not *source_column* / *target_column* — those are the output
+    # LINEAGE_TABLE_SCHEMA names). Read the real system-table columns and alias them to the
+    # CTE's *source_column* / *target_column* names below.
     if edge_type == _EDGE_COLUMN_UPSTREAM:
-        anchor_key, anchor_col_key = "target_table_full_name", "target_column"
-        frontier_key, frontier_col_key = "source_table_full_name", "source_column"
+        anchor_key, anchor_col_key = "target_table_full_name", "target_column_name"
+        frontier_key, frontier_col_key = "source_table_full_name", "source_column_name"
     else:
-        anchor_key, anchor_col_key = "source_table_full_name", "source_column"
-        frontier_key, frontier_col_key = "target_table_full_name", "target_column"
+        anchor_key, anchor_col_key = "source_table_full_name", "source_column_name"
+        frontier_key, frontier_col_key = "target_table_full_name", "target_column_name"
 
     max_depth = int(search.depth) if search.depth is not None else None
     lookback_days = int(search.lookback_days)
@@ -910,7 +910,8 @@ def _column_direction_df(
         f"  SELECT {frontier_key} AS frontier_table, "
         f"         {frontier_col_key} AS frontier_column, "
         f"         {table_literal} AS predecessor, "
-        f"         {frontier_key} AS neighbour, source_column, target_column, "
+        f"         {frontier_key} AS neighbour, source_column_name AS source_column, "
+        f"         target_column_name AS target_column, "
         f"         1 AS depth, "
         f"         array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path, "
         f"         event_time "
@@ -926,7 +927,8 @@ def _column_direction_df(
         " ("
         f"  SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
         f"         e.frontier_table AS predecessor, "
-        f"         t.{frontier_key} AS neighbour, t.source_column, t.target_column, "
+        f"         t.{frontier_key} AS neighbour, t.source_column_name AS source_column, "
+        f"         t.target_column_name AS target_column, "
         f"         e.depth + 1 AS depth, "
         f"         array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path, "
         f"         t.event_time "
@@ -973,12 +975,12 @@ def _project_edge_rows(
     df: DataFrame,
     *,
     edge_type: str,
-    predecessor_col: Any,
-    target_table_col: Any,
-    depth_col: Any,
-    source_column_col: Any,
-    target_column_col: Any,
-    common: dict[str, Any],
+    predecessor_col: Column,
+    target_table_col: Column,
+    depth_col: Column,
+    source_column_col: Column,
+    target_column_col: Column,
+    common: dict[str, str],
 ) -> DataFrame:
     """Project a walk DataFrame to *LINEAGE_TABLE_SCHEMA* with typed NULLs for absent columns.
 

@@ -85,9 +85,7 @@ def test_execute_returns_config_error_when_all_enabled_branches_fail(monkeypatch
     because they need a real Spark backend; the behaviour we assert is independent of them.
     """
     writes: list = []
-    monkeypatch.setattr(
-        lineage_mod, "save_dataframe_as_table", lambda df, cfg: writes.append((df, cfg))
-    )
+    monkeypatch.setattr(lineage_mod, "save_dataframe_as_table", lambda df, cfg: writes.append((df, cfg)))
     monkeypatch.setattr(lineage_mod, "_document_table", lambda **_: None)
     monkeypatch.setattr(lineage_mod, "_resolve_target_delta_versions", lambda _spark, df: df)
 

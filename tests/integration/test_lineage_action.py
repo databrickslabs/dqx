@@ -107,8 +107,8 @@ def stub_system_tables(spark: SparkSession, make_schema) -> _StubLineageLocation
         f"CREATE TABLE {column_lineage} ("
         "  source_table_full_name STRING,"
         "  target_table_full_name STRING,"
-        "  source_column STRING,"
-        "  target_column STRING,"
+        "  source_column_name STRING,"
+        "  target_column_name STRING,"
         "  event_time TIMESTAMP"
         ") USING DELTA"
     )
@@ -589,7 +589,7 @@ def test_column_lineage_ignores_prior_run_failures(
     column_lineage = patched_lineage_constants.column_lineage
     spark.sql(
         f"INSERT INTO {column_lineage} "
-        f"(source_table_full_name, target_table_full_name, source_column, target_column, event_time) "
+        f"(source_table_full_name, target_table_full_name, source_column_name, target_column_name, event_time) "
         f"VALUES "
         f"('{source}', '{downstream_table}', 'value', 'value_dst', current_timestamp()), "
         f"('{source}', '{downstream_table}', 'other', 'other_dst', current_timestamp())"
@@ -705,7 +705,7 @@ def _seed_column_lineage(
     values = ", ".join(f"('{st}', '{tt}', '{sc}', '{tc}', current_timestamp())" for st, sc, tt, tc in edges)
     spark.sql(
         f"INSERT INTO {column_lineage} "
-        f"(source_table_full_name, target_table_full_name, source_column, target_column, event_time) "
+        f"(source_table_full_name, target_table_full_name, source_column_name, target_column_name, event_time) "
         f"VALUES {values}"
     )
 
