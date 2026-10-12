@@ -145,12 +145,16 @@ def escape_json_for_sql_string_literal(value: str) -> str:
 
     ``json.dumps`` emits backslash escapes (``\\n``, ``\\"``, ``\\\\``). On the
     Databricks SQL string-literal path a backslash is itself an escape
-    character, so those must be doubled before :func:`escape_sql_string` doubles
-    any single-quotes — otherwise ``\\n`` in the JSON becomes a literal newline
-    inside the ``parse_json`` argument and JSON parsing fails when persisting
-    multiline ``sql_query`` rules.
+    character, so those must be doubled — otherwise ``\\n`` in the JSON becomes
+    a literal newline inside the ``parse_json`` argument and JSON parsing fails
+    when persisting multiline ``sql_query`` rules.
+
+    Single quotes are backslash-escaped as well. Databricks SQL reads a doubled
+    quote inside a literal as two adjacent literals and joins them, dropping
+    the quote, so a check's SQL stored this way would lose its string literals
+    (``!= 'x'`` would come back as ``!= x``).
     """
-    return escape_sql_string(value.replace("\\", "\\\\"))
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def escape_sql_string_strict(value: str) -> str:

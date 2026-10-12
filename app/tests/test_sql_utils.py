@@ -145,11 +145,13 @@ class TestEscapeJsonForSqlStringLiteral:
         escaped = escape_json_for_sql_string_literal(payload)
         assert "\\n" in payload
         assert "\\\\n" in escaped
-        assert escaped == escape_sql_string(payload.replace("\\", "\\\\"))
+        assert escaped == payload.replace("\\", "\\\\")
 
-    def test_still_doubles_single_quotes(self):
-        payload = json.dumps({"message": "it's fine"})
-        assert escape_json_for_sql_string_literal(payload) == escape_sql_string(payload.replace("\\", "\\\\"))
+    def test_backslash_escapes_single_quotes_so_sql_literals_survive(self):
+        """Databricks SQL joins ``'a''b'`` into ``ab``; ``\\'`` keeps the quote."""
+        payload = json.dumps({"expression": "col != 'x'"})
+        assert escape_json_for_sql_string_literal(payload) == '{"expression": "col != \\\'x\\\'"}'
+        assert "''" not in escape_json_for_sql_string_literal(payload)
 
 
 # ---------------------------------------------------------------------------
