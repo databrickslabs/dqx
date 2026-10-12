@@ -6,6 +6,7 @@ title: "Permissions & Entitlements"
 import Admonition from '@theme/Admonition';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Permissions & Entitlements
 
@@ -21,40 +22,88 @@ Your entitlement follows you everywhere; permissions apply object by object.
 
 ## Workspace and data access
 
-In-app roles and object permissions do **not** grant Databricks App access,
-warehouse access, or Unity Catalog privileges. Administrators configure the
-deployment audience with `DQX_USER_GROUPS`, a JSON list of scoped group names
-or simple unquoted comma-separated names.
-Its default `[]` leaves audience access administrator-managed; built-in `users`
-and `account users` audiences are rejected. DAB uses `studio_user_group`
-(default `dqx-studio-users`, which must already exist) for warehouse, app,
-dashboard, and schema audience grants.
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
 
-Profiling and validation use your data permissions to create a temporary view,
-then grant `SELECT` directly to the job runner and `MANAGE` on that view to the
-app service principal for cleanup. Schedules verify source catalog/schema usage
-and `SELECT` for the app scheduler and runner through OBO SQL; failed runner
-grants block scheduling. Setup rechecks the runner's fixed UC output access and
-scoped Lakebase access on every cold startup, without cached verification or
-automatic UC runner grants.
+In-app roles and object permissions do **not** grant Databricks App access, warehouse access, or Unity Catalog privileges. Those come from the installation, which an administrator sets up once and which Studio verifies.
 
-Ask Genie additionally requires space `CAN_RUN`, Consumer access or Databricks
-SQL access entitlement, parent catalog/schema usage, and `SELECT` on only the five
-approved Genie views and two metadata dimensions. Configured groups receive
-scoped audience grants; with no configured groups, an administrator manages
-these grants. Never grant audience whole-schema `SELECT` or access to
-`dq_user_table_entitlements`. Both deployment paths request the `genie` OAuth
-scope; sign in again to renew consent after an upgrade changes the scope.
-Genie uses embedded compute credentials; Studio's OBO previews and SQL workflows
-additionally require SQL access entitlement and warehouse `CAN_USE`.
-
-<Admonition type="warning" title="Review existing grants on upgrade">
-Existing broad workspace ACLs and UC grants are not automatically revoked.
-Administrators must remove legacy broad audience access and reapply scoped
-grants. Existing temporary views that require orphan cleanup need explicit
-runner SELECT and app-service-principal MANAGE on each view, not schema-wide
-cleanup rights or restored account users access.
+<Admonition type="warning" title="Breaking change: fresh installs only">
+There is no upgrade path from earlier Studio installations. Remove the previous app, task-runner job, warehouse, Unity Catalog schemas, and Lakebase project, then install this release fresh. Broad access granted by earlier versions (`users` / `account users`) is not revoked automatically; review and remove it.
 </Admonition>
+
+### Minimal setup
+
+**From the Marketplace.**
+
+1. Install the listing and bind a SQL warehouse and a Lakebase endpoint.
+2. Share the app with the audience group and the administrator group (**Compute → Apps → DQX Studio → Permissions → Can Use**). This is a manual step.
+3. Open Studio as a workspace administrator (a member of `admins` or of the configured admin group).
+4. In the setup form, enter the **catalog**, a **storage prefix** (default `dqx_studio`), and the **audience group** (an existing dedicated group).
+5. Run the `GRANT` statements that setup prints, then choose **Verify again**.
+6. In **Admin Settings → Entitlements**, assign roles to the audience groups.
+
+After the first successful full verification, app restarts reuse it only for catalog-level grants (`USE CATALOG` / `CREATE SCHEMA` on the selected catalog) that the app service principal cannot inspect itself; a changed audience, catalog, or task runner, or any grant observed missing, requires an administrator to choose **Verify again**.
+
+**From a bundle (DAB).** Deploy with `make app-deploy PROFILE=<profile> TARGET=<target> STUDIO_PREFIX=<prefix> STUDIO_USER_GROUP=<group|users>`, grant the catalog prerequisites that setup prints, and assign roles. The bundle supplies catalog, prefix, and audience, so setup shows them read-only and skips the form. See the [installation guide](/docs/installation#dqx-studio-installation).
+
+### Storage layout
+
+Studio uses an existing catalog and a prefix (lower-case letters, digits, and underscores; default `dqx_studio`):
+
+| Object | Purpose |
+|---|---|
+| `<prefix>` | Main Studio schema |
+| `<prefix>.wheels` | Volume for the app and task-runner wheels |
+| `<prefix>_tmp` | Temporary views created on behalf of users |
+| `<prefix>_genie` | Approved Genie views and metadata |
+| `<prefix>_demo` | Demo content |
+
+Catalog and prefix cannot be changed once storage exists. The Lakebase schema does not follow the prefix.
+
+### Who gets what
+
+Setup applies the access below, then **re-reads it to verify**. A missing grant, or one that cannot be inspected, blocks readiness. The only exception is sharing the app itself: if Studio cannot read the app's sharing it shows a warning rather than blocking (administrators see it in a dismissible banner once Studio is ready), and you share the app manually. ACL changes are additive, so unrelated principals on shared resources are preserved.
+
+| Resource | App SP | Runner SP | Audience | Admin group |
+| --- | --- | --- | --- | --- |
+| Catalog | `USE CATALOG`, `CREATE SCHEMA` | `USE CATALOG` | `USE CATALOG` | `USE CATALOG` |
+| Main schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | `USE SCHEMA`, `SELECT`, `MODIFY` | None | None |
+| Wheels volume | Owner / `ALL_PRIVILEGES` | `READ VOLUME` | None | None |
+| `_tmp` schema | Owner / explicit list incl. `MANAGE` | `USE SCHEMA`, `SELECT` (any view in `_tmp`) | `USE SCHEMA`, `CREATE TABLE` | Same as audience |
+| `_genie` schema | Owner / explicit list incl. `MANAGE` | None | `USE SCHEMA`; `SELECT` on allowlist only | Same as audience |
+| `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
+| SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
+| App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
+| Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
+| Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
+| Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
+| Lakebase app schema | Owner, migrations, CRUD | None | None | None |
+| User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
+
+The Genie `SELECT` allowlist is exactly the five approved views plus `dim_dq_rules` and `dim_dq_monitored_tables`. Studio never grants whole-schema Genie `SELECT`, quarantine tables, or `dq_user_table_entitlements`. On a bundle deployment the schemas are owned by the deploying identity, so the app service principal receives an explicit privilege list that includes `MANAGE` (not `ALL_PRIVILEGES`, which makes the bundle engine drop `MANAGE`) instead. The bundle grants the administrator group only its workspace permissions; the app re-applies and verifies the administrator group's Unity Catalog grants after each deploy restart.
+
+The runner service principal needs no Lakebase role or grants. Run configs too large to pass as job parameters are staged in the Delta `dq_run_configs` table in the main schema, which its main-schema `SELECT` / `MODIFY` already covers.
+
+### Audience, broad mode, and administrators
+
+The **audience** is a dedicated, existing workspace group. Studio never creates groups, and the setup form rejects `users`, `account users`, and `admins`.
+
+**Broad mode** (bundle deployments only, `STUDIO_USER_GROUP=users`) shares the app, warehouse, dashboard, and Genie space with the workspace `users` group and grants Unity Catalog access to `account users`. That is **account-wide**: everyone in the account can reach the Studio catalog objects. Use it only when that is intended.
+
+| Audience input | Workspace ACL principal | Unity Catalog principal |
+| --- | --- | --- |
+| `users` (bundle broad mode only) | `users` | `account users` |
+| Dedicated group | Group name | Same group name |
+
+**Administrator access.** Members of the configured admin group **or** the workspace `admins` group may run setup. Unity Catalog cannot grant to the workspace `admins` group, so Unity Catalog grants for administrators go only to a **custom** admin account group, which receives the same access as the audience plus app `CAN_USE`. With the built-in `admins` group, administrators must also be members of the audience group to use features that run on their behalf. Audience membership never makes someone an in-app Admin.
+
+### What stays per user
+
+Some access cannot be proven for a whole group, so it is checked for the active user when they use the feature: their **Databricks SQL access entitlement**, their **OAuth consent** for Studio's scopes (sign in again if a scope changes), and their own **source-data privileges** on the tables they profile or validate. Studio never grants source data.
+
+Profiling and validation use your data permissions to create a temporary view, then grant `MANAGE` on that view to the app service principal for cleanup. The job runner reads the view through schema-level `SELECT` on the temporary schema, so it can read any view in that schema. Schedules verify source catalog/schema usage and `SELECT` for the app scheduler and runner; failed runner grants block scheduling. Ask Genie additionally requires space `CAN_RUN`, Consumer access or Databricks SQL access entitlement, and the approved-view grants above.
 
 ## Entitlements (your role)
 

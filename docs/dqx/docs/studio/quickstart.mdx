@@ -6,6 +6,7 @@ title: Quickstart
 import Admonition from '@theme/Admonition';
 import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Quickstart: your first monitored table in 10 minutes
 
@@ -20,6 +21,27 @@ You'll need a table in Unity Catalog that you already have access to. DQX Studio
 only ever shows you data you can already see, so pick a table you know — an
 `orders`, `customers`, or similar table works well.
 </Admonition>
+
+## 0. Set up DQX Studio (administrators, once)
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+If your workspace administrator has already installed Studio and it opens to the home page, skip to step 1. Otherwise an administrator completes this once. The full procedure, including the Declarative Automation Bundle route, is in the [installation guide](/docs/installation#dqx-studio-installation).
+
+<Admonition type="warning" title="Breaking change: fresh installs only">
+This release changes Studio's storage layout and permission model. There is no upgrade path from earlier installations: remove the previous app, its task-runner job, warehouse, Unity Catalog schemas, and Lakebase project before installing.
+</Admonition>
+
+1. **Install** DQX Studio from the Databricks Marketplace and bind a SQL warehouse and a Lakebase endpoint.
+2. **Share the app** with your audience group and your administrator group (**Compute → Apps → DQX Studio → Permissions → Can Use**).
+3. **Open Studio as a workspace administrator** and fill in the setup form: the **catalog**, a **storage prefix** (default `dqx_studio`), and the **audience group** (an existing group such as `dqx-studio-users`).
+4. **Run the `GRANT` statements** setup prints, if any, and choose **Verify again** until every step is green. If the app's sharing cannot be verified, setup shows a warning instead; confirm step 2 manually.
+5. **Assign roles** in **Admin Settings → Entitlements** so the audience groups become Authors, Approvers, and Viewers.
+
+See [Permissions & Entitlements](/docs/studio/governance/permissions-and-entitlements) for exactly what each group needs.
 
 ## 1. Create a reusable rule
 

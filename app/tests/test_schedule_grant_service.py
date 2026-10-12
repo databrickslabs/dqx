@@ -209,7 +209,7 @@ def test_unresolved_caller_is_unknown(service: ScheduleGrantService, obo: Worksp
 
 
 @pytest.mark.parametrize("missing_principal", ["app-sp", "runner-sp"])
-@pytest.mark.parametrize("kind,privilege", [("catalog", "USE CATALOG"), ("schema", "USE SCHEMA")])
+@pytest.mark.parametrize("kind,privilege", [("catalog", "USE_CATALOG"), ("schema", "USE_SCHEMA")])
 def test_missing_source_parent_blocks_even_table_owner(
     service: ScheduleGrantService,
     obo: WorkspaceClient,
@@ -451,7 +451,7 @@ def test_parent_cache_separates_securables_and_principals(
             {
                 "principal": "runner-sp",
                 "type": "service_principal",
-                "remediation": "GRANT USE SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
+                "remediation": "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
             }
         ]
     )
