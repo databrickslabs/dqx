@@ -26,6 +26,8 @@ are unreachable by any per-column statistic -- which is what makes a comparison 
 mean something rather than measuring which detector is better tuned.
 """
 
+from collections import Counter
+
 import numpy as np
 import pytest
 from pyspark.sql import SparkSession
@@ -68,18 +70,21 @@ def _scored_frame(anomaly_scorer, test_df, model, registry, columns, **check_kwa
     """Score, then collect the columns the metrics need into pandas."""
     result = anomaly_scorer(test_df, model, registry, extract_score=False, **check_kwargs)
     anomaly = F.element_at(F.col("_dq_info"), 1).getField("anomaly")
-    return (
-        result.select(
-            *[F.col(c) for c in columns],
-            F.col("is_anomaly").alias("label"),
-            anomaly.getField("score").alias("score"),
-            anomaly.getField("is_anomaly").cast("double").alias("flagged"),
-            anomaly.getField("contributions").alias("contributions"),
-            anomaly.getField("ai_explanation").alias("ai_explanation"),
-        )
-        .toPandas()
-        .dropna(subset=["score"])
-    )
+    observed = result.select(
+        *[F.col(c) for c in columns],
+        F.col("is_anomaly").alias("label"),
+        anomaly.getField("score").alias("score"),
+        anomaly.getField("is_anomaly").cast("double").alias("flagged"),
+        anomaly.getField("contributions").alias("contributions"),
+        anomaly.getField("ai_explanation").alias("ai_explanation"),
+    ).toPandas()
+
+    expected = Counter(tuple(row) for row in test_df.select(*[*columns, "is_anomaly"]).collect())
+    actual = Counter(observed[[*columns, "label"]].itertuples(index=False, name=None))
+    assert actual == expected, "scoring changed evaluation row identities or multiplicities"
+    assert observed["score"].notna().all(), "a known evaluation row has no score"
+    assert np.isfinite(observed["score"]).all(), "evaluation scores must all be finite"
+    return observed
 
 
 def _engineered_feature_names(spark: SparkSession, registry_table: str, model_name: str) -> list[str]:
@@ -216,9 +221,8 @@ def test_correlation_profile_end_to_end(
     spark: SparkSession,
     quick_model_factory,
     anomaly_scorer,
-    ai_query_endpoint,
 ):
-    """The correlation profile trains, registers, scores, attributes, explains, and beats the default.
+    """The correlation profile trains, registers, scores, attributes, and beats the default.
 
     Trains two models on identical data -- one per profile -- and compares them on the same rows.
     """
@@ -247,8 +251,7 @@ def test_correlation_profile_end_to_end(
         columns,
         threshold=DEFAULT_SCORE_THRESHOLD,
         enable_contributions=True,
-        enable_ai_explanation=True,
-        ai_explanation_llm_model_config=ai_query_llm_config(ai_query_endpoint),
+        enable_ai_explanation=False,
     )
     distribution = _scored_frame(anomaly_scorer, test_df, distribution_model, distribution_registry, columns)
 
@@ -285,12 +288,37 @@ def test_correlation_profile_end_to_end(
         f"anomalies ({hits}/{len(positives)}); the attribution is not tracking the severed correlation"
     )
 
-    # 5. The AI explanation still reaches the user with a non-SHAP attribution behind it.
-    _assert_ai_explanation_present(flagged)
-
     # 6. Scores must be finite everywhere. A singular covariance would surface as NaN or inf rather
     #    than as an exception, and every metric above would silently degrade instead of failing.
     assert np.isfinite(correlation["score"]).all(), "the correlation model produced non-finite scores"
+
+
+@pytest.mark.slow
+def test_correlation_profile_live_explanation(spark, quick_model_factory, anomaly_scorer, ai_query_endpoint):
+    """A live serving endpoint accepts the correlation detector's public contributions."""
+    columns, train_df, test_df, _ = generate_correlated_multivariate_data(spark, n_train=400, n_test=100)
+    model, registry, _ = quick_model_factory(
+        spark,
+        columns=columns,
+        train_data=[tuple(row) for row in train_df.collect()],
+        train_schema=", ".join(f"{column} double" for column in columns) + ", is_anomaly double",
+        profile="correlation",
+        baseline_by=[],
+        params=AnomalyParams(sample_fraction=1.0),
+    )
+    scored = _scored_frame(
+        anomaly_scorer,
+        test_df,
+        model,
+        registry,
+        columns,
+        threshold=0.0,
+        enable_contributions=True,
+        enable_ai_explanation=True,
+        max_groups=1,
+        ai_explanation_llm_model_config=ai_query_llm_config(ai_query_endpoint),
+    )
+    _assert_ai_explanation_present(scored)
 
 
 def test_a_grouped_correlation_model_trains_and_scores(ws, spark: SparkSession, make_schema, make_random):

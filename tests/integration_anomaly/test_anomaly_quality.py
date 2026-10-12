@@ -16,6 +16,8 @@ Metric discipline lives in ``quality_metrics.py``; in particular there is no poi
 anywhere, for the reason documented there.
 """
 
+from collections import Counter
+
 import numpy as np
 import pytest
 from pyspark.sql import SparkSession
@@ -61,20 +63,28 @@ def _scored_frame(anomaly_scorer, test_df, model, registry):
     """Score, then collect the columns the metrics need into pandas."""
     result = anomaly_scorer(test_df, model, registry, extract_score=False)
     anomaly = F.element_at(F.col("_dq_info"), 1).getField("anomaly")
-    return (
-        result.select(
-            F.col("country"),
-            F.col("event_type"),
-            F.col("product"),
-            F.col("event_count"),
-            F.col("is_anomaly").alias("label"),
-            anomaly.getField("score").alias("score"),
-            anomaly.getField("is_anomaly").cast("double").alias("flagged"),
-            F.concat_ws("|", F.col("country"), F.col("event_type"), F.col("product")).alias("grp"),
-        )
-        .toPandas()
-        .dropna(subset=["score"])
+    observed = result.select(
+        F.col("country"),
+        F.col("event_type"),
+        F.col("product"),
+        F.col("event_count"),
+        F.col("is_anomaly").alias("label"),
+        anomaly.getField("score").alias("score"),
+        anomaly.getField("is_anomaly").cast("double").alias("flagged"),
+        F.concat_ws("|", F.col("country"), F.col("event_type"), F.col("product")).alias("grp"),
+    ).toPandas()
+
+    expected = Counter(
+        tuple(row)
+        for row in test_df.select(*['country', 'event_type', 'product', 'event_count', 'is_anomaly']).collect()
     )
+    actual = Counter(
+        observed[['country', 'event_type', 'product', 'event_count', 'label']].itertuples(index=False, name=None)
+    )
+    assert actual == expected, "scoring changed evaluation row identities or multiplicities"
+    assert observed["score"].notna().all(), "a known evaluation row has no score"
+    assert np.isfinite(observed["score"]).all(), "evaluation scores must all be finite"
+    return observed
 
 
 def test_baseline_conditioning_detection_quality(spark: SparkSession, quick_model_factory, anomaly_scorer):

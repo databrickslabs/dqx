@@ -130,8 +130,8 @@ def test_ensemble_with_feature_contributions(
     Previously this asserted only that the map was not null, which passed while the map came from one
     arbitrary member -- the member that happened to train first. The contract is asserted here instead:
     keys are the columns the caller passed, values are non-negative, and they total 100. That has to hold
-    after the mean across members has survived cloudpickle, the pandas UDF and the Spark map round-trip,
-    which is the part no unit test can reach.
+    after model reload and the driver scoring result's Spark map round-trip. The explicit scorer
+    contract matrix separately checks the distributed pandas UDF path.
     """
     unique_id = make_random(8).lower()
     model_name = f"{anomaly_registry_prefix}.test_ensemble_contributions_{make_random(4).lower()}"

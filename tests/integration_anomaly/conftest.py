@@ -1,19 +1,32 @@
 """Pytest configuration and fixtures for row anomaly detection integration tests."""
 
+import hashlib
+import json
+import re
 import logging
 import os
+import platform
 import time
+from collections.abc import Callable
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version as distribution_version
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
-import mlflow
-import mlflow.sklearn
+import pandas as pd
+
 import mlflow.utils.rest_utils as mlflow_rest_utils
 import pytest
 import pyspark.sql.functions as F
 from mlflow.exceptions import RestException
+from pyspark.errors import PySparkException
 from pyspark.sql import DataFrame, SparkSession
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
@@ -27,6 +40,18 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.pytester.fixtures.baseline import factory
+from tests.anomaly_diagnostics import (
+    AnomalyDiagnostics,
+    DEPENDENCIES,
+    dependency_provenance,
+    endpoint_unavailable_reason,
+    exception_chain,
+    runtime_observation,
+    compute_observation,
+    SCORER_MODULES,
+)
+from tests import anomaly_resources
+from tests.anomaly_resources import drop_registered_models_in_schemas
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
     DEFAULT_AI_QUERY_ENDPOINT,
@@ -43,9 +68,185 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
-# Process-scoped cache for MLflow experiment (one per xdist worker); lifecycle cleared by
-# _cleanup_mlflow_worker_experiment at session end. Not thread-safe.
-_MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
+
+# Bind the shared fixtures into this conftest module so pytest discovers them here.
+fixture_make_mlflow_experiment_resource = anomaly_resources.fixture_make_mlflow_experiment_resource
+fixture_mlflow_worker_experiment = anomaly_resources.fixture_mlflow_worker_experiment
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Enable payload-free diagnostics only when an artifact directory is supplied."""
+    directory = os.environ.get("DQX_TEST_DIAGNOSTICS_DIR")
+    if not directory:
+        return
+    versions = {}
+    for package in DEPENDENCIES:
+        try:
+            versions[package] = distribution_version(package)
+        except PackageNotFoundError:
+            versions[package] = "unavailable"
+    wheel = os.environ.get("DQX_PREBUILT_WHEEL")
+    wheel_digest = None
+    if wheel:
+        try:
+            wheel_digest = hashlib.sha256(Path(wheel).read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("Prebuilt wheel is unavailable for diagnostic provenance")
+    provenance = dependency_provenance(
+        versions,
+        platform.python_version(),
+        wheel_sha256=wheel_digest,
+        revision=os.environ.get("GITHUB_SHA"),
+        source=os.environ.get("DQX_TEST_CODE_SOURCE", "checkout"),
+    )
+    provenance["acceptance_retry"] = bool(os.environ.get("TEST_FILTER"))
+    diagnostics = AnomalyDiagnostics(Path(directory), Path(__file__).parent, f"{os.getpid()}-{uuid4().hex}", provenance)
+    config.pluginmanager.register(diagnostics, "dqx-anomaly-diagnostics")
+
+
+def _worker_environment_probe() -> Callable[[pd.Series], pd.Series]:
+    # The nested closure carries only values and installed-library references;
+    # workers do not need the test source tree to import this function.
+    packages = DEPENDENCIES
+    modules = SCORER_MODULES
+
+    def observe(batch: pd.Series) -> pd.Series:
+        versions = {}
+        for package in packages:
+            try:
+                versions[package] = distribution_version(package)
+            except PackageNotFoundError:
+                versions[package] = "unavailable"
+        hashes: dict[str, str | None] = {}
+        for module in modules:
+            try:
+                location = import_module(module).__file__
+                if location:
+                    hashes[module] = hashlib.sha256(Path(location).read_bytes()).hexdigest()
+            except (ImportError, AttributeError, OSError):
+                hashes[module] = None
+        value = {
+            "python": platform.python_version(),
+            "packages": versions,
+            "module_sha256": hashes,
+            "runtime": os.environ.get("DATABRICKS_RUNTIME_VERSION"),
+        }
+        return pd.Series([json.dumps(value)] * len(batch))
+
+    return observe
+
+
+def _observe_attached_compute(session: SparkSession, ws: WorkspaceClient) -> dict[str, object]:
+    """Resolve the runtime's attached cluster through documented, public APIs."""
+    # Documented for classic and serverless environment 6; older serverless
+    # environments may reject the configuration key and remain unknown.
+    try:
+        cluster_id = session.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
+    except PySparkException:
+        return compute_observation(None)
+    if not cluster_id:
+        return compute_observation(None)
+    try:
+        cluster = ws.clusters.get(cluster_id=cluster_id)
+    except DatabricksError:
+        return compute_observation(cluster_id)
+    if cluster.cluster_id != cluster_id:
+        return compute_observation(cluster_id)
+    return compute_observation(
+        cluster_id,
+        kind=cluster.kind.value if cluster.kind else None,
+        source=cluster.cluster_source.value if cluster.cluster_source else None,
+        runtime=cluster.spark_version,
+    )
+
+
+@pytest.fixture(autouse=True)
+def anomaly_worker_provenance(request: pytest.FixtureRequest) -> None:
+    """Observe a real pandas worker once per test process when diagnostics are on."""
+    diagnostics = request.config.pluginmanager.get_plugin("dqx-anomaly-diagnostics")
+    if not isinstance(diagnostics, AnomalyDiagnostics) or diagnostics.runtime_recorded:
+        return
+    diagnostics.runtime_recorded = True
+    expected = {}
+    wheel = os.environ.get("DQX_PREBUILT_WHEEL")
+    if wheel:
+        try:
+            with ZipFile(wheel) as archive:
+                expected = {
+                    module: hashlib.sha256(archive.read(module.replace(".", "/") + ".py")).hexdigest()
+                    for module in SCORER_MODULES
+                }
+        except (OSError, KeyError, BadZipFile):
+            logger.warning("The worker provenance wheel manifest is unavailable")
+    report: dict[str, object] = {"compute": "unknown", "worker": "unavailable"}
+    try:
+        session: SparkSession = request.getfixturevalue("spark")
+        spark_version = session.version
+        report["spark"] = spark_version if re.fullmatch(r"[0-9][A-Za-z0-9.+_-]{0,60}", spark_version) else "unavailable"
+        report.update(_observe_attached_compute(session, request.getfixturevalue("ws")))
+
+        observe = F.pandas_udf(_worker_environment_probe(), "string", F.PandasUDFType.SCALAR)
+        raw = session.range(1).select(observe("id").alias("provenance")).collect()[0]
+        report["worker"] = runtime_observation(json.loads(raw["provenance"]), expected)
+    except Exception as exc:
+        # Diagnostics must not turn a probe failure into a setup failure for every
+        # test. The actual scoring tests still surface their original exception.
+        report["exception_chain"] = exception_chain(exc)
+    diagnostics.record_runtime(report)
+
+
+@pytest.fixture
+def scoring_contract_data(
+    spark: SparkSession,
+) -> Callable[[str], tuple[DataFrame, DataFrame, list[str], list[str], str | None]]:
+    """Provide deterministic mixed inputs for public driver/worker scoring contracts."""
+    start = datetime(2025, 1, 1)
+
+    def create(context: str) -> tuple[DataFrame, DataFrame, list[str], list[str], str | None]:
+        if context not in {"plain", "combined"}:
+            raise ValueError("Unknown scoring contract context")
+        training = spark.createDataFrame(
+            [
+                (
+                    100.0 + offset + 0.2 * index + ((index * 7) % 13 - 6),
+                    10.0 + 0.03 * index + ((index * 11) % 7 - 3) * 0.2,
+                    "open" if index % 3 else "closed",
+                    region,
+                    start + timedelta(hours=index),
+                )
+                for region, offset in (("North", 0.0), ("South", 200.0))
+                for index in range(200)
+            ],
+            "amount double, quantity double, status string, region string, event_time timestamp",
+        )
+        timestamp = start + timedelta(hours=100)
+        probes = [
+            (1, 119.0, 13.0, "open", "North", timestamp),
+            (2, 5000.0, 150.0, "open", "North", timestamp),
+            (2, 5000.0, 150.0, "open", "North", timestamp),
+            (3, None, 13.0, "open", "North", timestamp),
+            (4, 119.0, 13.0, "open", "Unseen", timestamp),
+            (5, 119.0, 13.0, "open", "North", None),
+            (6, 119.0, 13.0, "open", "North", start + timedelta(hours=400)),
+            (7, 119.0, 13.0, "open", "North", timestamp),
+            (8, 119.0, 13.0, "open", None, timestamp),
+        ]
+        payload = (0.42, 0.1, {"original": 0.2}, {"original basis": 0.3}, 12.0)
+        probe = spark.createDataFrame(
+            [(*row, *payload) for row in probes],
+            "probe_id int, amount double, quantity double, status string, region string, event_time timestamp, "
+            "anomaly_score double, anomaly_score_std double, anomaly_contributions map<string,double>, "
+            "anomaly_basis_contributions map<string,double>, severity_percentile double",
+        )
+        return (
+            training,
+            probe,
+            ["amount", "quantity", "status"],
+            ["region"] if context == "combined" else [],
+            "event_time" if context == "combined" else None,
+        )
+
+    return create
 
 
 @pytest.fixture
@@ -95,10 +296,8 @@ def ai_query_llm_config(endpoint: str) -> LLMModelConfig:
 def ai_query_endpoint_available(session: SparkSession) -> tuple[bool, str | None]:
     """Cheap probe — does ai_query against the configured endpoint succeed?
 
-    Returns ``(available, error_message)``. The error message is surfaced in the skip reason so
-    a failing probe doesn't masquerade as 'endpoint not provisioned' — knowing why the probe
-    failed (auth, missing entitlement, wrong name) is what lets the user decide whether to set
-    DQX_AI_QUERY_TEST_ENDPOINT.
+    Known missing, denied, or temporarily unavailable endpoints produce a safe skip
+    reason. Unexpected SQL, schema, and execution failures propagate as test failures.
     """
     try:
         session.sql(
@@ -106,8 +305,11 @@ def ai_query_endpoint_available(session: SparkSession) -> tuple[bool, str | None
             f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
         ).collect()
         return True, None
-    except Exception as exc:
-        return False, repr(exc)
+    except PySparkException as exc:
+        reason = endpoint_unavailable_reason(exc.getErrorClass(), str(exc))
+        if reason is None:
+            raise
+        return False, reason
 
 
 @pytest.fixture
@@ -116,10 +318,7 @@ def ai_query_endpoint(ws, spark):
     assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
     available, error = ai_query_endpoint_available(spark)
     if not available:
-        pytest.skip(
-            f"ai_query endpoint {AI_QUERY_TEST_ENDPOINT!r} not reachable; "
-            f"set DQX_AI_QUERY_TEST_ENDPOINT to override. Probe error: {error}"
-        )
+        pytest.skip(f"{error}; set DQX_AI_QUERY_TEST_ENDPOINT to use an available endpoint")
     return AI_QUERY_TEST_ENDPOINT
 
 
@@ -520,83 +719,6 @@ def anomaly_engine(ws, spark):
     return AnomalyEngine(ws, spark)
 
 
-def _delete_mlflow_experiment(experiment_id: str) -> None:
-    """Delete an MLflow experiment; log and ignore errors so teardown does not fail the run."""
-    try:
-        mlflow.delete_experiment(experiment_id)
-        msg = f"Deleted MLflow experiment {experiment_id}"
-        logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment {experiment_id}: {e}"
-        logger.warning(msg)
-
-
-def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
-    """Resolve experiment by name and delete; log and ignore errors."""
-    try:
-        exp = mlflow.get_experiment_by_name(experiment_path)
-        if exp is not None and getattr(exp, "experiment_id", None):
-            mlflow.delete_experiment(exp.experiment_id)
-            msg = f"Deleted MLflow experiment {experiment_path} (id={exp.experiment_id})"
-            logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
-        logger.warning(msg)
-
-
-@pytest.fixture
-def mlflow_worker_experiment(ws):
-    """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.
-    Cleanup is done by _cleanup_mlflow_worker_experiment at session end. Function-scoped so
-    we can depend on ws (pytester provides ws as function-scoped)."""
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
-        if not local_mlflow_db:
-            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-            local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
-        tracking_uri = f"sqlite:///{local_mlflow_db}"
-        os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
-        os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
-    registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_registry_uri(registry_uri)
-
-    cached_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
-    if cached_path is not None:
-        return (_MLFLOW_WORKER_EXPERIMENT_CACHE["id"], cached_path)
-
-    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-    user_name = ws.current_user.me().user_name
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    suffix = uuid4().hex[:8]
-    experiment_path = f"/Users/{user_name}/dqx_integration_tests_{worker_id}_{suffix}"
-    experiment = mlflow.set_experiment(experiment_path)
-    experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
-    logger.debug(f"Created MLflow experiment {experiment_path} (id={experiment_id})")
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = experiment_id
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = experiment_path
-    return (experiment_id, experiment_path)
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _cleanup_mlflow_worker_experiment():
-    """Clear MLflow experiment and cache at end of worker session."""
-    yield
-    experiment_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
-    if experiment_path is None:
-        return
-    experiment_id = _MLFLOW_WORKER_EXPERIMENT_CACHE["id"]
-    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
-    if experiment_id:
-        _delete_mlflow_experiment(experiment_id)
-    else:
-        _delete_mlflow_experiment_by_name(experiment_path)
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = None
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = None
-
-
 @pytest.fixture(autouse=True)
 def configure_mlflow_tracking(mlflow_worker_experiment):
     """Set MLflow experiment env for each test from the worker-scoped experiment fixture."""
@@ -605,34 +727,10 @@ def configure_mlflow_tracking(mlflow_worker_experiment):
     if experiment_id:
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
     os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
-    logger.debug(f"MLflow configured: experiment={experiment_path}")
 
 
-def _drop_registered_models_in_schema(ws, catalog_name: str, schema_name: str) -> None:
-    """Delete every UC registered model (and its versions) in a schema.
-
-    Anomaly training registers models inside the test schema. A forced schema delete does NOT
-    cascade registered models, so without this they (a) block the schema teardown and (b) pile up
-    toward the metastore registered-model quota across runs. Best-effort: logs and continues on
-    error (missing schema, permission, concurrent delete) so teardown never fails a test.
-    """
-    try:
-        models = list(ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
-    except Exception as exc:  # best-effort teardown
-        logger.warning(f"Could not list registered models in {catalog_name}.{schema_name}: {exc}")
-        return
-    for model in models:
-        try:
-            for version in ws.model_versions.list(full_name=model.full_name):
-                ws.model_versions.delete(full_name=model.full_name, version=version.version)
-            ws.registered_models.delete(full_name=model.full_name)
-            logger.debug(f"Deleted registered model {model.full_name}")
-        except Exception as exc:  # best-effort teardown
-            logger.warning(f"Could not delete registered model {model.full_name}: {exc}")
-
-
-@pytest.fixture
-def make_schema(make_schema, ws):
+@pytest.fixture(name="make_schema")
+def fixture_make_schema(make_schema, ws):
     """Wrap pytester's ``make_schema`` so registered models in each schema are dropped at teardown.
 
     Anomaly training registers UC models inside the test schema, and a forced schema delete does
@@ -652,8 +750,7 @@ def make_schema(make_schema, ws):
         return schema
 
     yield _make
-    for schema in created:
-        _drop_registered_models_in_schema(ws, schema.catalog_name, schema.name)
+    drop_registered_models_in_schemas(ws, [(schema.catalog_name, schema.name) for schema in created])
 
 
 @pytest.fixture

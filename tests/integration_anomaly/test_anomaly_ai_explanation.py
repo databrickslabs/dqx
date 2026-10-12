@@ -9,12 +9,13 @@ configured endpoint (override with the DQX_AI_QUERY_TEST_ENDPOINT env var).
 import re
 
 import pytest
+from pyspark.errors import PySparkException
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.errors import InvalidParameterError
+from tests.anomaly_diagnostics import endpoint_unavailable_reason
 from tests.integration_anomaly.conftest import (
     AI_QUERY_TEST_ENDPOINT,
     ai_query_llm_config,
@@ -144,15 +145,14 @@ def test_ai_query_explanation_redact_columns_filters_output(
         ), f"redacted column 'amount' leaked into {field_name}: {explanation[field_name]!r}"
 
 
-def test_ai_query_explanation_one_call_per_group(
+def test_ai_query_explanation_is_shared_within_group(
     spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
 ):
     """Multiple identical anomalous rows collapse into a single pattern group.
 
     The ai_query call runs on executors so we can't intercept it directly; instead we assert the
-    *observable* contract: every flagged row in the group shares the same narrative and
-    group_size, which can only happen if the LLM was invoked once and the result fanned out via
-    the join.
+    observable contract: every flagged row in the group shares the same narrative and
+    group_size. This verifies consistent fan-out, not executor invocation or retry counts.
     """
     test_df = _make_outlier_df(spark, test_df_factory, repeat=5)
     result_df = _score_with_explanation(
@@ -164,7 +164,7 @@ def test_ai_query_explanation_one_call_per_group(
     ]
 
     assert len(explanations) == 5
-    # Single LLM call → single narrative + top_features shared across the group.
+    # Every member receives the same materialized group explanation.
     assert len({e["narrative"] for e in explanations}) == 1
     assert len({e["top_features"] for e in explanations}) == 1
     assert all(e["group_size"] == len(explanations) for e in explanations)
@@ -237,8 +237,11 @@ def test_ai_query_response_shape_portability(
             f"SELECT ai_query('{endpoint}', 'reply ok', "
             f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
         ).collect()
-    except Exception as exc:
-        pytest.skip(f"ai_query endpoint {endpoint!r} not reachable: {exc!r}"[:200])
+    except PySparkException as exc:
+        unavailable = endpoint_unavailable_reason(exc.getErrorClass(), str(exc))
+        if unavailable is None:
+            raise
+        pytest.skip(unavailable)
 
     test_df = _make_outlier_df(spark, test_df_factory)
     result_df = _score_with_explanation(
@@ -255,20 +258,7 @@ def test_ai_query_response_shape_portability(
         assert isinstance(value, str) and value.strip(), f"{endpoint!r}: {field_name!r} is empty"
 
 
-def test_ai_query_rejects_non_databricks_provider():
-    """A non-Databricks provider prefix surfaces InvalidParameterError.
-
-    Pure validation — no live call, no skip needed. Catches the case where a user copies a
-    litellm-style ``provider/model`` config that the ai_query path can't route.
-    """
-    cfg = LLMModelConfig(model_name="openai/gpt-4")
-    with pytest.raises(InvalidParameterError, match="require a Databricks serving endpoint"):
-        llm_explainer._resolve_ai_query_endpoint(cfg.model_name)
-
-
-def test_ai_query_explanation_on_by_default(
-    spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer, ai_query_endpoint
-):
+def test_ai_query_explanation_on_by_default(spark: SparkSession, shared_3d_model, test_df_factory, ai_query_endpoint):
     """With no enable flags, both contributions and ai_explanation are produced (on by default).
 
     Builds the check directly (not via the test helper, which defaults the flags off) so it

@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 import numpy as np
+import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
@@ -64,10 +65,23 @@ def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_
         enable_ai_explanation=False,
     )
 
-    low_count = apply_low(test_df).filter(F.col(f"{info_col_low}.anomaly.is_anomaly") == F.lit(True)).count()
-    high_count = apply_high(test_df).filter(F.col(f"{info_col_high}.anomaly.is_anomaly") == F.lit(True)).count()
-
-    assert low_count >= high_count
+    low_rows = (
+        apply_low(test_df).select(*feature_cols, F.col(f"{info_col_low}.anomaly.is_anomaly").alias("flagged")).collect()
+    )
+    high_rows = (
+        apply_high(test_df)
+        .select(*feature_cols, F.col(f"{info_col_high}.anomaly.is_anomaly").alias("flagged"))
+        .collect()
+    )
+    expected = {tuple(row[column] for column in feature_cols) for row in test_df.collect()}
+    assert len(low_rows) == len(high_rows) == len(expected)
+    assert {tuple(row[column] for column in feature_cols) for row in low_rows} == expected
+    assert {tuple(row[column] for column in feature_cols) for row in high_rows} == expected
+    low_ids = {tuple(row[column] for column in feature_cols) for row in low_rows if row.flagged}
+    high_ids = {tuple(row[column] for column in feature_cols) for row in high_rows if row.flagged}
+    assert high_ids, "the fixture must include a positive control above the high threshold"
+    assert low_ids - high_ids, "the fixture must exercise the interval between thresholds"
+    assert high_ids <= low_ids
 
 
 def test_threshold_affects_flagging(
@@ -208,14 +222,16 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
         threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
-    # Should produce same results
-    scores1 = [row["anomaly_score"] for row in result1.orderBy("transaction_id").collect()]
-    scores2 = [row["anomaly_score"] for row in result2.orderBy("transaction_id").collect()]
-
-    # Scores should be identical (deterministic)
-    for score1, score2 in zip(scores1, scores2, strict=False):
-        if score1 is not None and score2 is not None:
-            assert abs(score1 - score2) < 0.001  # Allow small floating point error
+    expected_ids = sorted(row.transaction_id for row in test_df.select("transaction_id").collect())
+    rows1 = result1.orderBy("transaction_id").collect()
+    rows2 = result2.orderBy("transaction_id").collect()
+    assert [row.transaction_id for row in rows1] == expected_ids
+    assert [row.transaction_id for row in rows2] == expected_ids
+    for row1, row2 in zip(rows1, rows2, strict=True):
+        assert row1.anomaly_score is not None and row2.anomaly_score is not None
+        assert np.isfinite(row1.anomaly_score) and np.isfinite(row2.anomaly_score)
+        assert row1.anomaly_score == pytest.approx(row2.anomaly_score, abs=0.001)
+        assert row1.severity_percentile == row2.severity_percentile
 
 
 def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):

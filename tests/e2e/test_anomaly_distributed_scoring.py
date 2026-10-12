@@ -1,27 +1,67 @@
-import logging
-from pathlib import Path
+"""Exercise the exact local wheel across independent training and scoring sessions."""
 
-from tests.constants import TEST_CATALOG
-from tests.e2e.conftest import new_classic_job_cluster, run_notebook_job
+import json
+import logging
+from datetime import timedelta
+
+import pytest
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError, OperationFailed
+from databricks.sdk.service.jobs import PerformanceTarget, RunResultState
+
+from tests.anomaly_diagnostics import worker_traceback
+from tests.anomaly_e2e import PackagedAnomalyCase, safe_packaged_result
 
 logger = logging.getLogger(__name__)
 
 
-def test_run_anomaly_distributed_scoring_notebook(make_schema, make_notebook, make_job, library_ref):
-    """Run anomaly scoring in distributed (non-driver-only) mode on a cluster via notebook."""
-    schema = make_schema(catalog_name=TEST_CATALOG).name
-    notebook_path = Path(__file__).parent / "notebooks" / "anomaly_distributed_scoring_notebook.py"
-    base_parameters = {
-        "test_catalog": TEST_CATALOG,
-        "test_schema": schema,
-        "test_library_ref": library_ref,
-    }
-    run_notebook_job(
-        notebook_path=notebook_path,
-        make_notebook=make_notebook,
-        make_job=make_job,
-        library_reference=library_ref,
-        task_key="anomaly_distributed_scoring_notebook",
-        base_parameters=base_parameters,
-        new_cluster=new_classic_job_cluster(),
-    )
+@pytest.mark.timeout(3900)
+def test_run_anomaly_distributed_scoring_notebook(
+    ws: WorkspaceClient, packaged_anomaly_case: PackagedAnomalyCase
+) -> None:
+    """Reload a persisted model and score with contributions on the suite's compute."""
+    waiter = ws.jobs.run_now(job_id=packaged_anomaly_case.job_id)
+    assert waiter.run_id is not None
+    try:
+        run = waiter.result(timeout=timedelta(minutes=60))
+    except OperationFailed:
+        run = ws.jobs.get_run(run_id=waiter.run_id)
+    except (TimeoutError, KeyboardInterrupt):
+        _cancel_anomaly_run(ws, waiter.run_id)
+        raise
+    if packaged_anomaly_case.serverless:
+        assert run.effective_performance_target == PerformanceTarget.STANDARD
+    assert run.tasks and len(run.tasks) == 2, "Both packaged anomaly tasks must be present"
+    completed = set()
+    for task in run.tasks:
+        assert task.run_id is not None
+        output = ws.jobs.get_run_output(task.run_id)
+        if not packaged_anomaly_case.serverless and task.cluster_instance and task.cluster_instance.cluster_id:
+            assert task.cluster_instance.cluster_id == packaged_anomaly_case.cluster_id
+        if not task.state or task.state.result_state != RunResultState.SUCCESS:
+            logger.error(f"Packaged anomaly task failed: {json.dumps(worker_traceback(output.error_trace or ''))}")
+            raise AssertionError("Packaged anomaly task failed; sanitized worker frames are in the test log")
+        assert task.task_key in {"train", "score"}
+        assert output.notebook_output and output.notebook_output.result and not output.notebook_output.truncated
+        evidence = safe_packaged_result(output.notebook_output.result, packaged_anomaly_case, task.task_key)
+        evidence["actual_compute"] = (
+            "serverless"
+            if (task.effective_performance_target or run.effective_performance_target) is not None
+            else "classic" if task.cluster_instance and task.cluster_instance.cluster_id else "unknown"
+        )
+        logger.info(f"Packaged anomaly provenance: {json.dumps(evidence, sort_keys=True)}")
+        completed.add(task.task_key)
+    assert completed == {"train", "score"}
+
+
+def _cancel_anomaly_run(ws: WorkspaceClient, run_id: int) -> None:
+    """Cancel only this test's run and bound teardown after an interrupted wait."""
+    try:
+        ws.jobs.cancel_run(run_id=run_id)
+        ws.jobs.wait_get_run_job_terminated_or_skipped(run_id=run_id, timeout=timedelta(minutes=5))
+    except OperationFailed:
+        # A cancelled terminal run is reported as unsuccessful by the SDK waiter.
+        return
+    except (DatabricksError, TimeoutError):
+        logger.error("Packaged anomaly run cancellation did not confirm termination before cleanup")
