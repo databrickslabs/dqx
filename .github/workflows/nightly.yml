@@ -67,11 +67,13 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
+        id: integration
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -84,19 +86,26 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-      - name: Preserve anomaly explanation diagnostics
+      - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') }}
+        run: make combine-coverage KEEP_COVERAGE=1
+
+      - name: Preserve anomaly explanation diagnostics and integration coverage
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
-          path: anomaly-explanation-diagnostics/
+          path: |
+            anomaly-explanation-diagnostics/
+            .coverage
+            .coverage.*
+            coverage-combined.xml
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Merge coverage reports and convert them to XML
-        run: make combine-coverage
-
       - name: Publish integration test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -134,9 +143,11 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run integration tests on serverless cluster
+        id: integration
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -150,19 +161,26 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-      - name: Preserve anomaly explanation diagnostics
+      - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') }}
+        run: make combine-coverage KEEP_COVERAGE=1
+
+      - name: Preserve anomaly explanation diagnostics and integration coverage
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
-          path: anomaly-explanation-diagnostics/
+          path: |
+            anomaly-explanation-diagnostics/
+            .coverage
+            .coverage.*
+            coverage-combined.xml
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Merge coverage reports and convert them to XML
-        run: make combine-coverage
-
       - name: Publish serverless integration test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
