@@ -190,6 +190,34 @@ def test_status_is_available_before_migrations(client: TestClient) -> None:
     assert response.json()["admin_group"] == "admins"
 
 
+def test_status_reports_the_signed_in_user_and_job_to_administrators(client: TestClient) -> None:
+    """Administrators get a direct link to the task-runner job."""
+    previous_job_id = setup_runtime.job_id
+    setup_runtime.job_id = 914148714803833
+    try:
+        response = client.get("/api/v1/setup/status")
+    finally:
+        setup_runtime.job_id = previous_job_id
+
+    assert response.json()["user_name"] == "admin@example.com"
+    assert response.json()["task_runner_job_id"] == 914148714803833
+
+
+def test_status_hides_the_job_from_non_admins_but_names_them(client: TestClient, obo_ws: MagicMock) -> None:
+    """A non-admin is told who they are signed in as, and never sees the job ID."""
+    obo_ws.current_user.me.return_value = user_in_groups("users", user_name="analyst@example.com")
+    previous_job_id = setup_runtime.job_id
+    setup_runtime.job_id = 914148714803833
+    try:
+        response = client.get("/api/v1/setup/status")
+    finally:
+        setup_runtime.job_id = previous_job_id
+
+    assert response.json()["can_manage"] is False
+    assert response.json()["user_name"] == "analyst@example.com"
+    assert response.json()["task_runner_job_id"] is None
+
+
 def test_status_marks_non_admin_as_waiting(client: TestClient, obo_ws: MagicMock) -> None:
     """Removing bootstrap-group membership must hide setup controls."""
     obo_ws.current_user.me.return_value = user_in_groups("users")

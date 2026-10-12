@@ -95,3 +95,13 @@ def test_show_grants_service_principal_with_no_lookup_match_is_uninspectable() -
 
     assert privileges is None
     workspace.service_principals.list.assert_called_once()
+
+
+def test_show_grants_account_users_grant_covers_every_principal() -> None:
+    """account users contains everyone, so its grant satisfies any audience group."""
+    inspector, workspace = _fallback_inspector([{"Principal": "account users", "ActionType": "USE CATALOG"}])
+
+    privileges = inspector.privileges("CATALOG", "main", "data-team", required=frozenset({"USE_CATALOG"}))
+
+    assert privileges is not None and has_privilege(privileges, "USE_CATALOG")
+    workspace.service_principals.list.assert_not_called()

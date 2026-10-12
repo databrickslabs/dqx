@@ -51,6 +51,9 @@ async def get_setup_status(
         report=setup_runtime.report(),
         can_manage=access.can_manage,
         admin_group=sanitize_setup_display(config.admin_group) or "",
+        user_name=sanitize_setup_display(access.user_name) or "",
+        # Only administrators get a link to the job, so only they need its ID.
+        task_runner_job_id=setup_runtime.job_id if access.can_manage else None,
         configuration=orchestrator.configuration_view() if orchestrator is not None else None,
     )
 

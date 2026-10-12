@@ -3136,7 +3136,14 @@
       "reconcile": "Ejecutar configuración",
       "verify_again": "Comprobar de nuevo",
       "openJobs": "Abrir trabajos",
+      "openTaskRunnerJob": "Abrir el job de ejecución",
       "configure": "Guardar configuración"
+    },
+    "notAdmin": {
+      "title": "No puedes completar la configuración",
+      "description": "Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "descriptionWithUser": "Has iniciado sesión como {{userName}}. Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "configurationPending": "Esperando a que un administrador elija el catálogo, el prefijo de almacenamiento y el grupo de usuarios."
     },
     "warningsReview": {
       "title": "La configuración de Studio terminó con advertencias",

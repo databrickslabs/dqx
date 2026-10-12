@@ -40,6 +40,18 @@ def _acl(*entries: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(access_control_list=list(entries))
 
 
+def test_missing_principals_treat_the_users_group_as_everyone() -> None:
+    levels = {"users": frozenset({"CAN_USE"})}
+
+    assert missing_principals(levels, ["data-team", "admins-custom"], frozenset({"CAN_USE", "CAN_MANAGE"})) == ()
+
+
+def test_missing_principals_ignore_an_insufficient_users_level() -> None:
+    levels = {"users": frozenset({"CAN_VIEW"})}
+
+    assert missing_principals(levels, ["data-team"], frozenset({"CAN_RUN"})) == ("data-team",)
+
+
 def test_reconcile_group_acl_grants_only_missing_groups_then_verifies() -> None:
     ws = create_autospec(WorkspaceClient, instance=True)
     ws.permissions.get.side_effect = [

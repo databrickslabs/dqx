@@ -235,3 +235,55 @@ def test_endpoint_names_are_sorted_and_deduplicated(resources, workspace) -> Non
     assert access.endpoint_names() == ("a", "b")
     same = AiAccess(resources=resources, workspace=workspace, settings=FakeAiSettings(endpoint="x", embedding="x"))
     assert same.endpoint_names() == ("x",)
+
+
+def _hosted(workspace: MagicMock) -> None:
+    """Make every endpoint look like a Databricks-hosted model: listed, but with no endpoint ID."""
+    tasks = {"chat-endpoint": "llm/v1/chat", "embed-endpoint": "llm/v1/embeddings"}
+    workspace.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id=None, task=tasks.get(name))
+    workspace.serving_endpoints.get_permissions.side_effect = AssertionError("hosted models have no permissions")
+
+
+def test_listed_hosted_models_pass_unattended_without_a_test_call(resources, workspace) -> None:
+    _hosted(workspace)
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.state == StepState.PASSED
+    workspace.serving_endpoints.query.assert_not_called()
+
+
+def test_admin_verification_makes_one_token_test_calls_to_hosted_models(resources, workspace) -> None:
+    _hosted(workspace)
+    reader = create_autospec(WorkspaceClient, instance=True)
+
+    step = _check(resources, workspace, FakeAiSettings(), reader)
+
+    assert step.state == StepState.PASSED
+    calls = {call.kwargs["name"]: call.kwargs for call in reader.serving_endpoints.query.call_args_list}
+    assert calls["chat-endpoint"]["max_tokens"] == 1
+    assert calls["embed-endpoint"]["input"] == ["ok"]
+    workspace.serving_endpoints.query.assert_not_called()
+
+
+def test_hosted_model_that_does_not_answer_turns_ai_off(resources, workspace) -> None:
+    _hosted(workspace)
+    reader = create_autospec(WorkspaceClient, instance=True)
+    reader.serving_endpoints.query.side_effect = RuntimeError("rate limited")
+    settings = FakeAiSettings()
+
+    step = _check(resources, workspace, settings, reader)
+
+    assert step.state == StepState.WARNING
+    assert step.code == "ai_endpoint_unreachable"
+    assert settings.saves == [(False, "setup", None)]
+    assert SetupActionId.OVERRIDE in step.actions
+
+
+def test_endpoint_lookup_failure_is_unverified(resources, workspace) -> None:
+    workspace.serving_endpoints.get.side_effect = RuntimeError("timeout")
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.state == StepState.WARNING
+    assert step.code == "ai_access_unverified"

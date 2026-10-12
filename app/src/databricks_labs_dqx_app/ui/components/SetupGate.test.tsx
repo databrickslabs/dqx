@@ -176,6 +176,45 @@ describe("SetupGate", () => {
     expect(markup).toContain('href="https://workspace.example.com/#job/list"');
   });
 
+  test("links straight to the task-runner job once setup knows it", () => {
+    const status = setupStatus(true);
+    status.task_runner_job_id = 914148714803833;
+
+    const markup = renderGate(status, "https://workspace.example.com/");
+
+    expect(markup).toContain(
+      'href="https://workspace.example.com/jobs/914148714803833"',
+    );
+    expect(markup).toContain(en.setup.actions.openTaskRunnerJob);
+  });
+
+  test("tells a non-administrator who they are and who can finish setup", () => {
+    const status = setupStatus(false);
+    status.user_name = "analyst@example.com";
+    status.report.steps.push({
+      id: "configuration",
+      state: "action_required",
+      code: "configuration_required",
+      summary: "Choose the catalog, storage prefix and audience group for DQX Studio.",
+      actions: ["configure"],
+    });
+
+    const markup = renderGate(status);
+
+    expect(markup).toContain(en.setup.notAdmin.title.replace("'", "&#x27;"));
+    expect(markup).toContain("analyst@example.com");
+    expect(markup).toContain("dqx-admins");
+    expect(markup).toContain(en.setup.notAdmin.configurationPending);
+    expect(markup).not.toContain("Choose the catalog, storage prefix");
+    expect(markup).not.toContain('name="catalog"');
+  });
+
+  test("administrators never see the not-admin notice", () => {
+    const markup = renderGate(setupStatus(true));
+
+    expect(markup).not.toContain(en.setup.notAdmin.title.replace("'", "&#x27;"));
+  });
+
   test("polls slowly while setup is waiting for external action", () => {
     expect(setupPollingInterval("checking")).toBe(2_000);
     expect(setupPollingInterval("initializing")).toBe(2_000);

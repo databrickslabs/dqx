@@ -495,7 +495,7 @@ The Marketplace listing installs DQX Studio into your workspace as a Databricks 
 
 3. **Share the app** with your audience group and your administrator group: in **Compute → Apps → DQX Studio → Permissions**, assign **Can Use**. Studio cannot always verify or set this itself; if it cannot read the app's sharing it shows a warning rather than blocking setup.
 
-4. **Open the app as a workspace administrator** (a member of the workspace `admins` group or of the group configured as **`DQX_ADMIN_GROUP`**). The setup wizard shows a form: enter the **catalog**, a **storage prefix** (default `dqx_studio`), and the **audience group**, then submit. The wizard creates the schemas and wheels volume, runs migrations, publishes the task-runner wheels, and verifies and reports every permission.
+4. **Open the app as a workspace administrator** (a member of the workspace `admins` group or of the group configured as **`DQX_ADMIN_GROUP`**). The setup wizard shows a form: enter the **catalog**, a **storage prefix** (default `dqx_studio`), and the **audience group**, then submit. The wizard creates the schemas and wheels volume, runs migrations, publishes the task-runner wheels, and verifies and reports every permission. Anyone else who opens the app sees a notice that an administrator must finish setup, and no form.
 
 5. **Run the `GRANT` statements** the wizard prints if any catalog or runner access is missing (for example `USE CATALOG` and `CREATE SCHEMA` for the app service principal), then choose **Verify again**. Follow its link to the Jobs UI and assign the workspace service principal as the task-runner job's `run_as` identity.
 
@@ -550,7 +550,7 @@ If you can't use the Marketplace, or want to customize the deployment, use the [
    databricks bundle run dqx-studio -p <your-profile> -t release --var catalog_name=<your-catalog> --var dqx_service_principal_application_id=<your-sp-application-id>
    ```
 
-7. Open the deployed app from the **Apps** page as a workspace administrator (a member of `admins` or of `admin_group`). The bundle supplies the catalog, prefix, and audience, so the setup wizard shows them read-only. Run any `GRANT` statements it prints and choose **Verify again** until every step is green.
+7. Open the deployed app from the **Apps** page as a workspace administrator (a member of `admins` or of `admin_group`). The bundle supplies the catalog, prefix, and audience, so the setup wizard shows them read-only. Run any `GRANT` statements it prints and choose **Verify again** until every step is green. Other users see a notice that an administrator must finish setup.
 
 8. **Assign roles**: in Studio, open **Admin Settings → Entitlements** and map your audience groups to the Author, Approver, and Viewer roles. See [Permissions & Entitlements](/docs/studio/governance/permissions-and-entitlements) for the full permission matrix.
 

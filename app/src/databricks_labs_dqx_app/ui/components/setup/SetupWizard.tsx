@@ -74,9 +74,14 @@ export function SetupShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function workspaceJobsUrl(workspaceHost?: string): string | null {
+/** Link to the task-runner job when it is known, else to the workspace jobs list. */
+export function workspaceJobsUrl(
+  workspaceHost?: string,
+  jobId?: number | null,
+): string | null {
   const host = workspaceHost?.trim().replace(/\/+$/, "");
-  return host ? `${host}/#job/list` : null;
+  if (!host) return null;
+  return jobId ? `${host}/jobs/${jobId}` : `${host}/#job/list`;
 }
 
 function StepIcon({ state }: { state: StepState }) {
@@ -204,6 +209,7 @@ function StepCard({
   actions,
   canManage,
   jobsUrl,
+  hasJobId,
   isReconciling,
   onReconcile,
   onOverride,
@@ -217,6 +223,7 @@ function StepCard({
   actions: SetupViewAction[];
   canManage: boolean;
   jobsUrl: string | null;
+  hasJobId: boolean;
   isReconciling: boolean;
   onReconcile: () => void;
   onOverride?: (stepId: SetupStep["id"]) => void;
@@ -234,6 +241,11 @@ function StepCard({
     !!configuration &&
     (configuration.source === "deployment" || configuration.source === "saved");
   const stepActions = actions.filter((action) => action.stepId === step.id);
+  // Non-administrators see the configuration step without its form; say who must complete it.
+  const summary =
+    !canManage && isConfigurationStep && step.state !== "passed"
+      ? t("setup.notAdmin.configurationPending")
+      : step.summary;
   const canOverride =
     !!onOverride && stepActions.some((action) => action.id === "override");
 
@@ -253,9 +265,9 @@ function StepCard({
               {t(`setup.states.${step.state}`)}
             </Badge>
           </div>
-          {step.summary && (
+          {summary && (
             <CardDescription className="whitespace-pre-wrap break-words">
-              {step.summary}
+              {summary}
             </CardDescription>
           )}
         </CardHeader>
@@ -305,7 +317,9 @@ function StepCard({
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                {t("setup.actions.openJobs")}
+                {hasJobId
+                  ? t("setup.actions.openTaskRunnerJob")
+                  : t("setup.actions.openJobs")}
                 <ExternalLink className="size-3.5" aria-hidden="true" />
               </a>
             )}
@@ -385,7 +399,7 @@ export function SetupWizard({
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
   const isReview = view.kind === "review";
-  const jobsUrl = workspaceJobsUrl(workspaceHost);
+  const jobsUrl = workspaceJobsUrl(workspaceHost, view.taskRunnerJobId);
   const steps = progressSteps(view);
 
   if (view.kind === "checking" && steps.length === 0) return <SetupLoading />;
@@ -418,6 +432,30 @@ export function SetupWizard({
             </p>
           )}
         </div>
+        {isWaiting && (
+          <div
+            role="status"
+            className="flex gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 text-sm"
+          >
+            <CircleAlert
+              className="mt-0.5 size-4 shrink-0 text-amber-500"
+              aria-hidden="true"
+            />
+            <div className="space-y-1">
+              <p className="font-medium">{t("setup.notAdmin.title")}</p>
+              <p className="text-muted-foreground">
+                {view.userName
+                  ? t("setup.notAdmin.descriptionWithUser", {
+                      userName: view.userName,
+                      adminGroup: view.adminGroup,
+                    })
+                  : t("setup.notAdmin.description", {
+                      adminGroup: view.adminGroup,
+                    })}
+              </p>
+            </div>
+          </div>
+        )}
         <ol className="relative space-y-3 before:absolute before:bottom-6 before:left-4 before:top-6 before:w-px before:bg-border sm:before:left-[18px]">
           {steps.map((step) => (
             <StepCard
@@ -426,6 +464,7 @@ export function SetupWizard({
               actions={view.actions}
               canManage={view.canManage}
               jobsUrl={jobsUrl}
+              hasJobId={view.taskRunnerJobId !== null}
               isReconciling={isReconciling || isOverriding}
               onReconcile={onReconcile}
               onOverride={onOverride}

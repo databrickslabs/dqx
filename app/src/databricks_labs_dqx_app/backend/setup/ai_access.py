@@ -1,8 +1,11 @@
 """Check that Studio users can query the AI model endpoints, and turn AI off when they cannot.
 
-AI calls run as the signed-in user, so every audience group needs Can query on the
-configured serving endpoints. Setup grants it on a best-effort basis, then re-reads the
-endpoint permissions. The check never blocks readiness: when access is missing or cannot
+AI calls run as the signed-in user. Custom serving endpoints have their own permissions,
+so every audience group needs Can query on them: setup grants it on a best-effort basis,
+then re-reads the endpoint permissions. Databricks-hosted foundation-model endpoints have
+no per-endpoint permissions (they have no endpoint ID); they pass when listed, and when an
+administrator verifies setup, a one-token test call as that administrator confirms the
+model answers. The check never blocks readiness: when access is missing or cannot
 be confirmed it reports a warning and, unless an administrator chose the AI setting
 themselves, turns AI features off. It turns them back on once access is confirmed.
 """
@@ -13,7 +16,12 @@ from typing import Protocol
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
-from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
+from databricks.sdk.service.serving import (
+    ChatMessage,
+    ChatMessageRole,
+    ServingEndpointAccessControlRequest,
+    ServingEndpointPermissionLevel,
+)
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
 from databricks_labs_dqx_app.backend.setup.acl import group_levels, missing_principals
@@ -22,10 +30,10 @@ from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupSte
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 
 _QUERY_LEVELS = frozenset({"CAN_QUERY", "CAN_MANAGE"})
-_ALL_WORKSPACE_USERS = "users"
 # Most severe first: a missing endpoint needs a settings change, missing access needs a
 # grant, and unverified access may already be fine.
-_PROBLEM_ORDER = ("ai_endpoint_missing", "ai_access_missing", "ai_access_unverified")
+_PROBLEM_ORDER = ("ai_endpoint_missing", "ai_endpoint_unreachable", "ai_access_missing", "ai_access_unverified")
+_EMBEDDINGS_TASK = "llm/v1/embeddings"
 logger = logging.getLogger(__name__)
 
 
@@ -132,16 +140,23 @@ class AiAccess:
         """Return a problem code and instructions for endpoint *name*, or None when users can query it."""
         endpoint_label = instruction_identifier(name)
         try:
-            endpoint_id = self._workspace.serving_endpoints.get(name).id
+            endpoint = self._workspace.serving_endpoints.get(name)
         except NotFound:
             return "ai_endpoint_missing", (
                 f"AI model endpoint {endpoint_label} doesn't exist in this workspace. Choose another one in Settings.",
             )
         except Exception:
-            endpoint_id = None
-        if not endpoint_id:
             return "ai_access_unverified", (
                 f"Studio couldn't look up AI model endpoint {endpoint_label}. Click Verify again in a minute.",
+            )
+        endpoint_id = endpoint.id
+        if not endpoint_id:
+            # Databricks-hosted model: no per-endpoint permissions to read or grant.
+            if reader_ws is None or self._answers_test_call(reader_ws, name, endpoint.task):
+                return None
+            return "ai_endpoint_unreachable", (
+                f"AI model endpoint {endpoint_label} didn't answer a test call. Check that the model is "
+                "available in this workspace and not blocked by its AI Gateway rate limits, then click Verify again.",
             )
         principals = self._resources.audience.workspace_principals
         absent = self._absent_principals(endpoint_id, principals, reader_ws)
@@ -173,6 +188,21 @@ class AiAccess:
             )
         return "ai_access_missing", grants
 
+    @staticmethod
+    def _answers_test_call(reader_ws: WorkspaceClient, name: str, task: str | None) -> bool:
+        """Make the smallest possible call to *name* as the administrator; True when it answers."""
+        try:
+            if task == _EMBEDDINGS_TASK:
+                reader_ws.serving_endpoints.query(name=name, input=["ok"])
+            else:
+                reader_ws.serving_endpoints.query(
+                    name=name, messages=[ChatMessage(role=ChatMessageRole.USER, content="ok")], max_tokens=1
+                )
+        except Exception:
+            logger.warning("An AI model endpoint did not answer the setup test call.")
+            return False
+        return True
+
     def _absent_principals(
         self,
         endpoint_id: str,
@@ -185,10 +215,7 @@ class AiAccess:
             entries = _read_acl(reader_ws, endpoint_id)
         if entries is None:
             return None
-        levels = group_levels(entries)
-        if levels.get(_ALL_WORKSPACE_USERS, frozenset()) & _QUERY_LEVELS:
-            return ()
-        return missing_principals(levels, principals, _QUERY_LEVELS)
+        return missing_principals(group_levels(entries), principals, _QUERY_LEVELS)
 
 
 def _read_acl(client: WorkspaceClient, endpoint_id: str) -> list[object] | None:

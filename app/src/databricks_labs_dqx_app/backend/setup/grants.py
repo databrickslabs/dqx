@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
 
 
+ALL_ACCOUNT_USERS = "account users"
 _APPLICATION_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
@@ -161,10 +162,11 @@ class GrantInspector:
                     normalized.append({"principal": granted_principal, "actiontype": action})
                 self._grant_rows[key] = normalized
             rows.extend(self._grant_rows[key])
+        # Grants to the built-in account users group apply to every principal.
         direct = frozenset(
             row["actiontype"].upper().replace(" ", "_")
             for row in rows
-            if row["principal"].strip().casefold() == principal.casefold()
+            if row["principal"].strip().casefold() in {principal.casefold(), ALL_ACCOUNT_USERS}
         )
         if required.issubset(direct) or "ALL_PRIVILEGES" in direct:
             return direct

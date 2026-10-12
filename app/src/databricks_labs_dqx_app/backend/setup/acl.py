@@ -10,6 +10,9 @@ from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 AccessStatus = Literal["granted", "missing", "unknown"]
 
 GENIE_RUN_LEVELS = frozenset({"CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
+# Built-in workspace group containing every workspace identity: a level granted to it
+# covers every principal.
+ALL_WORKSPACE_USERS = "users"
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +50,8 @@ def missing_principals(
 ) -> tuple[str, ...]:
     """Return the principals that hold none of the sufficient levels, in input order.
 
+    A sufficient level held by the built-in *users* group covers every principal.
+
     Args:
         levels: Casefolded principal to permission levels, from *group_levels*.
         principals: Principals to verify.
@@ -55,6 +60,8 @@ def missing_principals(
     Returns:
         The principals lacking any sufficient level.
     """
+    if levels.get(ALL_WORKSPACE_USERS, frozenset()) & sufficient:
+        return ()
     return tuple(
         principal for principal in principals if not levels.get(principal.casefold(), frozenset()) & sufficient
     )
