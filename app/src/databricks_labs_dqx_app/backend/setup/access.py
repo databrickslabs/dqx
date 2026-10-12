@@ -10,7 +10,7 @@ import logging
 from collections.abc import Sequence
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.iam import AccessControlRequest, ObjectPermissions, PermissionLevel
+from databricks.sdk.service.iam import PermissionLevel
 
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
@@ -25,7 +25,13 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
-from databricks_labs_dqx_app.backend.setup.acl import AccessStatus, group_levels, missing_principals
+from databricks_labs_dqx_app.backend.setup.acl import (
+    GENIE_RUN_LEVELS,
+    AccessStatus,
+    group_levels,
+    missing_principals,
+    reconcile_group_acl,
+)
 from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, instruction_identifier
 from databricks_labs_dqx_app.backend.setup.configuration import SetupSettings
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
@@ -44,7 +50,6 @@ GENIE_ALLOWLIST: tuple[str, ...] = (
     DIM_MONITORED_TABLES_TABLE_NAME,
 )
 
-_GENIE_RUN_LEVELS = frozenset({"CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
 _DASHBOARD_READ_LEVELS = frozenset({"CAN_READ", "CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
 _APP_USE_LEVELS = frozenset({"CAN_USE", "CAN_MANAGE"})
 logger = logging.getLogger(__name__)
@@ -136,7 +141,7 @@ class AudienceAccess:
             not_applicable.append("Genie space sharing")
         else:
             status, missing = self._reconcile_acl(
-                "genie", genie_space_id, PermissionLevel.CAN_RUN, _GENIE_RUN_LEVELS, reader_ws
+                "genie", genie_space_id, PermissionLevel.CAN_RUN, GENIE_RUN_LEVELS, reader_ws
             )
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("Genie space", genie_space_id))
@@ -311,50 +316,18 @@ class AudienceAccess:
         reader_ws: WorkspaceClient | None,
     ) -> tuple[AccessStatus, tuple[str, ...]]:
         """Additively grant *level* to workspace principals lacking it, then re-read the ACL."""
-        principals = self._resources.audience.workspace_principals
         if replace_control_characters(object_id) != object_id:
             return "unknown", ()
-        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient, reader_ws)
-        if absent is None:
-            return "unknown", ()
-        if not absent:
-            return "granted", ()
-        try:
-            self._workspace.permissions.update(
-                object_type,
-                object_id,
-                access_control_list=[
-                    AccessControlRequest(group_name=group, permission_level=level) for group in absent
-                ],
-            )
-        except Exception:
-            logger.warning("Could not share a Studio resource with the audience; verifying access instead.")
-        absent = self._missing_acl_principals(object_type, object_id, principals, sufficient, reader_ws)
-        if absent is None:
-            return "unknown", ()
-        return ("missing", absent) if absent else ("granted", ())
-
-    def _missing_acl_principals(
-        self,
-        object_type: str,
-        object_id: str,
-        principals: Sequence[str],
-        sufficient: frozenset[str],
-        reader_ws: WorkspaceClient | None,
-    ) -> tuple[str, ...] | None:
-        permissions = _read_acl(self._workspace, object_type, object_id)
-        if permissions is None and reader_ws is not None:
-            permissions = _read_acl(reader_ws, object_type, object_id)
-        if permissions is None:
-            return None
-        return missing_principals(group_levels(permissions.access_control_list or []), principals, sufficient)
-
-
-def _read_acl(client: WorkspaceClient, object_type: str, object_id: str) -> ObjectPermissions | None:
-    try:
-        return client.permissions.get(object_type, object_id)
-    except Exception:
-        return None
+        readers = (self._workspace, reader_ws) if reader_ws is not None else (self._workspace,)
+        return reconcile_group_acl(
+            self._workspace,
+            object_type,
+            object_id,
+            self._resources.audience.workspace_principals,
+            level,
+            sufficient,
+            readers=readers,
+        )
 
 
 def _blocked(code: str, summary: str, instructions: tuple[str, ...]) -> SetupStep:

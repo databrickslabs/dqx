@@ -399,6 +399,16 @@ async def test_saved_configuration_provisions_storage_and_locks_choices() -> Non
 
 
 @pytest.mark.asyncio
+async def test_configuration_view_reports_locked_right_after_first_provisioning() -> None:
+    """The wizard must not offer an editable form for choices that just became immutable."""
+    orchestrator, _ = _orchestrator([], resolved=SAVED)
+
+    await orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert orchestrator.configuration_view().locked is True
+
+
+@pytest.mark.asyncio
 async def test_deployment_configuration_verifies_without_provisioning() -> None:
     events: list[str] = []
     deployment = dataclasses.replace(SAVED, source=ConfigurationSource.DEPLOYMENT, choices=None)

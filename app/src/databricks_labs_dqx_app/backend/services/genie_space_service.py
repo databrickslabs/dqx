@@ -66,7 +66,7 @@ from collections.abc import Callable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
-from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
+from databricks.sdk.service.iam import PermissionLevel
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.compute_service import WAREHOUSE_USE_LEVELS, ComputeService
@@ -81,6 +81,7 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
+from databricks_labs_dqx_app.backend.setup.acl import GENIE_RUN_LEVELS, reconcile_group_acl
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate_identifier
 
@@ -1749,27 +1750,10 @@ def _reconcile_audience(ws: WorkspaceClient, space_id: str, audience_groups: tup
     if not audience_groups:
         logger.info("Genie space ACLs are administrator-managed; no audience groups configured.")
         return
-    sufficient_levels = {
-        PermissionLevel.CAN_RUN,
-        PermissionLevel.CAN_EDIT,
-        PermissionLevel.CAN_MANAGE,
-        PermissionLevel.IS_OWNER,
-    }
-    try:
-        permissions = ws.permissions.get("genie", space_id)
-        permitted_groups = {
-            entry.group_name
-            for entry in permissions.access_control_list or []
-            if any(permission.permission_level in sufficient_levels for permission in entry.all_permissions or [])
-        }
-        grants = [
-            AccessControlRequest(group_name=group, permission_level=PermissionLevel.CAN_RUN)
-            for group in dict.fromkeys(audience_groups)
-            if group not in permitted_groups
-        ]
-        if grants:
-            ws.permissions.update("genie", space_id, access_control_list=grants)
-    except Exception:
+    status, _ = reconcile_group_acl(
+        ws, "genie", space_id, tuple(dict.fromkeys(audience_groups)), PermissionLevel.CAN_RUN, GENIE_RUN_LEVELS
+    )
+    if status != "granted":
         logger.warning(
             "Could not reconcile Genie audience permissions; an administrator must grant CAN_RUN "
             "to the configured groups. Will retry on next provision."

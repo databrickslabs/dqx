@@ -1,6 +1,7 @@
 """Serialized, deployment-agnostic setup reconciliation for DQX Studio."""
 
 import asyncio
+import dataclasses
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -610,6 +611,8 @@ class SetupOrchestrator:
                 "configuration_lock_failed",
                 "Studio couldn't save that its storage has been created.",
             )
+        # Keep the published configuration view in step with the lock just recorded.
+        self._resolved = dataclasses.replace(resolved, locked=True)
         return step
 
     async def _activate(self, bound: BoundSetup) -> SetupStep:

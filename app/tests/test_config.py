@@ -36,6 +36,28 @@ def test_audience_groups_env_accepts_json_and_simple_csv(
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", []),
+        (" ", []),
+        ("studio-authors,", ["studio-authors"]),
+        (",studio-authors", ["studio-authors"]),
+        ("studio-authors,,studio-viewers", ["studio-authors", "studio-viewers"]),
+        ('["studio-authors", ""]', ["studio-authors"]),
+    ],
+)
+def test_audience_groups_env_ignores_empty_entries(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: list[str]
+) -> None:
+    """A stray trailing comma must not stop the app from starting."""
+    from databricks_labs_dqx_app.backend.config import AppConfig
+
+    monkeypatch.setenv("DQX_USER_GROUPS", value)
+
+    assert AppConfig(_env_file=None).user_groups == expected
+
+
+@pytest.mark.parametrize(
     "value",
     [
         '["studio-authors"',
@@ -50,11 +72,6 @@ def test_audience_groups_env_accepts_json_and_simple_csv(
         "[123]",
         "[null]",
         '[["studio-authors"]]',
-        "",
-        " ",
-        "studio-authors,",
-        ",studio-authors",
-        "studio-authors,,studio-viewers",
         "studio-authors,`studio-viewers`",
         "studio-authors,studio\nviewers",
         '["studio\\u0000viewers"]',
