@@ -84,6 +84,8 @@ def _scored_frame(anomaly_scorer, test_df, model, registry, columns, **check_kwa
     assert actual == expected, "scoring changed evaluation row identities or multiplicities"
     assert observed["score"].notna().all(), "a known evaluation row has no score"
     assert np.isfinite(observed["score"]).all(), "evaluation scores must all be finite"
+    assert observed["flagged"].notna().all(), "known evaluation rows must have a defined verdict"
+    assert observed["flagged"].isin([0.0, 1.0]).all(), "anomaly verdicts must be binary"
     return observed
 
 

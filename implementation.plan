@@ -6,6 +6,8 @@ Fix the three persistent CI failures and improve the anomaly module's unit, inte
 Work in the existing group-cond checkout on feat/anomaly-group-conditioning, starting from verified head e9f6fd97. Preserve unrelated changes and existing history.
 No public API, profile-name, reporting-schema or model-metadata-format changes are planned. Restore the intended discovery contract without introducing another compatibility or retraining requirement.
 
+Subsequent user clarification: retain the existing GitHub workflows and acceptance action. Extend their diagnostics, coverage retention and anomaly merge-queue conditions in place; do not add a custom action, workflow or retry-result gate. Preserve the acceptance action's current retry policy and record its limitation in the handoff.
+
 ## 1. Diagnose and repair the current failures
 
 ### Preserve actionable diagnostics first

@@ -4,7 +4,8 @@ This is the assertion that encodes the design claim, so that a future change whi
 a test rather than quietly shipping. It complements, rather than duplicates,
 ``tests/unit/test_anomaly_relative_feature_separability.py``: that one measures the *mechanism* in
 numpy in under five seconds, this one measures the *pipeline* — Spark feature engineering, persisted
-baselines, the scoring UDF, and severity calibration all included.
+baselines, driver scoring, and severity calibration all included. Distributed route parity is covered
+by the scoring-contract matrix; this quality test uses the helper's driver-only default.
 
 Deliberately **one test with several assertions** rather than four tests. Every property below is
 read off the same pair of trained models, and each model is a real Isolation Forest registered in
@@ -84,6 +85,8 @@ def _scored_frame(anomaly_scorer, test_df, model, registry):
     assert actual == expected, "scoring changed evaluation row identities or multiplicities"
     assert observed["score"].notna().all(), "a known evaluation row has no score"
     assert np.isfinite(observed["score"]).all(), "evaluation scores must all be finite"
+    assert observed["flagged"].notna().all(), "known evaluation rows must have a defined verdict"
+    assert observed["flagged"].isin([0.0, 1.0]).all(), "anomaly verdicts must be binary"
     return observed
 
 

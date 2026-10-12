@@ -1,11 +1,13 @@
 """Integration tests for anomaly threshold selection."""
 
+from collections import Counter
 from collections.abc import Callable
+import math
 
 import numpy as np
 import pytest
 import pyspark.sql.functions as F
-from pyspark.sql import SparkSession
+from pyspark.sql import Column, DataFrame, Row, SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.explainability import severity_from_scores
@@ -24,6 +26,34 @@ from tests.integration_anomaly.conftest import (
     train_simple_2d_model,
 )
 from tests.integration_anomaly.synthetic_generators import generate_overlapping_gaussian_data
+
+
+def _scored_snapshot(source: DataFrame, result: DataFrame, anomaly: Column, threshold: float) -> list[Row]:
+    """Validate all evaluated rows before comparing flags or calculating a quality metric."""
+    expected = source.collect()
+    assert expected, "threshold fixtures must contain evaluation rows"
+    assert [result.schema[name] for name in source.columns] == list(source.schema)
+    fields = [
+        anomaly.getField("score").alias("observed_score"),
+        anomaly.getField("severity_percentile").alias("observed_severity"),
+        anomaly.getField("is_anomaly").alias("observed_flag"),
+    ]
+    has_errors = "_errors" in result.columns
+    if has_errors:
+        fields.append((F.size(F.coalesce(F.col("_errors"), F.array())) > 0).alias("observed_error"))
+    observed = result.select(*source.columns, *fields).collect()
+    expected_rows = Counter(tuple(row) for row in expected)
+    observed_rows = Counter(tuple(row[name] for name in source.columns) for row in observed)
+    assert observed_rows == expected_rows, "scoring changed evaluation rows or duplicate counts"
+    for row in observed:
+        assert row.observed_score is not None and math.isfinite(row.observed_score)
+        assert row.observed_severity is not None and math.isfinite(row.observed_severity)
+        assert 0.0 <= row.observed_severity <= 100.0
+        assert isinstance(row.observed_flag, bool), "known rows must have a defined anomaly verdict"
+        assert row.observed_flag is (row.observed_severity >= threshold)
+        if has_errors:
+            assert row.observed_error is row.observed_flag
+    return observed
 
 
 def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_schema, make_random):
@@ -65,20 +95,10 @@ def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_
         enable_ai_explanation=False,
     )
 
-    low_rows = (
-        apply_low(test_df).select(*feature_cols, F.col(f"{info_col_low}.anomaly.is_anomaly").alias("flagged")).collect()
-    )
-    high_rows = (
-        apply_high(test_df)
-        .select(*feature_cols, F.col(f"{info_col_high}.anomaly.is_anomaly").alias("flagged"))
-        .collect()
-    )
-    expected = {tuple(row[column] for column in feature_cols) for row in test_df.collect()}
-    assert len(low_rows) == len(high_rows) == len(expected)
-    assert {tuple(row[column] for column in feature_cols) for row in low_rows} == expected
-    assert {tuple(row[column] for column in feature_cols) for row in high_rows} == expected
-    low_ids = {tuple(row[column] for column in feature_cols) for row in low_rows if row.flagged}
-    high_ids = {tuple(row[column] for column in feature_cols) for row in high_rows if row.flagged}
+    low_rows = _scored_snapshot(test_df, apply_low(test_df), F.col(info_col_low).getField("anomaly"), 30.0)
+    high_rows = _scored_snapshot(test_df, apply_high(test_df), F.col(info_col_high).getField("anomaly"), 90.0)
+    low_ids = {tuple(row[column] for column in feature_cols) for row in low_rows if row.observed_flag}
+    high_ids = {tuple(row[column] for column in feature_cols) for row in high_rows if row.observed_flag}
     assert high_ids, "the fixture must include a positive control above the high threshold"
     assert low_ids - high_ids, "the fixture must exercise the interval between thresholds"
     assert high_ids <= low_ids
@@ -116,16 +136,18 @@ def test_threshold_affects_flagging(
     rule_aggressive = create_anomaly_dataset_rule(model_name, registry_table, threshold=30.0)
 
     result_aggressive = dq_engine.apply_checks(test_df, [rule_aggressive])
-    errors_aggressive = result_aggressive.filter(F.size("_errors") > 0).count()
+    aggressive = _scored_snapshot(test_df, result_aggressive, F.col("_dq_info")[0].getField("anomaly"), 30.0)
+    aggressive_ids = {row.transaction_id for row in aggressive if row.observed_flag}
 
     # Conservative threshold (0.9) - flags less
     rule_conservative = create_anomaly_dataset_rule(model_name, registry_table, threshold=90.0)
 
     result_conservative = dq_engine.apply_checks(test_df, [rule_conservative])
-    errors_conservative = result_conservative.filter(F.size("_errors") > 0).count()
+    conservative = _scored_snapshot(test_df, result_conservative, F.col("_dq_info")[0].getField("anomaly"), 90.0)
+    conservative_ids = {row.transaction_id for row in conservative if row.observed_flag}
 
     # More aggressive threshold should flag more rows
-    assert errors_aggressive >= errors_conservative
+    assert conservative_ids <= aggressive_ids
 
 
 def test_precision_recall_tradeoff(
@@ -159,16 +181,22 @@ def test_precision_recall_tradeoff(
     rule_low_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=95.0)
 
     result_low_recall = dq_engine.apply_checks(test_df, [rule_low_recall])
-    flagged_low_recall = result_low_recall.filter(F.size("_errors") > 0).count()
+    low_recall = _scored_snapshot(test_df, result_low_recall, F.col("_dq_info")[0].getField("anomaly"), 95.0)
+    low_recall_ids = {row.transaction_id for row in low_recall if row.observed_flag}
 
     # Low threshold (high recall) - use helper
     rule_high_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=30.0)
 
     result_high_recall = dq_engine.apply_checks(test_df, [rule_high_recall])
-    flagged_high_recall = result_high_recall.filter(F.size("_errors") > 0).count()
+    high_recall = _scored_snapshot(test_df, result_high_recall, F.col("_dq_info")[0].getField("anomaly"), 30.0)
+    high_recall_ids = {row.transaction_id for row in high_recall if row.observed_flag}
 
     # Lower threshold should catch more anomalies
-    assert flagged_high_recall >= flagged_low_recall
+    assert low_recall_ids <= high_recall_ids
+    anomaly_ids = {2, 3}
+    low_recall_rate = len(low_recall_ids & anomaly_ids) / len(anomaly_ids)
+    high_recall_rate = len(high_recall_ids & anomaly_ids) / len(anomaly_ids)
+    assert high_recall_rate >= low_recall_rate
 
 
 def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
@@ -183,19 +211,21 @@ def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
     rule_zero = create_anomaly_dataset_rule(model_name, registry_table, threshold=0.0)
 
     result_zero = dq_engine.apply_checks(test_df, [rule_zero])
-    flagged_zero = result_zero.filter(F.size("_errors") > 0).count()
+    zero = _scored_snapshot(test_df, result_zero, F.col("_dq_info")[0].getField("anomaly"), 0.0)
+    zero_ids = {row.transaction_id for row in zero if row.observed_flag}
 
-    # Should flag most/all rows
-    assert flagged_zero >= 1
+    # Every known, finite row meets the inclusive zero-percentile threshold.
+    assert zero_ids == {row.transaction_id for row in test_df.collect()}
 
     # Threshold 100.0 - flags nothing (almost impossible to exceed) - use helper
     rule_one = create_anomaly_dataset_rule(model_name, registry_table, threshold=100.0)
 
     result_one = dq_engine.apply_checks(test_df, [rule_one])
-    flagged_one = result_one.filter(F.size("_errors") > 0).count()
+    one = _scored_snapshot(test_df, result_one, F.col("_dq_info")[0].getField("anomaly"), 100.0)
+    one_ids = {row.transaction_id for row in one if row.observed_flag}
 
     # Should flag few/no rows
-    assert flagged_one <= flagged_zero
+    assert one_ids <= zero_ids
 
 
 def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
@@ -323,8 +353,8 @@ def test_a_threshold_between_the_knots_flags_close_to_its_budget_through_real_sc
         test_df,
         [create_anomaly_check_rule(model_name=model_name, registry_table=registry_table, threshold=98.0)],
     )
-    severity = F.col("_dq_info")[0].getField("anomaly").getField("severity_percentile")
-    realised = result_df.filter(severity >= 98.0).count() / result_df.count()
+    observed = _scored_snapshot(test_df, result_df, F.col("_dq_info")[0].getField("anomaly"), 98.0)
+    realised = sum(row.observed_flag for row in observed) / len(observed)
 
     # Measured expectation is about 2.25%. The band is wide because a 4,000-row sample of a 2% tail carries
     # binomial noise of roughly 0.22pp on its own, the quantile grid is still an approximation, and the

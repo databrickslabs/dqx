@@ -4,6 +4,9 @@ Only the third-party ai_query expression is replaced. Prompt construction, respo
 materialization and the join back to caller rows execute normally, without paid endpoint calls.
 """
 
+from collections import Counter
+import json
+
 import pytest
 from pyspark.sql import SparkSession, functions as F
 
@@ -117,7 +120,9 @@ def test_explanation_preserves_response_named_columns_and_duplicate_rows(
     first = result.collect()
     second = result.collect()
 
-    assert first == second
+    assert Counter(json.dumps(row.asDict(recursive=True), sort_keys=True) for row in first) == Counter(
+        json.dumps(row.asDict(recursive=True), sort_keys=True) for row in second
+    )
     assert result.columns == [*source.columns, "explanation_owned"]
     assert sorted(result.select(*source.columns).collect()) == sorted(source.collect())
     assert len(first) == 3

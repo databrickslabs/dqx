@@ -9,11 +9,18 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import traceback
+from collections import deque
 from collections.abc import Generator, Mapping
 from pathlib import Path
 
 import pytest
+
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup
+else:
+    from exceptiongroup import BaseExceptionGroup
 
 
 DEPENDENCIES = (
@@ -185,12 +192,12 @@ def safe_traceback_frame(filename: str, line: int, function: str) -> dict[str, o
 
 def worker_traceback(message: str) -> dict[str, object]:
     """Extract only frame locations and known error classes from a worker message."""
-    frames: list[dict[str, object]] = []
+    frames: deque[dict[str, object]] = deque(maxlen=40)
     errors: list[str] = []
-    message = message[:100_000]
+    message = message[-100_000:]
     for line in message.splitlines():
         frame = _FRAME.match(line)
-        if frame and len(frames) < 40:
+        if frame:
             frames.append(safe_traceback_frame(frame[1], int(frame[2]), frame[3] or "<unknown>"))
         error = _ERROR.match(line)
         if error and (name := error[1].rsplit(".", 1)[-1]) in _WORKER_ERRORS and name not in errors:
@@ -202,7 +209,11 @@ def worker_traceback(message: str) -> dict[str, object]:
         "worker_result_schema": "SCHEMA_MISMATCH_FOR_PANDAS_UDF" in message or "ArrowTypeError" in message,
         "model_serialization": "PicklingError" in message or "UnpicklingError" in message,
     }
-    return {"frames": frames, "error_types": errors, "hints": [name for name, present in hints.items() if present]}
+    return {
+        "frames": list(frames),
+        "error_types": errors,
+        "hints": [name for name, present in hints.items() if present],
+    }
 
 
 def endpoint_unavailable_reason(error_class: str | None, message: str) -> str | None:
@@ -227,24 +238,56 @@ def endpoint_unavailable_reason(error_class: str | None, message: str) -> str | 
     return reasons[match[1]] if match else None
 
 
+def spark_error_condition(exception: BaseException) -> str | None:
+    """Read only a public Spark condition identifier, never its message parameters."""
+    try:
+        method = getattr(exception, "getCondition", None)
+        if not callable(method):
+            method = getattr(exception, "getErrorClass", None)
+        condition: object = method() if callable(method) else None
+    except Exception:
+        # A diagnostic accessor failure must not replace the original test error.
+        return None
+    if (
+        isinstance(condition, str)
+        and len(condition) <= 128
+        and re.fullmatch(r"[A-Z_][A-Z0-9_]*(?:\.[A-Z_][A-Z0-9_]*)*", condition)
+    ):
+        return condition
+    return None
+
+
 def exception_chain(exception: BaseException | None) -> list[dict[str, object]]:
-    """Describe chained exceptions without retaining their messages or local values."""
+    """Describe up to eight grouped or chained exceptions without retaining payloads.
+
+    Traverse group members depth first, including each member's cause or context.
+    The shared limit and visited set also bound nested groups and cyclic chains.
+    """
     chain: list[dict[str, object]] = []
     visited: set[int] = set()
-    while exception is not None and id(exception) not in visited and len(chain) < 8:
-        visited.add(id(exception))
+    pending = [exception] if exception is not None else []
+    while pending and len(chain) < 8:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
         frames = [
             safe_traceback_frame(frame.filename, frame.lineno or 0, frame.name)
-            for frame in traceback.extract_tb(exception.__traceback__, limit=40)
+            for frame in traceback.extract_tb(current.__traceback__, limit=-40)
         ]
         chain.append(
             {
-                "type": type(exception).__name__,
+                "type": type(current).__name__,
+                "spark_condition": spark_error_condition(current),
                 "frames": frames,
-                "worker_traceback": worker_traceback(str(exception)),
+                "worker_traceback": worker_traceback(str(current)),
             }
         )
-        exception = exception.__cause__ or (None if exception.__suppress_context__ else exception.__context__)
+        cause = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+        if cause is not None:
+            pending.append(cause)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(reversed(current.exceptions[:8]))
     return chain
 
 

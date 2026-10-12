@@ -28,6 +28,7 @@ def _assert_original_rows(source: DataFrame, expected: list[Row], result: DataFr
     assert len(rows) == len(expected)
     assert _original_rows(rows, source.columns) == _original_rows(expected, source.columns)
     assert set(result.columns) == {*source.columns, "_errors", "_warnings", "_dq_info"}
+    assert [name for name in result.columns if name in source.columns] == source.columns
     assert [result.schema[name] for name in source.columns] == list(source.schema)
 
 
@@ -137,10 +138,16 @@ def _assert_partitioned_filtered_checks(
     _assert_original_rows(variant, originals, result, rows)
     for row in rows:
         if row.probe_id == 7:
-            assert not row["_dq_info"] and not row["_warnings"]
+            # Dataset reporting preserves one array slot per check, including
+            # null results for rows excluded by the pushed-down filter.
+            assert row["_dq_info"] == [None, None]
+            assert not row["_warnings"]
         else:
             assert len(row["_dq_info"]) == 2
-            assert row["_dq_info"][0]["anomaly"]["score"] == row["_dq_info"][1]["anomaly"]["score"]
+            assert row["_dq_info"][0]["anomaly"] == row["_dq_info"][1]["anomaly"]
+            expected_warnings = 0 if row.probe_id in {4, 8} else 2
+            assert len(row["_warnings"] or []) == expected_warnings
+        assert not row["_errors"]
     included = [row for row in rows if row.probe_id != 7]
     expected = [row for row in baseline if row.probe_id != 7]
     _assert_parity(expected, included)

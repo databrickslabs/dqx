@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,15 @@ from tests.anomaly_diagnostics import (
     exception_chain,
     endpoint_unavailable_reason,
     safe_traceback_frame,
+    spark_error_condition,
     worker_traceback,
 )
 
+
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup, ExceptionGroup
+else:
+    from exceptiongroup import BaseExceptionGroup, ExceptionGroup
 
 pytest_plugins = ("pytester",)
 
@@ -83,6 +90,71 @@ def test_exception_chain_respects_suppressed_context_and_cycles() -> None:
     error.__cause__ = error
     assert len(exception_chain(error)) == 1
     assert not exception_chain(None)
+
+
+def test_exception_groups_retain_nested_members_and_member_causes_without_payloads() -> None:
+    members: list[Exception] = []
+    try:
+        try:
+            raise ValueError("private-input-value")
+        except ValueError as cause:
+            raise RuntimeError("private-http-response") from cause
+    except RuntimeError as failure:
+        members.append(failure)
+    try:
+        raise KeyError("private-column")
+    except KeyError as failure:
+        members.append(failure)
+    group = ExceptionGroup("private-group-label", [ExceptionGroup("private-nested-label", members[:1]), *members[1:]])
+
+    result = exception_chain(group)
+
+    assert [entry["type"] for entry in result] == [
+        "ExceptionGroup",
+        "ExceptionGroup",
+        "RuntimeError",
+        "ValueError",
+        "KeyError",
+    ]
+    assert all(entry["frames"] for entry in result[2:])
+    assert "private-" not in json.dumps(result)
+
+
+def test_exception_groups_preserve_base_exceptions_and_handle_shared_cyclic_members() -> None:
+    member = ValueError("private-member")
+    group = BaseExceptionGroup("private-group", [member, SystemExit("private-exit"), member])
+    member.__context__ = group
+
+    result = exception_chain(group)
+
+    assert [entry["type"] for entry in result] == ["BaseExceptionGroup", "ValueError", "SystemExit"]
+    assert "private-" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_exception_group_traversal_is_bounded(nested: bool) -> None:
+    failure: BaseException = BaseExceptionGroup("private-group", [ValueError("private-member") for _ in range(100)])
+    if nested:
+        for _ in range(100):
+            failure = BaseExceptionGroup("private-group", [failure])
+
+    result = exception_chain(failure)
+
+    assert len(result) == 8
+    assert "private-" not in json.dumps(result)
+
+
+def test_group_cause_and_suppressed_member_context_follow_normal_chain_rules() -> None:
+    member = ValueError("private-member")
+    member.__context__ = KeyError("private-suppressed-context")
+    member.__suppress_context__ = True
+    group = ExceptionGroup("private-group", [member])
+    group.__cause__ = LookupError("private-group-cause")
+
+    result = exception_chain(group)
+
+    assert [entry["type"] for entry in result] == ["ExceptionGroup", "ValueError", "LookupError"]
+    assert "private-" not in json.dumps(result)
 
 
 def test_dependency_manifest_only_contains_allowlisted_metadata() -> None:
@@ -356,3 +428,134 @@ def test_parameterized(value):
     assert all(entry["frames"] for entry in report["exception_chain"])
     assert "private-" not in json.dumps(reports)
     assert "private.invalid" not in json.dumps(reports)
+
+
+def test_pytest_teardown_group_preserves_each_fixture_failure(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest(
+        """
+from pathlib import Path
+import pytest
+from tests.anomaly_diagnostics import AnomalyDiagnostics
+
+def pytest_configure(config):
+    root = Path(__file__).parent
+    config.pluginmanager.register(AnomalyDiagnostics(root / "reports", root, "process-1", {}))
+
+@pytest.fixture
+def first_resource():
+    yield
+    raise ValueError("private-first-resource")
+
+@pytest.fixture
+def second_resource():
+    yield
+    raise KeyError("private-second-resource")
+"""
+    )
+    pytester.makepyfile(
+        """
+def test_resources(first_resource, second_resource):
+    assert True
+"""
+    )
+
+    result = pytester.runpytest("-q", "--tb=no", "-p", "no:cacheprovider", "-p", "no:rerunfailures")
+
+    result.assert_outcomes(passed=1, errors=1)
+    reports = [json.loads(path.read_text()) for path in (pytester.path / "reports").glob("*.json")]
+    teardown = next(report for report in reports if report["phase"] == "teardown")
+    assert teardown["outcome"] == "failed"
+    types = {entry["type"] for entry in teardown["exception_chain"]}
+    assert {"ExceptionGroup", "ValueError", "KeyError"} <= types
+    assert all(entry["frames"] for entry in teardown["exception_chain"])
+    assert "private-" not in json.dumps(reports)
+
+
+def test_worker_traceback_keeps_innermost_frames_with_bounded_output() -> None:
+    message = (
+        "\n".join(f'  File "/runtime/site-packages/pyspark/worker.py", line {line}, in invoke' for line in range(1, 51))
+        + "\nTypeError: private-response-body"
+    )
+
+    result = worker_traceback(message)
+
+    frames = result["frames"]
+    assert isinstance(frames, list)
+    assert [frame["line"] for frame in frames] == list(range(11, 51))
+    assert result["error_types"] == ["TypeError"]
+    assert "private-" not in json.dumps(result)
+
+
+def test_exception_traceback_keeps_innermost_frames_and_leaf_failure() -> None:
+    def leaf_failure() -> None:
+        raise ValueError("private-leaf-input")
+
+    def recurse(depth: int) -> None:
+        if depth == 0:
+            leaf_failure()
+        else:
+            recurse(depth - 1)
+
+    with pytest.raises(ValueError) as raised:
+        recurse(50)
+    result = exception_chain(raised.value)
+
+    frames = result[0]["frames"]
+    assert isinstance(frames, list) and len(frames) == 40
+    assert frames[-1]["function"] == "leaf_failure"
+    assert "private-" not in json.dumps(result)
+
+
+class SparkConditionFailure(Exception):
+    def __init__(self, condition: object):
+        super().__init__("private-error-message")
+        self.condition = condition
+
+    def get_condition(self) -> object:
+        return self.condition
+
+    def get_message_parameters(self) -> dict[str, str]:
+        raise AssertionError("Message parameters must not be accessed")
+
+    getCondition = get_condition
+    getMessageParameters = get_message_parameters
+
+
+class LegacySparkConditionFailure(Exception):
+    def get_error_class(self) -> str:
+        return "FIELD_DATA_TYPE_UNACCEPTABLE_WITH_NAME"
+
+    getErrorClass = get_error_class
+
+
+@pytest.mark.parametrize("condition", ["FIELD_DATA_TYPE_UNACCEPTABLE_WITH_NAME", "DATATYPE_MISMATCH.DATA_DIFF_TYPES"])
+def test_spark_condition_is_retained_without_message_parameters(condition: str) -> None:
+    error = SparkConditionFailure(condition)
+
+    result = exception_chain(error)
+
+    assert result[0]["spark_condition"] == condition
+    assert "private-" not in json.dumps(result)
+    assert spark_error_condition(LegacySparkConditionFailure("private-legacy-message")) == (
+        "FIELD_DATA_TYPE_UNACCEPTABLE_WITH_NAME"
+    )
+
+
+@pytest.mark.parametrize(
+    "condition", [None, 500, "", "https://private.invalid", "PRIVATE\nINPUT", "A" * 129, "A..B", "private_value"]
+)
+def test_malformed_spark_conditions_are_omitted(condition: object) -> None:
+    assert spark_error_condition(SparkConditionFailure(condition)) is None
+
+
+def test_spark_condition_accessor_failure_cannot_replace_original_exception() -> None:
+    class FailingAccessor(Exception):
+        def get_condition(self) -> str:
+            raise RuntimeError("private-accessor-failure")
+
+        getCondition = get_condition
+
+    result = exception_chain(FailingAccessor("private-original"))
+
+    assert result[0]["type"] == "FailingAccessor" and result[0]["spark_condition"] is None
+    assert "private-" not in json.dumps(result)
