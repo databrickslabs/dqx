@@ -72,7 +72,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+      - name: Preserve anomaly explanation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: anomaly-explanation-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
@@ -128,7 +138,17 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+      - name: Preserve anomaly explanation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: anomaly-explanation-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 

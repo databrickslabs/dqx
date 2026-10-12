@@ -73,8 +73,8 @@ e2e: ## Run end-to-end tests (long timeout, requires Databricks workspace auth)
 perf: ## Run performance benchmarks (long timeout)
 	$(UV_TEST) --timeout 600 --cov --cov-report=xml tests/perf/
 
-anomaly: ## Run anomaly integration tests (long timeout, with reruns)
-	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
+anomaly: ## Run anomaly integration tests (no test retries; override TEST_WORKERS as needed)
+	$(UV_TEST) tests/integration_anomaly/ -v --timeout 1200
 
 # The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the runner wheel with
 # `uv build ./runner` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
@@ -98,11 +98,11 @@ combine-coverage: ## Combine xdist worker coverage data into coverage-combined.x
 	# no parallel .coverage.* files left for `coverage combine` to merge.
 	# Tolerate that — the single .coverage file is still usable for the XML
 	# conversion. Leading `-` makes `make` ignore combine's non-zero exit.
-	-$(UV_RUN) coverage combine
+	-$(UV_RUN) coverage combine $(if $(filter 1,$(KEEP_COVERAGE)),--keep,)
 	# Fail loudly if the test run produced no coverage data.
 	@test -f .coverage || { echo "ERROR: no .coverage data found after test run"; exit 1; }
 	$(UV_RUN) coverage xml -o coverage-combined.xml
-	$(UV_RUN) coverage erase
+	$(if $(filter 1,$(KEEP_COVERAGE)),@true,$(UV_RUN) coverage erase)
 
 ##@ Documentation
 

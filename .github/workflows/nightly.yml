@@ -82,7 +82,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+      - name: Preserve anomaly explanation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: anomaly-explanation-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
@@ -138,7 +148,17 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-explanation-diagnostics
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+      - name: Preserve anomaly explanation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-explanation-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: anomaly-explanation-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
 
@@ -177,10 +197,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -191,15 +213,32 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-diagnostics
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
-        run: make combine-coverage
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
+        run: make combine-coverage KEEP_COVERAGE=1
+
+      - name: Preserve anomaly diagnostics and coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: |
+            anomaly-diagnostics/
+            .coverage
+            .coverage.*
+            coverage-combined.xml
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Publish anomaly test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -234,10 +273,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -248,6 +289,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
+          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-diagnostics
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
@@ -255,9 +297,25 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
-        run: make combine-coverage
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
+        run: make combine-coverage KEEP_COVERAGE=1
+
+      - name: Preserve anomaly diagnostics and coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: anomaly-diagnostics-${{ github.job }}-${{ github.run_attempt }}
+          path: |
+            anomaly-diagnostics/
+            .coverage
+            .coverage.*
+            coverage-combined.xml
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Publish serverless anomaly test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
