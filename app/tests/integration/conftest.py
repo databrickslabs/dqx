@@ -26,16 +26,25 @@ from databricks.sdk.service.postgres import (
     RoleRoleSpec,
 )
 
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.migrations import MigrationRunner
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
 from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor_from_connection
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
+from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
 from databricks_labs_dqx_app.backend.setup.checks import ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.configuration import ConfigurationSource, ResolvedConfiguration
 from databricks_labs_dqx_app.backend.setup.job_manager import TaskRunnerJobManager
-from databricks_labs_dqx_app.backend.setup.models import StepState
-from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, parse_volume_path
+from databricks_labs_dqx_app.backend.setup.models import SetupStep, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator
+from databricks_labs_dqx_app.backend.setup.resources import (
+    ActiveResources,
+    BootstrapResources,
+    LakebaseConnection,
+    parse_volume_path,
+)
+from databricks_labs_dqx_app.backend.setup.storage import StudioStorage, derive_storage
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
@@ -79,6 +88,7 @@ class LiveResources:
     workspace: WorkspaceClient
     volume: SetupVolume
     resources: ActiveResources
+    bootstrap: BootstrapCheckers
     checkers: ResourceCheckers
     pg: PgExecutor
     wheel: Path
@@ -218,6 +228,39 @@ def make_setup_schema(ws: WorkspaceClient) -> Generator[Callable[..., str], None
 
 
 @pytest.fixture
+def make_marketplace_storage(
+    ws: WorkspaceClient,
+    make_catalog: Callable[[], object],
+    make_random: Callable[[int], str],
+) -> Generator[Callable[[], StudioStorage], None, None]:
+    """Reserve prefix-derived Marketplace storage in a test catalog; setup provisions it.
+
+    The factory creates nothing itself: Studio setup creates the schemas and wheels
+    volume under a random prefix, and the factory guarantees they are dropped.
+    """
+
+    def create() -> StudioStorage:
+        catalog = make_catalog()
+        catalog_name = getattr(catalog, "name", None)
+        if not isinstance(catalog_name, str) or not catalog_name:
+            raise RuntimeError("The test catalog did not return a name.")
+        return derive_storage(catalog_name, f"dqx_mkt_{make_random(10).lower()}")
+
+    def delete(storage: StudioStorage) -> None:
+        try:
+            ws.volumes.delete(f"{storage.catalog}.{storage.schema}.{storage.volume}")
+        except NotFound:
+            pass
+        for schema in storage.schemas:
+            try:
+                ws.schemas.delete(f"{storage.catalog}.{schema}", force=True)
+            except NotFound:
+                pass
+
+    yield from factory("Marketplace storage", create, delete)
+
+
+@pytest.fixture
 def make_lakebase_project(
     ws: WorkspaceClient,
     make_random: Callable[[int], str],
@@ -309,6 +352,8 @@ def live_resources(
         job_id=None,
         tmp_schema=tmp_schema,
         genie_schema=genie_schema,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     sql = SqlExecutor(ws=ws, warehouse_id=warehouse_id, catalog=bound_volume.catalog, schema=bound_volume.schema)
     pg = build_pg_executor_from_connection(ws, resources.lakebase)
@@ -317,14 +362,15 @@ def live_resources(
         resources=resources,
         workspace=ws,
         sql=sql,
-        pg=pg,
         compute=ComputeService(sp_ws=ws, app_settings=app_settings),
+        app_sp_id=_workspace_identity(ws),
     )
     try:
         yield LiveResources(
             workspace=ws,
             volume=volume,
             resources=resources,
+            bootstrap=BootstrapCheckers(workspace=ws, pg=pg, lakebase_schema=resources.lakebase.schema),
             checkers=checkers,
             pg=pg,
             wheel=staged_task_runner_wheel,
@@ -477,8 +523,8 @@ def app_live_setup(
         resources=resources,
         workspace=app_workspace,
         sql=sql,
-        pg=pg,
         compute=ComputeService(sp_ws=app_workspace, app_settings=app_settings),
+        app_sp_id=app_identity,
     )
     warehouse = checkers.check_warehouse()
     if warehouse.state != StepState.PASSED:
@@ -517,19 +563,86 @@ def app_live_setup(
             wheel=live_resources.wheel,
             orchestrator=SetupOrchestrator(
                 runtime=SetupRuntime(),
-                resources=resources,
-                checkers=checkers,
-                jobs=TaskRunnerJobManager(app_workspace),
+                bootstrap=BootstrapResources(
+                    lakebase=resources.lakebase, warehouse_id=resources.warehouse_id, job_id=resources.job_id
+                ),
+                bootstrap_checks=BootstrapCheckers(
+                    workspace=app_workspace, pg=pg, lakebase_schema=resources.lakebase.schema
+                ),
                 pg_migrations=PgMigrationRunner(pg),
-                delta_migrations=MigrationRunner(sql),
+                configuration=FixedConfiguration(_deployment_configuration(resources)),
+                binder=FixedBinder(
+                    BoundSetup(
+                        resources=resources,
+                        checkers=checkers,
+                        access=VerifiedAccess(),
+                        delta_migrations=MigrationRunner(sql),
+                        publish_wheels=publish_wheels,
+                        activation=NoBackgroundActivation(),
+                    )
+                ),
+                jobs=TaskRunnerJobManager(app_workspace),
                 app_settings=app_settings,
-                publish_wheels=publish_wheels,
-                activation=NoBackgroundActivation(),
                 app_sp_id=app_identity,
             ),
         )
     finally:
         pg.close()
+
+
+@dataclass(frozen=True)
+class FixedConfiguration:
+    """Resolve the factory-provisioned storage as a locked deployment configuration."""
+
+    resolved: ResolvedConfiguration
+
+    def resolve(self) -> ResolvedConfiguration:
+        """Return the fixed configuration."""
+        return self.resolved
+
+    def lock(self, *, user_email: str | None) -> None:
+        """Factory storage is always locked."""
+
+
+@dataclass(frozen=True)
+class FixedBinder:
+    """Bind the factory resources to collaborators built by the fixture."""
+
+    bound: BoundSetup
+
+    async def bind(self, resources: ActiveResources) -> BoundSetup:
+        """Return the prebuilt collaborators for the factory resources."""
+        assert resources == self.bound.resources
+        return self.bound
+
+
+class VerifiedAccess:
+    """Audience access is not exercised by this live suite yet."""
+
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep:
+        """Report audience access as verified."""
+        return SetupStep(id=SetupStepId.ACCESS, state=StepState.PASSED)
+
+    def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+        """Report app sharing as verified."""
+        return SetupStep(id=SetupStepId.APP_SHARING, state=StepState.PASSED)
+
+
+def _deployment_configuration(resources: ActiveResources) -> ResolvedConfiguration:
+    volume = resources.volume
+    storage = StudioStorage(
+        catalog=volume.catalog,
+        schema=volume.schema,
+        tmp_schema=resources.tmp_schema,
+        genie_schema=resources.genie_schema,
+        demo_schema=resources.demo_schema,
+        volume=volume.volume,
+    )
+    return ResolvedConfiguration(ConfigurationSource.DEPLOYMENT, None, storage, resources.audience, True)
 
 
 def _grant_setup_privileges(

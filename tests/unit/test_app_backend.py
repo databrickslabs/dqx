@@ -67,6 +67,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -115,6 +116,8 @@ def _activate_test_runtime_resources() -> Generator[None, None, None]:
         job_id="1",
         tmp_schema=conf.tmp_schema_name,
         genie_schema=conf.genie_schema_name,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     rt.activate(resources)
     try:
@@ -1378,7 +1381,6 @@ class TestJobService:
 # Tests for ViewService
 # ============================================================================
 
-VIEW_RUNNER_PRINCIPAL = "11111111-1111-4111-8111-111111111111"
 VIEW_CLEANUP_PRINCIPAL = "22222222-2222-4222-8222-222222222222"
 
 
@@ -1399,7 +1401,7 @@ class TestViewService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return ViewService(sql=sql, runner_principal=VIEW_RUNNER_PRINCIPAL, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
+        return ViewService(sql=sql, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1410,7 +1412,7 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """Create the source view with only runner SELECT and app cleanup MANAGE grants."""
+        """Create the source view with only the app cleanup MANAGE grant."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
         view = svc.create_view("cat.sch.src_table")
@@ -1421,7 +1423,6 @@ class TestViewService:
         quoted_view = ".".join(f"`{part}`" for part in view.split("."))
         assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
             f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
-            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
         ]
         assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
@@ -1528,7 +1529,7 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """Embed the query and grant only runner SELECT and app cleanup MANAGE."""
+        """Embed the query and grant only app cleanup MANAGE."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
         query = "SELECT id FROM cat.sch.src_table"
 
@@ -1542,7 +1543,6 @@ class TestViewService:
         quoted_view = ".".join(f"`{part}`" for part in view.split("."))
         assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
             f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
-            f"GRANT SELECT ON VIEW {quoted_view} TO `{VIEW_RUNNER_PRINCIPAL}`",
         ]
         assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 

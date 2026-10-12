@@ -4564,7 +4564,51 @@ export type SetupActionId = typeof SetupActionId[keyof typeof SetupActionId];
 export const SetupActionId = {
   reconcile: 'reconcile',
   verify_again: 'verify_again',
+  configure: 'configure',
+  override: 'override',
 } as const;
+
+/**
+ * Administrator-submitted catalog, prefix and audience group (Marketplace path).
+ */
+export interface SetupConfigurationRequest {
+  /** @maxLength 255 */
+  catalog: string;
+  /** @maxLength 64 */
+  prefix?: string;
+  /** @maxLength 255 */
+  audience_group: string;
+}
+
+export type SetupConfigurationViewSource = typeof SetupConfigurationViewSource[keyof typeof SetupConfigurationViewSource];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupConfigurationViewSource = {
+  deployment: 'deployment',
+  saved: 'saved',
+  none: 'none',
+} as const;
+
+/**
+ * Sanitized view of the active Studio storage and audience configuration.
+ */
+export interface SetupConfigurationView {
+  source: SetupConfigurationViewSource;
+  catalog?: string;
+  prefix?: string;
+  audience_group?: string;
+  schemas?: string[];
+  broad_audience?: boolean;
+  locked?: boolean;
+}
+
+/**
+ * Administrator confirmation that a step's requirement was met in a way Studio cannot see.
+ */
+export interface SetupOverrideRequest {
+  step_id: SetupStepId;
+}
 
 export type SetupReportCurrentStep = SetupStepId | null;
 
@@ -4591,6 +4635,8 @@ export const SetupState = {
   ready: 'ready',
 } as const;
 
+export type SetupStatusResponseConfiguration = SetupConfigurationView | null;
+
 /**
  * Setup report projected with caller-specific management access.
  */
@@ -4598,6 +4644,7 @@ export interface SetupStatusResponse {
   report: SetupReport;
   can_manage: boolean;
   admin_group: string;
+  configuration?: SetupStatusResponseConfiguration;
 }
 
 /**
@@ -4621,15 +4668,18 @@ export type SetupStepId = typeof SetupStepId[keyof typeof SetupStepId];
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const SetupStepId = {
   identity: 'identity',
-  volume: 'volume',
-  unity_catalog: 'unity_catalog',
-  schemas: 'schemas',
   lakebase: 'lakebase',
+  configuration: 'configuration',
+  unity_catalog: 'unity_catalog',
+  storage: 'storage',
   warehouse: 'warehouse',
   task_runner: 'task_runner',
   wheels: 'wheels',
   migrations: 'migrations',
   activation: 'activation',
+  access: 'access',
+  ai: 'ai',
+  app_sharing: 'app_sharing',
 } as const;
 
 /**
@@ -4674,6 +4724,8 @@ export const StepState = {
   passed: 'passed',
   action_required: 'action_required',
   failed: 'failed',
+  warning: 'warning',
+  overridden: 'overridden',
 } as const;
 
 /**
@@ -6291,7 +6343,7 @@ export function useCurrentUserRoleSuspense<TData = Awaited<ReturnType<typeof cur
 
 
 /**
- * Return readiness and the caller's bootstrap setup-management access.
+ * Return readiness, the caller's bootstrap setup access and the resolved configuration.
  * @summary Get Setup Status
  */
 export const getSetupStatus = (
@@ -6438,6 +6490,69 @@ export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getS
 
 
 /**
+ * Validate and save catalog, prefix and audience group, then run the setup workflow.
+ * @summary Configure Setup
+ */
+export const configureSetup = (
+    setupConfigurationRequest: SetupConfigurationRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/configuration`,
+      setupConfigurationRequest,options
+    );
+  }
+
+
+
+export const getConfigureSetupMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext> => {
+
+const mutationKey = ['configureSetup'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof configureSetup>>, {data: SetupConfigurationRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  configureSetup(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfigureSetupMutationResult = NonNullable<Awaited<ReturnType<typeof configureSetup>>>
+    export type ConfigureSetupMutationBody = SetupConfigurationRequest
+    export type ConfigureSetupMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Configure Setup
+ */
+export const useConfigureSetup = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureSetup>>, TError,{data: SetupConfigurationRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof configureSetup>>,
+        TError,
+        {data: SetupConfigurationRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getConfigureSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Run the serialized setup workflow as a bootstrap administrator.
  * @summary Reconcile Setup
  */
@@ -6495,6 +6610,69 @@ export const useReconcileSetup = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getReconcileSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Continue past a step an administrator confirmed is set up in a way Studio cannot see.
+ * @summary Override Setup Step
+ */
+export const overrideSetupStep = (
+    setupOverrideRequest: SetupOverrideRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/override`,
+      setupOverrideRequest,options
+    );
+  }
+
+
+
+export const getOverrideSetupStepMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext> => {
+
+const mutationKey = ['overrideSetupStep'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof overrideSetupStep>>, {data: SetupOverrideRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  overrideSetupStep(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type OverrideSetupStepMutationResult = NonNullable<Awaited<ReturnType<typeof overrideSetupStep>>>
+    export type OverrideSetupStepMutationBody = SetupOverrideRequest
+    export type OverrideSetupStepMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Override Setup Step
+ */
+export const useOverrideSetupStep = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof overrideSetupStep>>, TError,{data: SetupOverrideRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof overrideSetupStep>>,
+        TError,
+        {data: SetupOverrideRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getOverrideSetupStepMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -28192,7 +28370,7 @@ export const useSaveComputeSettings = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Check whether the app SP has CAN_USE on *warehouse_id*.
+ * Check whether the app SP has CAN_MANAGE on *warehouse_id*.
 
 Never raises for the access-read itself — returns ``"unknown"`` when the ACL
 can't be read so the UI shows no false warning.
@@ -28344,7 +28522,7 @@ export function useGetWarehouseAccessSuspense<TData = Awaited<ReturnType<typeof 
 
 
 /**
- * Grant the app SP CAN_USE on the warehouse via the admin's OBO client.
+ * Grant the app SP CAN_MANAGE on the warehouse via the admin's OBO client.
  * @summary Grant Warehouse Access
  */
 export const grantWarehouseAccess = (
