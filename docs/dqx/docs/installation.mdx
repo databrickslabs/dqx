@@ -3,6 +3,7 @@ sidebar_position: 200
 ---
 
 import Admonition from '@theme/Admonition';
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
 
 # Installation
 
@@ -441,6 +442,10 @@ Databricks CLI will confirm a few options:
 
 ## DQX Studio installation
 
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX Studio" version="0.1.0" releaseTag="studio-v0.1.0" heading={false} />
+</FeatureTags>
+
 [DQX Studio](/docs/studio/) is the no-code Databricks App that exposes DQX's profiling, rule authoring, approval workflow, scheduled runs, and results tracking through a browser. It is deployed to your Databricks workspace as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html).
 
 There are two ways to install it:
@@ -450,8 +455,8 @@ There are two ways to install it:
 
 Both methods deploy the same app and finish in the same in-app **setup wizard**, and both require the workspace-level prerequisites listed under [Prerequisites](#prerequisites-for-installing-dqx-studio) below.
 
-<Admonition type="warning" title="Breaking change: fresh installs only, no upgrade path">
-This release changes DQX Studio's storage layout and permission model. Existing DAB and Marketplace installations cannot be upgraded or migrated. Before installing, remove the previous app, its task-runner job, its SQL warehouse (DAB-managed), its Unity Catalog schemas and wheels volume, and its Lakebase project (see [Uninstall DQX Studio](#uninstall-dqx-studio)). Broad audience access granted by earlier versions (`users` / `account users`) is not revoked automatically; review it before reinstalling.
+<Admonition type="warning" title="Breaking change in DQX Studio 0.1.0: fresh installs only, no upgrade path">
+DQX Studio 0.1.0 changes the storage layout and permission model used by earlier pre-release builds. Existing DAB and Marketplace installations cannot be upgraded or migrated. Before installing, remove the previous app, its task-runner job, its SQL warehouse (DAB-managed), its Unity Catalog schemas and wheels volume, and its Lakebase project (see [Uninstall DQX Studio](#uninstall-dqx-studio)). Broad audience access granted by earlier versions (`users` / `account users`) is not revoked automatically; review it before reinstalling.
 </Admonition>
 
 Each DQX Studio release is paired with a specific DQX Core version. Studio and Core have separate version numbers; the Core version for a Studio release is recorded in that release's `app/databricks.yml` as `dqx_version`.
