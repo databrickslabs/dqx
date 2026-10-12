@@ -287,7 +287,7 @@ def compute_validation_metrics(
 ) -> dict[str, float]:
     """Compute validation metrics and distribution statistics."""
     if not val_df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
-        return {"validation_rows": 0}
+        return {"validation_rows": 0.0}
 
     scored = score_with_model(model, val_df, feature_cols, feature_metadata)
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
@@ -303,7 +303,7 @@ def compute_validation_metrics(
     if stats is None:
         raise ComputationError("Failed to compute validation statistics")
     metrics = {
-        "validation_rows": val_count,
+        "validation_rows": float(val_count),
         "score_mean": stats["mean"] or 0.0,
         "score_std": stats["std"] or 0.0,
         "score_skewness": stats["skewness"] or 0.0,
