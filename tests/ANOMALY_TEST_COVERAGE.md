@@ -133,26 +133,51 @@ Unless marked Spark-only, these suites require the workspace/MLflow/UC integrati
 
 ## Evidence status for the repair
 
-Selected local results below are overlapping checkpoints, not suite totals. They do not establish remote compatibility. Keep raw resource names, workspace addresses, user paths, request bodies and tokens out of committed evidence.
+Results below distinguish the current source and wheel from earlier attempts. Focused local checkpoints overlap and must not be added into a suite total. The full unit result covers the repository's unit suite, not only anomaly tests. Keep resource identifiers, workspace addresses, user paths, request bodies and tokens out of committed evidence.
 
-| Validation | Status / observed result | Evidence required before completion |
+The current source/test revision is `f54738c68e0cfeea83fa09f92c02f1683fc0fffd`. Its wheel SHA-256 is `d1fb5265548f99b64b1b5108033ea2489cd1953b7672352522b3496cef225c1f`; the remote test archive SHA-256 is `347e0713acb8719e6bf4ac68b74fbb05dc4a4563f474f76f1944bdb4a45c56a4`. A later evidence-only documentation commit does not change those executed artifact identities.
+
+The inventory audit found all 42 anomaly unit test modules and all 29 anomaly integration test modules represented. The explanation, packaged E2E and support modules are also represented: all 91 Python file links resolve, with no missing module in the defined inventory scope. These are module counts, not collected case counts or pass claims.
+
+| Validation | Observed result | Scope / remaining evidence |
 | --- | --- | --- |
-| Original profiler regression | Reproduced `KeyError: category`; original test remains unchanged | Final revision run of the unchanged regression |
-| Selected discovery contracts | Nine actual local Spark cases passed | Same contracts in classic and serverless CI |
-| Scalar validation mutation | Removing the finite-value guard caused four NaN cases to fail | Preserve production-call regression cases |
-| Grouping metadata mutation | Removing grouping type restoration caused the original cardinality test to fail | Preserve original test and explicit basis-type cases |
-| Focused unit contracts | 132 selected lifecycle/validation/workflow tests passed; separate final cleanup suite: 12 passed | Final full unit suite on the committed revision |
-| Generator contracts | Two tests collected; both passed against local Spark | Run the collected module in the final integration suite |
-| Final formatting, typing and full unit suite | Passed on code/test revision `30bec88b`: 3,183 unit tests passed, one platform skip; formatting, lint, typing and documentation build passed | Preserve recorded results; later evidence-only edits do not change tested source |
-| Classic anomaly integration | **PENDING remote run** | Run link/identifier, commit, exact wheel digest, dependency versions, first-attempt test outcomes and sanitized worker provenance |
-| Serverless anomaly integration | **PENDING remote run** | Same evidence, with observed serverless runtime |
-| Classic packaged E2E | Passed separate train/score tasks, contributions-enabled distributed scoring and fixture teardown; actual Spark 4.0.0 on DBR 17.3 | Exact artifact and source fingerprints recorded in implementation results |
-| Serverless packaged E2E | Passed separate train/score tasks, contributions-enabled distributed scoring and fixture teardown; actual STANDARD serverless Spark 4.2.0 | Exact artifact and source fingerprints recorded in implementation results |
-| Live endpoint smoke | Passed one availability probe and one narrative group shared by two synthetic rows on classic; owned resources cleaned | Full endpoint portability suite remains a CI responsibility |
+| Full unit suite on the current revision | **3,203 passed, one platform skip** | No Spark session or workspace execution; this does not establish remote compatibility. |
+| Formatting, lint, typing and documentation build | Passed on the current source/test revision | Preserve recorded results when updating evidence text. |
+| Original profiler regression and discovery contracts | Original `KeyError: category` reproduced; unchanged regression and nine selected discovery cases passed with real local Spark | Final classic/serverless outcome remains separate. |
+| Earlier remote autodiscovery evidence | On source `30bec88b` / wheel `f22704dd`, the unchanged original cardinality regression passed all three phases on both computes. Classic passed all 32 cases in the module, including all 12 focused grouping/context/type/feature-slot cases | Serverless did not reach the other 31 cases. These are overlapping earlier-artifact results, not additional suite totals or current-artifact pass claims. |
+| Scalar validation mutation | Removing the finite-value guard caused four production-call NaN cases to fail | Regression sensitivity, not additional suite passes. |
+| Grouping metadata mutation | Removing grouping type restoration caused the unchanged cardinality test to fail | Preserves the original behavioral oracle. |
+| Native Spark registry metric regression | Empty and nonempty validation preserve the existing map-of-double schema after the integer-count repair | Native Spark and Connect routes must remain distinct; Connect coercion can conceal this error. |
+| Scoring and assertion sensitivity | Six real fitted detector/context configurations supplied positive planted-outlier attribution; null-evidence mutations were rejected. Twenty-seven focused local assertion probes and a separate public-engine filtered-info contract passed | These checks do not replace remote UC model loading or the full scoring matrix on each compute mode. |
+| Generator contracts | Both collected generator tests passed with local Spark | Keep helper functions separate from collected test cases. |
+| Earlier classic packaged E2E | Separate train/score tasks, distributed contributions and teardown passed on Spark 4.0.0 / DBR 17.3 | Executed older revision `adfbcaf53fedde87b5a7a852139cc9c42d9ed893` and wheel `f22704dd78769f5a572c49b028bb9d160ff48fbf06a0efb83ba899606ca4ef3d`; it is not a pass for the current repair artifact. |
+| Earlier serverless packaged E2E | Separate train/score tasks, distributed contributions and teardown passed on serverless Spark 4.2.0 | Same older revision/wheel as the preceding row; final-artifact rerun remains separate. |
+| Live endpoint smoke | One availability probe and one narrative group shared by two synthetic rows passed on classic; its owned resources were cleaned | Earlier artifact evidence only. The full endpoint portability suite remains a CI responsibility. |
 
-Final commit: **PENDING**. Wheel digest: **PENDING**. Remote run references: **PENDING**.
+### Remote campaign results
 
-A green retry does not erase the first failure. Classify a serving availability skip separately from product failure, and retain sanitized setup/call/teardown evidence. A plain row count, finite-only assertion, Python mirror, mocked Spark method call or source-string check cannot replace exact identity/schema/value and execution-path assertions.
+Reconciled from terminal, exported pytest phase reports at **2026-10-12T16:24:57.874848+00:00**. Test outcomes are complete; the exhaustive cleanup and exact absence follow-up are reconciled below. Counts are per compute and attempt; do not combine them into a single success rate. A complete case pass requires passed setup, call and teardown. "Not started" means selected but without an observed phase report; it is not a skip.
+
+| Cohort / attempt | Compute | Complete passes | Failed cases | Interrupted cases | Selected but not started | Interpretation |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Earlier full cohort / 4 | Classic | 0 | 289 | 0 | 0 | Setup failures; zero test bodies executed. |
+| Earlier full cohort / 4 | Serverless | 0 | 289 | 0 | 0 | Setup failures; zero test bodies executed. |
+| Superseded full cohort / 5 | Classic | 92 | 8 | 2 interrupted | 187 | Canceled after preserving first outcomes; source `30bec88b`, older wheel `f22704dd`. |
+| Superseded full cohort / 5 | Serverless | 34 | 20 | 0 | 235 | Canceled after preserving first outcomes; same older source/wheel as classic. |
+| Current targeted repair / 6 | Classic | 20 | 0 | 0 | 0 | **PASSED; terminal reports complete.** Both shard pytest exit codes are zero. |
+| Current targeted repair / 6 | Serverless | 3 | 17 | 0 | 0 | **FAILED; terminal reports complete.** All failures occurred in call with `EmitterError`; all 20 setup and teardown phases passed. |
+
+Earlier attempts 1–3 stopped during bootstrap or collection before test-body phases. Their first failure evidence is retained. The current 20-case selection per compute is a targeted repair check, not a pass for the earlier 289-case selection or the complete integration suite. The manual campaign excludes live explanation cases and deployment CLI cases; exclusions are not passes or runtime skips.
+
+All four current repair shards have matching exported source, wheel, test archive and runner provenance. Both targeted acceptance results are final: 20 classic passes; three serverless passes and 17 failures. The same 20 case hashes ran on both computes; each has complete setup, call and teardown reports. The 17 serverless failures all occur in MLflow model loading before the scoring assertions. The two native metric-schema cases and the deterministic explanation duplicate/column-preservation case pass on serverless. A separately marked runtime diagnostic is excluded from acceptance selection and totals; any diagnostic result cannot repair or replace these failures. The reconciliation has no conflicting case-phase outcomes, overlapping selected hashes between shards, or artifact identity conflicts. The classic Jobs API status is failed despite both pytest exit codes being zero; retain the wrapper status separately from the complete passing test phases. The runner-exit diagnosis remains separate from product assertions. The separate runtime diagnostic reproduced the YAML-loading failure once; its selected case is not included in acceptance totals. The initialization recheck is also reported separately below.
+
+The first current-artifact classic E2E attempt timed out while starting compute, before submitting its train/score job; this is a harness failure, not a failed scorer assertion. The one bounded infrastructure retry then passed setup, call and teardown, with separate train/score provenance matching the current revision and wheel on classic Spark 4.0.0. Fixture cleanup and owned-cluster termination were confirmed; the exhaustive campaign cleanup audit remains separate. The current-artifact serverless E2E also passed setup, call and teardown, with separate train/score provenance matching the current revision and wheel on serverless Spark 4.2.0; its owned fixture resources were deleted. These packaged E2Es use the platform runtime with wheel-resolved dependencies, whereas the integration acceptance suite uses its locked dependency environment. Do not transfer the older E2E passes to these attempts.
+
+Targeted acceptance and packaged E2E outcomes are complete as described above. The separately authorized initialization recheck passed all four unchanged collision cases after a notebook Python restart: 12 passed setup/call/teardown phases, pytest exit zero and Jobs `TERMINATED/SUCCESS`. Source, wheel and test archive match the original targeted run; every recorded package version and Python version is unchanged. Before training, YAML node identities agree and both pure/C dumps pass. This is four-case recheck evidence, not an updated 20-case acceptance result, and does not establish that the other 13 failed cases would pass. The initialization-recheck runner SHA-256 is `6a2bd2732089b1c23aa2edf36fb0522b2f76eabcba4292f6b51b53fe1e966fdf`; its public-safe evidence SHA-256 is `285d4a0920d82f3f643071b0f17e88e4d12da01dc74507ce2637d898383c9e69`. All owned test runs are terminal and their required phase reports have been exported. Cleanup was reconciled at 16:28:05 UTC with zero unresolved campaign-owned resources. The original audit retains five job DELETE errors; a separate read-only exact GET follow-up confirmed all five jobs absent. Other recorded resources were deleted, confirmed absent or terminated as appropriate, and all three clean temporary verification worktrees were removed. The final export downloaded 28 additional files and reused 2,837 checksum-verified exports; one file was omitted by the privacy allowlist. Cleanup evidence SHA-256: `b84dd71c84f387e9a0d9f69ae4f1682a447c19f0ce1ab55922afdf65c50a9f7c`.
+
+Dispatch controls used a shared serverless lock and live capacity checks across the campaign ledgers, limiting requests to two STANDARD-serverless task slots. The recorded final E2E dispatch observed one occupied slot before requesting its sequential train/score slot. Complete start/end timestamps were not retained for every task, so the historical peak was not independently reconstructed. All verification runs were observed terminal by 16:16:18 UTC, before the 16:37:51 UTC deadline.
+
+A green retry does not erase the first failure. Classify a serving availability skip separately from a product failure, and retain sanitized setup/call/teardown evidence. A plain row count, finite-only assertion, Python mirror, mocked Spark method call or source-string check cannot replace exact identity/schema/value and execution-path assertions.
 
 ## Keeping this inventory current
 
