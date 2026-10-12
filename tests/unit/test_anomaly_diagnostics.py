@@ -207,6 +207,7 @@ def test_setup_failure(failed_setup):
     result.assert_outcomes(passed=1, failed=1, skipped=1, errors=1)
     reports = [json.loads(path.read_text()) for path in directory.glob("*.json")]
     failed = [report for report in reports if report["outcome"] == "failed"]
+    assert len(failed) == 2
     assert {(report["phase"], report["exception_chain"][0]["type"]) for report in failed} == {
         ("call", "RuntimeError"),
         ("setup", "ValueError"),
@@ -297,3 +298,61 @@ def test_compute_observation_does_not_infer_from_unattached_or_unsafe_metadata()
     unsafe = compute_observation("private-cluster", source="private-source", runtime="https://private.invalid")
     assert unsafe["cluster_source"] is None and unsafe["databricks_runtime"] == "unavailable"
     assert "private" not in json.dumps(unsafe)
+
+
+@pytest.mark.parametrize("failure_source", ["import", "collection"])
+def test_pytest_collection_errors_preserve_causes_and_redact_payloads(
+    pytester: pytest.Pytester, failure_source: str
+) -> None:
+    pytester.makeconftest(
+        """
+from pathlib import Path
+from tests.anomaly_diagnostics import AnomalyDiagnostics
+
+def pytest_configure(config):
+    root = Path(__file__).parent
+    config.pluginmanager.register(AnomalyDiagnostics(root / "reports", root / "anomaly", "process-1", {}))
+"""
+    )
+    directory = pytester.path / "anomaly"
+    directory.mkdir()
+    failures = {
+        "import": """
+def fail_import():
+    try:
+        raise ValueError("private-input-value")
+    except ValueError as cause:
+        raise ImportError("private-token https://private.invalid/") from cause
+fail_import()
+""",
+        "collection": """
+def pytest_generate_tests(metafunc):
+    try:
+        raise LookupError("private-parameter-value")
+    except LookupError as cause:
+        raise RuntimeError("private-response-body") from cause
+
+def test_parameterized(value):
+    assert value
+""",
+    }
+    (directory / "test_failure.py").write_text(failures[failure_source])
+    pytester.makepyfile(test_unrelated='raise ValueError("private-outside-scope")')
+
+    result = pytester.runpytest("-q", "--tb=no", "-p", "no:cacheprovider", "-p", "no:rerunfailures")
+
+    result.assert_outcomes(errors=2)
+    assert result.ret == pytest.ExitCode.INTERRUPTED
+    reports = [json.loads(path.read_text()) for path in (pytester.path / "reports").glob("*.json")]
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["test"] == "anomaly/test_failure.py"
+    assert report["phase"] == "collect" and report["outcome"] == "failed"
+    types = [entry["type"] for entry in report["exception_chain"]]
+    expected = (
+        ["CollectError", "ImportError", "ValueError"] if failure_source == "import" else ["RuntimeError", "LookupError"]
+    )
+    assert types == expected
+    assert all(entry["frames"] for entry in report["exception_chain"])
+    assert "private-" not in json.dumps(reports)
+    assert "private.invalid" not in json.dumps(reports)

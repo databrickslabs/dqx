@@ -9,6 +9,8 @@ import pytest
 
 from tests.anomaly_e2e import PackagedAnomalyCase, packaged_anomaly_tasks, safe_packaged_result, wheel_manifest
 
+pytest_plugins = ("pytester",)
+
 
 def test_wheel_manifest_rejects_stale_or_incomplete_source(tmp_path: Path) -> None:
     package = tmp_path / "src" / "databricks" / "labs" / "dqx"
@@ -106,3 +108,66 @@ def test_both_verified_driver_and_worker_evidence_are_required(source: str, veri
     }
     with pytest.raises(ValueError, match="verify"):
         safe_packaged_result(json.dumps(result), case, "score")
+
+
+@pytest.mark.parametrize("absent_resource", ["version", "model", "all"])
+def test_packaged_model_factory_cleans_remaining_resources_after_notfound(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, absent_resource: str
+) -> None:
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    pytester.makeconftest(
+        rf'''
+from pathlib import Path
+from unittest.mock import create_autospec
+import pytest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
+from databricks.sdk.service.catalog import ModelVersionInfo, SchemaInfo
+from tests.e2e.conftest import make_anomaly_model_intent
+
+@pytest.fixture
+def packaged_anomaly_schema() -> SchemaInfo:
+    return SchemaInfo(full_name="catalog.schema")
+
+@pytest.fixture
+def ws():
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    if {absent_resource!r} == "all":
+        workspace.model_versions.list.side_effect = NotFound("synthetic absent model")
+    else:
+        workspace.model_versions.list.return_value = [ModelVersionInfo(version=1), ModelVersionInfo(version=2)]
+
+    def delete_version(*, full_name: str, version: int) -> None:
+        with Path("cleanup-attempts").open("a") as output:
+            output.write(f"version-{{version}}\n")
+        if {absent_resource!r} == "version" and version == 1:
+            raise NotFound("synthetic absent version")
+
+    def delete_model(*, full_name: str) -> None:
+        with Path("cleanup-attempts").open("a") as output:
+            output.write("model\n")
+        if {absent_resource!r} == "model":
+            raise NotFound("synthetic absent model")
+
+    workspace.model_versions.delete.side_effect = delete_version
+    workspace.registered_models.delete.side_effect = delete_model
+    return workspace
+'''
+    )
+    pytester.makepyfile(
+        """
+def test_train(make_anomaly_model_intent):
+    make_anomaly_model_intent()
+    raise RuntimeError("synthetic training failure")
+"""
+    )
+
+    result = pytester.runpytest("-q", "--tb=line", "-p", "no:cacheprovider", "-p", "no:rerunfailures")
+
+    result.assert_outcomes(failed=1)
+    attempts = pytester.path / "cleanup-attempts"
+    if absent_resource == "all":
+        assert not attempts.exists()
+    else:
+        assert attempts.read_text().splitlines() == ["version-1", "version-2", "model"]
+    assert "synthetic training failure" in result.stdout.str()

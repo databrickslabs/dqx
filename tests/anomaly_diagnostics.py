@@ -293,13 +293,29 @@ class AnomalyDiagnostics:
             self.record(report.nodeid, report.when, report.outcome, exception)
         return report
 
+    def pytest_exception_interact(
+        self,
+        node: pytest.Item | pytest.Collector,
+        call: pytest.CallInfo[object],
+        report: pytest.TestReport | pytest.CollectReport,
+    ) -> None:
+        """Keep collection exceptions before pytest reduces them to rendered prose."""
+        if isinstance(report, pytest.CollectReport) and report.failed and node.path.is_relative_to(self.test_root):
+            exception = call.excinfo.value if call.excinfo is not None else None
+            self.record(report.nodeid, "collect", report.outcome, exception)
+
     def record(self, nodeid: str, phase: str, outcome: str, exception: BaseException | None = None) -> None:
         """Write a distinct report for each phase, test attempt, and Python process."""
-        if phase not in {"setup", "call", "teardown"} or outcome not in {"passed", "failed", "skipped", "rerun"}:
+        if phase not in {"collect", "setup", "call", "teardown"} or outcome not in {
+            "passed",
+            "failed",
+            "skipped",
+            "rerun",
+        }:
             raise ValueError("Invalid pytest diagnostic outcome")
         identity = case_identity(nodeid)
         case = identity["case_sha256"]
-        if phase == "setup":
+        if phase in {"collect", "setup"}:
             self.attempts[case] = self.attempts.get(case, 0) + 1
         attempt = self.attempts.get(case, 1)
         report = {

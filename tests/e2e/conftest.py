@@ -268,8 +268,14 @@ def make_anomaly_model_intent(
     def remove(model: AnomalyModelCleanup) -> None:
         try:
             for model_version in ws.model_versions.list(full_name=model.full_name):
-                if model_version.version is not None:
+                if model_version.version is None:
+                    continue
+                try:
                     ws.model_versions.delete(full_name=model.full_name, version=model_version.version)
+                except NotFound:
+                    # A version may already be absent while its parent model
+                    # and later versions still need their owned cleanup.
+                    continue
             ws.registered_models.delete(full_name=model.full_name)
         except NotFound:
             return

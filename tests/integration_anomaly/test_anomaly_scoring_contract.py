@@ -97,6 +97,12 @@ def _assert_public_info(rows: list[Row], columns: list[str], context: str, profi
         assert len(row["_warnings"]) == 1
         if contributions:
             _assert_contributions(info, columns, profile)
+            if row.probe_id == 2:
+                # This row deliberately perturbs both numeric inputs far outside
+                # training support. Its enabled attribution must contain evidence
+                # for a changed input, not merely a map whose values are all null.
+                shares = info["contributions"]
+                assert any(shares[name] is not None and shares[name] > 0.0 for name in ("amount", "quantity"))
         else:
             assert info["contributions"] is None and info["basis_contributions"] is None
 
