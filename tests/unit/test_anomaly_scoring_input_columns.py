@@ -48,7 +48,7 @@ def test_the_time_column_is_carried_even_though_it_is_not_a_feature():
     """
     selected = scoring_input_columns(["amount"], [ROW_ID], _metadata(baseline_over_time="event_ts"))
 
-    assert "event_ts" in selected
+    assert selected == ["amount", "event_ts", ROW_ID]
 
 
 def test_both_bases_are_carried_together():
@@ -69,7 +69,7 @@ def test_passthrough_columns_come_last():
     """The packed original row is appended, so restoring it after scoring reads a stable position."""
     selected = scoring_input_columns(["amount"], [ROW_ID], _metadata(), passthrough_columns=["__dqx_orig_abc"])
 
-    assert selected[-1] == "__dqx_orig_abc"
+    assert selected == ["amount", ROW_ID, "__dqx_orig_abc"]
 
 
 def test_a_column_serving_two_roles_is_selected_once():

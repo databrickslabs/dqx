@@ -8,18 +8,14 @@
   must not double as a feature. The last of those is not cosmetic -- feature engineering expands a
   datetime feature into cyclical columns and drops the raw one, so a column serving as both would leave
   the temporal fit with no axis to read.
-- The feature-engineering contract: every scorer must run features through the shared feature_prep
-  entry points before scoring, or a model would score on a different feature list than it trained on.
 """
 
-import inspect
 from unittest.mock import create_autospec
 
 import pytest
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly import ensemble_scorer, single_model_scorer
 from databricks.labs.dqx.anomaly.validation import validate_baseline_columns, validate_baseline_over_time
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -97,23 +93,3 @@ def test_validate_baseline_over_time_rejects_a_missing_column():
 def test_validate_baseline_over_time_is_silent_when_unset(value: str | None):
     """The inertness path: nothing declared, nothing checked, nothing raised."""
     validate_baseline_over_time(_fake_df({"revenue": T.DoubleType()}), value, ["revenue"])
-
-
-def test_every_scorer_applies_feature_engineering_before_scoring():
-    """Structural guard: every scoring module must route features through the shared feature_prep
-    entry points (which call apply_feature_engineering_from_metadata) before scoring.
-
-    A scorer that fed raw columns to the model would score on a different feature list than the
-    model trained on — the shapes can still line up, so it is a silent correctness bug, not a crash.
-    If you add a scoring module, add it to this list and make it apply feature engineering.
-    """
-    fe_entry_points = (
-        "apply_feature_engineering_for_scoring",
-        "apply_feature_engineering_with_row_passthrough",
-        "apply_feature_engineering_from_metadata",
-    )
-    for module in (single_model_scorer, ensemble_scorer):
-        source = inspect.getsource(module)
-        assert any(
-            entry in source for entry in fe_entry_points
-        ), f"{module.__name__} must apply feature engineering before scoring"

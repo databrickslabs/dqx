@@ -1,24 +1,16 @@
 import inspect
 import logging
-from datetime import datetime
 from unittest.mock import create_autospec, patch
 
 import pytest
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 
-from databricks.labs.dqx.anomaly import check_funcs, model_discovery, scoring_orchestrator
+from databricks.labs.dqx.anomaly import check_funcs
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.anomaly.model_discovery import get_quantile_points_for_severity
+from databricks.labs.dqx.anomaly.model_discovery import get_quantile_points_for_severity, get_record_for_discovery
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
-from databricks.labs.dqx.anomaly.scoring_strategies import resolve_scoring_strategy
-from databricks.labs.dqx.anomaly.model_config import (
-    AnomalyModelRecord,
-    FeatureEngineering,
-    ModelIdentity,
-    GroupingConfig,
-    TrainingMetadata,
-    compute_config_hash,
-)
+from databricks.labs.dqx.anomaly.scoring_strategies import GlobalModelScoringStrategy, resolve_scoring_strategy
+from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -129,16 +121,19 @@ def test_scoring_config_defaults_contributions_and_ai_explanation_on():
     assert cfg.enable_ai_explanation is True
 
 
-def test_ai_explanation_downgraded_when_contributions_off(caplog):
-    """AI explanations need SHAP contributions; with contributions off, explanation is disabled
-    (with a warning) instead of raising. Both default on, so this only fires on an explicit
-    opt-out of contributions."""
+@pytest.mark.parametrize("enabled", [False, True])
+def test_ai_explanation_dependency_is_reported_through_public_check(
+    caplog: pytest.LogCaptureFixture, enabled: bool
+) -> None:
     with caplog.at_level(logging.WARNING, logger=check_funcs.__name__):
-        resolved = check_funcs._resolve_ai_explanation_flag(enable_contributions=False, enable_ai_explanation=True)
-    assert resolved is False
-    assert any("disabling enable_ai_explanation" in r.message for r in caplog.records)
-    # With contributions on, the flag is left as-is.
-    assert check_funcs._resolve_ai_explanation_flag(enable_contributions=True, enable_ai_explanation=True) is True
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.registry",
+            enable_contributions=enabled,
+            enable_ai_explanation=True,
+        )
+    warnings = [record.message for record in caplog.records if "disabling enable_ai_explanation" in record.message]
+    assert bool(warnings) is not enabled
 
 
 def test_has_no_row_anomalies_no_raise_when_contributions_off():
@@ -156,7 +151,9 @@ def test_validate_explanation_flags_ai_query_needs_no_extra_dependency():
     """AI explanations run in Spark SQL via ``ai_query`` — no DSPy/driver dependency. The only
     hard requirement is SHAP (for the contributions that feed the prompt)."""
     with patch.object(check_funcs, "SHAP_AVAILABLE", True):
-        check_funcs._validate_explanation_flags(enable_contributions=True)
+        has_no_row_anomalies(
+            model_name="catalog.schema.model", registry_table="catalog.schema.registry", enable_contributions=True
+        )
 
 
 def test_has_no_row_anomalies_redact_columns_must_be_list():
@@ -230,113 +227,44 @@ def test_resolve_scoring_strategy_returns_strategy_for_isolation_forest():
     assert strategy.supports("IsolationForestV1")
 
 
-def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
-    """When get_active_model returns None, InvalidParameterError is raised."""
-    mock_spark = create_autospec(SparkSession, instance=True)
-    mock_df = create_autospec(DataFrame, instance=True)
-    mock_df.sparkSession = mock_spark
-    mock_df.withColumn.return_value = mock_df
-    mock_df.columns = ["a", "b"]
-
-    registry_table = "catalog.schema.registry"
-    model_name = "catalog.schema.my_model"
-
-    # Minimal record so discovery (fetch_model_columns) succeeds.
-    record = create_autospec(AnomalyModelRecord, instance=True)
-    record.training = create_autospec(TrainingMetadata, instance=True)
-    record.training.columns = ["a", "b"]
-
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    # Discovery calls get_active_model once -> return record; orchestrator calls it -> None.
-    mock_registry.get_active_model.side_effect = [record, None]
-    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
-        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
-            mock_cls_disc.return_value = mock_registry
-            mock_cls_orch.return_value = mock_registry
-
-            _, apply_fn, _ = has_no_row_anomalies(
-                model_name=model_name,
-                registry_table=registry_table,
-            )
-            with pytest.raises(InvalidParameterError) as exc_info:
-                apply_fn(mock_df)
-
-    assert model_name in str(exc_info.value)
-    assert registry_table in str(exc_info.value)
-    assert "Train first" in str(exc_info.value)
+def test_discovery_reports_missing_model_without_ordered_registry_reads() -> None:
+    registry = create_autospec(AnomalyModelRegistry, instance=True)
+    registry.get_active_model.return_value = None
+    with pytest.raises(InvalidParameterError, match="Train first") as error:
+        get_record_for_discovery(registry, "catalog.schema.registry", "catalog.schema.model")
+    assert "catalog.schema.model" in str(error.value)
+    assert "catalog.schema.registry" in str(error.value)
+    registry.get_active_model.assert_called_once_with("catalog.schema.registry", "catalog.schema.model")
 
 
-def test_extract_quantile_points_raises_when_score_quantiles_missing():
-    """get_quantile_points_for_severity raises when record.training.score_quantiles is missing or empty."""
-    record = create_autospec(AnomalyModelRecord, instance=True)
-    record.identity = create_autospec(ModelIdentity, instance=True)
-    record.identity.model_name = "catalog.schema.my_model"
-    record.training = create_autospec(TrainingMetadata, instance=True)
-    record.training.score_quantiles = None
-
-    with pytest.raises(InvalidParameterError) as exc_info:
-        get_quantile_points_for_severity(record)
-
-    assert "missing score quantiles" in str(exc_info.value)
-    assert "catalog.schema.my_model" in str(exc_info.value)
-    assert "Retrain the model" in str(exc_info.value)
+def test_discovery_returns_the_registered_record(anomaly_model_record: AnomalyModelRecord) -> None:
+    registry = create_autospec(AnomalyModelRegistry, instance=True)
+    registry.get_active_model.return_value = anomaly_model_record
+    assert get_record_for_discovery(registry, "catalog.schema.registry", "catalog.schema.model") is anomaly_model_record
 
 
-def test_extract_quantile_points_raises_when_score_quantiles_empty():
-    """get_quantile_points_for_severity raises when record.training.score_quantiles is empty dict."""
-    record = create_autospec(AnomalyModelRecord, instance=True)
-    record.identity = create_autospec(ModelIdentity, instance=True)
-    record.identity.model_name = "catalog.schema.other_model"
-    record.training = create_autospec(TrainingMetadata, instance=True)
-    record.training.score_quantiles = {}
-
-    with pytest.raises(InvalidParameterError) as exc_info:
-        get_quantile_points_for_severity(record)
-
-    assert "missing score quantiles" in str(exc_info.value)
-    assert "catalog.schema.other_model" in str(exc_info.value)
+@pytest.mark.parametrize("quantiles", [None, {}])
+def test_missing_quantile_points_require_retraining(
+    anomaly_model_record: AnomalyModelRecord, quantiles: dict[str, float] | None
+) -> None:
+    anomaly_model_record.training.score_quantiles = quantiles
+    with pytest.raises(InvalidParameterError, match="missing score quantiles") as error:
+        get_quantile_points_for_severity(anomaly_model_record)
+    assert anomaly_model_record.identity.model_name in str(error.value)
+    assert "Retrain the model" in str(error.value)
 
 
-def test_apply_fn_raises_when_global_model_has_no_feature_metadata():
-    """When registry returns a global model with feature_metadata None, apply_fn raises InvalidParameterError."""
-    mock_spark = create_autospec(SparkSession, instance=True)
-    mock_df = create_autospec(DataFrame, instance=True)
-    mock_df.sparkSession = mock_spark
-    mock_df.withColumn.return_value = mock_df
-    mock_df.columns = ["a", "b"]
-    mock_df.filter.return_value = mock_df
-
-    registry_table = "catalog.schema.registry"
-    model_name = "catalog.schema.my_model"
-    columns = ["a", "b"]
-    config_hash = compute_config_hash(columns, None)
-
-    record = create_autospec(AnomalyModelRecord, instance=True)
-    record.identity = create_autospec(ModelIdentity, instance=True)
-    record.identity.model_name = model_name
-    record.identity.model_uri = "models:/my_model/1"
-    record.identity.algorithm = "IsolationForestV1"
-    record.training = create_autospec(TrainingMetadata, instance=True)
-    record.training.columns = columns
-    record.training.training_time = datetime(2024, 1, 1)
-    record.features = FeatureEngineering(feature_metadata=None)
-    record.grouping = create_autospec(GroupingConfig, instance=True)
-    record.grouping.config_hash = config_hash
-
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    mock_registry.get_active_model.return_value = record
-
-    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
-        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
-            mock_cls_disc.return_value = mock_registry
-            mock_cls_orch.return_value = mock_registry
-
-            _, apply_fn, _ = has_no_row_anomalies(
-                model_name=model_name,
-                registry_table=registry_table,
-            )
-            with pytest.raises(InvalidParameterError) as exc_info:
-                apply_fn(mock_df)
-
-    assert "missing feature_metadata" in str(exc_info.value)
-    assert model_name in str(exc_info.value)
+def test_scoring_rejects_a_record_without_feature_metadata(anomaly_model_record: AnomalyModelRecord) -> None:
+    df = create_autospec(DataFrame, instance=True)
+    df.withColumn.return_value = df
+    config = ScoringConfig(
+        columns=["a", "b"],
+        model_name=anomaly_model_record.identity.model_name,
+        registry_table="catalog.schema.registry",
+        threshold=95.0,
+        merge_columns=["row_id"],
+        enable_ai_explanation=False,
+    )
+    with pytest.raises(InvalidParameterError, match="missing feature_metadata") as error:
+        GlobalModelScoringStrategy().score_global(df, anomaly_model_record, config)
+    assert anomaly_model_record.identity.model_name in str(error.value)

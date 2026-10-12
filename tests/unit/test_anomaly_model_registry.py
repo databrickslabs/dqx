@@ -149,7 +149,7 @@ def test_training_metadata_required_fields() -> None:
         columns=["amount", "quantity"],
         hyperparameters={"n_estimators": "100"},
         training_rows=1000,
-        training_time=datetime.now(),
+        training_time=datetime(2024, 1, 1),
     )
 
     assert metadata.training_rows == 1000
@@ -187,7 +187,7 @@ def test_anomaly_model_record_full_construction() -> None:
             columns=["amount", "quantity"],
             hyperparameters={"n_estimators": "100"},
             training_rows=5000,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(
             feature_metadata=None,
@@ -217,7 +217,7 @@ def test_grouping_recorded_on_the_model() -> None:
             columns=["col1"],
             hyperparameters={},
             training_rows=1000,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(feature_metadata=None, feature_importance=None, temporal_config=None),
         grouping=GroupingConfig(baseline_by=None),
@@ -235,7 +235,7 @@ def test_grouping_recorded_on_the_model() -> None:
             columns=["col1"],
             hyperparameters={},
             training_rows=1000,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(feature_metadata=None, feature_importance=None, temporal_config=None),
         grouping=GroupingConfig(baseline_by=["region"]),
@@ -264,7 +264,7 @@ def _minimal_record(model_name: str = "catalog.schema.model") -> AnomalyModelRec
             columns=["col1"],
             hyperparameters={},
             training_rows=100,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(
             feature_metadata=None,

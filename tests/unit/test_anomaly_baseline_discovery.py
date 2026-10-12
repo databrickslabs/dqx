@@ -113,4 +113,7 @@ def test_selection_is_deterministic_in_candidate_order():
     total = 9000
     candidates = [_candidate("a", 3, total), _candidate("b", 5, total), _candidate("c", 6, total)]
 
-    assert select_baseline_columns(candidates, total) == select_baseline_columns(list(candidates), total)
+    original = list(candidates)
+    assert select_baseline_columns(candidates, total) == ["a", "b"]
+    assert candidates == original
+    assert select_baseline_columns(candidates, total) == ["a", "b"]

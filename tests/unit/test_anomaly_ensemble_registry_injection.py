@@ -1,19 +1,7 @@
-"""A registry handed to a training strategy must be the one it uses (no Spark, no workspace).
+"""An unusable injected registry stops ensemble training before any data is read.
 
-The strategy accepts a ``ModelRegistryBase`` so a caller can substitute a backend and a test can
-substitute a fake. That held for a single model and silently did not for an ensemble: a module-level
-helper constructed ``EnsembleTrainer()`` with no argument, so the injected registry was dropped on the
-path taken by default -- ``ensemble_size`` is 3 -- and a test's fake registry would have reached MLflow
-instead of recording the call.
-
-Reaching the assertion without Spark depends on ``EnsembleTrainer.train`` consulting the registry before
-it engineers any features. That ordering is load-bearing for the test and not for the product, so it is
-stated here rather than left implicit: if the two are ever swapped, this test fails for the wrong reason
-and its docstring is where to look.
-
-Only the ensemble path is covered. The single-model path already forwarded the injected registry, and it
-fits before consulting it, so reaching that call without a real Spark session is not possible -- the
-existing integration tests are what cover it.
+This covers failure propagation and dependency isolation, not successful model registration.
+The successful training and persistence path requires real Spark and belongs in integration tests.
 """
 
 from unittest.mock import create_autospec
@@ -30,12 +18,12 @@ from databricks.labs.dqx.anomaly.training_strategies import IsolationForestTrain
 from databricks.labs.dqx.config import AnomalyParams
 
 
-class _RegistryReached(Exception):
-    """Raised by whichever registry is consulted first, to identify it without doing any real work."""
+class RegistryUnavailableError(Exception):
+    """A configured registry boundary that cannot accept a training run."""
 
 
-@pytest.fixture
-def default_registry_spy():
+@pytest.fixture(name="default_registry_spy")
+def fixture_default_registry_spy():
     """Install a fake as the process default and restore the real one afterwards.
 
     Installed through the public *set_default_registry*, which the module documents as being for exactly
@@ -51,31 +39,26 @@ def default_registry_spy():
         set_default_registry(original)
 
 
-def _train(strategy: IsolationForestTrainingStrategy, ensemble_size: int) -> None:
+@pytest.mark.parametrize("ensemble_size", [2, 3])
+def test_unavailable_injected_registry_stops_training_before_data_access(
+    default_registry_spy, ensemble_size: int
+) -> None:
+    injected = create_autospec(ModelRegistryBase, instance=True)
+    injected.ensure_registry_configured.side_effect = RegistryUnavailableError("Registry is unavailable")
     train_df = create_autospec(DataFrame, instance=True)
     val_df = create_autospec(DataFrame, instance=True)
-    strategy.train(
-        train_df,
-        val_df,
-        ["amount", "quantity"],
-        AnomalyParams(ensemble_size=ensemble_size),
-        "cat.sch.model",
-        allow_ensemble=True,
-    )
 
-
-def test_the_ensemble_path_uses_the_injected_registry(default_registry_spy):
-    """The defect: an ensemble ignored the injected registry and used the default.
-
-    Both halves are asserted. That the injected registry was consulted is the fix; that the default was
-    not touched at all is what makes this a statement about injection rather than about which of two
-    registries happens to be reached first.
-    """
-    injected = create_autospec(ModelRegistryBase, instance=True)
-    injected.ensure_registry_configured.side_effect = _RegistryReached
-
-    with pytest.raises(_RegistryReached):
-        _train(IsolationForestTrainingStrategy(registry=injected), ensemble_size=3)
+    with pytest.raises(RegistryUnavailableError, match="Registry is unavailable"):
+        IsolationForestTrainingStrategy(registry=injected).train(
+            train_df,
+            val_df,
+            ["amount", "quantity"],
+            AnomalyParams(ensemble_size=ensemble_size),
+            "catalog.schema.model",
+            allow_ensemble=True,
+        )
 
     injected.ensure_registry_configured.assert_called_once()
-    assert not default_registry_spy.method_calls, "the default registry should never have been consulted"
+    assert not train_df.mock_calls
+    assert not val_df.mock_calls
+    assert not default_registry_spy.method_calls

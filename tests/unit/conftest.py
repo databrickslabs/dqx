@@ -2,10 +2,24 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, Mock, create_autospec
 
 import pytest
+import mlflow
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import RegisteredModelsAPI, ModelVersionsAPI
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.model_config import (
+    AnomalyModelRecord,
+    FeatureEngineering,
+    GroupingConfig,
+    ModelIdentity,
+    TrainingMetadata,
+    compute_config_hash,
+)
+from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
@@ -74,3 +88,54 @@ def profiler(mock_workspace_client, mock_spark):
     inst = DQProfiler(workspace_client=mock_workspace_client, spark=mock_spark)
     inst.llm_engine = None
     return inst
+
+
+@pytest.fixture
+def anomaly_workflow_context() -> WorkflowContext:
+    """Isolated workflow input with strict Spark and workspace boundaries."""
+    context = create_autospec(WorkflowContext, instance=True)
+    context.spark = create_autospec(SparkSession, instance=True)
+    context.workspace_client = create_autospec(WorkspaceClient, instance=True)
+    context.run_config = RunConfig(
+        name="Anomaly training",
+        input_config=InputConfig(location="catalog.schema.input"),
+        anomaly_config=AnomalyConfig(model_name="catalog.schema.model", registry_table="catalog.schema.registry"),
+    )
+    return context
+
+
+@pytest.fixture
+def anomaly_workflow_dependencies() -> tuple[Mock, Mock]:
+    """Inject the real reader/engine signatures without opening external services."""
+    reader = create_autospec(read_input_data)
+    reader.return_value = create_autospec(DataFrame, instance=True)
+    engine_factory = create_autospec(AnomalyEngine)
+    return reader, engine_factory
+
+
+@pytest.fixture
+def anomaly_model_record() -> AnomalyModelRecord:
+    """Real persisted-record value for discovery and scoring rejection tests."""
+    return AnomalyModelRecord(
+        identity=ModelIdentity("catalog.schema.model", "models:/catalog.schema.model/1", "IsolationForest", "run"),
+        training=TrainingMetadata(["a", "b"], {}, 100, datetime(2024, 1, 1)),
+        features=FeatureEngineering(),
+        grouping=GroupingConfig(config_hash=compute_config_hash(["a", "b"], None)),
+    )
+
+
+@pytest.fixture
+def anomaly_experiment_boundaries() -> tuple[Mock, Mock]:
+    """Autospec MLflow lookup and deletion without any tracking backend."""
+    lookup = create_autospec(mlflow.get_experiment_by_name)
+    delete = create_autospec(mlflow.delete_experiment)
+    return lookup, delete
+
+
+@pytest.fixture
+def anomaly_cleanup_workspace() -> Mock:
+    """Strict catalog boundaries for test-resource cleanup."""
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.registered_models = create_autospec(RegisteredModelsAPI, instance=True)
+    workspace.model_versions = create_autospec(ModelVersionsAPI, instance=True)
+    return workspace

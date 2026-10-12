@@ -136,17 +136,13 @@ def test_severity_stays_monotonic_across_the_whole_range():
     assert np.all(np.diff(severity) >= 0.0)
 
 
-def test_a_degenerate_tail_falls_back_to_the_anchor():
-    """A constant score above p95 leaves no width to interpolate over.
+def test_a_constant_calibration_uses_first_bound_and_clamps_above_the_last():
+    """Tied scores use the first matching bound; scores above every bound reach the final percentile."""
+    points = [(percentile, 0.0) for percentile, _ in SEVERITY_QUANTILE_KEYS]
 
-    Real: a table where almost every row scores identically, so p95 and p99 coincide. The anchor percentile
-    is then the answer outright, which is how a zero-width segment lower down is already handled.
-    """
-    points = [(percentile, 0.0 if percentile <= 95.0 else 0.0) for percentile, _ in SEVERITY_QUANTILE_KEYS]
+    severity = severity_from_scores(np.array([-1.0, 0.0, 5.0]), points)
 
-    severity = severity_from_scores(np.array([0.0, 5.0]), points)
-
-    assert np.all(np.isfinite(severity))
+    np.testing.assert_array_equal(severity, [0.0, 0.0, 100.0])
 
 
 def test_points_without_the_anchors_keep_the_plain_linear_behaviour():

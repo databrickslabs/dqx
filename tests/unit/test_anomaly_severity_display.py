@@ -26,10 +26,10 @@ _THRESHOLDS = [90.0, 95.0, 99.0, 99.5, 99.9, 99.95, 99.995, 0.9, 90.01, 99.01, 9
 def _displayed(severity: float, threshold: float) -> float:
     """The published value, in Python, mirroring *displayed_severity_expr*.
 
-    Flooring in decimal space on the shortest representation, which is what Spark's ``floor(expr, scale)``
-    does for a double: it routes through ``BigDecimal.valueOf``, i.e. ``Double.toString``. Deliberately not
-    ``floor(severity * scale) / scale`` -- that is the form this fix replaced, and
-    :func:`test_scaling_then_flooring_would_reintroduce_the_defect` pins why.
+    This arithmetic reference floors the shortest decimal representation of the float. Spark needs an
+    explicit sufficiently precise decimal cast before flooring: its implicit cast can round an adjacent
+    float onto the threshold. Scaling the double before flooring has a separate rounding defect, which
+    :func:`test_scaling_then_flooring_would_reintroduce_the_defect` documents.
 
     A mirror, so it proves a property of the arithmetic and not of the product. The integration suite is
     what checks Spark agrees with it.
@@ -65,7 +65,7 @@ def test_a_reader_comparing_the_published_severity_reaches_the_flags_verdict(thr
     """The contract, stated as the equivalence it is.
 
     Swept either side of the threshold and across the float neighbours of every gridpoint, because the
-    implementation multiplies before flooring and that is exactly where such an implementation would drift.
+    rejected scaling-then-flooring implementation drifts at those neighbouring values.
     """
     disagreements = [
         value for value in _candidates(threshold) if (_displayed(value, threshold) >= threshold) != (value >= threshold)

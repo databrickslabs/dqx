@@ -271,10 +271,9 @@ def test_feature_engineering_config_defaults():
     """Test FeatureEngineeringConfig with default values."""
     cfg = FeatureEngineeringConfig()
 
-    # Check defaults exist
-    assert hasattr(cfg, "categorical_cardinality_threshold")
-    assert hasattr(cfg, "max_input_columns")
-    assert hasattr(cfg, "max_engineered_features")
+    assert cfg.categorical_cardinality_threshold == 20
+    assert cfg.max_input_columns == 25
+    assert cfg.max_engineered_features == 50
 
 
 def test_feature_engineering_config_custom_thresholds():

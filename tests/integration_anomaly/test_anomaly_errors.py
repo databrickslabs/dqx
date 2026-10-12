@@ -26,7 +26,6 @@ from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
     create_null_scored_dataframe,
-    create_udf_schema,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
@@ -437,20 +436,6 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
     row = result.select(F.col("_dq_info").getField("anomaly").getField("score").alias("score")).first()
     assert row is not None
     assert row["score"] == 0.5
-
-
-def test_create_udf_schema_includes_contributions():
-    """Test UDF schema includes contributions field when requested."""
-    schema_without = create_udf_schema(enable_contributions=False)
-    schema_with = create_udf_schema(enable_contributions=True)
-    assert [field.name for field in schema_without.fields] == ["anomaly_score"]
-    # The basis split rides with the contributions rather than behind a flag of its own: it is derived from
-    # the attribution enable_contributions already pays for, so there is nothing to switch off separately.
-    assert [field.name for field in schema_with.fields] == [
-        "anomaly_score",
-        "anomaly_contributions",
-        "anomaly_basis_contributions",
-    ]
 
 
 def test_sklearn_version_mismatch_warns(

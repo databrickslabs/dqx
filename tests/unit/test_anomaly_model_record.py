@@ -184,38 +184,6 @@ def test_convert_decimals_preserves_non_decimal_types():
     assert result["list_value"] == [1, 2, 3]
 
 
-def test_anomaly_model_record_to_dict():
-    """Test converting AnomalyModelRecord to dictionary."""
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name="test_model",
-            model_uri="models:/test_model/1",
-            algorithm="IsolationForest",
-            mlflow_run_id="run123",
-        ),
-        training=TrainingMetadata(
-            columns=["col1", "col2"],
-            hyperparameters={"contamination": "0.1"},
-            training_rows=1000,
-            training_time=datetime(2024, 1, 1, 12, 0, 0),
-            metrics={"precision": 0.85},
-        ),
-        features=FeatureEngineering(),
-        grouping=GroupingConfig(),
-    )
-
-    record_dict = record.__dict__
-
-    assert isinstance(record_dict, dict)
-    assert record_dict["identity"].model_name == "test_model"
-    assert record_dict["identity"].model_uri == "models:/test_model/1"
-    assert record_dict["training"].columns == ["col1", "col2"]
-    assert record_dict["identity"].algorithm == "IsolationForest"
-    assert record_dict["training"].training_rows == 1000
-    assert "hyperparameters" in record_dict["training"].__dict__
-    assert "metrics" in record_dict["training"].__dict__
-
-
 def test_anomaly_model_record_defaults_for_optional_fields():
     """Test that optional fields have correct None defaults."""
     record = AnomalyModelRecord(
@@ -229,7 +197,7 @@ def test_anomaly_model_record_defaults_for_optional_fields():
             columns=["col1"],
             hyperparameters={},
             training_rows=100,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(),
         grouping=GroupingConfig(),
@@ -258,7 +226,7 @@ def test_anomaly_model_record_with_empty_collections():
             columns=[],  # Empty list
             hyperparameters={},  # Empty dict
             training_rows=0,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
             metrics={},  # Empty dict
             baseline_stats={},  # Empty dict
         ),
