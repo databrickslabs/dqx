@@ -3088,7 +3088,6 @@
     "checkingTitle": "Comprobando la preparación de Studio",
     "checkingDescription": "DQX Studio está comprobando las capacidades necesarias para iniciarse de forma segura.",
     "waitingTitle": "La configuración de Studio necesita un administrador",
-    "waitingDescription": "Póngase en contacto con un miembro de {{adminGroup}} para completar los pasos restantes de la configuración.",
     "statusUnavailableTitle": "El estado de configuración no está disponible",
     "statusUnavailableDescription": "Actualice la página para comprobar de nuevo la preparación de Studio.",
     "reconcileFailed": "No se pudo completar la configuración. Revise los pasos indicados e inténtelo de nuevo.",
@@ -3143,6 +3142,8 @@
       "title": "No puedes completar la configuración",
       "description": "Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
       "descriptionWithUser": "Has iniciado sesión como {{userName}}. Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "adminsOnly": "Solo los administradores del área de trabajo pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "adminsOnlyWithUser": "Has iniciado sesión como {{userName}}. Solo los administradores del área de trabajo pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
       "configurationPending": "Esperando a que un administrador elija el catálogo, el prefijo de almacenamiento y el grupo de usuarios."
     },
     "warningsReview": {

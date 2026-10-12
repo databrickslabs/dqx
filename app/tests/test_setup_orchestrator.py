@@ -777,6 +777,19 @@ async def test_ready_unattended_reconcile_returns_cached_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ready_reverify_by_an_admin_without_a_user_name_still_runs() -> None:
+    """An administrator whose user record has no name must still be able to verify again."""
+    harness = _harness(resolved=SAVED)
+    await harness.orchestrator.reconcile()
+    harness.events.clear()
+
+    await harness.orchestrator.reconcile(setup_user=None, reader_ws=create_autospec(WorkspaceClient, instance=True))
+
+    assert SetupStepId.UNITY_CATALOG.value in harness.events
+    assert not any(event.startswith("grant_admin:") for event in harness.events)
+
+
+@pytest.mark.asyncio
 async def test_invalid_saved_configuration_is_action_required() -> None:
     events: list[str] = []
     invalid = ResolvedConfiguration(
@@ -1479,7 +1492,7 @@ async def test_override_is_refused_without_an_override_store() -> None:
 @pytest.mark.asyncio
 async def test_ai_step_runs_between_access_and_app_sharing_and_its_warning_does_not_block() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_unverified", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_unverified", StepState.WARNING))
     harness = _harness(events, ai=ai)
 
     report = await harness.orchestrator.reconcile()
@@ -1494,7 +1507,7 @@ async def test_ai_step_runs_between_access_and_app_sharing_and_its_warning_does_
 @pytest.mark.asyncio
 async def test_ai_override_keeps_ai_on_and_marks_the_step_overridden() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_missing", StepState.WARNING))
     harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
     await harness.orchestrator.reconcile()
 
@@ -1508,7 +1521,7 @@ async def test_ai_override_keeps_ai_on_and_marks_the_step_overridden() -> None:
 @pytest.mark.asyncio
 async def test_ai_override_stops_applying_when_the_endpoint_changes() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_missing", StepState.WARNING))
     harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
     await harness.orchestrator.reconcile()
     await harness.orchestrator.override(SetupStepId.AI, setup_user="admin@example.com")

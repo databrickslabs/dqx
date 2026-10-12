@@ -1,4 +1,4 @@
-"""Tests for the non-blocking AI model access setup check."""
+"""Tests for the non-blocking AI model endpoint setup check."""
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -10,9 +10,7 @@ from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
 from databricks_labs_dqx_app.backend.setup.ai_access import AiAccess
-from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
-from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 
 
 @dataclass
@@ -44,90 +42,53 @@ class FakeAiSettings:
 
 
 @pytest.fixture
-def resources() -> ActiveResources:
-    return ActiveResources(
-        volume=VolumeLocation("main", "dqx_studio", "wheels", "/Volumes/main/dqx_studio/wheels"),
-        lakebase=LakebaseConnection(
-            endpoint="projects/p/branches/b/endpoints/e",
-            host=None,
-            port=5432,
-            database="databricks_postgres",
-            username=None,
-            password=None,
-            schema="dqx_studio",
-        ),
-        warehouse_id="warehouse-id",
-        job_id=None,
-        tmp_schema="dqx_studio_tmp",
-        genie_schema="dqx_studio_genie",
-        demo_schema="dqx_studio_demo",
-        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
-    )
-
-
-def _acl(*entries: tuple[str, str]) -> SimpleNamespace:
-    return SimpleNamespace(
-        access_control_list=[
-            SimpleNamespace(
-                group_name=group,
-                service_principal_name=None,
-                user_name=None,
-                all_permissions=[SimpleNamespace(permission_level=level)],
-            )
-            for group, level in entries
-        ]
-    )
-
-
-@pytest.fixture
 def workspace() -> MagicMock:
     client = create_autospec(WorkspaceClient, instance=True)
-    client.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id=f"id-{name}")
-    client.serving_endpoints.get_permissions.return_value = _acl(("data-team", "CAN_QUERY"))
+    # Databricks-hosted models are listed without an endpoint ID.
+    client.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id=None, name=name)
     return client
 
 
-def _check(resources: ActiveResources, workspace: MagicMock, settings: FakeAiSettings, reader: MagicMock | None = None):
-    return AiAccess(resources=resources, workspace=workspace, settings=settings).check_ai_access(reader)
+@pytest.fixture
+def admin() -> MagicMock:
+    """Setup administrator's client; its presence makes the check attended."""
+    client = create_autospec(WorkspaceClient, instance=True)
+    client.serving_endpoints.get.side_effect = NotFound("not visible to the admin either")
+    return client
 
 
-def test_passes_when_the_audience_can_query_every_endpoint(resources, workspace) -> None:
+def _check(workspace: MagicMock, settings: FakeAiSettings, reader: MagicMock | None = None):
+    return AiAccess(workspace=workspace, settings=settings).check_ai_access(reader)
+
+
+def test_passes_when_every_endpoint_is_listed(workspace) -> None:
     settings = FakeAiSettings()
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings)
 
     assert step.id == SetupStepId.AI
     assert step.state == StepState.PASSED
+    assert step.summary == "The AI models are available."
     assert settings.saves == []
+    assert {call.args[0] for call in workspace.serving_endpoints.get.call_args_list} == {
+        "chat-endpoint",
+        "embed-endpoint",
+    }
+
+
+def test_never_reads_permissions_grants_or_queries(workspace) -> None:
+    _check(workspace, FakeAiSettings())
+
+    workspace.serving_endpoints.get_permissions.assert_not_called()
     workspace.serving_endpoints.update_permissions.assert_not_called()
+    workspace.serving_endpoints.query.assert_not_called()
 
 
-def test_all_workspace_users_with_query_access_covers_the_audience(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.return_value = _acl(("users", "CAN_QUERY"))
-
-    assert _check(resources, workspace, FakeAiSettings()).state == StepState.PASSED
-
-
-def test_missing_access_is_granted_then_reverified(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.side_effect = [
-        _acl(),
-        _acl(("data-team", "CAN_QUERY")),
-        _acl(("data-team", "CAN_MANAGE")),
-    ]
-
-    step = _check(resources, workspace, FakeAiSettings(embedding="chat-endpoint"))
-
-    assert step.state == StepState.PASSED
-    request = workspace.serving_endpoints.update_permissions.call_args.kwargs["access_control_list"][0]
-    assert request.group_name == "data-team"
-    assert request.permission_level.value == "CAN_QUERY"
-
-
-def test_missing_endpoint_warns_and_turns_default_ai_off(resources, workspace) -> None:
+def test_missing_endpoint_warns_and_turns_default_ai_off(workspace, admin) -> None:
     workspace.serving_endpoints.get.side_effect = NotFound("no such endpoint")
     settings = FakeAiSettings()
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings, admin)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_endpoint_missing"
@@ -135,43 +96,35 @@ def test_missing_endpoint_warns_and_turns_default_ai_off(resources, workspace) -
     assert settings.enabled is False
     assert settings.source == "setup"
     assert "turned off" in step.summary
+    assert any("`chat-endpoint`" in instruction for instruction in step.instructions)
 
 
-def test_unreadable_permissions_are_unverified(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.side_effect = PermissionError("denied")
-    reader = create_autospec(WorkspaceClient, instance=True)
-    reader.serving_endpoints.get_permissions.side_effect = PermissionError("denied")
+def test_endpoint_lookup_failure_is_unverified_without_leaking_details(workspace) -> None:
+    workspace.serving_endpoints.get.side_effect = RuntimeError("internal timeout detail")
 
-    step = _check(resources, workspace, FakeAiSettings(), reader)
+    step = _check(workspace, FakeAiSettings())
 
     assert step.state == StepState.WARNING
-    assert step.code == "ai_access_unverified"
-    assert "denied" not in str(step)
-    assert any("data-team" in instruction for instruction in step.instructions)
+    assert step.code == "ai_endpoint_unverified"
+    assert "internal timeout detail" not in str(step)
 
 
-def test_permissions_fall_back_to_the_administrator_client(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.side_effect = PermissionError("denied")
-    reader = create_autospec(WorkspaceClient, instance=True)
-    reader.serving_endpoints.get_permissions.return_value = _acl(("data-team", "CAN_QUERY"))
+def test_missing_endpoint_outranks_a_failed_lookup(workspace) -> None:
+    def get(name: str) -> SimpleNamespace:
+        if name == "chat-endpoint":
+            raise NotFound("missing")
+        raise RuntimeError("timeout")
 
-    assert _check(resources, workspace, FakeAiSettings(), reader).state == StepState.PASSED
+    workspace.serving_endpoints.get.side_effect = get
 
-
-def test_access_still_missing_after_grant_names_the_group(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.return_value = _acl(("other-team", "CAN_QUERY"))
-
-    step = _check(resources, workspace, FakeAiSettings())
-
-    assert step.code == "ai_access_missing"
-    assert any("`data-team`" in instruction and "Can query" in instruction for instruction in step.instructions)
+    assert _check(workspace, FakeAiSettings()).code == "ai_endpoint_missing"
 
 
-def test_admin_enabled_ai_stays_on_when_access_fails(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.return_value = _acl()
+def test_admin_enabled_ai_stays_on_when_an_endpoint_is_missing(workspace, admin) -> None:
+    workspace.serving_endpoints.get.side_effect = NotFound("missing")
     settings = FakeAiSettings(source="admin")
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings, admin)
 
     assert step.state == StepState.WARNING
     assert settings.enabled is True
@@ -179,31 +132,31 @@ def test_admin_enabled_ai_stays_on_when_access_fails(resources, workspace) -> No
     assert "AI features are on" in step.summary
 
 
-def test_setup_turned_off_ai_comes_back_once_access_is_confirmed(resources, workspace) -> None:
+def test_setup_turned_off_ai_comes_back_once_endpoints_are_listed(workspace, admin) -> None:
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings, admin)
 
     assert step.state == StepState.PASSED
     assert settings.enabled is True
     assert settings.saves == [(True, "setup", None)]
 
 
-def test_setup_turned_off_ai_stays_off_while_access_fails(resources, workspace) -> None:
-    workspace.serving_endpoints.get_permissions.return_value = _acl()
+def test_setup_turned_off_ai_stays_off_while_an_endpoint_is_missing(workspace, admin) -> None:
+    workspace.serving_endpoints.get.side_effect = NotFound("missing")
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings, admin)
 
     assert step.state == StepState.WARNING
     assert settings.enabled is False
     assert settings.saves == []
 
 
-def test_admin_turned_off_ai_is_not_checked(resources, workspace) -> None:
+def test_admin_turned_off_ai_is_not_checked(workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="admin")
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings)
 
     assert step.state == StepState.PASSED
     assert "turned off in Settings" in step.summary
@@ -211,79 +164,61 @@ def test_admin_turned_off_ai_is_not_checked(resources, workspace) -> None:
     assert settings.saves == []
 
 
-def test_unreadable_settings_warn_without_blocking(resources, workspace) -> None:
+def test_unreadable_settings_warn_without_blocking(workspace) -> None:
     settings = FakeAiSettings()
     settings.get_ai_enabled = MagicMock(side_effect=RuntimeError("lakebase down"))
 
-    step = _check(resources, workspace, settings)
+    step = _check(workspace, settings)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_settings_unreadable"
 
 
-def test_keep_enabled_is_an_administrator_choice(resources, workspace) -> None:
+def test_keep_enabled_is_an_administrator_choice(workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    AiAccess(resources=resources, workspace=workspace, settings=settings).keep_enabled(user_email="admin@example.com")
+    AiAccess(workspace=workspace, settings=settings).keep_enabled(user_email="admin@example.com")
 
     assert settings.saves == [(True, "admin", "admin@example.com")]
 
 
-def test_endpoint_names_are_sorted_and_deduplicated(resources, workspace) -> None:
-    access = AiAccess(resources=resources, workspace=workspace, settings=FakeAiSettings(endpoint="b", embedding="a"))
+def test_endpoint_names_are_sorted_and_deduplicated(workspace) -> None:
+    access = AiAccess(workspace=workspace, settings=FakeAiSettings(endpoint="b", embedding="a"))
 
     assert access.endpoint_names() == ("a", "b")
-    same = AiAccess(resources=resources, workspace=workspace, settings=FakeAiSettings(endpoint="x", embedding="x"))
+    same = AiAccess(workspace=workspace, settings=FakeAiSettings(endpoint="x", embedding="x"))
     assert same.endpoint_names() == ("x",)
 
 
-def _hosted(workspace: MagicMock) -> None:
-    """Make every endpoint look like a Databricks-hosted model: listed, but with no endpoint ID."""
-    tasks = {"chat-endpoint": "llm/v1/chat", "embed-endpoint": "llm/v1/embeddings"}
-    workspace.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id=None, task=tasks.get(name))
-    workspace.serving_endpoints.get_permissions.side_effect = AssertionError("hosted models have no permissions")
-
-
-def test_listed_hosted_models_pass_unattended_without_a_test_call(resources, workspace) -> None:
-    _hosted(workspace)
-
-    step = _check(resources, workspace, FakeAiSettings())
-
-    assert step.state == StepState.PASSED
-    workspace.serving_endpoints.query.assert_not_called()
-
-
-def test_admin_verification_makes_one_token_test_calls_to_hosted_models(resources, workspace) -> None:
-    _hosted(workspace)
-    reader = create_autospec(WorkspaceClient, instance=True)
-
-    step = _check(resources, workspace, FakeAiSettings(), reader)
-
-    assert step.state == StepState.PASSED
-    calls = {call.kwargs["name"]: call.kwargs for call in reader.serving_endpoints.query.call_args_list}
-    assert calls["chat-endpoint"]["max_tokens"] == 1
-    assert calls["embed-endpoint"]["input"] == ["ok"]
-    workspace.serving_endpoints.query.assert_not_called()
-
-
-def test_hosted_model_that_does_not_answer_turns_ai_off(resources, workspace) -> None:
-    _hosted(workspace)
-    reader = create_autospec(WorkspaceClient, instance=True)
-    reader.serving_endpoints.query.side_effect = RuntimeError("rate limited")
+def test_unattended_check_reports_but_never_changes_the_ai_setting(workspace) -> None:
+    """A restart may not see an endpoint the administrator can, so it must not flip AI off."""
+    workspace.serving_endpoints.get.side_effect = NotFound("not visible to the app")
     settings = FakeAiSettings()
 
-    step = _check(resources, workspace, settings, reader)
+    step = _check(workspace, settings)
 
     assert step.state == StepState.WARNING
-    assert step.code == "ai_endpoint_unreachable"
-    assert settings.saves == [(False, "setup", None)]
-    assert SetupActionId.OVERRIDE in step.actions
+    assert step.code == "ai_endpoint_missing"
+    assert settings.saves == []
+    assert "until an administrator" in step.summary
 
 
-def test_endpoint_lookup_failure_is_unverified(resources, workspace) -> None:
-    workspace.serving_endpoints.get.side_effect = RuntimeError("timeout")
+def test_unattended_check_does_not_turn_setup_disabled_ai_back_on(workspace) -> None:
+    settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(resources, workspace, FakeAiSettings())
+    step = _check(workspace, settings)
 
-    assert step.state == StepState.WARNING
-    assert step.code == "ai_access_unverified"
+    assert step.state == StepState.PASSED
+    assert settings.enabled is False
+    assert settings.saves == []
+
+
+def test_endpoint_the_app_cannot_see_is_found_as_the_administrator(workspace, admin) -> None:
+    workspace.serving_endpoints.get.side_effect = NotFound("no CAN_VIEW for the app")
+    admin.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id="custom-id", name=name)
+    settings = FakeAiSettings()
+
+    step = _check(workspace, settings, admin)
+
+    assert step.state == StepState.PASSED
+    assert settings.saves == []

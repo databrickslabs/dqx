@@ -74,14 +74,18 @@ export function SetupShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+export type JobsLink = { href: string; isTaskRunnerJob: boolean };
+
 /** Link to the task-runner job when it is known, else to the workspace jobs list. */
-export function workspaceJobsUrl(
+export function workspaceJobsLink(
   workspaceHost?: string,
   jobId?: number | null,
-): string | null {
+): JobsLink | null {
   const host = workspaceHost?.trim().replace(/\/+$/, "");
   if (!host) return null;
-  return jobId ? `${host}/jobs/${jobId}` : `${host}/#job/list`;
+  return typeof jobId === "number" && jobId > 0
+    ? { href: `${host}/jobs/${jobId}`, isTaskRunnerJob: true }
+    : { href: `${host}/#job/list`, isTaskRunnerJob: false };
 }
 
 function StepIcon({ state }: { state: StepState }) {
@@ -208,8 +212,7 @@ function StepCard({
   step,
   actions,
   canManage,
-  jobsUrl,
-  hasJobId,
+  jobsLink,
   isReconciling,
   onReconcile,
   onOverride,
@@ -222,8 +225,7 @@ function StepCard({
   step: SetupStep;
   actions: SetupViewAction[];
   canManage: boolean;
-  jobsUrl: string | null;
-  hasJobId: boolean;
+  jobsLink: JobsLink | null;
   isReconciling: boolean;
   onReconcile: () => void;
   onOverride?: (stepId: SetupStep["id"]) => void;
@@ -241,9 +243,10 @@ function StepCard({
     !!configuration &&
     (configuration.source === "deployment" || configuration.source === "saved");
   const stepActions = actions.filter((action) => action.stepId === step.id);
-  // Non-administrators see the configuration step without its form; say who must complete it.
+  // Non-administrators see the configuration step without its form, so whatever it needs
+  // is for an administrator; the diagnostic code below stays visible to pass on.
   const summary =
-    !canManage && isConfigurationStep && step.state !== "passed"
+    !canManage && isConfigurationStep && step.state === "action_required"
       ? t("setup.notAdmin.configurationPending")
       : step.summary;
   const canOverride =
@@ -277,7 +280,7 @@ function StepCard({
           canOverride ||
           showForm ||
           showSummary ||
-          (canManage && step.id === "task_runner" && jobsUrl)) && (
+          (canManage && step.id === "task_runner" && jobsLink)) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
             {step.code && (
               <p className="font-mono text-xs text-muted-foreground break-all">
@@ -310,14 +313,14 @@ function StepCard({
                 onSubmit={(values) => onConfigure?.(values)}
               />
             )}
-            {canManage && step.id === "task_runner" && jobsUrl && (
+            {canManage && step.id === "task_runner" && jobsLink && (
               <a
-                href={jobsUrl}
+                href={jobsLink.href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                {hasJobId
+                {jobsLink.isTaskRunnerJob
                   ? t("setup.actions.openTaskRunnerJob")
                   : t("setup.actions.openJobs")}
                 <ExternalLink className="size-3.5" aria-hidden="true" />
@@ -399,7 +402,12 @@ export function SetupWizard({
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
   const isReview = view.kind === "review";
-  const jobsUrl = workspaceJobsUrl(workspaceHost, view.taskRunnerJobId);
+  const jobsLink = workspaceJobsLink(workspaceHost, view.taskRunnerJobId);
+  // A custom administrator group is named; the default workspace admins group is implied.
+  const customAdminGroup =
+    view.adminGroup && view.adminGroup.toLowerCase() !== "admins"
+      ? view.adminGroup
+      : null;
   const steps = progressSteps(view);
 
   if (view.kind === "checking" && steps.length === 0) return <SetupLoading />;
@@ -417,15 +425,16 @@ export function SetupWizard({
                   ? t("setup.warningsReview.title")
                   : t("setup.title")}
           </h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            {isWaiting
-              ? t("setup.waitingDescription", { adminGroup: view.adminGroup })
-              : view.kind === "checking"
+          {/* Non-administrators get the fuller notice below instead of a description. */}
+          {!isWaiting && (
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              {view.kind === "checking"
                 ? t("setup.checkingDescription")
                 : isReview
                   ? t("setup.warningsReview.description")
                   : t("setup.description")}
-          </p>
+            </p>
+          )}
           {reconciliationFailed && (
             <p className="text-sm text-destructive">
               {t("setup.reconcileFailed")}
@@ -444,14 +453,20 @@ export function SetupWizard({
             <div className="space-y-1">
               <p className="font-medium">{t("setup.notAdmin.title")}</p>
               <p className="text-muted-foreground">
-                {view.userName
-                  ? t("setup.notAdmin.descriptionWithUser", {
-                      userName: view.userName,
-                      adminGroup: view.adminGroup,
-                    })
-                  : t("setup.notAdmin.description", {
-                      adminGroup: view.adminGroup,
-                    })}
+                {customAdminGroup
+                  ? view.userName
+                    ? t("setup.notAdmin.descriptionWithUser", {
+                        userName: view.userName,
+                        adminGroup: customAdminGroup,
+                      })
+                    : t("setup.notAdmin.description", {
+                        adminGroup: customAdminGroup,
+                      })
+                  : view.userName
+                    ? t("setup.notAdmin.adminsOnlyWithUser", {
+                        userName: view.userName,
+                      })
+                    : t("setup.notAdmin.adminsOnly")}
               </p>
             </div>
           </div>
@@ -463,8 +478,7 @@ export function SetupWizard({
               step={step}
               actions={view.actions}
               canManage={view.canManage}
-              jobsUrl={jobsUrl}
-              hasJobId={view.taskRunnerJobId !== null}
+              jobsLink={jobsLink}
               isReconciling={isReconciling || isOverriding}
               onReconcile={onReconcile}
               onOverride={onOverride}

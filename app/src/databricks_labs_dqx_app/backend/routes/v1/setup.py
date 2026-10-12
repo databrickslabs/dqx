@@ -30,6 +30,8 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupOverrideRequest,
     SetupReport,
     SetupStatusResponse,
+    SetupStepId,
+    StepState,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -47,15 +49,28 @@ async def get_setup_status(
 ) -> SetupStatusResponse:
     """Return readiness, the caller's bootstrap setup access and the resolved configuration."""
     orchestrator = getattr(request.app.state, "setup_orchestrator", None)
+    report = setup_runtime.report()
     return SetupStatusResponse(
-        report=setup_runtime.report(),
+        report=report,
         can_manage=access.can_manage,
         admin_group=sanitize_setup_display(config.admin_group) or "",
-        user_name=sanitize_setup_display(access.user_name) or "",
-        # Only administrators get a link to the job, so only they need its ID.
-        task_runner_job_id=setup_runtime.job_id if access.can_manage else None,
+        user_name=access.user_name or "",
+        task_runner_job_id=_task_runner_job_id(report) if access.can_manage else None,
         configuration=orchestrator.configuration_view() if orchestrator is not None else None,
     )
+
+
+def _task_runner_job_id(report: SetupReport) -> int | None:
+    """Return the task-runner job to link to, or None when this run didn't resolve one.
+
+    The runtime keeps the last resolved job ID even after the job is deleted, so the ID is
+    only trusted when the current report's task-runner step didn't fail.
+    """
+    try:
+        step = report.step(SetupStepId.TASK_RUNNER)
+    except LookupError:
+        return None
+    return None if step.state == StepState.FAILED else setup_runtime.job_id
 
 
 def _error(status_code: int, code: str, detail: str | None = None) -> HTTPException:

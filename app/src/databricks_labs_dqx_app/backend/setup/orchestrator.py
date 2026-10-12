@@ -109,7 +109,7 @@ class AccessChecks(Protocol):
 
 
 class AiChecks(Protocol):
-    """Non-blocking check that Studio users can use the AI model endpoints."""
+    """Non-blocking check that the configured AI model endpoints exist."""
 
     def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep: ...
 
@@ -311,9 +311,12 @@ class SetupOrchestrator:
         async with self.runtime.activation_lock:
             actor = _sanitize_identity(setup_user)
             if self.runtime.report().state == SetupState.READY:
-                if actor is None:
+                # An administrator's request always carries their client, even when their
+                # user record has no name; only unattended calls return the report unchanged.
+                if actor is None and reader_ws is None:
                     return self.runtime.report()
-                await self._refresh_job_admin(actor)
+                if actor is not None:
+                    await self._refresh_job_admin(actor)
                 return await self._run_steps(
                     actor=actor,
                     grant_user=None,

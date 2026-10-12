@@ -190,32 +190,74 @@ def test_status_is_available_before_migrations(client: TestClient) -> None:
     assert response.json()["admin_group"] == "admins"
 
 
-def test_status_reports_the_signed_in_user_and_job_to_administrators(client: TestClient) -> None:
-    """Administrators get a direct link to the task-runner job."""
+JOB_ID = 914148714803833
+
+
+def _report_with_task_runner(state: StepState) -> SetupReport:
+    return SetupReport(
+        state=SetupState.READY if state == StepState.PASSED else SetupState.SETUP_REQUIRED,
+        steps=(SetupStep(id=SetupStepId.TASK_RUNNER, state=state),),
+    )
+
+
+@pytest.fixture
+def resolved_job_id(client: TestClient) -> Iterator[int]:
+    """Give the setup runtime a resolved task-runner job, restoring the previous one afterwards."""
     previous_job_id = setup_runtime.job_id
-    setup_runtime.job_id = 914148714803833
+    setup_runtime.job_id = JOB_ID
     try:
-        response = client.get("/api/v1/setup/status")
+        yield JOB_ID
     finally:
         setup_runtime.job_id = previous_job_id
+
+
+def test_status_reports_the_signed_in_user_and_job_to_administrators(client: TestClient, resolved_job_id: int) -> None:
+    """Administrators get a direct link to the task-runner job."""
+    setup_runtime.publish(_report_with_task_runner(StepState.PASSED))
+
+    response = client.get("/api/v1/setup/status")
 
     assert response.json()["user_name"] == "admin@example.com"
-    assert response.json()["task_runner_job_id"] == 914148714803833
+    assert response.json()["task_runner_job_id"] == resolved_job_id
 
 
-def test_status_hides_the_job_from_non_admins_but_names_them(client: TestClient, obo_ws: MagicMock) -> None:
+def test_status_hides_the_job_from_non_admins_but_names_them(
+    client: TestClient, obo_ws: MagicMock, resolved_job_id: int
+) -> None:
     """A non-admin is told who they are signed in as, and never sees the job ID."""
     obo_ws.current_user.me.return_value = user_in_groups("users", user_name="analyst@example.com")
-    previous_job_id = setup_runtime.job_id
-    setup_runtime.job_id = 914148714803833
-    try:
-        response = client.get("/api/v1/setup/status")
-    finally:
-        setup_runtime.job_id = previous_job_id
+    setup_runtime.publish(_report_with_task_runner(StepState.PASSED))
+
+    response = client.get("/api/v1/setup/status")
 
     assert response.json()["can_manage"] is False
     assert response.json()["user_name"] == "analyst@example.com"
     assert response.json()["task_runner_job_id"] is None
+
+
+@pytest.mark.usefixtures("resolved_job_id")
+@pytest.mark.parametrize(
+    "report",
+    [
+        _report_with_task_runner(StepState.FAILED),
+        SetupReport(
+            state=SetupState.SETUP_REQUIRED, steps=(SetupStep(id=SetupStepId.IDENTITY, state=StepState.PASSED),)
+        ),
+    ],
+)
+def test_status_omits_a_job_this_run_did_not_resolve(client: TestClient, report: SetupReport) -> None:
+    """A deleted or not-yet-resolved job must not be linked; the UI falls back to the jobs list."""
+    setup_runtime.publish(report)
+
+    assert client.get("/api/v1/setup/status").json()["task_runner_job_id"] is None
+
+
+def test_status_never_shows_the_placeholder_for_an_unnamed_user(client: TestClient, obo_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("users", user_name="")
+
+    response = client.get("/api/v1/setup/status")
+
+    assert response.json()["user_name"] == ""
 
 
 def test_status_marks_non_admin_as_waiting(client: TestClient, obo_ws: MagicMock) -> None:

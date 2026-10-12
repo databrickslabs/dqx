@@ -6,11 +6,11 @@ import re
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import EffectivePermissionsList
 
+from databricks_labs_dqx_app.backend.setup.audience import ACCOUNT_USERS
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_identifier
 
 
-ALL_ACCOUNT_USERS = "account users"
 _APPLICATION_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
@@ -166,7 +166,7 @@ class GrantInspector:
         direct = frozenset(
             row["actiontype"].upper().replace(" ", "_")
             for row in rows
-            if row["principal"].strip().casefold() in {principal.casefold(), ALL_ACCOUNT_USERS}
+            if row["principal"].strip().casefold() in {principal.casefold(), ACCOUNT_USERS}
         )
         if required.issubset(direct) or "ALL_PRIVILEGES" in direct:
             return direct

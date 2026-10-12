@@ -46,6 +46,13 @@ def test_missing_principals_treat_the_users_group_as_everyone() -> None:
     assert missing_principals(levels, ["data-team", "admins-custom"], frozenset({"CAN_USE", "CAN_MANAGE"})) == ()
 
 
+def test_users_group_level_also_covers_the_app_service_principal() -> None:
+    """Every workspace identity, service principals included, is in the users group."""
+    levels = {"users": frozenset({"CAN_MANAGE"})}
+
+    assert missing_principals(levels, ["96c991fa-88bc-4361-8963-e1876ee4bfcf"], frozenset({"CAN_MANAGE"})) == ()
+
+
 def test_missing_principals_ignore_an_insufficient_users_level() -> None:
     levels = {"users": frozenset({"CAN_VIEW"})}
 

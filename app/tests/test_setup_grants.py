@@ -105,3 +105,19 @@ def test_show_grants_account_users_grant_covers_every_principal() -> None:
 
     assert privileges is not None and has_privilege(privileges, "USE_CATALOG")
     workspace.service_principals.list.assert_not_called()
+
+
+def test_effective_permissions_count_grants_inherited_from_account_users() -> None:
+    """The effective-permissions API lists account users grants for a group; they count."""
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(
+        privilege_assignments=[
+            EffectivePrivilegeAssignment(
+                principal="account users", privileges=[EffectivePrivilege(privilege=Privilege.USE_CATALOG)]
+            )
+        ]
+    )
+
+    privileges = GrantInspector(workspace).privileges("CATALOG", "main", "data-team")
+
+    assert privileges is not None and has_privilege(privileges, "USE_CATALOG")

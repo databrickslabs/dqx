@@ -271,7 +271,7 @@ class _Binder:
             delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
             activation=_Activation(context),
-            ai=AiAccess(resources=resources, workspace=sp_ws, settings=self.settings),
+            ai=AiAccess(workspace=sp_ws, settings=self.settings),
         )
         # Track the context only once every collaborator exists, so a failed bind leaves nothing behind.
         self.context = context
