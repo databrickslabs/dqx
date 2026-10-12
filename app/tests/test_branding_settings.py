@@ -128,6 +128,7 @@ class TestBrandingSettings:
         with pytest.raises(BrandingValidationError):
             svc.get_branding_logo("sepia")
 
+
 class TestCustomPresets:
     def test_edited_theme_is_kept_as_custom_preset(self, svc):
         out = svc.save_branding_theme(None, {"brand": "#112233"}, False, {})
@@ -176,7 +177,9 @@ class TestCustomPresets:
         assert [e["id"] for e in svc.get_branding()["edited_presets"]] == ["solarized", "nord"]
 
     def test_invalid_stored_preset_edits_dropped(self, svc, store):
-        store["branding_v1"] = json.dumps({"edited_presets": [{"id": "neon"}, {"id": "nord", "light": {"colors": {"brand": "#5E81AC"}}}]})
+        store["branding_v1"] = json.dumps(
+            {"edited_presets": [{"id": "neon"}, {"id": "nord", "light": {"colors": {"brand": "#5E81AC"}}}]}
+        )
         assert svc.get_branding()["edited_presets"] == [
             {"id": "nord", "light": {"colors": {"brand": "#5E81AC"}}, "dark": {"customised": False, "colors": {}}}
         ]
@@ -236,7 +239,10 @@ class TestCustomPresets:
 
     def test_corrupt_custom_presets_dropped(self, svc, store):
         store["branding_v1"] = json.dumps(
-            {"preset": "custom-2", "custom_presets": [{"id": "evil"}, "x", {"id": "custom-2", "light": {"colors": {"brand": "red"}}}]}
+            {
+                "preset": "custom-2",
+                "custom_presets": [{"id": "evil"}, "x", {"id": "custom-2", "light": {"colors": {"brand": "red"}}}],
+            }
         )
         branding = svc.get_branding()
         assert branding["preset"] == "custom-2"

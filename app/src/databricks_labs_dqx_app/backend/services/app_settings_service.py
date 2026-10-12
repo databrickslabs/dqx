@@ -1381,9 +1381,7 @@ class AppSettingsService:
         return self._save_branding(branding, user_email)
 
     @staticmethod
-    def _custom_preset_for(
-        custom: list[dict[str, object]], light: dict[str, object], dark: dict[str, object]
-    ) -> str:
+    def _custom_preset_for(custom: list[dict[str, object]], light: dict[str, object], dark: dict[str, object]) -> str:
         for existing in custom:
             if existing["light"] == light and existing["dark"] == dark:
                 return str(existing["id"])

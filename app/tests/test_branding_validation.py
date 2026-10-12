@@ -100,7 +100,6 @@ class TestPresetAndLogoMode:
             validate_preset("neon")
 
 
-
 class TestDecodeLogo:
     @pytest.mark.parametrize(
         "raw,mime", [(PNG_BYTES, "image/png"), (JPEG_BYTES, "image/jpeg"), (WEBP_BYTES, "image/webp")]
