@@ -6,6 +6,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.types import (
     BooleanType,
+    DecimalType,
     DoubleType,
     MapType,
     StringType,
@@ -53,61 +54,30 @@ def displayed_severity_decimals(threshold: float) -> int:
 
 
 def displayed_severity_expr(severity: Column, threshold: float) -> Column:
-    """Publish a severity a reader can compare against the threshold and reach the same verdict.
+    """Floor the published severity without changing the full-precision anomaly decision.
 
-    The flag is decided on the full-precision severity, and so is every other consumer -- the
-    contributions gate on both the Spark and numpy sides, and the AI-explanation gates. Only the published
-    number was lossy: it was *rounded* to one decimal, so a row at 94.96 was shown as 95.0 and not flagged
-    at a threshold of 95. Nothing was wrong with the decision, but a reader comparing the two numbers
-    disagreed with it, which a black-box evaluation found in 477 of 912 scoring cells -- every audited
-    disagreement sitting exactly at displayed threshold equality.
+    The display uses the threshold's precision so comparing it against that threshold gives the
+    same verdict as comparing the original severity. Null values remain null.
 
-    Flooring instead of rounding is what closes it, and it changes no flag at all. Flooring gives
-    ``displayed <= actual``, so ``displayed >= threshold`` implies ``actual >= threshold``; and because the
-    floor is taken at the threshold's own precision, ``actual >= threshold`` implies
-    ``displayed >= threshold`` too. The two verdicts therefore agree exactly.
+    Spark implicitly converts a double passed to the two-argument SQL floor to a decimal with
+    insufficient scale: 0.8999999999999999 becomes 0.900000000000000 before flooring. Explicit
+    decimal precision preserves the float neighbours of thresholds, including thresholds at the
+    ten-decimal precision supported by displayed_severity_decimals. The severity range is 0–100,
+    so eight integer digits and thirty fractional digits leave ample space for that conversion.
 
-    The precision is derived rather than fixed at one decimal, because a fixed decimal is correct only for
-    thresholds that happen to be that precise. Measured over dense sweeps around each threshold plus the
-    float neighbours of every gridpoint: rounding disagrees on 560 sampled values at each of 90, 95, 99,
-    99.5 and 99.9, while flooring at one decimal disagrees on none of those but on 560 at a threshold of
-    99.95.
-
-    **The floor is taken in decimal space, not by scaling and flooring**, and that distinction is the whole
-    correctness argument rather than a stylistic one. ``floor(severity * 10**n) / 10**n`` looks equivalent
-    and is not: the multiply is a double operation that can round *up* across an integer, so the floor lands
-    exactly on the threshold for a row whose true severity is one ulp below it -- reintroducing this defect
-    in its harmful direction, where the display reads at the threshold and the flag says no. Enumerated over
-    every legal threshold at each precision, the scaling form disagrees at 98 of 1000 one-decimal thresholds
-    (0.9, 1.8, 3.6 and so on), 140 of 1001 two-decimal, and 30 of 1001 three-decimal; the decimal form
-    disagrees at none. The failing thresholds are all outside the commonly used range, which is exactly why
-    a sweep of 90, 95, 99, 99.5 and 99.9 misses them -- so the tests sweep thresholds too, not only values.
-
-    ``floor(expr, scale)`` is called through *call_function* rather than
-    ``F.floor(col, scale)`` because the two-argument Python wrapper only exists in PySpark 4, while this
-    package supports a ``databricks-connect`` floor of 15.4 whose client is PySpark 3.5. The SQL function
-    itself has taken a scale since Spark 3.3, so every supported runtime provides it.
-
-    Rounding the *decision* to match the display would also make the two agree, and is the wrong trade: it
-    would begin flagging every row in ``[threshold - 0.05, threshold)``, changing the detector to fix a
-    presentation defect.
+    Use call_function because the two-argument Python floor wrapper requires PySpark 4, while the
+    SQL function is supported by every supported runtime. Cast back to double to preserve the
+    published schema.
 
     Args:
-        severity: The full-precision severity column. Null passes through null.
+        severity: The full-precision severity column.
         threshold: The severity percentile a row must reach to be flagged.
 
     Returns:
-        The severity to publish: never above the true value, and never below it by enough to change how it
-        compares against *threshold*.
+        The severity rounded down at the threshold's display precision.
     """
-    # Cast back to double explicitly, so this helper's own return type is a double whatever the SQL
-    # function decides: ``floor(expr, scale)`` does not promise its input's type, and on serverless
-    # ``floor(<double>, 1)`` returns ``decimal(17,1)``. Nothing published is decimal today even without
-    # this cast -- both call sites coerce, one via ``add_info_column``'s cast of the whole struct to
-    # anomaly_info_struct_schema and one with a cast of its own -- so the cast is not load-bearing. It
-    # stays because a helper named "displayed severity" handing back a decimal is a trap for the next
-    # caller, who would have to know about a cast two functions away to stay correct.
-    return F.call_function("floor", severity, F.lit(displayed_severity_decimals(threshold))).cast(DoubleType())
+    precise_severity = severity.cast(DecimalType(38, 30))
+    return F.call_function("floor", precise_severity, F.lit(displayed_severity_decimals(threshold))).cast(DoubleType())
 
 
 def create_null_scored_dataframe(

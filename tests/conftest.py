@@ -11,11 +11,6 @@ from functools import cached_property
 from io import BytesIO
 from typing import Any
 
-# Apply numba/coverage patches before any other imports that might trigger numba
-# This must be imported early (before third-party imports) to patch coverage types
-# See pyproject.toml per-file-ignores for ignored checks (wrong-import-order, unused-import)
-import tests.compat  # noqa: F401
-
 import pytest
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 from databricks.labs.blueprint.installation import Installation, MockInstallation

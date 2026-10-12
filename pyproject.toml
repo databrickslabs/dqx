@@ -144,8 +144,9 @@ lint = [
     "types-requests~=2.31.0",
 ]
 test = [
+    "argcomplete~=3.6",  # pytester type annotations follow pytest optional completion helpers.
     "pip~=26.0",  # required by databricks-labs-blueprint WheelsV2 which calls `pip wheel`; remove after blueprint migrates to uv
-    "coverage[toml]~=7.4.4",
+    "coverage[toml]~=7.6.1",  # Numba 0.62+ needs coverage.types.Tracer (numba/numba#10239).
     "databricks-labs-pytester~=0.7.4",
     "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
@@ -365,10 +366,6 @@ load-plugins = [
     "pylint.extensions.typing",
     "pylint_per_file_ignores",
 ]
-# Per-file pylint ignores for tests/conftest.py
-# - wrong-import-order: tests.compat must be imported before third-party imports to apply numba/coverage patches
-# - unused-import: tests.compat is imported for side effects (applying patches), not for direct use
-per-file-ignores = "tests/conftest.py:wrong-import-order,unused-import"
 
 # Pickle collected data for later comparisons.
 persistent = true

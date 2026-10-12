@@ -25,6 +25,7 @@ def test_discovery_respects_declared_grouping(discovery_basis_df, baseline_by):
     assert set(profile.recommended_segments) == set(expected_groups)
     assert set(profile.recommended_columns) == {"amount", "region", "channel"}.difference(expected_groups)
     assert "event_time" not in profile.recommended_columns
+    assert profile.column_types == {"amount": "numeric", "region": "categorical", "channel": "categorical"}
 
 
 @pytest.mark.parametrize("via_params", [False, True])
@@ -76,6 +77,26 @@ def test_comparison_basis_does_not_consume_feature_slots(spark):
     profile = auto_discover_columns(df, baseline_by=["baseline_category"], baseline_over_time="event_time")
     assert len(profile.recommended_columns) == 10
     assert set(profile.recommended_columns) == set(columns[2:])
+    assert profile.column_types == {name: "categorical" for name in ("baseline_category", *columns[2:])}
+
+
+@pytest.mark.parametrize(
+    "group_type,group_values,expected_type",
+    [
+        ("int", [1, 2], "numeric"),
+        ("boolean", [False, True], "boolean"),
+        ("string", ["east", "west"], "categorical"),
+    ],
+)
+def test_explicit_grouping_preserves_its_analyzed_type(spark, group_type, group_values, expected_type):
+    df = spark.createDataFrame(
+        [(group_values[index % 2], float(index)) for index in range(20)],
+        f"region {group_type}, amount double",
+    )
+    profile = auto_discover_columns(df, baseline_by=["region"])
+    assert profile.recommended_segments == ["region"]
+    assert profile.recommended_columns == ["amount"]
+    assert profile.column_types == {"amount": "numeric", "region": expected_type}
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
@@ -441,6 +462,7 @@ def test_autodiscovery_with_many_columns(spark):
 
     # Should select exactly 10 columns (max limit)
     assert len(profile.recommended_columns) == 10
+    assert profile.column_types == {name: "numeric" for name in profile.recommended_columns}
 
     # Should have warning about too many columns (lines 169-173)
     # Note: The actual count may be 14 or 15 depending on variance filtering

@@ -613,8 +613,13 @@ def _auto_discover_heuristic(
 
     # Resolve the comparison basis before the feature limit so a basis column cannot consume a
     # feature slot. Explicit grouping also prevents unrelated suggested groups from disappearing.
-    candidates = [candidate for candidate in candidates if candidate[1] not in recommended_segments]
-    recommended_columns, column_types = _select_top_columns(candidates, 10, warnings)
+    feature_candidates = [candidate for candidate in candidates if candidate[1] not in recommended_segments]
+    recommended_columns, column_types = _select_top_columns(feature_candidates, 10, warnings)
+    # Grouping changes a column's role, not its analyzed type. Keep its type without expanding the
+    # metadata to unrelated feature candidates omitted by the feature limit.
+    column_types.update(
+        {candidate[1]: candidate[2] for candidate in candidates if candidate[1] in recommended_segments}
+    )
 
     return AnomalyProfile(
         recommended_columns=recommended_columns,

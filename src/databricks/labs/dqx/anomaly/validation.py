@@ -7,6 +7,7 @@
 
 import collections
 import collections.abc
+import math
 import warnings
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
@@ -299,6 +300,8 @@ def _validate_float_range(
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidParameterError(f"{label} must be a numeric value.")
     numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        raise InvalidParameterError(f"{label} must be a finite numeric value.")
     if min_exclusive is not None and numeric_value <= min_exclusive:
         raise InvalidParameterError(f"{label} must be > {min_exclusive}. Got {value}.")
     if max_inclusive is not None and numeric_value > max_inclusive:

@@ -1,0 +1,107 @@
+# implementation.plan — PR #1489 anomaly fixes and test hardening
+
+## Summary and agreed decisions
+
+Fix the three persistent CI failures and improve the anomaly module's unit, integration and E2E tests within the existing PR, using separate GPG-signed commits.
+Work in the existing group-cond checkout on feat/anomaly-group-conditioning, starting from verified head e9f6fd97. Preserve unrelated changes and existing history.
+No public API, profile-name, reporting-schema or model-metadata-format changes are planned. Restore the intended discovery contract without introducing another compatibility or retraining requirement.
+
+## 1. Diagnose and repair the current failures
+
+### Preserve actionable diagnostics first
+
+- Add an opt-in, anomaly-scoped pytest reporting hook. Write separate sanitized reports per test, process and attempt to an absolute directory supplied through DQX_TEST_DIAGNOSTICS_DIR.
+- Retain exception types, chains and available tracebacks without local variables, input rows, credentials or raw HTTP traffic. Test the reporter with synthetic failures and redaction cases.
+- Upload reports after success or failure, with seven-day retention. Preserve the acceptance action's existing reporting.
+- Record tested source revision, wheel checksum, actual compute type and loaded client/worker package versions. Include DQX, Python, Spark, MLflow, scikit-learn, SHAP, numba, coverage, NumPy, pandas, PyArrow and cloudpickle.
+- If the client still receives an empty worker exception, use a targeted workspace reproduction to obtain worker-side diagnostics.
+
+### Profiler repair
+
+- Preserve the original candidates.
+- Select the maximum ten features from candidates excluding the resolved grouping columns.
+- Restore grouping-column types from the original candidates into the returned type map.
+- Preserve existing treatment of omitted candidates beyond the feature limit.
+- Keep the failing cardinality test unchanged; add assertions covering automatic grouping, explicit grouping, grouping opt-out and the feature limit.
+
+### Collision repair
+
+- Reproduce all four existing single/ensemble × driver/distributed variants, initially serially without test retries.
+- Preserve the original map/double collision fields, duplicate rows, two consecutive checks and threshold zero.
+- Diagnose differences through narrowly controlled variants: contributions on/off, one/two checks, and individual collision fields.
+- If code or dependency provenance differs, correct the packaged installation or supported dependency constraints through the existing build/lock workflows. Do not copy test-only compatibility patches into production.
+- If a scoring defect remains with matched environments, fix the implicated boundary and retain the original regression.
+- Do not replace the existing distributed output-isolation design without evidence that it causes the failure.
+
+The worker exception remains a diagnostic dependency. An unresolved traceback must remain an explicit blocker rather than prompting a speculative fix.
+
+## 2. Audit and strengthen the test suite
+
+Review every anomaly unit and integration module, plus related explanation and E2E tests. Maintain a behavior-to-test inventory recording execution mode, dependencies, assertions and remaining gaps.
+
+### Unit tests
+
+- Replace the 22 literal-only validation tests with parameterized calls to production validators or public entry points. Cover meaningful boundaries, invalid types, empty values and non-finite numbers where applicable.
+- Remove outdated registry-name and segmentation assumptions.
+- Replace explainer tests that merely assert a non-null Spark expression with integration tests that materialize the result and prove severity precedence, threshold behavior and contributor selection.
+- Reduce internal constructor/call-order patching in affected registry and workflow tests. Prefer existing injection seams, autospec dependencies and shared fixtures; add only small internal seams when necessary.
+- Keep real Spark execution in integration tests. Move genuinely pure tests out of workspace-backed suites.
+- Preserve strong numerical tests using independent expectations, deterministic fixtures, real estimators and justified tolerances.
+
+### Integration assertions
+
+- Assert expected row coverage and score nullability before computing quality metrics. Explicitly account for intentionally unscored unseen groups.
+- Replace comparisons that truncate unequal results or silently skip null scores.
+- Check threshold monotonicity using nested sets of flagged row identities, not counts alone.
+- Use controlled perturbations to verify meaningful top contributors.
+- Assert contributions through the public nested output, including disabled behavior.
+- Compare row multisets or stable identities with duplicate counts; never rely on incidental Spark collection order.
+
+Validate sensitivity with a small disposable-checkout exercise: deliberately break validation, grouping-type preservation and scorer output restoration, and confirm the relevant tests fail. Do not introduce a general mutation-testing framework.
+
+## 3. Establish explicit production-path coverage
+
+Use this compact scoring matrix on both classic and serverless CI:
+
+| Model configuration | Execution | Contributions |
+|---|---|---|
+| Distribution, single model | Driver and distributed | Off and on |
+| Distribution, ensemble | Driver and distributed | Off and on |
+| Correlation, single model | Driver and distributed | Off and on |
+
+Train once per model configuration within the appropriate fixture lifetime and score the same persisted model through both execution modes. Verify correlation's documented single-model resolution separately.
+Every matrix case must check original values/schema, duplicate preservation, finite supported scores, severity/verdict parity, contribution contracts and absence of leaked temporary columns.
+Use representative cases—not a full Cartesian expansion—for grouping, time conditioning, combined conditioning, mixed categories, nulls, unseen groups, row filters, multiple checks, repeated application, column reordering and partition changes. Include targeted ensemble confidence-standard-deviation coverage and metadata/programmatic API parity.
+Add a maintained packaged-artifact test that trains/registers, starts a fresh process or session, reloads and scores using the exact built wheel. Include contribution-enabled distributed scoring in E2E and record the actual compute used.
+
+### AI tests
+
+- Separate numerical correlation, persistence and attribution checks from live endpoint availability.
+- Extend the existing real-Spark tests that substitute only the serving boundary: complete-prompt redaction, response formats, malformed/null responses, grouping limits and row preservation.
+- Keep live explanation smoke small and separately identified.
+- Skip only recognized unavailable-endpoint conditions; unexpected application failures remain failures.
+- Rename unsupported one-call-per-group claims or instrument the actual boundary. Constructed expressions and identical narratives do not establish request counts.
+
+## 4. CI, resource ownership and acceptance
+
+- Preserve first-attempt and retry outcomes separately. Disable blanket retries in manual deterministic regression runs; retain only narrowly classified, bounded infrastructure retries.
+- Keep manual and CI suite selection aligned. A retry-success result must not conceal a first-attempt deterministic regression.
+- Enable branch coverage consistently and publish available coverage after failures without replacing the original failure.
+- Distinguish client coverage from remote-worker execution evidence. Add remote coverage only through supported collection mechanisms; do not claim it exists based on client coverage.
+- Investigate Codecov failures without weakening thresholds or adding exclusions to obtain green checks.
+- Correct the anomaly merge-queue gate while preserving fork and secret-access protections.
+- Register cleanup immediately after acquiring resources, including before training. Retain factory-based ownership and report unresolved test-owned resources.
+
+Acceptance sequence:
+1. Reproduce the original failures and preserve diagnostics.
+2. Pass the targeted repairs and strengthened tests.
+3. Run make fmt, make test, then make docs-build on the final source tree.
+4. Pass the complete classic/serverless anomaly suites, related explanation integration tests and packaged E2E coverage.
+5. Reconcile every planned behavior with actual results, including skips, retries, cleanup failures and coverage limitations.
+
+## 5. Execution limits and handoff
+
+Manual Databricks diagnosis and verification have a four-hour wall-clock window from the first manual submission, with at most two concurrent STANDARD-serverless tasks and ten unique live narrative groups across the campaign. Disable AI elsewhere. Existing full CI suites retain their configured limits.
+Use synthetic inputs and uniquely owned resources. At the deadline, stop only run-owned tasks, export available evidence and perform exact-resource cleanup. Report incomplete checks explicitly; do not extend the budget automatically.
+Keep fixes, unit-test improvements, integration contracts and CI changes in focused commits. Run formatting before every commit, GPG-sign every commit and verify its signature.
+Handoff includes signed commit hashes, the behavior-to-test inventory, exact source/artifact identities, first-attempt results, remaining limitations and cleanup outcomes. Implementation ends with reviewable local changes and evidence; pushing or posting reviewer replies is a separate step.
