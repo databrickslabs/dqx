@@ -1,6 +1,7 @@
 """Route tests for /api/v1/config/branding."""
 
 import base64
+import logging
 
 import pytest
 from fastapi import FastAPI
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.common.branding import MAX_LOGO_BASE64_LENGTH
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, get_user_role
+from databricks_labs_dqx_app.backend.logger import logger as app_logger
 from databricks_labs_dqx_app.backend.routes.v1.branding import router
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 
@@ -45,11 +47,11 @@ def settings(sql_executor_mock) -> AppSettingsService:
     return AppSettingsService(sql=sql_executor_mock)
 
 
-def _client(settings: AppSettingsService, role: UserRole) -> TestClient:
+def _client(settings: AppSettingsService, role: UserRole, email: str = "user@x") -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/config/branding")
     app.dependency_overrides[get_app_settings_service] = lambda: settings
-    app.dependency_overrides[get_user_email] = lambda: "user@x"
+    app.dependency_overrides[get_user_email] = lambda: email
     app.dependency_overrides[get_user_role] = lambda: role
     return TestClient(app)
 
@@ -203,3 +205,18 @@ class TestLogoMimeAllowlist:
     def test_non_image_mime_in_db_served_as_404(self, admin, viewer, settings):
         settings.save_branding_logo("light", "text/html", b"<script>alert(1)</script>", user_email="a@x")
         assert viewer.get("/api/v1/config/branding/logo/light").status_code == 404
+
+
+class TestLogSafety:
+    def test_actor_email_control_characters_are_not_logged(self, settings, caplog):
+        client = _client(settings, UserRole.ADMIN, email="user@x\nFORGED log line")
+        # The app logger doesn't propagate to root, so attach caplog's handler to it directly.
+        app_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.INFO, logger=app_logger.name):
+                resp = client.put("/api/v1/config/branding/company-name", json={"company_name": "Acme"})
+        finally:
+            app_logger.removeHandler(caplog.handler)
+        assert resp.status_code == 200
+        lines = [r.getMessage() for r in caplog.records if "company name" in r.getMessage()]
+        assert lines and all("\n" not in line for line in lines)

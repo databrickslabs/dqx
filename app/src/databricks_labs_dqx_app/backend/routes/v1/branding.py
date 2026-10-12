@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_u
 from databricks_labs_dqx_app.backend.common.branding import BrandingValidationError, decode_logo
 from databricks_labs_dqx_app.backend.dependencies import get_app_settings_service, require_role
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.models import (
     BrandingCompanyNameIn,
     BrandingCustomPresetOut,
@@ -77,6 +78,11 @@ def _to_out(svc: AppSettingsService) -> BrandingOut:
     )
 
 
+def _actor(email: str) -> str:
+    """The acting user's email, safe to embed in a log line (CWE-117)."""
+    return replace_control_characters(email)
+
+
 def _bad_request(e: BrandingValidationError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(e))
 
@@ -100,7 +106,7 @@ def save_company_name(body: BrandingCompanyNameIn, svc: SettingsDep, email: Emai
         svc.save_branding_company_name(body.company_name, user_email=email)
     except BrandingValidationError as e:
         raise _bad_request(e) from e
-    logger.info(f"Saved branding company name (by={email})")
+    logger.info(f"Saved branding company name (by={_actor(email)})")
     return _to_out(svc)
 
 
@@ -113,7 +119,7 @@ def save_theme(body: BrandingThemeIn, svc: SettingsDep, email: EmailDep) -> Bran
         )
     except BrandingValidationError as e:
         raise _bad_request(e) from e
-    logger.info(f"Saved branding theme (by={email})")
+    logger.info(f"Saved branding theme (by={_actor(email)})")
     return _to_out(svc)
 
 
@@ -130,7 +136,7 @@ def rename_custom_preset(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except BrandingValidationError as e:
         raise _bad_request(e) from e
-    logger.info(f"Renamed a custom branding preset (by={email})")
+    logger.info(f"Renamed a custom branding preset (by={_actor(email)})")
     return _to_out(svc)
 
 
@@ -143,7 +149,7 @@ def delete_custom_preset(preset_id: str, svc: SettingsDep, email: EmailDep) -> B
         svc.delete_branding_custom_preset(preset_id, user_email=email)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    logger.info(f"Deleted a custom branding preset (by={email})")
+    logger.info(f"Deleted a custom branding preset (by={_actor(email)})")
     return _to_out(svc)
 
 
@@ -155,7 +161,7 @@ def upload_logo(slot: str, body: BrandingLogoIn, svc: SettingsDep, email: EmailD
         svc.save_branding_logo(slot, mime, raw, user_email=email)
     except BrandingValidationError as e:
         raise _bad_request(e) from e
-    logger.info(f"Saved {slot} branding logo ({len(raw)} bytes, by={email})")
+    logger.info(f"Saved {slot} branding logo ({len(raw)} bytes, by={_actor(email)})")
     return _to_out(svc)
 
 
