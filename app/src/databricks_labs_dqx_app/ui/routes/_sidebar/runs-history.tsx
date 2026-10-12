@@ -170,7 +170,7 @@ function StatusBadge({ status }: { status: string | null }) {
       );
     case "CANCELED":
       return (
-        <Badge variant="outline" className="gap-1 border-gray-400 text-gray-500">
+        <Badge variant="outline" className="gap-1 border-border text-muted-foreground">
           <CircleStop className="h-3 w-3" />
           {t("runsHistory.canceledBadge")}
         </Badge>

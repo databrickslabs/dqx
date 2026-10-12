@@ -8,7 +8,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import EntityTagAssignment
 
-from databricks_labs_dqx_app.backend.demo.manifest import SOURCE_SCHEMA
 from databricks_labs_dqx_app.backend.migrations import ANALYTICAL_TABLE_NAMES
 from databricks_labs_dqx_app.backend.services.entitlement_service import (
     ENTITLEMENTS_TABLE_NAME,
@@ -121,7 +120,7 @@ def startup_tag_targets(resources: ActiveResources, include_bundle_resources: bo
         targets.update(
             {
                 TagTarget("schemas", f"{catalog}.{schema}"),
-                TagTarget("schemas", f"{catalog}.{SOURCE_SCHEMA}"),
+                TagTarget("schemas", f"{catalog}.{resources.demo_schema}"),
                 TagTarget("volumes", f"{catalog}.{schema}.{resources.volume.volume}"),
             }
         )
