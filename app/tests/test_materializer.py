@@ -576,6 +576,30 @@ class TestRenderCheckNativeNegate:
         )
         assert "negate" not in check["check"]["arguments"]
 
+    def test_stored_polarity_on_a_function_without_negate_is_ignored(self):
+        """A rule saved with a polarity whose function has no ``negate``
+        (``is_not_in_list``) still runs — DQX would reject the argument."""
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["Canada"]}},
+                "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "leadproduct"},
+            effective_severity="Critical",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+        )
+        assert check["check"]["arguments"] == {"column": "leadproduct", "forbidden": ["Canada"]}
+
 
 class TestRenderCheckSqlMode:
     def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
