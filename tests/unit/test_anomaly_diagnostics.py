@@ -580,3 +580,11 @@ def test_notebook_traceback_retains_ansi_frames_and_message_free_assertions(loca
         "hints": [],
     }
     assert "secret" not in json.dumps(result) and "private" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("error_type", ["PySparkNotImplementedError", "NotImplementedError", "InvalidConfigError"])
+def test_worker_traceback_retains_platform_and_configuration_error_types(error_type: str) -> None:
+    message = f"{error_type}: [NOT_IMPLEMENTED] PRIVATE_PAYLOAD"
+    result = worker_traceback(message)
+    assert result["error_types"] == [error_type]
+    assert "PRIVATE_PAYLOAD" not in json.dumps(result)

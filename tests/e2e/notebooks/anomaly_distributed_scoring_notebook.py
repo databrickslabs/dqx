@@ -146,11 +146,17 @@ if phase == "score":
     assert metadata_result.schema == class_result.schema
     for original_field in probe.schema.fields:
         assert metadata_result.schema[original_field.name] == original_field
-    expected_rows = sorted(probe.toJSON().collect())
+    # Collect the tiny synthetic probe through the DataFrame API: toJSON returns
+    # an RDD and is unavailable when classic compute exposes Spark Connect.
+    expected_rows = sorted(json.dumps(row.asDict(recursive=True), sort_keys=True) for row in probe.collect())
     results = []
     for result in (metadata_result, class_result):
         assert set(result.columns) == set(probe.columns) | {"_dq_info", "_errors", "_warnings"}
-        assert sorted(result.select(*probe.columns).toJSON().collect()) == expected_rows, "Input values or duplicates changed"
+        restored_rows = sorted(
+            json.dumps(row.asDict(recursive=True), sort_keys=True)
+            for row in result.select(*probe.columns).collect()
+        )
+        assert restored_rows == expected_rows, "Input values or duplicates changed"
         rows = result.orderBy("transaction_id").collect()
         assert len(rows) == 3 and rows[1] == rows[2], "Duplicate rows must be preserved"
         for row in rows:
