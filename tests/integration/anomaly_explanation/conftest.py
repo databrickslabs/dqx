@@ -2,52 +2,11 @@
 
 from collections.abc import Callable
 import json
-import hashlib
-import logging
-import os
-import platform
-from importlib.metadata import distributions
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
 from pyspark.sql import Column, functions as F
 
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
-from tests.anomaly_diagnostics import AnomalyDiagnostics, DEPENDENCIES, dependency_provenance
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Opt in to safe reports for this anomaly-specific integration subtree only."""
-    directory = os.environ.get("DQX_TEST_DIAGNOSTICS_DIR")
-    if not directory:
-        return
-    versions = {
-        package.metadata["Name"]: package.version
-        for package in distributions()
-        if package.metadata["Name"] in DEPENDENCIES
-    }
-    wheel = os.environ.get("DQX_PREBUILT_WHEEL")
-    wheel_digest = None
-    if wheel:
-        try:
-            wheel_digest = hashlib.sha256(Path(wheel).read_bytes()).hexdigest()
-        except OSError:
-            logging.getLogger(__name__).warning("Prebuilt wheel is unavailable for diagnostic provenance")
-    revision = os.environ.get("GITHUB_SHA")
-    source = os.environ.get("DQX_TEST_CODE_SOURCE", "checkout")
-    provenance = dependency_provenance(
-        versions,
-        platform.python_version(),
-        wheel_sha256=wheel_digest,
-        revision=revision,
-        source=source,
-    )
-    provenance["acceptance_retry"] = bool(os.environ.get("TEST_FILTER"))
-    reporter = AnomalyDiagnostics(
-        Path(directory), Path(__file__).parent, f"explanation-{os.getpid()}-{uuid4().hex}", provenance
-    )
-    config.pluginmanager.register(reporter, "dqx-explanation-diagnostics")
 
 
 @pytest.fixture

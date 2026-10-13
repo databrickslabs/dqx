@@ -1,22 +1,12 @@
 """Pytest configuration and fixtures for row anomaly detection integration tests."""
 
-import hashlib
-import json
-import re
 import logging
 import os
-import platform
 import time
 from collections.abc import Callable
-from importlib import import_module
-from importlib.metadata import PackageNotFoundError, version as distribution_version
-from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import uuid4
-from zipfile import BadZipFile, ZipFile
 
-import pandas as pd
 
 import mlflow.utils.rest_utils as mlflow_rest_utils
 import pytest
@@ -25,8 +15,6 @@ from mlflow.exceptions import RestException
 from pyspark.errors import PySparkException
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
@@ -40,16 +28,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.pytester.fixtures.baseline import factory
-from tests.anomaly_diagnostics import (
-    AnomalyDiagnostics,
-    DEPENDENCIES,
-    dependency_provenance,
-    endpoint_unavailable_reason,
-    exception_chain,
-    runtime_observation,
-    compute_observation,
-    SCORER_MODULES,
-)
+from tests.anomaly_diagnostics import endpoint_unavailable_reason
 from tests import anomaly_resources
 from tests.anomaly_resources import drop_registered_models_in_schemas
 from tests.constants import TEST_CATALOG
@@ -72,127 +51,6 @@ logger = logging.getLogger(__name__)
 # Bind the shared fixtures into this conftest module so pytest discovers them here.
 fixture_make_mlflow_experiment_resource = anomaly_resources.fixture_make_mlflow_experiment_resource
 fixture_mlflow_worker_experiment = anomaly_resources.fixture_mlflow_worker_experiment
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Enable payload-free diagnostics only when an artifact directory is supplied."""
-    directory = os.environ.get("DQX_TEST_DIAGNOSTICS_DIR")
-    if not directory:
-        return
-    versions = {}
-    for package in DEPENDENCIES:
-        try:
-            versions[package] = distribution_version(package)
-        except PackageNotFoundError:
-            versions[package] = "unavailable"
-    wheel = os.environ.get("DQX_PREBUILT_WHEEL")
-    wheel_digest = None
-    if wheel:
-        try:
-            wheel_digest = hashlib.sha256(Path(wheel).read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("Prebuilt wheel is unavailable for diagnostic provenance")
-    provenance = dependency_provenance(
-        versions,
-        platform.python_version(),
-        wheel_sha256=wheel_digest,
-        revision=os.environ.get("GITHUB_SHA"),
-        source=os.environ.get("DQX_TEST_CODE_SOURCE", "checkout"),
-    )
-    provenance["acceptance_retry"] = bool(os.environ.get("TEST_FILTER"))
-    diagnostics = AnomalyDiagnostics(Path(directory), Path(__file__).parent, f"{os.getpid()}-{uuid4().hex}", provenance)
-    config.pluginmanager.register(diagnostics, "dqx-anomaly-diagnostics")
-
-
-def _worker_environment_probe() -> Callable[[pd.Series], pd.Series]:
-    # The nested closure carries only values and installed-library references;
-    # workers do not need the test source tree to import this function.
-    packages = DEPENDENCIES
-    modules = SCORER_MODULES
-
-    def observe(batch: pd.Series) -> pd.Series:
-        versions = {}
-        for package in packages:
-            try:
-                versions[package] = distribution_version(package)
-            except PackageNotFoundError:
-                versions[package] = "unavailable"
-        hashes: dict[str, str | None] = {}
-        for module in modules:
-            try:
-                location = import_module(module).__file__
-                if location:
-                    hashes[module] = hashlib.sha256(Path(location).read_bytes()).hexdigest()
-            except (ImportError, AttributeError, OSError):
-                hashes[module] = None
-        value = {
-            "python": platform.python_version(),
-            "packages": versions,
-            "module_sha256": hashes,
-            "runtime": os.environ.get("DATABRICKS_RUNTIME_VERSION"),
-        }
-        return pd.Series([json.dumps(value)] * len(batch))
-
-    return observe
-
-
-def _observe_attached_compute(session: SparkSession, ws: WorkspaceClient) -> dict[str, object]:
-    """Resolve the runtime's attached cluster through documented, public APIs."""
-    # Documented for classic and serverless environment 6; older serverless
-    # environments may reject the configuration key and remain unknown.
-    try:
-        cluster_id = session.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
-    except PySparkException:
-        return compute_observation(None)
-    if not cluster_id:
-        return compute_observation(None)
-    try:
-        cluster = ws.clusters.get(cluster_id=cluster_id)
-    except DatabricksError:
-        return compute_observation(cluster_id)
-    if cluster.cluster_id != cluster_id:
-        return compute_observation(cluster_id)
-    return compute_observation(
-        cluster_id,
-        kind=cluster.kind.value if cluster.kind else None,
-        source=cluster.cluster_source.value if cluster.cluster_source else None,
-        runtime=cluster.spark_version,
-    )
-
-
-@pytest.fixture(autouse=True)
-def anomaly_worker_provenance(request: pytest.FixtureRequest) -> None:
-    """Observe a real pandas worker once per test process when diagnostics are on."""
-    diagnostics = request.config.pluginmanager.get_plugin("dqx-anomaly-diagnostics")
-    if not isinstance(diagnostics, AnomalyDiagnostics) or diagnostics.runtime_recorded:
-        return
-    diagnostics.runtime_recorded = True
-    expected = {}
-    wheel = os.environ.get("DQX_PREBUILT_WHEEL")
-    if wheel:
-        try:
-            with ZipFile(wheel) as archive:
-                expected = {
-                    module: hashlib.sha256(archive.read(module.replace(".", "/") + ".py")).hexdigest()
-                    for module in SCORER_MODULES
-                }
-        except (OSError, KeyError, BadZipFile):
-            logger.warning("The worker provenance wheel manifest is unavailable")
-    report: dict[str, object] = {"compute": "unknown", "worker": "unavailable"}
-    try:
-        session: SparkSession = request.getfixturevalue("spark")
-        spark_version = session.version
-        report["spark"] = spark_version if re.fullmatch(r"[0-9][A-Za-z0-9.+_-]{0,60}", spark_version) else "unavailable"
-        report.update(_observe_attached_compute(session, request.getfixturevalue("ws")))
-
-        observe = F.pandas_udf(_worker_environment_probe(), "string", F.PandasUDFType.SCALAR)
-        raw = session.range(1).select(observe("id").alias("provenance")).collect()[0]
-        report["worker"] = runtime_observation(json.loads(raw["provenance"]), expected)
-    except Exception as exc:
-        # Diagnostics must not turn a probe failure into a setup failure for every
-        # test. The actual scoring tests still surface their original exception.
-        report["exception_chain"] = exception_chain(exc)
-    diagnostics.record_runtime(report)
 
 
 @pytest.fixture

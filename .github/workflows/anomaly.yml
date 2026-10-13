@@ -72,7 +72,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-diagnostics
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
           MLFLOW_REGISTRY_URI: databricks-uc
@@ -80,22 +79,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
-        run: make combine-coverage KEEP_COVERAGE=1
-
-      - name: Preserve anomaly diagnostics and coverage
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: anomaly-diagnostics-${{ github.job }}-${{ github.run_attempt }}
-          path: |
-            anomaly-diagnostics/
-            .coverage
-            .coverage.*
-            .coverage-checkpoints/
-            coverage-combined.xml
-          include-hidden-files: true
-          if-no-files-found: warn
-          retention-days: 7
+        run: make combine-coverage
 
       - name: Publish test coverage
         if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
@@ -149,7 +133,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
-          DQX_TEST_DIAGNOSTICS_DIR: ${{ github.workspace }}/anomaly-diagnostics
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: databricks
@@ -158,22 +141,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
         if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
-        run: make combine-coverage KEEP_COVERAGE=1
-
-      - name: Preserve anomaly diagnostics and coverage
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: anomaly-diagnostics-${{ github.job }}-${{ github.run_attempt }}
-          path: |
-            anomaly-diagnostics/
-            .coverage
-            .coverage.*
-            .coverage-checkpoints/
-            coverage-combined.xml
-          include-hidden-files: true
-          if-no-files-found: warn
-          retention-days: 7
+        run: make combine-coverage
 
       - name: Publish test coverage
         if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}

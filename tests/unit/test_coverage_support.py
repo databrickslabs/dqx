@@ -7,7 +7,7 @@ from coverage import CoverageData
 from coverage.exceptions import DataError
 import pytest
 
-from tests.coverage_support import checkpoint_directory, combine_coverage
+from tests.coverage_support import combine_coverage
 
 pytest_plugins = ["pytester"]
 
@@ -29,19 +29,16 @@ def write_coverage(path: Path, source: Path, line: int, *, branch: bool = True) 
     data.write()
 
 
-@pytest.mark.parametrize("keep", [False, True])
-def test_combine_preserves_existing_parallel_and_checkpoint_hits(
-    tmp_path: Path, coverage_source: Path, keep: bool
-) -> None:
+def test_combine_preserves_existing_and_parallel_hits(tmp_path: Path, coverage_source: Path) -> None:
     data_file = tmp_path / ".coverage"
     worker = tmp_path / ".coverage.worker"
-    checkpoint = checkpoint_directory(data_file) / "last-worker.coverage"
+    second_worker = tmp_path / ".coverage.second-worker"
     write_coverage(data_file, coverage_source, 2)
     write_coverage(worker, coverage_source, 5)
-    write_coverage(checkpoint, coverage_source, 8)
+    write_coverage(second_worker, coverage_source, 8)
     output = tmp_path / "coverage.xml"
 
-    combine_coverage(data_file, output, keep=keep, config_file=False)
+    combine_coverage(data_file, output, config_file=False)
 
     report = ET.parse(output)
     hits = {int(line.attrib["number"]): int(line.attrib["hits"]) for line in report.findall(".//line")}
@@ -52,8 +49,8 @@ def test_combine_preserves_existing_parallel_and_checkpoint_hits(
     lines = combined.lines(str(coverage_source))
     assert lines is not None
     assert set(lines) == {2, 5, 8}
-    assert worker.exists() is keep
-    assert checkpoint.exists() is keep
+    assert not worker.exists()
+    assert not second_worker.exists()
 
 
 def test_combine_accepts_already_combined_data(tmp_path: Path, coverage_source: Path) -> None:
@@ -86,61 +83,6 @@ def test_combine_failure_preserves_inputs_and_removes_stale_xml(
 
     assert not output.exists()
     assert all(path.read_bytes() == contents for path, contents in before.items())
-
-
-@pytest.mark.parametrize("workers", [0, 2])
-def test_acceptance_checkpoint_precedes_completion_notification(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, workers: int
-) -> None:
-    # Environment is the third-party acceptance boundary; no workspace/HTTP calls.
-    monkeypatch.setenv("COVERAGE_FILE", str(pytester.path / ".coverage"))
-    monkeypatch.setenv("REPLY_URL", "https://example.invalid/unused")
-    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2]))
-    pytester.makefile(".ini", pytest="[pytest]\n")
-    pytester.makefile(".coveragerc", **{"": "[run]\nbranch = true\nparallel = true\n"})
-    pytester.makepyfile(probe="def value():\n    return 42\n")
-    pytester.makeconftest(
-        '''
-from pathlib import Path
-from coverage import CoverageData
-import pytest
-pytest_plugins = ["tests.coverage_support"]
-
-@pytest.hookimpl(trylast=True)
-def pytest_runtest_logfinish(nodeid):
-    # This is the same notification hook used by acceptance. Coverage must already
-    # be readable here, before sessionfinish and worker/controller shutdown.
-    source = str(Path("probe.py").resolve())
-    reports = list(Path(".coverage-checkpoints").glob("*.coverage"))
-    assert reports
-    hits = set()
-    for report in reports:
-        data = CoverageData(basename=str(report))
-        data.read()
-        hits.update(data.lines(source) or [])
-    assert 2 in hits
-    Path(nodeid.split("::")[-1] + ".notified").write_text("flushed")
-'''
-    )
-    pytester.makepyfile(
-        test_probe='''
-from probe import value
-
-def test_pass():
-    assert value() == 42
-
-def test_fail():
-    assert value() == -1
-'''
-    )
-    result = pytester.runpytest_subprocess(
-        "-q", "-n", str(workers), "--cov=probe", "--cov-report=", "--cov-config=.coveragerc", "-p", "no:rerunfailures"
-    )
-    result.assert_outcomes(passed=1, failed=1)
-    assert (pytester.path / "test_pass.notified").read_text() == "flushed"
-    assert (pytester.path / "test_fail.notified").read_text() == "flushed"
-    # Session-end pytest-cov combination must not erase our independent checkpoints.
-    assert list((pytester.path / ".coverage-checkpoints").glob("*.coverage"))
 
 
 @pytest.mark.parametrize("workers", [0, 2])

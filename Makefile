@@ -93,8 +93,8 @@ coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
 	open htmlcov/index.html
 
-combine-coverage: ## Merge existing, process and acceptance-checkpoint coverage into XML
-	KEEP_COVERAGE=$(KEEP_COVERAGE) $(UV_RUN) python -m tests.coverage_support
+combine-coverage: ## Merge existing and process coverage into XML
+	$(UV_RUN) python -m tests.coverage_support
 
 ##@ Documentation
 
