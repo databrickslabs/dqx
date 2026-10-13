@@ -15,7 +15,9 @@ user_api_scopes:
   - sql.warehouses
   - vectorsearch.vector-search-endpoints
   - vectorsearch.vector-search-indexes
+  - serving.serving-endpoints
   - ai-gateway
+  - ai-functions
   - files.files
   - genie
   - catalog.catalogs:read

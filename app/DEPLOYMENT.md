@@ -198,14 +198,21 @@ The bundle **does not create the catalog itself** — that's deliberate. Catalog
 
 ### AI model access (Unity Gateway)
 
-AI features (rule generation, rule suggestions, test data, natural-language table queries) call Databricks-provided **Unity Gateway model services** in `system.ai` — by default `system.ai.claude-sonnet-4-5` for chat and `system.ai.gte-large-en` for embeddings — through the `/ai-gateway/mlflow/v1` routes. They replace the legacy `databricks-*` pay-per-token serving endpoints, which retire on March 30, 2027 (and stop working sooner if a workspace admin turns on **Enforce Unity Gateway**). The app requests the `ai-gateway` user API scope for this.
+AI features (rule generation, rule suggestions, test data, natural-language table queries) call Databricks-provided **Unity Gateway model services** in `system.ai` — by default `system.ai.claude-sonnet-4-5` for chat and `system.ai.gte-large-en` for embeddings — through the `/ai-gateway/mlflow/v1` routes. They replace the legacy `databricks-*` pay-per-token serving endpoints, which retire on March 30, 2027 (and stop working sooner if a workspace admin turns on **Enforce Unity Gateway**).
+
+Studio's AI features are **AI Gateway only**. Legacy Model Serving endpoints — pay-per-token, custom, provisioned throughput and external-model endpoints — are not supported. A saved `databricks-*` name is mapped to its `system.ai` model service (`databricks-claude-sonnet-4-5` → `system.ai.claude-sonnet-4-5`); any other name must be a Unity Gateway model service (`catalog.schema.name`).
+
+The app requests two user API scopes for this, which users see on the consent screen:
+
+- `ai-gateway` — query Unity Gateway model services on the user's behalf
+- `ai-functions` — invoke Databricks AI Functions on the user's behalf
 
 Calls run as the signed-in user, except embedding newly published rules, which runs as the app service principal. So the Studio audience group (and a custom admin group) needs, and the app service principal needs on the embedding model:
 
 - `EXECUTE` on each configured model service
 - `USE CATALOG` on `system` and `USE SCHEMA` on `system.ai`
 
-Databricks grants all of these to `account users` by default, so most workspaces need no action. If a metastore admin has restricted `system.ai`, a **metastore admin** (or anyone with `MANAGE` on the model services) must grant them — Studio can't. Setup's AI step checks the grants and prints the exact `GRANT` statements to run, for example:
+Databricks grants all of these to `account users` by default, so most workspaces need no action. If a metastore admin has restricted `system.ai`, a **metastore admin** (or anyone with `MANAGE` on the model services) must grant them — Studio can't. Setup's AI step checks the grants where it can read them and prints the exact `GRANT` statements to run. Only owners and `MANAGE` holders can read grants on `system.ai`, so when they can't be read, Studio treats the app service principal being able to see the model as confirmation of access. Example statements:
 
 ```sql
 GRANT USE_CATALOG ON CATALOG `system` TO `dqx-studio-users`;
@@ -213,7 +220,7 @@ GRANT USE_SCHEMA ON SCHEMA `system`.`ai` TO `dqx-studio-users`;
 GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`claude-sonnet-4-5` TO `dqx-studio-users`;
 ```
 
-Model names saved before this change (`databricks-claude-sonnet-4-5`) are read as their `system.ai` equivalents, so existing deployments need no settings change. Pick a different model under **Settings → AI**.
+Existing deployments need no settings change. Pick a different model under **Settings → AI**.
 
 **Upgrading an existing deployment:** a user's app token carries the scopes the app had when they signed in. After the first deploy that adds `ai-gateway`, users who were already signed in see "Studio isn't allowed to call AI models for you yet" until they sign in to the app again (a new browser session, or clearing the app's cookies, is enough).
 

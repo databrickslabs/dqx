@@ -178,7 +178,8 @@ class AiAccess:
                 "ai_endpoint_missing",
                 (f"AI model {label} isn't a Unity Gateway model service. Choose a model in Settings > AI.",),
             ), []
-        exists = self._exists(name, reader_ws)
+        sp_sees = self._sp_sees(name)
+        exists = True if sp_sees else self._administrator_sees(name, reader_ws)
         if exists is None:
             return (
                 "ai_access_unverified",
@@ -209,7 +210,10 @@ class AiAccess:
                     statements.append(
                         f"GRANT {privilege} ON {kind.replace('_', ' ')} {quoted} TO {instruction_identifier(principal)};"
                     )
-        if not unreadable:
+        # Only owners and MANAGE holders can read grants on system.ai, so on most installs
+        # they are unreadable. The app SP only sees model services it can access, and it gets
+        # that access the same way users do (account users), so its visibility stands in.
+        if not unreadable or sp_sees:
             return None, statements
         who = ", ".join(instruction_identifier(principal) for principal in unreadable)
         return (
@@ -221,18 +225,24 @@ class AiAccess:
             ),
         ), statements
 
-    def _exists(self, name: str, reader_ws: WorkspaceClient | None) -> bool | None:
-        """Return whether model service *name* exists, or None when that can't be confirmed.
+    def _sp_sees(self, name: str) -> bool | None:
+        """Return whether the app service principal can see model service *name*, or None on error.
 
-        The app service principal only sees model services it can access, so its miss is
-        not proof the model is missing; only the setup administrator's client can confirm
-        that. At startup there is no administrator client, so a miss stays unconfirmed.
+        The app service principal only sees model services it can access, so a True here
+        both proves the model exists and that the SP has access to it.
         """
         try:
-            if ModelServices(self._workspace).exists(name):
-                return True
+            return ModelServices(self._workspace).exists(name)
         except Exception:
-            pass
+            return None
+
+    @staticmethod
+    def _administrator_sees(name: str, reader_ws: WorkspaceClient | None) -> bool | None:
+        """Return whether the setup administrator can see model service *name*, or None when unknown.
+
+        The app SP's miss is not proof the model is missing; only the administrator's client
+        can confirm that. At startup there is no administrator client, so a miss stays unknown.
+        """
         if reader_ws is None:
             return None
         try:

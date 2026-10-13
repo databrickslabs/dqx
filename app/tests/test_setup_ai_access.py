@@ -250,8 +250,18 @@ def test_no_chat_model_selected_warns(resources, workspace) -> None:
     assert any("No AI model is selected" in instruction for instruction in step.instructions)
 
 
-def test_unreadable_grants_are_unverified(resources, workspace, grants) -> None:
+def test_unreadable_grants_are_confirmed_by_the_app_seeing_the_model(resources, workspace, grants) -> None:
+    """Only owners and MANAGE holders can read grants on system.ai, so most installs can't read them."""
     grants.unreadable = True
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.state == StepState.PASSED
+
+
+def test_unreadable_grants_on_a_model_the_app_cant_see_are_unverified(resources, grants) -> None:
+    grants.unreadable = True
+    workspace = _client(grants, existing={"system.ai.embed-model"})
     reader = _client(grants)
 
     step = _check(resources, workspace, FakeAiSettings(), reader)
