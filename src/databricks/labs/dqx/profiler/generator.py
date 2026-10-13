@@ -240,6 +240,7 @@ class DQGenerator(DQEngineBase):
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
         default_criticality: str = "error",
+        process_library_rules: bool = True,
     ) -> list[dict]:
         """
         Generate DQX quality rules from a data contract specification.
@@ -261,6 +262,7 @@ class DQGenerator(DQEngineBase):
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules (default True).
             strict_schema_validation: Passed as strict to has_valid_schema (default True = exact match; False = permissive).
             default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
+            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True).
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
@@ -295,6 +297,7 @@ class DQGenerator(DQEngineBase):
             generate_schema_validation=generate_schema_validation,
             strict_schema_validation=strict_schema_validation,
             default_criticality=default_criticality,
+            process_library_rules=process_library_rules,
         )
         logger.info(
             f"✅ Quality rules generation from a data contract specification completed. Generated {len(dq_rules)} rules."
