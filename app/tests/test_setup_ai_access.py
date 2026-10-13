@@ -190,9 +190,10 @@ def test_app_service_principal_needs_the_embedding_model(resources, workspace, g
 
 def test_missing_model_warns_and_turns_default_ai_off(resources, grants) -> None:
     workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants, existing={"system.ai.embed-model"})
     settings = FakeAiSettings()
 
-    step = _check(resources, workspace, settings)
+    step = _check(resources, workspace, settings, reader)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_endpoint_missing"
@@ -208,6 +209,31 @@ def test_model_hidden_from_the_app_is_looked_up_as_the_administrator(resources, 
     reader = _client(grants)
 
     assert _check(resources, workspace, FakeAiSettings(), reader).state == StepState.PASSED
+
+
+def test_model_hidden_from_the_app_without_an_administrator_is_unverified(resources, grants) -> None:
+    """At startup there is no administrator client, so the app SP's miss can't prove the model is gone."""
+    sp = "11111111-2222-3333-4444-555555555555"
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+
+    step = _check(resources, workspace, FakeAiSettings(), app_sp_id=sp)
+
+    assert step.code == "ai_access_unverified"
+    assert any(
+        f"GRANT READ_METADATA ON MODEL SERVICE `system`.`ai`.`chat-model` TO `{sp}`;" in instruction
+        for instruction in step.instructions
+    )
+    assert not any("doesn't exist" in instruction for instruction in step.instructions)
+
+
+def test_failed_administrator_lookup_is_unverified_not_missing(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants)
+    reader.api_client.do.side_effect = PermissionError("denied")
+
+    step = _check(resources, workspace, FakeAiSettings(), reader)
+
+    assert step.code == "ai_access_unverified"
 
 
 def test_non_model_service_name_asks_for_a_model_choice(resources, workspace) -> None:

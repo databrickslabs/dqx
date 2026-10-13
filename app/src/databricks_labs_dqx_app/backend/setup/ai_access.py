@@ -182,7 +182,7 @@ class AiAccess:
         if exists is None:
             return (
                 "ai_access_unverified",
-                (f"Studio couldn't look up AI model {label}. Click Verify again in a minute.",),
+                (self._unconfirmed_model_instruction(name, label),),
             ), []
         if not exists:
             return (
@@ -222,22 +222,34 @@ class AiAccess:
         ), statements
 
     def _exists(self, name: str, reader_ws: WorkspaceClient | None) -> bool | None:
-        """Return whether model service *name* exists, or None when no client could look it up.
+        """Return whether model service *name* exists, or None when that can't be confirmed.
 
-        The app service principal only sees model services it can access, so a miss falls
-        back to the setup administrator's client before reporting the model as missing.
+        The app service principal only sees model services it can access, so its miss is
+        not proof the model is missing; only the setup administrator's client can confirm
+        that. At startup there is no administrator client, so a miss stays unconfirmed.
         """
-        found: bool | None = None
-        for client in (self._workspace, reader_ws):
-            if client is None:
-                continue
-            try:
-                if ModelServices(client).exists(name):
-                    return True
-                found = False
-            except Exception:
-                continue
-        return found
+        try:
+            if ModelServices(self._workspace).exists(name):
+                return True
+        except Exception:
+            pass
+        if reader_ws is None:
+            return None
+        try:
+            return ModelServices(reader_ws).exists(name)
+        except Exception:
+            return None
+
+    def _unconfirmed_model_instruction(self, name: str, label: str) -> str:
+        """Explain an unconfirmed model lookup and how to make it visible to Studio."""
+        if not self._app_sp:
+            return f"Studio couldn't look up AI model {label}. Click Verify again in a minute."
+        return (
+            f"Studio's service principal can't see AI model {label}, so Studio can't confirm it exists. "
+            "Check the model in Settings > AI. If it's correct, a metastore admin can let Studio see it by "
+            f"running: GRANT READ_METADATA ON MODEL SERVICE {_quote_name(name)} TO "
+            f"{instruction_identifier(self._app_sp)}; then click Verify again."
+        )
 
     def _privileges(
         self, kind: str, full_name: str, principal: str, reader_ws: WorkspaceClient | None
