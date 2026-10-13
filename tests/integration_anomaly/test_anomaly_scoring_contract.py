@@ -1,7 +1,8 @@
-"""Public scoring parity across supported detectors, execution routes and attribution flags.
+"""Public driver scoring contracts across supported detectors and attribution flags.
 
-Each case trains once and reuses the persisted model for four explicitly selected paths.
-AI is disabled so worker execution and row preservation do not depend on a serving endpoint.
+Each case trains once and reuses the persisted model with contributions off and on.
+Connect workers do not have the required anomaly packages in the integration environment;
+distributed scoring is exercised by the packaged E2E suite. AI is disabled here.
 """
 
 from collections import Counter
@@ -124,7 +125,7 @@ def _assert_partitioned_filtered_checks(
                     "model_name": model,
                     "registry_table": registry,
                     "threshold": 0.0,
-                    "driver_only": False,
+                    "driver_only": True,
                     "enable_contributions": True,
                     "enable_confidence_std": True,
                     "enable_ai_explanation": False,
@@ -160,7 +161,7 @@ def _assert_partitioned_filtered_checks(
     ids=["single", "ensemble", "correlation"],
 )
 @pytest.mark.parametrize("context", ["plain", "combined"])
-def test_public_scoring_contract_across_execution_paths(
+def test_public_driver_scoring_contract(
     ws, spark, quick_model_factory, scoring_contract_data, profile: str, ensemble_size: int | None, context: str
 ) -> None:
     training, source, columns, baseline_by, baseline_over_time = scoring_contract_data(context)
@@ -180,35 +181,33 @@ def test_public_scoring_contract_across_execution_paths(
     )
     engine = DQEngine(ws, spark)
     originals = source.collect()
-    snapshots: dict[tuple[bool, bool], list[Row]] = {}
-    for driver_only in (True, False):
-        for contributions in (False, True):
-            checks = [
-                {
-                    "name": "contract",
-                    "criticality": "warn",
-                    "check": {
-                        "function": "has_no_row_anomalies",
-                        "arguments": {
-                            "model_name": model,
-                            "registry_table": registry,
-                            "threshold": 0.0,
-                            "driver_only": driver_only,
-                            "enable_contributions": contributions,
-                            "enable_confidence_std": True,
-                            "enable_ai_explanation": False,
-                        },
+    snapshots: dict[bool, list[Row]] = {}
+    for contributions in (False, True):
+        checks = [
+            {
+                "name": "contract",
+                "criticality": "warn",
+                "check": {
+                    "function": "has_no_row_anomalies",
+                    "arguments": {
+                        "model_name": model,
+                        "registry_table": registry,
+                        "threshold": 0.0,
+                        "driver_only": True,
+                        "enable_contributions": contributions,
+                        "enable_confidence_std": True,
+                        "enable_ai_explanation": False,
                     },
-                }
-            ]
-            result = engine.apply_checks_by_metadata(source, checks)
-            rows = result.collect()
-            _assert_original_rows(source, originals, result, rows)
-            _assert_public_info(rows, columns, context, profile, contributions)
-            snapshots[driver_only, contributions] = rows
+                },
+            }
+        ]
+        result = engine.apply_checks_by_metadata(source, checks)
+        rows = result.collect()
+        _assert_original_rows(source, originals, result, rows)
+        _assert_public_info(rows, columns, context, profile, contributions)
+        snapshots[contributions] = rows
     for rows in snapshots.values():
-        _assert_parity(snapshots[True, False], rows)
-    _assert_contribution_parity(snapshots[True, True], snapshots[False, True])
+        _assert_parity(snapshots[False], rows)
 
     if context == "plain" and profile == "distribution" and ensemble_size is None:
         # Public engine calls reject existing reporting columns. Callers explicitly
@@ -221,8 +220,8 @@ def test_public_scoring_contract_across_execution_paths(
         repeated_rows = result.collect()
         _assert_original_rows(source, originals, result, repeated_rows)
         _assert_public_info(repeated_rows, columns, context, profile, True)
-        _assert_parity(snapshots[False, True], repeated_rows)
-        _assert_contribution_parity(snapshots[False, True], repeated_rows)
+        _assert_parity(snapshots[True], repeated_rows)
+        _assert_contribution_parity(snapshots[True], repeated_rows)
 
     if context == "combined":
-        _assert_partitioned_filtered_checks(engine, source, originals, model, registry, snapshots[False, True])
+        _assert_partitioned_filtered_checks(engine, source, originals, model, registry, snapshots[True])

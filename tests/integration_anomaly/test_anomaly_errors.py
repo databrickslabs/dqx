@@ -259,12 +259,9 @@ def test_internal_row_id_collision(ws, spark: SparkSession, make_random, anomaly
     assert "_dqx_row_id" in str(exc.value)
 
 
-@pytest.mark.parametrize("driver_only", [False, True])
 @pytest.mark.parametrize("ensemble_size", [None, 3], ids=["single", "ensemble"])
-def test_internal_score_column_collision(
-    ws, spark: SparkSession, quick_model_factory, driver_only: bool, ensemble_size: int | None
-):
-    """All four scorer paths preserve input fields across consecutive contribution-enabled checks."""
+def test_internal_score_column_collision(ws, spark: SparkSession, quick_model_factory, ensemble_size: int | None):
+    """Driver scorers preserve input fields across consecutive contribution-enabled checks."""
     model_name, registry_table, _ = quick_model_factory(
         spark,
         params=AnomalyParams(
@@ -288,7 +285,7 @@ def test_internal_score_column_collision(
                     "model_name": model_name,
                     "registry_table": registry_table,
                     "threshold": 0.0,
-                    "driver_only": driver_only,
+                    "driver_only": True,
                     "enable_contributions": True,
                     "enable_ai_explanation": False,
                 },

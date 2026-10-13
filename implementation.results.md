@@ -181,3 +181,14 @@ A disposable local check executed the actual old/new notebook comparison express
 The separately supplied training-run traceback was readable through its child task output. Its requested run configuration was the literal `unavailable`, matching the existing `test_train_anomaly_cli_when_run_config_missing` negative test. Its missing-configuration exception is separate from the packaged E2E failure and requires no configuration fallback or production change.
 
 Local validation of this repair: 76 targeted diagnostic/E2E harness tests passed, and the full unit suite passed with 3,217 tests and one skip. No new manual workspace run was submitted after the previous follow-up window closed. The repaired packaged E2E result remains pending in CI.
+
+
+## Connect integration scope adjustment on 13 October 2026
+
+At the user's request, the newly added distributed Connect variants are removed from the collision and public scoring contract tests. The collision regression retains single and ensemble driver cases, original map/double fields, duplicate rows, threshold zero and two consecutive contribution-enabled checks. The scoring contract retains all six detector/context configurations, contributions off/on, public output assertions, repeated application, column reordering, repartitioning and filtered checks in driver mode. Its name now states that execution scope.
+
+The preceding CI run failed eight shared cases on both classic and serverless, on the first attempt and retry, with worker ModuleNotFoundError for databricks.labs. Worker provenance also reported SHAP and numba unavailable. This scope adjustment does not repair worker dependency provisioning or establish distributed matrix parity. The existing packaged E2E retains distributed contribution-enabled scoring; both E2E workflows passed on the preceding revision. No production code, dependency constraints, GitHub actions or workflows are changed.
+
+The separate top-contributor test failure remains unresolved and is retained. The two serverless setup IndexErrors passed acceptance retries; their first failures remain part of the evidence. No manual workspace run was submitted for this adjustment.
+
+Local validation: make fmt passed, all eight retained driver cases collect successfully, and 46 scorer-input, feature-collision and packaged E2E harness unit tests pass. Remote execution of the adjusted integration cases remains a CI check; collection is not an integration pass.
