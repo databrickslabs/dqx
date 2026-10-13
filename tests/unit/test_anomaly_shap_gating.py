@@ -54,14 +54,18 @@ def fitted_model_and_features_fixture():
     return model, features
 
 
-def test_gated_contributions_computed_only_for_anomalous_rows(fitted_model_and_features):
+@pytest.mark.parametrize("threshold", [0.0, 85.0])
+def test_gated_contributions_computed_only_for_anomalous_rows(fitted_model_and_features, threshold):
     model, features = fitted_model_and_features
-    # Scores are passed in explicitly; only the last row's severity reaches the threshold.
+    # Only the last row reaches severity 85; threshold zero admits every row.
     scores = np.array([1.0, 1.2, 1.1, 10.0])
     contributions = compute_gated_shap_contributions(
-        [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=85.0
+        [model], features, ["amount", "quantity"], scores, QUANTILE_POINTS, threshold=threshold
     ).by_column
-    assert contributions[:3] == [None, None, None]
+    if threshold == 0.0:
+        assert all(isinstance(contribution, dict) for contribution in contributions)
+    else:
+        assert contributions[:3] == [None, None, None]
     assert isinstance(contributions[3], dict)
     assert set(contributions[3]) == {"amount", "quantity"}
     total = sum(v for v in contributions[3].values() if v is not None)

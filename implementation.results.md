@@ -192,3 +192,12 @@ The preceding CI run failed eight shared cases on both classic and serverless, o
 The separate top-contributor test failure remains unresolved and is retained. The two serverless setup IndexErrors passed acceptance retries; their first failures remain part of the evidence. No manual workspace run was submitted for this adjustment.
 
 Local validation: make fmt passed, all eight retained driver cases collect successfully, and 46 scorer-input, feature-collision and packaged E2E harness unit tests pass. Remote execution of the adjusted integration cases remains a CI check; collection is not an integration pass.
+
+
+## Top-contributor test calibration independence
+
+CI on the preceding revision passed the contributor test on serverless without retry but failed it on classic both initially and on retry: contributions was null before the dominance assertion. The test used severity threshold 95 even though its purpose is to check the attribution of an amount-only perturbation. Attribution deliberately returns null below the selected threshold; the captured failure did not include severity, so calibration sensitivity remains an explanation rather than a confirmed measurement of that CI row.
+
+The test now uses threshold zero to admit its single synthetic probe regardless of fitted calibration. It explicitly checks row/info coverage, finite score and severity, a flagged verdict, non-null contribution keys and finite nonnegative evidence before retaining both original amount-dominance assertions. Production scoring and the shared training fixture are unchanged. The existing real-estimator unit gate regression additionally covers threshold zero while retaining its positive-threshold null-map assertions. Remote confirmation remains with the existing CI workflows; no new manual workspace campaign is started.
+
+Local validation: make fmt passed; all 46 gate, orientation, source-block and ensemble attribution unit cases passed, including the added zero-threshold case. The adjusted top-contributor integration test collects successfully; its remote result is pending CI.

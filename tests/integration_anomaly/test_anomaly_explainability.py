@@ -1,5 +1,7 @@
 """Integration tests for public anomaly feature contributions and rendered messages."""
 
+import math
+
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, DoubleType, MapType, StringType, StructField, StructType
@@ -147,7 +149,7 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
 
 
 def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
-    """Test that the top contributor makes sense for the anomaly."""
+    """The only perturbed feature dominates attribution independently of calibration."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
@@ -160,28 +162,37 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
         columns_schema="amount double, quantity double, discount double",
     )
 
-    # Use anomaly_scorer with enable_contributions
+    # This tests attribution, not whether the sampled model ranks the probe above
+    # severity 95. Threshold zero admits the row regardless of calibration.
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=0.0,
         enable_contributions=True,
         extract_score=False,
     )
-    row = result_df.collect()[0]
-
-    # Extract contributions map from _dq_info[0].anomaly.contributions
-    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
+    rows = result_df.collect()
+    assert len(rows) == 1
+    assert len(rows[0]["_dq_info"]) == 1
+    info = rows[0]["_dq_info"][0]["anomaly"]
+    assert info["score"] is not None and math.isfinite(info["score"])
+    assert info["severity_percentile"] is not None and math.isfinite(info["severity_percentile"])
+    assert info["is_anomaly"] is True
+    contribs = info["contributions"]
+    assert contribs is not None, "a flagged probe must have contributions when attribution is enabled"
+    assert set(contribs) == set(shared_3d_model["columns"])
 
     # Filter out None values
     valid_contribs = {k: v for k, v in contribs.items() if v is not None}
 
+    assert valid_contribs, "the perturbed probe must have attribution evidence"
+    assert all(math.isfinite(value) and value >= 0.0 for value in valid_contribs.values())
+
     # Find top contributor
     top_feature = max(valid_contribs, key=lambda k: valid_contribs[k])
 
-    # Amount should likely be the top contributor (or at least significant)
-    # Since amount is the most anomalous feature
+    # Only amount was perturbed; it must dominate the other features combined.
     assert top_feature == "amount", f"only amount was perturbed, but attribution ranked {valid_contribs}"
     assert valid_contribs["amount"] > sum(value for name, value in valid_contribs.items() if name != "amount")
 
