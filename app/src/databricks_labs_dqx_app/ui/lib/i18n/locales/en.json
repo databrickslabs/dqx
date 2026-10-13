@@ -3141,9 +3141,8 @@
     "notAdmin": {
       "title": "You can't complete setup",
       "description": "Only workspace admins or members of {{adminGroup}} can set up DQX Studio. Ask one of them to finish the steps below.",
-      "descriptionWithUser": "You're signed in as {{userName}}. Only workspace admins or members of {{adminGroup}} can set up DQX Studio. Ask one of them to finish the steps below.",
+      "signedInAs": "You're signed in as {{userName}}.",
       "adminsOnly": "Only workspace admins can set up DQX Studio. Ask one of them to finish the steps below.",
-      "adminsOnlyWithUser": "You're signed in as {{userName}}. Only workspace admins can set up DQX Studio. Ask one of them to finish the steps below.",
       "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and audience group."
     },
     "warningsReview": {
@@ -3181,7 +3180,7 @@
         "ai": "Keep AI features on"
       },
       "help": {
-        "default": "Studio can only see permissions given directly to a user or group. If you gave this access through a parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
+        "default": "Studio can only see permissions given directly to a user or group, or to all workspace users. If you gave this access through another parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
         "app_sharing": "Studio isn't allowed to read who the app is shared with, so it can't check this itself. Once you've shared the app with your users, confirm it here.",
         "ai": "If your users can already use this AI model (for example through a parent group), you can keep AI features on."
       }

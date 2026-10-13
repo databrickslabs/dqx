@@ -225,6 +225,25 @@ describe("SetupGate", () => {
     expect(markup).not.toContain("storage prefix or audience group isn");
   });
 
+  test.each(["failed", "warning"] as const)(
+    "non-administrators get the waiting message when configuration is %p",
+    (state) => {
+      const status = setupStatus(false);
+      status.report.steps.push({
+        id: "configuration",
+        state,
+        code: "configuration_unreadable",
+        summary: "Fix the catalog, storage prefix or audience group, then click Verify again.",
+      });
+
+      const markup = renderGate(status);
+
+      expect(markup).toContain(en.setup.notAdmin.configurationPending);
+      expect(markup).toContain("configuration_unreadable");
+      expect(markup).not.toContain("Fix the catalog");
+    },
+  );
+
   test("names a custom administrator group once", () => {
     const markup = renderGate(setupStatus(false));
 

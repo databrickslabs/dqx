@@ -3141,9 +3141,8 @@
     "notAdmin": {
       "title": "Non puoi completare la configurazione",
       "description": "Solo gli amministratori dell'area di lavoro o i membri di {{adminGroup}} possono configurare DQX Studio. Chiedi a uno di loro di completare i passaggi seguenti.",
-      "descriptionWithUser": "Hai effettuato l'accesso come {{userName}}. Solo gli amministratori dell'area di lavoro o i membri di {{adminGroup}} possono configurare DQX Studio. Chiedi a uno di loro di completare i passaggi seguenti.",
+      "signedInAs": "Hai effettuato l'accesso come {{userName}}.",
       "adminsOnly": "Solo gli amministratori dell'area di lavoro possono configurare DQX Studio. Chiedi a uno di loro di completare i passaggi seguenti.",
-      "adminsOnlyWithUser": "Hai effettuato l'accesso come {{userName}}. Solo gli amministratori dell'area di lavoro possono configurare DQX Studio. Chiedi a uno di loro di completare i passaggi seguenti.",
       "configurationPending": "In attesa che un amministratore scelga il catalogo, il prefisso di archiviazione e il gruppo di utenti."
     },
     "warningsReview": {
@@ -3181,7 +3180,7 @@
         "ai": "Mantieni l'IA attiva"
       },
       "help": {
-        "default": "Studio vede solo le autorizzazioni concesse direttamente a un utente o a un gruppo. Se hai concesso questo accesso tramite un gruppo padre, o l'hai configurato a mano nell'area di lavoro, qui potrebbe sembrare mancante. Se sei sicuro che sia configurato, puoi continuare comunque.",
+        "default": "Studio vede solo le autorizzazioni concesse direttamente a un utente o a un gruppo, o a tutti gli utenti dell'area di lavoro. Se hai concesso questo accesso tramite un altro gruppo padre, o l'hai configurato a mano nell'area di lavoro, qui potrebbe sembrare mancante. Se sei sicuro che sia configurato, puoi continuare comunque.",
         "app_sharing": "Studio non può leggere con chi è condivisa l'app, quindi non può verificarlo da solo. Dopo aver condiviso l'app con i tuoi utenti, confermalo qui.",
         "ai": "Se i tuoi utenti possono già usare questo modello di IA (ad esempio tramite un gruppo padre), puoi mantenere attive le funzionalità IA."
       }

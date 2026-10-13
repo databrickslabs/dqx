@@ -3141,9 +3141,8 @@
     "notAdmin": {
       "title": "Você não pode concluir a configuração",
       "description": "Somente administradores do workspace ou membros de {{adminGroup}} podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
-      "descriptionWithUser": "Você entrou como {{userName}}. Somente administradores do workspace ou membros de {{adminGroup}} podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
+      "signedInAs": "Você entrou como {{userName}}.",
       "adminsOnly": "Somente administradores do workspace podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
-      "adminsOnlyWithUser": "Você entrou como {{userName}}. Somente administradores do workspace podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
       "configurationPending": "Aguardando um administrador escolher o catálogo, o prefixo de armazenamento e o grupo de usuários."
     },
     "warningsReview": {
@@ -3181,7 +3180,7 @@
         "ai": "Manter a IA ativada"
       },
       "help": {
-        "default": "O Studio só vê permissões concedidas diretamente a um usuário ou grupo. Se você concedeu esse acesso por meio de um grupo pai, ou configurou manualmente no workspace, ele pode parecer ausente aqui. Se tiver certeza de que está configurado, você pode continuar mesmo assim.",
+        "default": "O Studio só vê permissões concedidas diretamente a um usuário ou grupo, ou a todos os usuários do workspace. Se você concedeu esse acesso por meio de outro grupo pai, ou configurou manualmente no workspace, ele pode parecer ausente aqui. Se tiver certeza de que está configurado, você pode continuar mesmo assim.",
         "app_sharing": "O Studio não tem permissão para ler com quem o app está compartilhado, então não consegue verificar isso sozinho. Depois de compartilhar o app com seus usuários, confirme aqui.",
         "ai": "Se seus usuários já podem usar este modelo de IA (por exemplo, por meio de um grupo pai), você pode manter os recursos de IA ativados."
       }

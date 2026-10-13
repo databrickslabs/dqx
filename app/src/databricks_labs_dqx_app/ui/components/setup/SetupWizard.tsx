@@ -162,6 +162,11 @@ function ConfigurationSummary({
 
 /** Steps with their own override wording; every other step uses the default wording. */
 const OVERRIDE_COPY_STEPS = new Set<SetupStep["id"]>(["app_sharing", "ai"]);
+const CONFIGURATION_PROBLEM_STATES = new Set<StepState>([
+  "action_required",
+  "failed",
+  "warning",
+]);
 
 function overrideCopyKey(stepId: SetupStep["id"]): string {
   return OVERRIDE_COPY_STEPS.has(stepId) ? stepId : "default";
@@ -246,7 +251,9 @@ function StepCard({
   // Non-administrators see the configuration step without its form, so whatever it needs
   // is for an administrator; the diagnostic code below stays visible to pass on.
   const summary =
-    !canManage && isConfigurationStep && step.state === "action_required"
+    !canManage &&
+    isConfigurationStep &&
+    CONFIGURATION_PROBLEM_STATES.has(step.state)
       ? t("setup.notAdmin.configurationPending")
       : step.summary;
   const canOverride =
@@ -453,20 +460,13 @@ export function SetupWizard({
             <div className="space-y-1">
               <p className="font-medium">{t("setup.notAdmin.title")}</p>
               <p className="text-muted-foreground">
+                {view.userName &&
+                  `${t("setup.notAdmin.signedInAs", { userName: view.userName })} `}
                 {customAdminGroup
-                  ? view.userName
-                    ? t("setup.notAdmin.descriptionWithUser", {
-                        userName: view.userName,
-                        adminGroup: customAdminGroup,
-                      })
-                    : t("setup.notAdmin.description", {
-                        adminGroup: customAdminGroup,
-                      })
-                  : view.userName
-                    ? t("setup.notAdmin.adminsOnlyWithUser", {
-                        userName: view.userName,
-                      })
-                    : t("setup.notAdmin.adminsOnly")}
+                  ? t("setup.notAdmin.description", {
+                      adminGroup: customAdminGroup,
+                    })
+                  : t("setup.notAdmin.adminsOnly")}
               </p>
             </div>
           </div>

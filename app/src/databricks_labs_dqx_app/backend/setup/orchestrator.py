@@ -11,6 +11,7 @@ from functools import partial
 from typing import Literal, Protocol
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.setup.configuration import (
     ConfigurationSource,
@@ -202,7 +203,7 @@ class SetupOrchestrator:
     Lakebase is bootstrapped first so saved setup choices can be read before any
     Unity Catalog storage exists; storage-bound collaborators are created once the
     configuration resolves. An administrator can override steps whose requirement may
-    be met in a way Studio cannot see (for example a grant through a parent group);
+    be met in a way Studio cannot see (for example a grant through a nested group);
     overridden steps no longer block.
     """
 
@@ -652,9 +653,19 @@ class SetupOrchestrator:
         try:
             resolved = await asyncio.to_thread(self.jobs.resolve, configured)
             self.runtime.job_id = resolved.job_id
-            if setup_user is not None:
-                await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
-            step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            try:
+                if setup_user is not None:
+                    await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
+                step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            except NotFound:
+                # The job was deleted; forget it so the next run discovers or recreates one.
+                self.runtime.job_id = None
+                return _failed(
+                    SetupStepId.TASK_RUNNER,
+                    "task_runner_job_missing",
+                    "Studio's task-runner job no longer exists. Click Verify again to set up a new one, "
+                    "or redeploy the bundle if it defines the job.",
+                )
             if step.state != StepState.PASSED:
                 return step
             return await asyncio.to_thread(

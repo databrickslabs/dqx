@@ -10,6 +10,7 @@ from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.configuration import (
@@ -207,6 +208,7 @@ class FakeJobs:
     resolved: ResolvedJob = ResolvedJob(job_id=27, created=False)
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
     grant_failure: Exception | None = None
+    run_as_failure: Exception | None = None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
@@ -219,6 +221,8 @@ class FakeJobs:
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
+        if self.run_as_failure is not None:
+            raise self.run_as_failure
         return self.run_as_result
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
@@ -944,6 +948,39 @@ async def test_reconcile_stops_at_external_run_as_action() -> None:
     assert report.current_step == SetupStepId.TASK_RUNNER
     assert "publish_wheels" not in harness.events
     assert "delta" not in harness.events
+
+
+@pytest.mark.asyncio
+async def test_reconcile_forgets_a_deleted_task_runner_job() -> None:
+    """A deleted job must not stay pinned in the runtime, so the next run can find or recreate one."""
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.run_as_failure = NotFound("job deleted")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
+    assert harness.runtime.job_id is None
+
+    harness.jobs.run_as_failure = None
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+    del harness.events[:]
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert "resolve_job:discover" in harness.events
+    assert harness.runtime.job_id == 81
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_the_job_after_a_transient_lookup_error() -> None:
+    harness = _harness()
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.run_as_failure = RuntimeError("timeout")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_reconciliation_failed"
+    assert harness.runtime.job_id == 27
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 """Remember setup steps an administrator chose to continue past without Studio confirming them.
 
-Studio can only see grants made directly to a principal. Access given through a parent
-group, or set up by hand in the workspace UI, often looks missing or unreadable to it.
+Studio can only see grants made directly to a principal or to the built-in *users* /
+*account users* groups. Access given through another parent group, or set up by hand in the workspace UI, often looks missing or unreadable to it.
 An override records that an administrator confirmed such a step, so setup does not
 stay blocked. Each override is tied to a fingerprint of what was confirmed (the step,
 the Studio storage and audience, and any step-specific subject such as the warehouse).
