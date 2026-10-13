@@ -19,7 +19,7 @@ needs a column saying when each row happened, and how to read it:
   after yesterday's midnight), so it is compared by day instead: every day the
   window touches, in the configured time zone, is included.
 
-The task runner pins its Spark session to UTC (see :func:`pin_session_to_utc`)
+A run that applies a window pins its Spark session to UTC (see :func:`pin_session_to_utc`)
 so these conversions don't depend on a workspace's session time-zone setting.
 """
 
