@@ -42,8 +42,8 @@ One Databricks Asset Bundle (`databricks.yml`) provisions everything in one `mak
 - **Databricks App** (FastAPI + React, single process, served by the Apps runtime)
 - **Serverless Job** for Spark work — the *task runner* — invoked for profiler, dry-run, and scheduled runs
 - **Lakebase Postgres project** (`postgres_projects.dqx_studio` + `postgres_roles.app_sp`) for OLTP state
-- **Two UC schemas** (`dqx_studio`, `dqx_studio_tmp`) under a customer-supplied catalog
-- **UC volume** (`wheels`) the app uses to ship DQX wheels into the job
+- **Four UC schemas** derived from a storage prefix (default `dqx_studio`): `<prefix>`, `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_demo`, under a customer-supplied catalog
+- **UC volume** (`<prefix>.wheels`) the app uses to ship DQX wheels into the job
 - **SQL warehouse** — managed by the bundle, or BYO (bring-your-own) if you already have one
 - **Lakeview dashboard** (`dashboards.dqx_quality_overview`) pinned to the app's *Insights* page
 
@@ -154,15 +154,17 @@ Roles are resolved from **Databricks workspace-group membership** via the `dq_ro
 ### 4.3 What permissions does the app's service principal need?
 Scoped tight:
 
-- `USE CATALOG` + `USE SCHEMA` + `ALL PRIVILEGES` on the two DQX schemas (`dqx_studio`, `dqx_studio_tmp`) only
-- `READ VOLUME` + `WRITE VOLUME` on the wheels volume only
-- `CAN USE` on the SQL warehouse the app is bound to
+- `USE CATALOG` + `CREATE SCHEMA` on the selected catalog (the one manual prerequisite)
+- Ownership (Marketplace) or an explicit privilege list incl. `MANAGE` (DAB) on the four prefix-derived Studio schemas and the wheels volume only
+- `CAN MANAGE` on the SQL warehouse the app is bound to, so setup can share it with the audience additively
 - `Service Principal: User` role on the task-runner SP (so the app can submit jobs as it)
+
+The task-runner SP is least privilege: `USE CATALOG`; `USE SCHEMA`, `SELECT`, `MODIFY` on the main schema; `USE SCHEMA` and `SELECT` on `<prefix>_tmp` (the runner reads OBO temporary views through this schema-level `SELECT`, so it can read any view in `_tmp`; no per-view grants); `READ VOLUME` on the wheels volume; nothing on `<prefix>_genie` or `<prefix>_demo`.
 
 It is **not** a workspace admin and **not** a metastore admin. If you remove the app, those grants are the only blast radius.
 
 ### 4.4 What's the deployer's permission burden?
-Documented as a table in `DEPLOYMENT.md` — about 10 line items, the bulk of which collapse if the deployer is added to a UC-admin group. The single most common failure on first deploy is missing `MANAGE`/`USE CATALOG` on the target catalog. `bundle deploy` applies schema/volume grants natively, but the one manual prerequisite is granting `USE CATALOG` on the (pre-existing, bundle-unmanaged) catalog to the app SP, task-runner SP, and `account users`. We surface that error explicitly with a fix.
+Documented as a table in `DEPLOYMENT.md` — about 10 line items, the bulk of which collapse if the deployer is added to a UC-admin group. The single most common failure on first deploy is missing `MANAGE`/`USE CATALOG` on the target catalog. `bundle deploy` applies schema/volume grants natively, but the one manual prerequisite is granting catalog access on the (pre-existing, bundle-unmanaged) catalog: `USE CATALOG` + `CREATE SCHEMA` to the app SP, and `USE CATALOG` to the task-runner SP and the audience group (`account users` only in broad mode). We surface that error explicitly with a fix.
 
 ### 4.5 Is everything audited?
 Yes, but the auditing is **distributed** across the platform rather than in one DQX log:

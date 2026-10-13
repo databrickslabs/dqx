@@ -9,25 +9,51 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
-from databricks.sdk.service.catalog import Privilege
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import (
+    EffectivePermissionsList,
+    EffectivePrivilege,
+    EffectivePrivilegeAssignment,
+    Privilege,
+)
+from databricks.sdk.service.sql import (
+    ColumnInfo,
+    ResultData,
+    ResultManifest,
+    ResultSchema,
+    ServiceError,
+    StatementExecutionAPI,
+    StatementResponse,
+    StatementState,
+    StatementStatus,
+)
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigIn,
+    SchedulePreflightIn,
     UpdateDataProductIn,
     UpdateMonitoredTableScheduleIn,
 )
 from databricks_labs_dqx_app.backend.routes.v1.data_products import update_data_product
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import update_monitored_table_schedule
-from databricks_labs_dqx_app.backend.routes.v1.schedules import save_schedule
+from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import preflight_schedule_grants
+from databricks_labs_dqx_app.backend.routes.v1.schedules import list_schedule_overview, save_schedule
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
-from databricks_labs_dqx_app.backend.services.schedule_grant_service import CannotManageError, ScheduleGrantService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    ScheduleGrantService,
+    TablePreflight,
+    WarehouseUnavailableError,
+)
 
 FQN = "cat.sch.tbl"
+# An SDK/SQL error message that embeds internal names; it must never reach the client.
+_LEAKY = "PERMISSION_DENIED on `secret_cat`.`hr`.`salaries` for 0123-warehouse"
 
 
 @pytest.fixture
@@ -69,6 +95,31 @@ class TestMonitoredTableScheduleGate:
         assert exc.value.detail["tables"][0]["fqn"] == FQN
         svc.update_schedule.assert_not_called()
 
+    def test_inconclusive_warehouse_check_is_a_retryable_503(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.get.return_value = self._detail()
+        grant_svc.grant_select_to_schedulers.side_effect = WarehouseUnavailableError("cold start")
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
+
+        with pytest.raises(HTTPException) as exc:
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 503
+        assert "Try again" in exc.value.detail
+        svc.update_schedule.assert_not_called()
+
+    def test_grant_failure_returns_a_fixed_message(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.get.return_value = self._detail()
+        grant_svc.grant_select_to_schedulers.side_effect = RuntimeError(_LEAKY)
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
+
+        with pytest.raises(HTTPException) as exc:
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to this table."
+
     def test_grants_then_saves_when_manageable(self, obo_ws, perms, grant_svc):
         svc = create_autospec(MonitoredTableService, instance=True)
         svc.get.return_value = self._detail()
@@ -109,7 +160,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         # t1 manageable, t2 not.
-        grant_svc.user_can_manage.side_effect = lambda fqn: fqn == "cat.sch.t1"
+        grant_svc.can_schedule.side_effect = lambda fqn: fqn == "cat.sch.t1"
         grant_svc.manage_holders.return_value = [{"principal": "bob@example.com", "type": "user"}]
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
@@ -125,7 +176,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -152,7 +203,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -162,7 +213,7 @@ class TestDataProductScheduleGate:
             )
             update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
-        assert grant_svc.user_can_manage.call_count == 3
+        assert grant_svc.can_schedule.call_count == 3
         assert grant_svc.grant_select_precleared.call_count == 3
 
     def test_primes_identities_once_for_the_whole_save(self, obo_ws, perms, grant_svc):
@@ -170,7 +221,7 @@ class TestDataProductScheduleGate:
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
         svc.get.return_value = MagicMock()
-        grant_svc.user_can_manage.return_value = True
+        grant_svc.can_schedule.return_value = True
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.MonkeyPatch.context() as mp:
@@ -187,7 +238,7 @@ class TestDataProductScheduleGate:
         """A blocked member must stop the save before any grant is attempted."""
         svc = create_autospec(DataProductService, instance=True)
         svc.member_table_fqns.return_value = ["cat.sch.t1", "cat.sch.t2"]
-        grant_svc.user_can_manage.return_value = False
+        grant_svc.can_schedule.return_value = False
         grant_svc.manage_holders.return_value = [{"principal": "bob@example.com", "type": "user"}]
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
@@ -195,6 +246,20 @@ class TestDataProductScheduleGate:
             update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
         grant_svc.grant_select_precleared.assert_not_called()
+
+    def test_grant_failure_returns_a_fixed_message(self, obo_ws, perms, grant_svc):
+        svc = create_autospec(DataProductService, instance=True)
+        svc.member_table_fqns.return_value = ["cat.sch.t1"]
+        grant_svc.can_schedule.return_value = True
+        grant_svc.grant_select_precleared.side_effect = RuntimeError(_LEAKY)
+        body = UpdateDataProductIn(schedule_cron="0 0 * * *")
+
+        with pytest.raises(HTTPException) as exc:
+            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to the collection's tables."
+        svc.update.assert_not_called()
 
     def test_skips_gate_when_no_schedule_field(self, obo_ws, perms, grant_svc):
         svc = create_autospec(DataProductService, instance=True)
@@ -208,7 +273,7 @@ class TestDataProductScheduleGate:
             )
             update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
 
-        grant_svc.user_can_manage.assert_not_called()
+        grant_svc.can_schedule.assert_not_called()
         grant_svc.grant_select_to_schedulers.assert_not_called()
         grant_svc.grant_select_precleared.assert_not_called()
 
@@ -237,26 +302,47 @@ class TestScopeConfigScheduleGate:
 
     @pytest.fixture
     def obo(self):
-        ws = MagicMock(name="obo_ws")
+        ws = create_autospec(WorkspaceClient, instance=True)
         ws.current_user.me.return_value = _me()
         ws.tables.get.return_value = SimpleNamespace(owner=None)
         ws.schemas.get.return_value = SimpleNamespace(owner=None)
         ws.catalogs.get.return_value = SimpleNamespace(owner=None)
         ws.grants.get_effective.return_value = _eff([])
-        return ws
-
-    @pytest.fixture
-    def sp(self):
-        ws = MagicMock(name="sp_ws")
-        ws.jobs.get.return_value = SimpleNamespace(
-            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="task-runner-sp"))
+        ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+        ws.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(
+                schema=ResultSchema(columns=[ColumnInfo(name="principal"), ColumnInfo(name="actionType")])
+            ),
+            result=ResultData(data_array=[]),
         )
         return ws
 
     @pytest.fixture
-    def grant_svc(self, obo, sp, monkeypatch):  # type: ignore[override]
+    def sp(self):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.jobs.get.return_value = SimpleNamespace(
+            settings=SimpleNamespace(run_as=SimpleNamespace(service_principal_name="task-runner-sp"))
+        )
+        ws.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: (
+            EffectivePermissionsList(
+                privilege_assignments=[
+                    EffectivePrivilegeAssignment(
+                        principal=principal, privileges=[EffectivePrivilege(privilege=Privilege.ALL_PRIVILEGES)]
+                    )
+                ]
+            )
+        )
+        ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+        ws.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.FAILED, error=ServiceError(message="denied"))
+        )
+        return ws
+
+    @pytest.fixture
+    def grant_svc(self, obo, sp, monkeypatch):
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
-        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123")
+        return ScheduleGrantService(obo_ws=obo, sp_ws=sp, job_id="123", warehouse_id="warehouse-1")
 
     @staticmethod
     def _config_svc(fqns):
@@ -285,9 +371,14 @@ class TestScopeConfigScheduleGate:
 
         assert result.schedule_name == "nightly"
         # Full coverage: SELECT granted to app SP + task-runner SP on EVERY table.
-        assert obo.grants.update.call_count == 2 * len(fqns)
-        granted_principals = {c.kwargs["changes"][0].principal for c in obo.grants.update.call_args_list}
-        assert granted_principals == {"app-sp-id", "task-runner-sp"}
+        statements = [c.kwargs["statement"] for c in obo.statement_execution.execute_statement.call_args_list]
+        assert set(statements) == {
+            f"GRANT SELECT ON TABLE `cat`.`sch`.`t{i}` TO `{principal}`"
+            for i in range(20)
+            for principal in ("app-sp-id", "task-runner-sp")
+        }
+        assert len(statements) == 2 * len(fqns)
+        obo.grants.update.assert_not_called()
         # MANAGE checked exactly once per table (owner read once each, not twice).
         assert obo.tables.get.call_count == len(fqns)
         # Identity round-trips do NOT scale with the table count: the OBO caller
@@ -306,8 +397,12 @@ class TestScopeConfigScheduleGate:
 
         obo.tables.get.side_effect = _tables_get
         # A different principal holds MANAGE on the blocked tables (surfaced to UI).
-        obo.grants.get_effective.return_value = _eff(
-            [SimpleNamespace(principal="bob@example.com", privileges=[SimpleNamespace(privilege=Privilege.MANAGE)])]
+        obo.statement_execution.execute_statement.return_value = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(
+                schema=ResultSchema(columns=[ColumnInfo(name="principal"), ColumnInfo(name="actionType")])
+            ),
+            result=ResultData(data_array=[["bob@example.com", "MANAGE"]]),
         )
         svc = self._config_svc(fqns)
         body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
@@ -321,6 +416,22 @@ class TestScopeConfigScheduleGate:
         assert blocked == {"cat.sch.t0", "cat.sch.t2"}  # ALL blocked tables aggregated
         # Hard block: nothing granted and nothing saved.
         obo.grants.update.assert_not_called()
+        assert not any(
+            c.kwargs["statement"].startswith("GRANT") for c in obo.statement_execution.execute_statement.call_args_list
+        )
+        svc.save.assert_not_called()
+
+    async def test_grant_failure_returns_a_fixed_message(self, obo, sp, grant_svc):
+        obo.tables.get.return_value = SimpleNamespace(owner="alice@example.com")
+        obo.statement_execution.execute_statement.side_effect = RuntimeError(_LEAKY)
+        svc = self._config_svc(["cat.sch.t0"])
+        body = ScheduleConfigIn(schedule_name="nightly", config={"scope_mode": "all"})
+
+        with pytest.raises(HTTPException) as exc:
+            await save_schedule(body, obo, svc, grant_svc)
+
+        assert exc.value.status_code == 502
+        assert exc.value.detail == "Could not grant the scheduler read access to the scheduled tables."
         svc.save.assert_not_called()
 
     async def test_noop_when_scope_resolves_to_no_tables(self, obo, grant_svc):
@@ -343,3 +454,37 @@ class TestScopeConfigScheduleGate:
         svc.resolve_scope_table_fqns.assert_not_called()
         obo.grants.update.assert_not_called()
         svc.save.assert_called_once()
+
+
+class TestSchedulePreflightRoute:
+    async def test_unverified_table_is_reported_per_table_not_as_a_503(self, grant_svc):
+        grant_svc.preflight_async.return_value = [
+            TablePreflight(fqn="cat.sch.t1", can_manage=True, manage_holders=[]),
+            TablePreflight(fqn="cat.sch.t2", can_manage=False, manage_holders=[], access_unverified=True),
+        ]
+
+        out = await preflight_schedule_grants(SchedulePreflightIn(table_fqns=["cat.sch.t1", "cat.sch.t2"]), grant_svc)
+
+        assert [(t.fqn, t.can_manage, t.access_unverified) for t in out.tables] == [
+            ("cat.sch.t1", True, False),
+            ("cat.sch.t2", False, True),
+        ]
+
+
+class TestScheduleOverviewRoute:
+    def test_failure_returns_a_fixed_message(self):
+        svc = create_autospec(ScheduleConfigService, instance=True)
+        # e.g. an existing deployment whose schema predates the ``paused`` column.
+        svc.list_trackers.side_effect = RuntimeError(
+            'column "paused" does not exist in "dqx_internal"."dq_schedule_runs"'
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            list_schedule_overview(
+                svc,
+                create_autospec(MonitoredTableService, instance=True),
+                create_autospec(DataProductService, instance=True),
+            )
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail == "Failed to list schedule overview."

@@ -563,6 +563,11 @@ class TestFacets:
         out = compute_entity_results(self._rows(), ResultFacets(columns=("id",)))
         assert [g.label for g in out.by_rule] == ["c1"]
 
+    def test_outcome_facet_splits_passed_and_failed_checks(self):
+        rows = [make_row("c1", failed=10, total=100), make_row("c2", failed=0, total=100)]
+        assert [g.label for g in compute_entity_results(rows, ResultFacets(outcomes=("failed",))).by_rule] == ["c1"]
+        assert [g.label for g in compute_entity_results(rows, ResultFacets(outcomes=("passed",))).by_rule] == ["c2"]
+
     def test_rule_facet_matches_check_name(self):
         out = compute_entity_results(self._rows(), ResultFacets(rules=("c2",)))
         assert [g.label for g in out.by_rule] == ["c2"]

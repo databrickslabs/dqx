@@ -9,15 +9,15 @@
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { CalendarClock, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScheduleEditor, DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
+import { useScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 import {
-  preflightScheduleGrants,
   useListDataProducts,
   useUpdateMonitoredTableSchedule,
   type MonitoredTableOut,
@@ -62,25 +62,17 @@ export function MonitoredTableSchedulingTab({
   // Preflight: scheduled runs read this table as a service account, so setting
   // up a schedule requires the caller to be able to grant those SPs SELECT.
   // When they can't, we hard-block the save and show a warning naming who can.
-  const preflightQuery = useQuery({
-    queryKey: ["scheduleGrantPreflight", table.table_fqn],
-    queryFn: async () => (await preflightScheduleGrants({ table_fqns: [table.table_fqn] })).data,
-    // Gated on scheduling intent, not merely on edit rights: this issues
-    // ownership reads plus fully-paginated grants.get_effective per table, and
-    // the result only matters once a cron is actually set.
-    enabled: canEdit && cron !== null,
-    staleTime: 60_000,
-  });
-  const preflightTable = preflightQuery.data?.tables?.[0];
-  const cannotManage = !!preflightTable && !preflightTable.can_manage;
+  // Gated on scheduling intent, not merely on edit rights (see the hook).
+  const tableFqns = useMemo(() => [table.table_fqn], [table.table_fqn]);
+  const preflight = useScheduleGrantPreflight(tableFqns, canEdit && cron !== null);
   // Only block when a schedule is actually being set/kept — clearing it (null
   // cron) needs no grant, matching the backend gate.
-  const blockForSchedule = cannotManage && cron !== null;
+  const blockForSchedule = preflight.hasGrantIssue && cron !== null;
 
   // While the preflight for a newly-set cron is still in flight we do not yet
   // know whether to block, so hold the save rather than let it through to a
   // backend 403.
-  const preflightPending = cron !== null && preflightQuery.isFetching;
+  const preflightPending = cron !== null && preflight.isFetching;
   const canSave = dirty && !cronInvalid && !blockForSchedule && !preflightPending;
 
   const updateMut = useUpdateMonitoredTableSchedule({ mutation: { onError: () => {} } });
@@ -149,7 +141,7 @@ export function MonitoredTableSchedulingTab({
           // showing it on an unscheduled table alarms people about something
           // they are not doing.
           blockForSchedule ? (
-            <ScheduleGrantWarning entity="table" blockedTables={preflightTable ? [preflightTable] : []} />
+            <ScheduleGrantWarning entity="table" preflight={preflight} />
           ) : undefined
         }
         footerNote={t("monitoredTables.scheduleFooterNote")}

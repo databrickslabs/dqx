@@ -279,8 +279,8 @@ def test_start_retags_refreshed_genie_dimensions(
     assert response.status_code == 200
     resource_tagger_mock.reconcile.assert_called_once_with(
         (
-            TagTarget("tables", "dqx_test.genie.dim_dq_monitored_tables"),
-            TagTarget("tables", "dqx_test.genie.dim_dq_rules"),
+            TagTarget("tables", "dqx_test.dqx_app_test_genie.dim_dq_monitored_tables"),
+            TagTarget("tables", "dqx_test.dqx_app_test_genie.dim_dq_rules"),
         )
     )
 

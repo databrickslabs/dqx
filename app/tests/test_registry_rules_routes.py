@@ -10,7 +10,7 @@ by ``test_registry_service.py``.
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
@@ -48,6 +48,16 @@ def _definition() -> RuleDefinition:
     )
 
 
+def _column_definition(column: str) -> RuleDefinition:
+    return RuleDefinition.model_validate(
+        {
+            "body": {"function": "is_not_null", "arguments": {"column": "{{" + column + "}}"}},
+            "slots": [{"name": column, "family": "any", "position": 0, "cardinality": "one"}],
+            "parameters": [],
+        }
+    )
+
+
 def _rule(rule_id: str = "r1", status: str = "draft", version: int = 0) -> RegistryRule:
     return RegistryRule(rule_id=rule_id, mode="dqx_native", status=status, version=version, definition=_definition())
 
@@ -68,15 +78,48 @@ class TestListAndGet:
     def test_list_maps_domain_rules_to_dto(self):
         svc = MagicMock()
         svc.list_rules.return_value = [_rule()]
-        result = list_registry_rules(svc=svc, status="draft")
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks(), status="draft")
         assert len(result) == 1
         assert result[0].rule_id == "r1"
         svc.list_rules.assert_called_once_with(status="draft", dimension=None, severity=None, owner=None, tag=None)
 
+    def test_list_fills_owner_names_through_the_shared_cache_helper(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule()]
+        tasks = BackgroundTasks()
+
+        result = list_registry_rules(svc=svc, background_tasks=tasks)
+
+        svc.fill_owner_display_names.assert_called_once()
+        args, kwargs = svc.fill_owner_display_names.call_args
+        assert args[0] == result
+        # SCIM resolution runs after the response, never on the request path.
+        assert kwargs["defer"] == tasks.add_task
+
+    def test_get_fills_owner_names_through_the_shared_cache_helper(self):
+        svc = MagicMock()
+        svc.get_rule_with_version.return_value = (_rule(), None)
+
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
+
+        args, _ = svc.fill_owner_display_names.call_args
+        assert args[0] == [result.rule]
+
+    def test_confirmed_missing_owner_is_flagged_unverified(self):
+        rule = _rule()
+        rule.owner = "jhon.doe@example.com"
+        svc = MagicMock()
+        svc.list_rules.return_value = [rule]
+        svc.fill_owner_display_names.side_effect = lambda outs, *, defer, mark_unverified: mark_unverified(outs[0])
+
+        result = list_registry_rules(svc=svc, background_tasks=BackgroundTasks())
+
+        assert result[0].owner_unverified is True
+
     def test_get_returns_detail_with_no_version_when_unpublished(self):
         svc = MagicMock()
         svc.get_rule_with_version.return_value = (_rule(), None)
-        result = get_registry_rule("r1", svc=svc)
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
         assert result.rule.rule_id == "r1"
         assert result.current_version is None
 
@@ -84,7 +127,7 @@ class TestListAndGet:
         svc = MagicMock()
         svc.get_rule_with_version.return_value = None
         with pytest.raises(HTTPException) as excinfo:
-            get_registry_rule("missing", svc=svc)
+            get_registry_rule("missing", svc=svc, background_tasks=BackgroundTasks())
         assert excinfo.value.status_code == 404
 
     def test_get_surfaces_modified_display_status(self):
@@ -92,7 +135,7 @@ class TestListAndGet:
         rule = _rule(status="approved", version=1)
         rule.modified_since_publish = True
         svc.get_rule_with_version.return_value = (rule, None)
-        result = get_registry_rule("r1", svc=svc)
+        result = get_registry_rule("r1", svc=svc, background_tasks=BackgroundTasks())
         assert result.rule.modified_since_publish is True
         assert result.rule.display_status == "modified"
 
@@ -449,6 +492,106 @@ class TestBatchImport:
         assert result.reused == []
         svc.compute_definition_fingerprint.assert_not_called()
         svc.get_active_rule_by_fingerprint.assert_not_called()
+
+    def test_contract_columns_reuse_the_existing_generic_rule(self):
+        # ``customer_id is not null`` and ``email is not null`` from a contract
+        # are the same rule as the registry's generic ``{{column}}`` one.
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule("generic", status="approved", version=1)]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("customer_id")),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email")),
+            ],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        svc.create_rule.assert_not_called()
+        assert [r.rule.rule_id for r in result.reused] == ["generic", "generic"]
+        assert [r.input_index for r in result.reused] == [0, 1]
+        assert [r.slot_renames for r in result.reused] == [{"customer_id": "column"}, {"email": "column"}]
+
+    def test_contract_columns_create_one_generic_rule_when_missing(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = []
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.return_value = (_rule("new"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native",
+                    definition=_column_definition("customer_id"),
+                    user_metadata={"name": "customer_id is not null", "description": "Customer id must be set"},
+                ),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email")),
+            ],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        svc.create_rule.assert_called_once()
+        kwargs = svc.create_rule.call_args.kwargs
+        assert kwargs["definition"].body["arguments"] == {"column": "{{column}}"}
+        assert kwargs["user_metadata"] == {"name": "Is not null"}
+        assert result.created[0].slot_renames == {"customer_id": "column"}
+        assert result.reused[0].rule.rule_id == "new"
+        assert result.reused[0].slot_renames == {"email": "column"}
+
+    def test_earlier_per_column_import_is_not_reused_for_another_column(self):
+        svc = MagicMock()
+        old_copy = _rule("customer_id_copy", status="approved", version=1)
+        old_copy.definition = _column_definition("customer_id")
+        old_copy.source = "import"
+        svc.list_rules.return_value = [old_copy]
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.return_value = (_rule("generic"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email"))],
+            skip_duplicates=True,
+            generalize_slots=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [r.rule.rule_id for r in result.created] == ["generic"]
+        assert result.reused == []
+
+    def test_approved_rule_is_preferred_over_draft(self):
+        svc = MagicMock()
+        svc.list_rules.return_value = [_rule("draft"), _rule("approved", status="approved", version=1)]
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_column_definition("email"))],
+            skip_duplicates=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.reused[0].rule.rule_id == "approved"
 
     def test_imported_dimension_is_folded_onto_the_configured_vocabulary(self):
         # ODCS closes ``quality.dimension`` to a lowercase vocabulary, so a

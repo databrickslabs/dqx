@@ -135,9 +135,9 @@ describe("SetupGate", () => {
     const status = setupStatus(true);
     status.report.steps = [
       {
-        id: "volume",
+        id: "storage",
         state: "action_required",
-        summary: "Grant access to the wheels volume.",
+        summary: "Grant access to the storage schemas.",
         actions: ["verify_again"],
       },
     ];
@@ -145,9 +145,7 @@ describe("SetupGate", () => {
     const markup = renderGate(status);
 
     expect(markup).not.toContain("Why this is needed");
-    expect(markup).toContain(
-      'aria-label="Stores the DQX Core library and task-runner application used by profiling and data-quality jobs."',
-    );
+    expect(markup).toContain(`aria-label="${en.setup.purposes.storage}"`);
   });
 
   test("renders the active setup step while initialization is running", () => {
@@ -267,5 +265,284 @@ describe("SetupGate", () => {
     );
 
     expect(writes).toEqual([["cdh-ui-theme", "light"]]);
+  });
+});
+
+function configurationStatus(canManage: boolean): SetupStatusResponse {
+  return {
+    can_manage: canManage,
+    admin_group: "admins",
+    configuration: {
+      source: "none",
+      catalog: "",
+      prefix: "",
+      audience_group: "",
+      schemas: [],
+      broad_audience: false,
+      locked: false,
+    },
+    report: {
+      state: "setup_required",
+      current_step: "configuration",
+      steps: [
+        { id: "identity", state: "passed" },
+        { id: "lakebase", state: "passed" },
+        {
+          id: "configuration",
+          state: "action_required",
+          code: "configuration_required",
+          actions: ["configure"],
+        },
+      ],
+    },
+  };
+}
+
+function renderWizard(status: SetupStatusResponse): string {
+  return renderSetup(
+    <SetupWizard
+      view={setupView(status)}
+      isReconciling={false}
+      onReconcile={() => undefined}
+      reconciliationFailed={false}
+    />,
+  );
+}
+
+describe("setup configuration", () => {
+  test("admins see the configuration form", () => {
+    const html = renderWizard(configurationStatus(true));
+    expect(html).toContain('name="catalog"');
+    expect(html).toContain('value="dqx_studio"');
+    expect(html).toContain('name="audience_group"');
+  });
+
+  test("non-admins never see the form", () => {
+    const html = renderWizard(configurationStatus(false));
+    expect(html).not.toContain('name="catalog"');
+  });
+
+  test("deployment configuration is read-only", () => {
+    const status = configurationStatus(true);
+    status.configuration = {
+      ...status.configuration!,
+      source: "deployment",
+      catalog: "main",
+      prefix: "dqx_studio",
+      broad_audience: true,
+    };
+    status.report.steps[2] = { id: "configuration", state: "passed" };
+    const html = renderWizard(status);
+    expect(html).not.toContain('name="catalog"');
+    expect(html).toContain(en.setup.configuration.broadAudience);
+  });
+
+  test("warning steps are labelled", () => {
+    const status = configurationStatus(true);
+    status.report.steps.push({
+      id: "app_sharing",
+      state: "warning",
+      code: "app_sharing_unverified",
+      instructions: ["Share the app"],
+    });
+    const html = renderWizard(status);
+    expect(html).toContain(en.setup.states.warning);
+  });
+});
+
+function escapeHtml(text: string): string {
+  return renderToStaticMarkup(<>{text}</>);
+}
+
+function readyWithWarning(canManage: boolean): SetupStatusResponse {
+  return {
+    can_manage: canManage,
+    admin_group: "dqx-admins",
+    report: {
+      state: "ready",
+      steps: [
+        { id: "access", state: "passed" },
+        {
+          id: "app_sharing",
+          state: "warning",
+          code: "app_sharing_unverified",
+          summary: "Could not verify that Studio users can open the app.",
+          instructions: ["Share the app dqx-studio with group data-team."],
+          actions: ["override"],
+        },
+      ],
+    },
+  };
+}
+
+describe("setup warnings review", () => {
+  test("administrators review unacknowledged warnings before entering Studio", () => {
+    const markup = renderGate(readyWithWarning(true));
+
+    expect(markup).not.toContain("Studio content");
+    expect(markup).toContain(en.setup.warningsReview.title);
+    expect(markup).toContain(en.setup.steps.app_sharing);
+    expect(markup).toContain(
+      "Could not verify that Studio users can open the app.",
+    );
+    expect(markup).toContain("Share the app dqx-studio with group data-team.");
+    expect(markup).toContain(escapeHtml(en.setup.override.button.app_sharing));
+    expect(markup).not.toContain(`>${en.setup.actions.verify_again}</button>`);
+    expect(markup).toContain(en.setup.warningsReview.acknowledge);
+  });
+
+  test("never shows setup warnings to non-administrators", () => {
+    const markup = renderGate(readyWithWarning(false));
+
+    expect(markup).toContain("Studio content");
+    expect(markup).not.toContain(en.setup.warningsReview.title);
+    expect(markup).not.toContain("Share the app");
+  });
+
+  test("enters Studio directly when the ready report has no warnings", () => {
+    const status = readyWithWarning(true);
+    status.report.steps = [{ id: "app_sharing", state: "passed" }];
+
+    const markup = renderGate(status);
+
+    expect(markup).toContain("Studio content");
+    expect(markup).not.toContain(en.setup.warningsReview.title);
+  });
+
+  test("warning state has its own label", () => {
+    expect(en.setup.states.warning).not.toBe(en.setup.states.failed);
+    expect(en.setup.states.warning).toBe("Warning");
+  });
+});
+
+describe("editable saved configuration", () => {
+  function savedStatus(): SetupStatusResponse {
+    const status = configurationStatus(true);
+    status.configuration = {
+      source: "saved",
+      catalog: "main",
+      prefix: "custom_prefix",
+      audience_group: "data-team",
+      schemas: ["custom_prefix", "custom_prefix_tmp"],
+      broad_audience: false,
+      locked: false,
+    };
+    status.report.current_step = "storage";
+    status.report.steps = [
+      { id: "identity", state: "passed" },
+      { id: "configuration", state: "passed", actions: ["configure"] },
+      {
+        id: "storage",
+        state: "action_required",
+        code: "storage_collision",
+        actions: ["verify_again"],
+      },
+    ];
+    return status;
+  }
+
+  test("a passed configuration step that advertises configure shows a prefilled form", () => {
+    const html = renderWizard(savedStatus());
+
+    expect(html).toContain('name="catalog"');
+    expect(html).toContain('value="main"');
+    expect(html).toContain('value="custom_prefix"');
+    expect(html).toContain('value="data-team"');
+    expect(html).toContain("custom_prefix_tmp");
+  });
+
+  test("a saved configuration without configure stays read-only", () => {
+    const status = savedStatus();
+    status.report.steps[1] = { id: "configuration", state: "passed" };
+
+    expect(renderWizard(status)).not.toContain('name="catalog"');
+  });
+});
+
+describe("setup overrides", () => {
+  function blockedStatus(
+    stepId: SetupStatusResponse["report"]["steps"][number]["id"],
+  ): SetupStatusResponse {
+    return {
+      can_manage: true,
+      admin_group: "dqx-admins",
+      report: {
+        state: "setup_required",
+        current_step: stepId,
+        steps: [
+          {
+            id: stepId,
+            state: "action_required",
+            code: "catalog_permissions_missing",
+            summary: "Studio users don't have the permissions they need.",
+            actions: ["verify_again", "override"],
+          },
+        ],
+      },
+    };
+  }
+
+  function renderWithOverride(status: SetupStatusResponse): string {
+    return renderSetup(
+      <SetupWizard
+        view={setupView(status)}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        onOverride={() => undefined}
+        reconciliationFailed={false}
+      />,
+    );
+  }
+
+  test("offers continue anyway with an explanation of inherited grants", () => {
+    const markup = renderWithOverride(blockedStatus("unity_catalog"));
+
+    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).toContain(en.setup.override.button.default);
+    expect(markup).toContain(escapeHtml(en.setup.override.help.default));
+  });
+
+  test("uses AI-specific wording for the AI step", () => {
+    const markup = renderWithOverride(blockedStatus("ai"));
+
+    expect(markup).toContain(en.setup.override.button.ai);
+    expect(markup).toContain(en.setup.steps.ai);
+  });
+
+  test("hides the override without a handler", () => {
+    const markup = renderSetup(
+      <SetupWizard
+        view={setupView(blockedStatus("warehouse"))}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        reconciliationFailed={false}
+      />,
+    );
+
+    expect(markup).toContain(en.setup.actions.verify_again);
+    expect(markup).not.toContain(en.setup.override.button.default);
+  });
+
+  test("never offers overrides to non-administrators", () => {
+    const status = blockedStatus("access");
+    status.can_manage = false;
+
+    expect(renderGate(status)).not.toContain(en.setup.override.button.default);
+  });
+
+  test("labels overridden steps as confirmed by an administrator", () => {
+    const status = blockedStatus("warehouse");
+    status.report.state = "ready";
+    status.report.steps = [
+      {
+        id: "warehouse",
+        state: "overridden",
+        summary: "An administrator confirmed this is set up.",
+        actions: ["verify_again"],
+      },
+    ];
+    const markup = renderWithOverride(status);
+
+    expect(markup).toContain(en.setup.states.overridden);
   });
 });

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo, useState, Suspense } from "react";
+import { Fragment, useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
@@ -62,6 +62,11 @@ import {
   matchesDqScoreBucket,
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
+import {
+  filterLayoutMenuConfig,
+  useFilterLayout,
+  type FilterLayoutDef,
+} from "@/components/data-table/filter-layout";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +77,14 @@ function extractApiError(err: unknown, fallback: string): string {
 
 const PAGE_SIZE = 50;
 const ALL = "all";
+
+type CollectionsFilterKey = "search" | "owner" | "dqScore";
+const FILTER_ORDER: readonly CollectionsFilterKey[] = ["search", "owner", "dqScore"];
+const FILTERS: Record<CollectionsFilterKey, FilterLayoutDef> = {
+  search: { labelKey: "dataProducts.filterSearch", defaultVisible: true },
+  owner: { labelKey: "dataProducts.colOwner", defaultVisible: true },
+  dqScore: { labelKey: "dataProducts.colDqScore", defaultVisible: true },
+};
 
 export const Route = createFileRoute("/_sidebar/collections/")({
   component: () => (
@@ -204,6 +217,26 @@ function DataProductsPage() {
       },
     [],
   );
+
+  // Which filter pills show, and in what order (Edit Columns > Filters).
+  // Hiding a filter clears it so it can't keep narrowing the list unseen.
+  const resetFilter = useCallback((key: CollectionsFilterKey) => {
+    setPage(1);
+    switch (key) {
+      case "search":
+        return setSearch("");
+      case "owner":
+        return setOwnerFilter(ALL);
+      case "dqScore":
+        return setScoreFilter(DQ_SCORE_FILTER_ALL);
+    }
+  }, []);
+  const filterLayout = useFilterLayout<CollectionsFilterKey>({
+    storageKey: "dqx.collections.filters",
+    defaultOrder: FILTER_ORDER,
+    filters: FILTERS,
+    onHide: resetFilter,
+  });
 
   const openProduct = (product: DataProductOut) => {
     navigate({ to: "/collections/$productId", params: { productId: product.product_id } });
@@ -509,6 +542,46 @@ function DataProductsPage() {
     );
   };
 
+  const filterControls: Record<CollectionsFilterKey, ReactNode> = {
+    search: (
+      <div className="relative w-56">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          placeholder={t("dataProducts.searchPlaceholder")}
+          value={search}
+          onChange={(e) => applyFilter(setSearch)(e.target.value)}
+          className="h-8 text-xs pl-7"
+        />
+      </div>
+    ),
+    owner: (
+      <SearchableSelect
+        value={ownerFilter}
+        onChange={applyFilter(setOwnerFilter)}
+        options={ownerOptions.map((s) => ({ value: s, label: s }))}
+        allValue={ALL}
+        allLabel={t("dataProducts.allOwners")}
+        searchPlaceholder={t("common.search")}
+        emptyText={t("common.noMatches")}
+        ariaLabel={t("dataProducts.colOwner")}
+      />
+    ),
+    dqScore: (
+      <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+        <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {DQ_SCORE_BUCKETS.map((b) => (
+            <SelectItem key={b.value} value={b.value} className="text-xs">
+              {t(b.labelKey)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ),
+  };
+
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -664,41 +737,10 @@ function DataProductsPage() {
                   </div>
                 )
           }
-          toolbarExtra={
-            <>
-              <div className="relative w-56">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  placeholder={t("dataProducts.searchPlaceholder")}
-                  value={search}
-                  onChange={(e) => applyFilter(setSearch)(e.target.value)}
-                  className="h-8 text-xs pl-7"
-                />
-              </div>
-              <SearchableSelect
-                value={ownerFilter}
-                onChange={applyFilter(setOwnerFilter)}
-                options={ownerOptions.map((s) => ({ value: s, label: s }))}
-                allValue={ALL}
-                allLabel={t("dataProducts.allOwners")}
-                searchPlaceholder={t("common.search")}
-                emptyText={t("common.noMatches")}
-                ariaLabel={t("dataProducts.colOwner")}
-              />
-              <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
-                <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DQ_SCORE_BUCKETS.map((b) => (
-                    <SelectItem key={b.value} value={b.value} className="text-xs">
-                      {t(b.labelKey)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
-          }
+          filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
+          toolbarExtra={filterLayout.visibleKeys.map((key) => (
+            <Fragment key={key}>{filterControls[key]}</Fragment>
+          ))}
           emptyState={
             isLoading ? (
               <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">

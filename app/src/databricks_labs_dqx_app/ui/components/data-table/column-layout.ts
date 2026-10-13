@@ -42,22 +42,15 @@ export interface UseColumnLayoutResult<K extends string> {
   onResizeStart: (key: K, e: React.MouseEvent) => void;
 }
 
-type StoredLayout<K extends string> = {
+export type StoredLayout<K extends string> = {
   visibility: Partial<Record<K, boolean>>;
   order: K[];
 };
 
-type LoadedLayout<K extends string> = {
+export type LoadedLayout<K extends string> = {
   visibility: Record<K, boolean>;
   order: K[];
 };
-
-function defaultVisibilityOf<K extends string>(
-  defaultOrder: readonly K[],
-  columns: Record<K, ColumnLayoutDef>,
-): Record<K, boolean> {
-  return Object.fromEntries(defaultOrder.map((k) => [k, columns[k].defaultVisible])) as Record<K, boolean>;
-}
 
 function defaultWidthsOf<K extends string>(
   defaultOrder: readonly K[],
@@ -67,46 +60,55 @@ function defaultWidthsOf<K extends string>(
 }
 
 /**
- * Loads a persisted column layout, reconciled against the current set of
- * column keys shipped in code:
- *   - Columns in storage no longer known in code -> dropped.
- *   - Columns known in code but missing from storage (newly added) ->
- *     appended in `defaultOrder` position, with the current defaultVisible.
+ * Reconciles a persisted layout against the set of keys shipped in code:
+ *   - Keys in storage no longer known in code -> dropped.
+ *   - Keys known in code but missing from storage (newly added) -> inserted
+ *     right after their nearest preceding `defaultOrder` neighbour (or first
+ *     when they lead `defaultOrder`), with their default visibility, so a new
+ *     leading column doesn't land at the far end of an existing layout.
  *   - Everything the user explicitly set keeps its value.
  * Ported from dqlake's `dqlake.bindings.layout` / `dqlake.rules.layout`
- * reconciliation strategy so new columns don't silently reset user prefs.
+ * reconciliation strategy so new keys don't silently reset user prefs.
  */
-function loadLayout<K extends string>(
-  storageKey: string,
+export function reconcileLayout<K extends string>(
+  stored: Partial<StoredLayout<K>>,
   defaultOrder: readonly K[],
-  columns: Record<K, ColumnLayoutDef>,
+  defaultVisibility: Record<K, boolean>,
 ): LoadedLayout<K> {
-  let stored: Partial<StoredLayout<K>> = {};
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) stored = JSON.parse(raw) as Partial<StoredLayout<K>>;
-  } catch {
-    // localStorage unavailable or malformed payload — fall back to defaults
-  }
-
   const storedOrder = Array.isArray(stored.order) ? stored.order : [];
-  const known = storedOrder.filter((k): k is K => k in columns);
-  const missing = defaultOrder.filter((k) => !known.includes(k));
-  const order = [...known, ...missing];
+  const order = storedOrder.filter(
+    (k, i): k is K => defaultOrder.includes(k as K) && storedOrder.indexOf(k) === i,
+  );
+  defaultOrder.forEach((key, defaultIdx) => {
+    if (order.includes(key)) return;
+    const previous = defaultOrder.slice(0, defaultIdx).reverse().find((k) => order.includes(k));
+    order.splice(previous === undefined ? 0 : order.indexOf(previous) + 1, 0, key);
+  });
 
   const storedVis = (stored.visibility ?? {}) as Partial<Record<K, boolean>>;
-  const visibility = { ...defaultVisibilityOf(defaultOrder, columns) } as Record<K, boolean>;
+  const visibility = { ...defaultVisibility };
   for (const key of order) {
     if (Object.prototype.hasOwnProperty.call(storedVis, key)) {
       const v = storedVis[key];
       if (typeof v === "boolean") visibility[key] = v;
     }
   }
-
   return { visibility, order };
 }
 
-function persistLayout<K extends string>(storageKey: string, visibility: Record<K, boolean>, order: K[]): void {
+/** Reads a persisted layout payload; an unavailable store or a malformed
+ *  payload yields an empty layout (callers fall back to defaults). */
+export function readStoredLayout<K extends string>(storageKey: string): Partial<StoredLayout<K>> {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) return JSON.parse(raw) as Partial<StoredLayout<K>>;
+  } catch {
+    // localStorage unavailable or malformed payload — fall back to defaults
+  }
+  return {};
+}
+
+export function persistLayout<K extends string>(storageKey: string, visibility: Record<K, boolean>, order: K[]): void {
   try {
     localStorage.setItem(storageKey, JSON.stringify({ visibility, order }));
   } catch {
@@ -114,9 +116,21 @@ function persistLayout<K extends string>(storageKey: string, visibility: Record<
   }
 }
 
+function loadLayout<K extends string>(
+  storageKey: string,
+  defaultOrder: readonly K[],
+  columns: Record<K, ColumnLayoutDef>,
+): LoadedLayout<K> {
+  const defaultVisibility = Object.fromEntries(defaultOrder.map((k) => [k, columns[k].defaultVisible])) as Record<
+    K,
+    boolean
+  >;
+  return reconcileLayout(readStoredLayout<K>(storageKey), defaultOrder, defaultVisibility);
+}
+
 /**
  * Shared column visibility/order/width/resize state for tables with a
- * drag-reorderable, toggleable "Edit Columns" dropdown. Ported from
+ * drag-reorderable, toggleable "Edit View" dropdown. Ported from
  * dqlake's `BindingsTable` and used by both the Rules Registry list
  * (`RulesTable`) and the Monitored Tables list (`MonitoredTablesTable`) so
  * the two don't drift in behavior.

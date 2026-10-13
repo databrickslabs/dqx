@@ -159,17 +159,51 @@ class TestPgMigrationsCatalogue:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
 
-class TestBaselineOnlyCatalogue:
-    """The catalogue is one baseline and the schema is expressed as CREATE TABLE.
+_ADD_COLUMN_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*) (.+)"
+)
+_DROP_TABLE_RE = re.compile(r"DROP TABLE IF EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
 
-    There are no external installs to upgrade yet, so a shape change is
-    edited into v1 rather than appended as an ALTER. These tests pin that
-    decision — an ``ALTER TABLE`` or backfill ``UPDATE`` creeping back in
-    would mean the schema is once again split across a replay chain.
+
+class TestBaselineCatalogue:
+    """v1 is the full schema as CREATE TABLE; later migrations add columns or drop retired tables.
+
+    The baseline stays the single description of the schema, so it holds no
+    ``ALTER TABLE`` or backfill ``UPDATE``. Later migrations exist only to
+    upgrade deployments that already applied v1. Each column they add must
+    already be in the baseline, and each table they drop must not be, so a
+    fresh install and an upgraded one end up with the same shape.
     """
 
-    def test_catalogue_is_exactly_the_baseline(self):
-        assert [m.version for m in PG_MIGRATIONS] == [1]
+    def test_baseline_is_version_one(self):
+        assert PG_MIGRATIONS[0].version == 1
+
+    def test_later_migrations_only_add_columns_or_drop_tables(self):
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                assert _ADD_COLUMN_RE.fullmatch(stmt) or _DROP_TABLE_RE.fullmatch(
+                    stmt
+                ), f"v{m.version}: not an ADD COLUMN or DROP TABLE IF EXISTS: {stmt[:120]}"
+
+    def test_dropped_tables_are_not_in_the_baseline(self):
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                if match := _DROP_TABLE_RE.fullmatch(stmt):
+                    assert match.group(1) not in OLTP_TABLE_NAMES, f"v{m.version} drops baseline table {match.group(1)}"
+
+    def test_added_columns_match_the_baseline(self):
+        baseline = _baseline()
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                match = _ADD_COLUMN_RE.fullmatch(stmt)
+                if match is None:
+                    continue
+                table, column, definition = match.groups()
+                create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
+                assert create is not None, f"v{m.version}: {table} is not created by the baseline"
+                assert (
+                    f" {column} {definition}," in f" {create.group(1)},"
+                ), f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
 
     def test_every_statement_creates_a_table_index_or_view(self):
         # The baseline is CREATE TABLE / CREATE INDEX plus the single

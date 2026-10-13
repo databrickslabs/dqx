@@ -209,6 +209,21 @@ class TestSubmission:
         assert result.run_set_id == "rs-existing"
         run_set_service.add_member.assert_called_once_with("rs-existing", result.run_id, "b1", 2)
 
+    def test_run_set_member_id_matches_the_submitted_job_run_id(
+        self, service, monitored_tables, version_service, job_service, run_set_service
+    ):
+        # The scheduler matches swept run-set members against the Jobs API's
+        # active runs by the ``run_id`` job parameter, so the two must be the
+        # same id or a still-running member is looked up in Delta every tick.
+        monitored_tables.get.return_value = _detail(version=2)
+        version_service.get_checks.return_value = _CHECKS
+
+        service.run_binding("b1", source="approved", version=2, user_email="alice@x")
+
+        _, submit_kwargs = job_service.submit_run.call_args
+        member_run_id = run_set_service.add_member.call_args.args[1]
+        assert member_run_id == submit_kwargs["run_id"]
+
     def test_records_dryrun_started(self, service, monitored_tables, version_service, job_service):
         monitored_tables.get.return_value = _detail(table_fqn="cat.schema.tbl", version=2)
         version_service.get_checks.return_value = _CHECKS

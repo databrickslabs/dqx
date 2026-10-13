@@ -5,23 +5,28 @@ from collections.abc import Callable
 import math
 from typing import Any
 
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_text
+from databricks.labs.dqx.geo.check_funcs import DEFAULT_SRID, MULTIPOLYGON_TYPE, POINT_TYPE, POLYGON_TYPE
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_geography, is_geospatial, is_text
+from databricks.labs.dqx.utils import quote_column_name
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
     PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_GEOSPATIAL_SRID,
     PROFILE_OPTION_MAX_EMPTY_RATIO,
     PROFILE_OPTION_MAX_IN_COUNT,
     PROFILE_OPTION_MAX_NULL_RATIO,
     PROFILE_OPTION_NUM_SIGMAS,
     PROFILE_OPTION_OUTLIER_COLUMNS,
     PROFILE_OPTION_OUTLIERS_RATIO,
+    PROFILE_OPTION_PROFILE_GEOSPATIAL,
     PROFILE_OPTION_REMOVE_OUTLIERS,
     PROFILE_OPTION_ROUND,
     PROFILE_OPTION_TRIM_STRINGS,
@@ -36,6 +41,35 @@ from databricks.labs.dqx.profiler.profile_options import (
 # can never drift apart (a mismatch would raise ValueError at parse time).
 _TIMESTAMP_SPARK_FORMAT = "yyyy-MM-dd HH:mm:ss.SSSSSS"
 _TIMESTAMP_STRPTIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+_GEO_STAT_MIN_X = "min_x_coordinate"
+_GEO_STAT_MAX_X = "max_x_coordinate"
+_GEO_STAT_MIN_Y = "min_y_coordinate"
+_GEO_STAT_MAX_Y = "max_y_coordinate"
+_GEO_STAT_MIN_AREA = "min_area"
+_GEO_STAT_MAX_AREA = "max_area"
+_GEO_STAT_MIN_NUM_POINTS = "min_num_points"
+_GEO_STAT_MAX_NUM_POINTS = "max_num_points"
+_GEO_STAT_TYPES = "geometry_types"
+_GEO_STAT_EMPTY_COUNT = "empty_geometry_count"
+_GEO_STAT_INVALID_COUNT = "invalid_geometry_count"
+_GEO_STAT_NULL_ISLAND_COUNT = "null_island_count"
+_POLYGONAL_GEOMETRY_TYPES = frozenset({POLYGON_TYPE, MULTIPOLYGON_TYPE})
+_UNRESOLVED_ROUTINE_CONDITION = "UNRESOLVED_ROUTINE"
+
+GEOSPATIAL_PROFILE_NAMES: frozenset[str] = frozenset(
+    {
+        "geometry_type",
+        "has_x_coordinate_between",
+        "has_y_coordinate_between",
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+        "is_non_empty_geometry",
+        "is_ogc_valid",
+        "is_not_null_island",
+    }
+)
 
 
 PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
@@ -852,3 +886,373 @@ def make_has_no_outliers_profile(
         )
 
     return None
+
+
+@register_profile_builder("geospatial")
+def make_geospatial_profile(
+    df: DataFrame,
+    column_name: str,
+    column_type: T.DataType,
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> list[DQProfile] | None:
+    """
+    Creates geospatial profiles for native GEOMETRY/GEOGRAPHY columns.
+
+    The column is referenced directly (it is already a native geometry/geography value), so the
+    profiled bounds line up with the checks the profiler generates, which set *convert_column=False*.
+    Requires Databricks serverless compute or classic compute with Databricks Runtime Version >17.1.
+    If the runtime does not meet these requirements, a warning is logged and no geospatial profiles
+    are produced.
+
+    Args:
+        df: Single-column DataFrame (nulls already dropped)
+        column_name: Input column name
+        column_type: Input column type
+        profiler_metrics: Column-level statistics computed by the DQProfiler
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        A list of DQProfiles, or None when profiling is disabled, the column is not geospatial,
+        the column is entirely null, or the spatial functions are unavailable.
+
+    Notes:
+        Because spatial aggregations required for profiling can be expensive at scale, geospatial
+        profiling must be  enabled via the *profile_geospatial* option (default: *False*).
+
+        When geospatial profiling is enabled and the column is a geometry or geography type, a single
+        aggregation computes the bounding box, area range, point-count range, geometry-type distribution
+        and quality counts. Summary stats are added to the *profiler_metrics* (and thus the summary statistics)
+        and used to emit the matching row-level geospatial profiles.
+    """
+    if not profiler_options.get(PROFILE_OPTION_PROFILE_GEOSPATIAL, False):
+        return None
+
+    if not is_geospatial(column_type):
+        return None
+
+    if profiler_metrics.get("count_non_null", 0) == 0:
+        return None
+
+    stats = _compute_geospatial_stats(df, column_name, column_type, profiler_options)
+    if stats is None:
+        return None
+
+    profiler_metrics.update(stats)
+    profiles = _build_geospatial_profiles(column_name, column_type, stats, profiler_metrics, profiler_options)
+    return profiles or None
+
+
+def _compute_geospatial_stats(
+    df: DataFrame, column_name: str, column_type: T.DataType, profiler_options: dict[str, Any]
+) -> dict[str, Any] | None:
+    """
+    Runs a single spatial aggregation over a geometry column and returns the raw stats.
+
+    Requires Databricks serverless compute or classic compute with Databricks Runtime
+    Version >17.1. If the runtime does not meet these requirements, a warning is logged
+    and no geospatial profiles are produced.
+
+    Args:
+        df: Single-column DataFrame with nulls dropped
+        column_name: Input column name
+        column_type: Input column type, used to compute geodesic areas for geography columns
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        A dictionary of statistics about the geometry values in the profiled column, or None when the
+        spatial SQL functions are unavailable on the current runtime.
+    """
+    column_label = df.columns[0]
+    # The column is already a native GEOMETRY/GEOGRAPHY type (guaranteed by the is_geospatial gate in
+    # make_geospatial_profile), so reference it directly. Wrapping it in try_to_geometry() — which only
+    # accepts STRING/BINARY — would throw a type-mismatch on native columns. quote_column_name escapes
+    # embedded backticks so column names with special characters produce valid SQL.
+    geom = quote_column_name(column_label)
+    area = _geospatial_area_expr(geom, column_type, profiler_options)
+    # st_area, st_npoints, st_geometrytype and st_isempty accept both GEOMETRY and GEOGRAPHY.
+    empty_or_null = f"{geom} IS NULL OR st_isempty({geom})"
+    non_empty = f"NOT ({empty_or_null})"
+    aggregations = [
+        F.expr(f"min({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_AREA),
+        F.expr(f"max({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_AREA),
+        F.expr(f"min(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_NUM_POINTS),
+        F.expr(f"max(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_NUM_POINTS),
+        F.expr(f"array_sort(collect_set(st_geometrytype({geom})))").alias(_GEO_STAT_TYPES),
+        F.expr(f"count_if({empty_or_null})").alias(_GEO_STAT_EMPTY_COUNT),
+    ]
+    if not is_geography(column_type):
+        null_island = (
+            f"CASE WHEN st_geometrytype({geom}) = '{POINT_TYPE}' THEN "
+            f"st_x({geom}) = 0.0 AND st_y({geom}) = 0.0 "
+            f"AND (st_z({geom}) IS NULL OR st_z({geom}) = 0.0) "
+            f"AND (st_m({geom}) IS NULL OR st_m({geom}) = 0.0) "
+            f"ELSE false END"
+        )
+        aggregations += [
+            F.expr(f"min(st_xmin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_X),
+            F.expr(f"max(st_xmax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_X),
+            F.expr(f"min(st_ymin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_Y),
+            F.expr(f"max(st_ymax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_Y),
+            F.expr(f"count_if({geom} IS NULL OR NOT st_isvalid({geom}))").alias(_GEO_STAT_INVALID_COUNT),
+            F.expr(f"count_if({null_island})").alias(_GEO_STAT_NULL_ISLAND_COUNT),
+        ]
+    try:
+        row = df.agg(*aggregations).first()
+    except AnalysisException as exc:
+        match exc:
+            # NOTE: Using getCondition would be preferred, but Python 3.10 and 3.11 do not support getCondition
+            # on exception classes; We must use pattern matching instead to determine the error class and decide
+            # to raise or skip the exception
+            case AnalysisException(_errorClass=condition) if condition == _UNRESOLVED_ROUTINE_CONDITION:
+                safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
+                logger.warning(
+                    f"Skipping geospatial profiling for column '{safe_column_name}': the spatial SQL functions "
+                    f"are unavailable on this runtime (requires Databricks serverless or DBR 17.1+). Details: {exc}"
+                )
+                return None
+            case _:
+                raise
+
+    return row.asDict() if row else None
+
+
+def _resolve_geospatial_srid(profiler_options: dict[str, Any]) -> int:
+    """
+    Resolves the SRID used to compute geometry areas.
+
+    Falls back to the profiler default when the option is missing or falsy (None/0), so the profiled
+    area bounds are always computed in the same units as the generated *is_area_* checks, which default
+    to the same SRID. Returning a concrete SRID keeps the area transform and the emitted profile aligned.
+
+    Args:
+        profiler_options: Configuration options for the DQProfiler.
+
+    Returns:
+        The SRID to use for area computations.
+
+    Raises:
+        InvalidParameterError: If the configured SRID is not an integer.
+    """
+    srid = (
+        profiler_options.get(PROFILE_OPTION_GEOSPATIAL_SRID) or DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_GEOSPATIAL_SRID]
+    )
+    if isinstance(srid, bool) or not isinstance(srid, int):
+        raise InvalidParameterError(f"'{PROFILE_OPTION_GEOSPATIAL_SRID}' must be an integer SRID, got: {srid!r}")
+    return srid
+
+
+def _geospatial_area_expr(geo: str, column_type: T.DataType, profiler_options: dict[str, Any]) -> str:
+    """
+    Builds the SQL area expression, matching how the generated *is_area_* checks compute area.
+
+    Geography areas are geodesic (*st_area* on the native geography value); geometry areas are planar and
+    computed after projecting to the configured SRID. Mirrors *geo/check_funcs.py* so the profiled bounds
+    and the generated checks use the same units.
+
+    Args:
+        geo: Quoted SQL reference to the geometry/geography column.
+        column_type: Input column type.
+        profiler_options: Configuration options for the DQProfiler.
+
+    Returns:
+        The SQL area expression as a string.
+    """
+    if is_geography(column_type):
+        return f"st_area({geo})"
+    srid = _resolve_geospatial_srid(profiler_options)
+    return f"st_area(st_transform(st_setsrid({geo}, {DEFAULT_SRID}), {srid}))"
+
+
+def _build_geospatial_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> list[DQProfile]:
+    """
+    Builds a list of geospatial DQProfiles from the aggregated profiler stats.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_metrics: Profiler metrics from non-geospatial profiling.
+        profiler_options: Profiler options.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    dq_filter = profiler_options.get(PROFILE_OPTION_FILTER, None)
+    profiles = []
+
+    geometry_types = stats.get(_GEO_STAT_TYPES) or []
+    if len(geometry_types) == 1:
+        profiles.append(
+            DQProfile(
+                name="geometry_type",
+                column=column_name,
+                parameters={"type": geometry_types[0]},
+                description=f"All profiled geometries are of type {geometry_types[0]}",
+                filter=dq_filter,
+            )
+        )
+
+    profiles.extend(_build_geospatial_range_profiles(column_name, column_type, stats, profiler_options, dq_filter))
+    profiles.extend(
+        _build_geospatial_quality_profiles(
+            column_name, column_type, stats, profiler_metrics, profiler_options, dq_filter
+        )
+    )
+    return profiles
+
+
+def _build_geospatial_range_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_options: dict[str, Any],
+    dq_filter: str | None,
+) -> list[DQProfile]:
+    """
+    Builds value range profiles for the bounding-box, area and number of points in the input
+    geometry column.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type, used to pick a planar (geometry) or geodesic (geography) area bound.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_options: Profiler options.
+        dq_filter: Row filter applied to the input column before profiling column values.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    profiles = []
+
+    min_x, max_x = stats.get(_GEO_STAT_MIN_X), stats.get(_GEO_STAT_MAX_X)
+    if min_x is not None and max_x is not None:
+        profiles.append(
+            DQProfile(
+                name="has_x_coordinate_between",
+                column=column_name,
+                parameters={
+                    "min_value": _round_value(float(min_x), "down", profiler_options),
+                    "max_value": _round_value(float(max_x), "up", profiler_options),
+                },
+                filter=dq_filter,
+            )
+        )
+
+    min_y, max_y = stats.get(_GEO_STAT_MIN_Y), stats.get(_GEO_STAT_MAX_Y)
+    if min_y is not None and max_y is not None:
+        profiles.append(
+            DQProfile(
+                name="has_y_coordinate_between",
+                column=column_name,
+                parameters={
+                    "min_value": _round_value(float(min_y), "down", profiler_options),
+                    "max_value": _round_value(float(max_y), "up", profiler_options),
+                },
+                filter=dq_filter,
+            )
+        )
+
+    geometry_types = set(stats.get(_GEO_STAT_TYPES) or [])
+
+    if geometry_types and geometry_types <= _POLYGONAL_GEOMETRY_TYPES:
+        area_bound: dict[str, Any] = (
+            {"geodesic": True} if is_geography(column_type) else {"srid": _resolve_geospatial_srid(profiler_options)}
+        )
+        min_area, max_area = stats.get(_GEO_STAT_MIN_AREA), stats.get(_GEO_STAT_MAX_AREA)
+        if min_area is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_area_not_less_than",
+                    column=column_name,
+                    parameters={"value": _round_value(float(min_area), "down", profiler_options), **area_bound},
+                    filter=dq_filter,
+                )
+            )
+        if max_area is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_area_not_greater_than",
+                    column=column_name,
+                    parameters={"value": _round_value(float(max_area), "up", profiler_options), **area_bound},
+                    filter=dq_filter,
+                )
+            )
+
+    if geometry_types and geometry_types != {POINT_TYPE}:
+        min_num_points, max_num_points = stats.get(_GEO_STAT_MIN_NUM_POINTS), stats.get(_GEO_STAT_MAX_NUM_POINTS)
+        if min_num_points is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_num_points_not_less_than",
+                    column=column_name,
+                    parameters={"value": int(min_num_points)},
+                    filter=dq_filter,
+                )
+            )
+        if max_num_points is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_num_points_not_greater_than",
+                    column=column_name,
+                    parameters={"value": int(max_num_points)},
+                    filter=dq_filter,
+                )
+            )
+
+    return profiles
+
+
+def _build_geospatial_quality_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+    dq_filter: str | None,
+) -> list[DQProfile]:
+    """
+    Builds profiles for empty, OGC-invalid, or null-island values in geometry columns.
+
+    Profiles are emitted only when the sampled violation ratio is within *max_null_ratio*.
+    Columns with some empty/invalid/null-island values are still profiled. The OGC-validity
+    (*st_isvalid*) and null-island (*st_x*/*st_y*) checks only accept GEOMETRY, so those profiles
+    are skipped for geography columns.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type, used to skip profiles unsupported for geography columns.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_metrics: Dictionary of profiling metrics from profiling values in the input column.
+        profiler_options: Profiler options.
+        dq_filter: Row filter applied to the input column before profiling column values.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    total = profiler_metrics.get("count_non_null", 0)
+    if total <= 0:
+        return []
+
+    max_null_ratio = profiler_options.get(
+        PROFILE_OPTION_MAX_NULL_RATIO, DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_MAX_NULL_RATIO]
+    )
+    property_profiles = [(_GEO_STAT_EMPTY_COUNT, "is_non_empty_geometry")]
+    if not is_geography(column_type):
+        property_profiles.append((_GEO_STAT_INVALID_COUNT, "is_ogc_valid"))
+        if set(stats.get(_GEO_STAT_TYPES) or []) == {POINT_TYPE}:
+            property_profiles.append((_GEO_STAT_NULL_ISLAND_COUNT, "is_not_null_island"))
+
+    profiles = []
+    for stat_key, profile_name in property_profiles:
+        violation_ratio = stats.get(stat_key, 0) / total
+        if violation_ratio <= max_null_ratio:
+            profiles.append(DQProfile(name=profile_name, column=column_name, filter=dq_filter))
+
+    return profiles

@@ -6,19 +6,26 @@
  *  render this card naming the users/groups that DO hold MANAGE, asking the user
  *  to have one of them set the schedule up instead.
  *
+ *  Tables whose access couldn't be checked (the SQL warehouse didn't answer)
+ *  get a separate neutral notice with a retry instead — that is not a denial.
+ *
  *  Rendered via the `ScheduleEditor` `banner` slot so it sits above the first
  *  schedule setting on both the table page and the collection page.
  */
 import { useTranslation } from "react-i18next";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { SchedulePreflightTableOut } from "@/lib/api";
+import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
+
+type Entity = "table" | "collection";
 
 interface Props {
   /** Which entity is being scheduled — drives the description wording. */
-  entity: "table" | "collection";
-  /** The tables the caller cannot grant on (each with its MANAGE holders). */
-  blockedTables: SchedulePreflightTableOut[];
+  entity: Entity;
+  /** Preflight result: blocked tables (with MANAGE holders) and unverified ones. */
+  preflight: ScheduleGrantPreflight;
 }
 
 /** Label for a MANAGE holder's principal type.
@@ -55,7 +62,53 @@ function Holders({ holders }: { holders: SchedulePreflightTableOut["manage_holde
   );
 }
 
-export function ScheduleGrantWarning({ entity, blockedTables }: Props) {
+export function ScheduleGrantWarning({ entity, preflight }: Props) {
+  return (
+    <div className="space-y-3">
+      {preflight.blockedTables.length > 0 && <BlockedNotice entity={entity} blockedTables={preflight.blockedTables} />}
+      {preflight.unverifiedTables.length > 0 && <UnverifiedNotice entity={entity} preflight={preflight} />}
+    </div>
+  );
+}
+
+/** Neutral notice for tables whose access couldn't be checked because the SQL
+ *  warehouse didn't answer (usually still starting). Not a denial, so it offers
+ *  a retry instead of naming MANAGE holders. */
+function UnverifiedNotice({ entity, preflight }: Props) {
+  const { t } = useTranslation();
+  const single = entity === "table";
+  return (
+    <div role="status" className="rounded-lg border bg-muted/40 p-4 space-y-3">
+      <div className="flex items-start gap-2">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="space-y-1">
+          <h4 className="text-sm font-medium">{t("schedule.grantWarning.unverifiedTitle")}</h4>
+          <p className="text-xs text-muted-foreground">
+            {single
+              ? t("schedule.grantWarning.unverifiedDescriptionTable")
+              : t("schedule.grantWarning.unverifiedDescriptionCollection")}
+          </p>
+          {!single && (
+            <ul className="list-disc pl-4 text-xs text-muted-foreground">
+              {preflight.unverifiedTables.map((tbl) => (
+                <li key={tbl.fqn} className="break-all">
+                  {tbl.fqn}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+      <div className="pl-6">
+        <Button size="sm" variant="outline" onClick={preflight.retry} disabled={preflight.isFetching}>
+          {t("schedule.grantWarning.retry")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BlockedNotice({ entity, blockedTables }: { entity: Entity; blockedTables: SchedulePreflightTableOut[] }) {
   const { t } = useTranslation();
   const single = entity === "table";
 

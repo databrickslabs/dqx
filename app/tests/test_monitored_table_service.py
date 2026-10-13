@@ -326,6 +326,42 @@ class TestBulkRegister:
 # ---------------------------------------------------------------------------
 
 
+class TestGetTableFqns:
+    def test_empty_input_issues_no_query(self, svc, sql):
+        assert svc.get_table_fqns(set()) == {}
+        sql.query.assert_not_called()
+
+    def test_one_batched_query(self, svc, sql):
+        sql.query.return_value = [["b1", "cat.sch.t1"], ["b2", "cat.sch.t2"]]
+        assert svc.get_table_fqns({"b2", "b1"}) == {"b1": "cat.sch.t1", "b2": "cat.sch.t2"}
+        [stmt] = [c.args[0] for c in sql.query.call_args_list]
+        assert "WHERE binding_id IN ('b1', 'b2')" in stmt
+
+
+class TestListOwnerEnrichmentIsNonBlocking:
+    def test_list_defers_scim_resolution_off_the_request_path(self, sql, profiling_sql):
+        from unittest.mock import create_autospec
+
+        from databricks.sdk import WorkspaceClient
+
+        from databricks_labs_dqx_app.backend.services import owner_display_name_service
+
+        owner_display_name_service._resolve_cache.clear()
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        deferred: list = []
+        svc = MonitoredTableService(
+            sql=sql, profiling_sql=profiling_sql, sp_ws=sp_ws, defer_owner_resolution=deferred.append
+        )
+        sql.query.side_effect = [[_table_row(binding_id="b1", owner="nobody-cached@x")], [], []]
+        try:
+            summaries = svc.list_monitored_tables()
+            assert summaries[0].table.owner_display_name is None
+            sp_ws.users.list.assert_not_called()
+            assert len(deferred) == 1
+        finally:
+            owner_display_name_service.release_owner_resolution(["nobody-cached@x"])
+
+
 class TestListMonitoredTables:
     def test_lists_with_applied_rule_counts(self, svc, sql):
         sql.query.side_effect = [

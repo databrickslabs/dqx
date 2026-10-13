@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -129,6 +130,7 @@ import {
   useUpdateRegistryRule,
   useListRegistryRuleVersions,
   useGetRuleScore,
+  useListMonitoredTables,
   useListCheckFunctions,
   useGetTableColumns,
   useAiGenerateRule,
@@ -183,6 +185,7 @@ import { useDefaultPassThreshold } from "@/hooks/use-default-pass-threshold";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { computeMergeColumnsAutofill } from "@/lib/mergeColumnsAutofill";
 import { AI_EXAMPLE_COUNT, pickAiExampleKey } from "@/lib/aiExamplePrompt";
+import { DEFAULT_PAGE_TAB, type PageTab } from "@/lib/registry-rule-page-tab";
 
 const RESERVED_NAME_KEY = "name";
 const RESERVED_DESCRIPTION_KEY = "description";
@@ -205,10 +208,7 @@ type DecisionPointChoice = {
 };
 type Polarity = "pass" | "fail";
 
-// Top-level page tabs. Persisted to the URL (`?tab=`) by the routed detail
-// page so browser back/forward moves between them, mirroring the old dqx
-// editor's page-based structure.
-export type PageTab = "about" | "permissions" | "implementation" | "test" | "history" | "results";
+export type { PageTab };
 
 // Mirrors the backend's `forbidden_statements` list verbatim — see
 // `is_sql_query_safe()` in `src/databricks/labs/dqx/utils.py`, the source of
@@ -1813,9 +1813,11 @@ export function RegistryRuleFormDialog({
   const setPageTab = useCallback(
     (tab: PageTab) => {
       setInternalPageTab(tab);
-      onActiveTabChange?.(tab);
+      // Skip no-op switches (e.g. validate() jumping to the tab already open)
+      // so the routed page never pushes a duplicate history entry.
+      if (tab !== pageTab) onActiveTabChange?.(tab);
     },
-    [onActiveTabChange],
+    [onActiveTabChange, pageTab],
   );
   const [functionName, setFunctionName] = useState("");
   const [paramRawValues, setParamRawValues] = useState<Record<string, string>>({});
@@ -2017,7 +2019,10 @@ export function RegistryRuleFormDialog({
       setDecisionPointChosen(true);
       setAuthorKind(sourceRule.author_kind ?? undefined);
       setMode(sourceRule.mode);
-      setPageTab("about");
+      // Reset only the uncontrolled tab: when the routed page owns the tab via
+      // ?tab=, hydration must not push a navigation (that added a second
+      // history entry on every rule open, and clobbered deep-linked tabs).
+      setInternalPageTab(DEFAULT_PAGE_TAB);
       setPolarity(sourceRule.polarity ?? "pass");
       if (sourceRule.mode === "dqx_native") {
         const fn = String((sourceRule.definition?.body ?? {}).function ?? "");
@@ -2094,7 +2099,7 @@ export function RegistryRuleFormDialog({
       setDecisionPointChosen(false);
       setAuthorKind("human");
       setMode("lowcode");
-      setPageTab("about");
+      setInternalPageTab(DEFAULT_PAGE_TAB);
       setFunctionName("");
       setParamRawValues({});
       setSqlPredicate("");
@@ -2107,7 +2112,7 @@ export function RegistryRuleFormDialog({
       setPolarity("pass");
       setFilter("");
     }
-  }, [open, sourceRule, setPageTab]);
+  }, [open, sourceRule]);
 
   const selectedFn = useMemo(
     () => checkFunctions.find((f) => f.name === functionName),
@@ -2211,6 +2216,18 @@ export function RegistryRuleFormDialog({
     query: { enabled: open && Boolean(sourceRule), select: (d) => d.data, ...RESULTS_QUERY_OPTIONS },
   });
   const ruleScore = ruleScoreQuery.data;
+  // Only needed to link the About tab's applied tables to their monitored-table pages.
+  const monitoredTablesQuery = useListMonitoredTables(
+    {},
+    { query: { enabled: open && Boolean(sourceRule) && (ruleScore?.applied_to_count ?? 0) > 0 } },
+  );
+  const bindingIdByTableFqn = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const summary of monitoredTablesQuery.data?.data ?? []) {
+      result.set(summary.table.table_fqn, summary.table.binding_id);
+    }
+    return result;
+  }, [monitoredTablesQuery.data]);
   const resultsNotApplied = ruleScore !== undefined && ruleResultsState(ruleScore) === "not-applied";
   // A FAILED score fetch also leaves the trigger disabled, but with its own
   // explanatory tooltip + click-to-retry — previously it was silently
@@ -3370,6 +3387,65 @@ export function RegistryRuleFormDialog({
             <dt className="text-muted-foreground uppercase tracking-wide">{t("rulesRegistry.aboutRuleId")}</dt>
             <dd className="font-mono break-all">{sourceRule.rule_id}</dd>
           </dl>
+          {/* per_table is filtered to the viewer's catalogs, so tables the
+              viewer cannot read are counted (applied_to_count) but not listed. */}
+          {(ruleScore?.applied_to_count ?? 0) > 0 && (
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("rulesRegistry.appliedTablesTitle")}
+                </h3>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => setPageTab("results")}
+                >
+                  {t("rulesRegistry.appliedTablesViewResults")}
+                </Button>
+              </div>
+              <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
+                {(ruleScore?.per_table ?? []).map((table) => {
+                  const bindingId = bindingIdByTableFqn.get(table.source_table_fqn);
+                  return (
+                    <div
+                      key={table.source_table_fqn}
+                      className="flex items-center justify-between gap-2 rounded border bg-muted/30 px-2 py-1.5"
+                    >
+                      {bindingId ? (
+                        <Link
+                          to="/monitored-tables/$bindingId"
+                          params={{ bindingId }}
+                          search={{ tab: "apply-rules" }}
+                          className="min-w-0 truncate font-mono text-xs text-primary hover:text-primary/80 hover:underline"
+                          title={table.source_table_fqn}
+                        >
+                          {table.source_table_fqn}
+                        </Link>
+                      ) : (
+                        <span className="min-w-0 truncate font-mono text-xs" title={table.source_table_fqn}>
+                          {table.source_table_fqn}
+                        </span>
+                      )}
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        {table.score == null
+                          ? t("rulesRegistry.appliedTablesNotRun")
+                          : `${Math.round(table.score * 100)}%`}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+              {(ruleScore?.applied_to_count ?? 0) > (ruleScore?.per_table?.length ?? 0) && (
+                <p className="text-xs text-muted-foreground">
+                  {t("rulesRegistry.appliedTablesRestricted", {
+                    count: (ruleScore?.applied_to_count ?? 0) - (ruleScore?.per_table?.length ?? 0),
+                  })}
+                </p>
+              )}
+            </div>
+          )}
         </section>
       )}
     </div>
@@ -3393,6 +3469,7 @@ export function RegistryRuleFormDialog({
         canEditOwner={!readOnly}
         owner={owner}
         ownerDisplayName={ownerDisplayName}
+        ownerUnverified={!!sourceRule?.owner_unverified && owner === sourceRule.owner}
         onOwnerChange={setOwner}
         onOwnerDisplayNameChange={setOwnerDisplayName}
         onOwnerGrantIntent={setOwnerGrantIntent}

@@ -164,11 +164,14 @@ def is_geography(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_point(column: str | Column) -> Column:
+def is_point(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are point geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are point geometries
@@ -179,24 +182,28 @@ def is_point(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{POINT_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{POINT_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a point geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_point",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_linestring(column: str | Column) -> Column:
+def is_linestring(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are linestring geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are linestring geometries
@@ -207,24 +214,28 @@ def is_linestring(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{LINESTRING_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{LINESTRING_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a linestring geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_linestring",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_polygon(column: str | Column) -> Column:
+def is_polygon(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are polygon geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are polygon geometries
@@ -235,24 +246,28 @@ def is_polygon(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{POLYGON_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{POLYGON_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a polygon geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_polygon",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_multipoint(column: str | Column) -> Column:
+def is_multipoint(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are multipoint geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are multipoint geometries
@@ -263,24 +278,28 @@ def is_multipoint(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTIPOINT_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{MULTIPOINT_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a multipoint geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multipoint",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_multilinestring(column: str | Column) -> Column:
+def is_multilinestring(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are multilinestring geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are multilinestring geometries
@@ -291,24 +310,28 @@ def is_multilinestring(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTILINESTRING_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{MULTILINESTRING_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a multilinestring geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multilinestring",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_multipolygon(column: str | Column) -> Column:
+def is_multipolygon(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are multipolygon geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are multipolygon geometries
@@ -319,24 +342,28 @@ def is_multipolygon(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTIPOLYGON_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{MULTIPOLYGON_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a multipolygon geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_multipolygon",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_geometrycollection(column: str | Column) -> Column:
+def is_geometrycollection(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are geometrycollection geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are geometrycollection geometries
@@ -347,24 +374,28 @@ def is_geometrycollection(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{GEOMETRYCOLLECTION_TYPE}'")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_geometrytype({geom}) <> '{GEOMETRYCOLLECTION_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a geometrycollection geometry"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_geometrycollection",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_ogc_valid(column: str | Column) -> Column:
+def is_ogc_valid(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are valid geometries in the OGC sense.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_isvalid* accepts GEOMETRY only).
 
     Returns:
         Column object indicating whether the values in the input column are valid geometries
@@ -375,25 +406,29 @@ def is_ogc_valid(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isvalid` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"NOT st_isvalid(try_to_geometry({col_str_norm}))")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"NOT st_isvalid({geom})")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is not a valid geometry (in the OGC sense)"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_not_valid_geometry",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_non_empty_geometry(column: str | Column) -> Column:
+def is_non_empty_geometry(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are empty geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the values in the input column are empty geometries
@@ -404,26 +439,30 @@ def is_non_empty_geometry(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isempty` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_isempty(try_to_geometry({col_str_norm}))")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_isempty({geom})")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` is an empty geometry"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_is_empty_geometry",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_not_null_island(column: str | Column) -> Column:
+def is_not_null_island(column: str | Column, convert_column: bool = True) -> Column:
     """Checks whether the values in the input column are NULL island geometries (e.g. POINT(0 0), POINTZ(0 0 0), or
     POINTZM(0 0 0 0)).
 
     Args:
         column: column to check; can be a string column name or a column expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_x*/*st_y* accept POINT GEOMETRY only).
 
     Returns:
         Column object indicating whether the values in the input column are NULL island geometries
@@ -434,7 +473,7 @@ def is_not_null_island(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_geometrytype`, `st_x`, and `st_y` functions.
-    try_geom_expr = f"try_to_geometry({col_str_norm})"
+    try_geom_expr = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
     geom_cond = F.expr(f"{try_geom_expr} IS NULL")
 
     is_point_cond = F.expr(f"st_geometrytype({try_geom_expr}) = '{POINT_TYPE}'")
@@ -455,12 +494,15 @@ def is_not_null_island(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def has_dimension(column: str | Column, dimension: int) -> Column:
+def has_dimension(column: str | Column, dimension: int, convert_column: bool = True) -> Column:
     """Checks whether the geometries/geographies in the input column have a given dimension.
 
     Args:
         column: column to check; can be a string column name or a column expression
         dimension: required dimension of the geometries/geographies
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the geometries/geographies in the input column have a given dimension
@@ -471,27 +513,33 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_dimension` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_dimension(try_to_geometry({col_str_norm})) <> {dimension}")
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_dimension({geom}) <> {dimension}")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` does not have the required dimension ({dimension})"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_does_not_have_required_geo_dimension",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
+def has_x_coordinate_between(
+    column: str | Column, min_value: float, max_value: float, convert_column: bool = True
+) -> Column:
     """Checks whether the x coordinates of the geometries in the input column are between a given range.
 
     Args:
         column: column to check; can be a string column name or a column expression
         min_value: minimum value of the x coordinates
         max_value: maximum value of the x coordinates
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_xmin*/*st_xmax* accept GEOMETRY only).
 
     Returns:
         Column object indicating whether the x coordinates of the geometries in the input column are between a given range
@@ -502,29 +550,33 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_xmax` and `st_xmin` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(
-        f"st_xmax(try_to_geometry({col_str_norm})) > {max_value} OR st_xmin(try_to_geometry({col_str_norm})) < {min_value}"
-    )
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_xmax({geom}) > {max_value} OR st_xmin({geom}) < {min_value}")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` has x coordinates outside the range [{min_value}, {max_value}]"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_has_x_coordinates_outside_range",
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
+def has_y_coordinate_between(
+    column: str | Column, min_value: float, max_value: float, convert_column: bool = True
+) -> Column:
     """Checks whether the y coordinates of the geometries in the input column are between a given range.
 
     Args:
         column: column to check; can be a string column name or a column expression
         min_value: minimum value of the y coordinates
         max_value: maximum value of the y coordinates
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT,
+            WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a
+            native GEOMETRY value. GEOGRAPHY is not supported (*st_ymin*/*st_ymax* accept GEOMETRY only).
 
     Returns:
         Column object indicating whether the y coordinates of the geometries in the input column are between a given range
@@ -535,16 +587,15 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_ymax` and `st_ymin` functions.
-    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(
-        f"st_ymax(try_to_geometry({col_str_norm})) > {max_value} OR st_ymin(try_to_geometry({col_str_norm})) < {min_value}"
-    )
+    geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+    geom_cond = F.expr(f"{geom} IS NULL")
+    geom_type_cond = F.expr(f"st_ymax({geom}) > {max_value} OR st_ymin({geom}) < {min_value}")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` has y coordinates outside the range [{min_value}, {max_value}]"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        _geometry_value_message(col_str_norm, col_expr, condition_str, convert_column=convert_column),
         f"{col_str_norm}_has_y_coordinates_outside_range",
     )
 
@@ -552,7 +603,11 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D
@@ -566,6 +621,9 @@ def is_area_equal_to(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column are equal to the provided value
@@ -584,13 +642,18 @@ def is_area_equal_to(
         compare_op_name="not_equal_to",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D
@@ -604,6 +667,9 @@ def is_area_not_equal_to(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column are not equal to the provided value
@@ -622,13 +688,18 @@ def is_area_not_equal_to(
         compare_op_name="equal_to",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_greater_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
@@ -642,6 +713,9 @@ def is_area_not_greater_than(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is greater than the provided value
@@ -660,13 +734,18 @@ def is_area_not_greater_than(
         compare_op_name="greater_than",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
 def is_area_not_less_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+    column: str | Column,
+    value: int | float | str | Column,
+    srid: int | None = 3857,
+    geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
@@ -680,6 +759,9 @@ def is_area_not_less_than(
             If an SRID is provided, the input value is translated and area is calculated using the units of measure of
             the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided value
@@ -698,18 +780,24 @@ def is_area_not_less_than(
         compare_op_name="less_than",
         srid=srid,
         geodesic=geodesic,
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_equal_to(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is equal to a specified value.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -727,18 +815,24 @@ def is_num_points_equal_to(column: str | Column, value: int | float | str | Colu
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_equal_to(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not equal to a specified value.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is not
@@ -756,18 +850,24 @@ def is_num_points_not_equal_to(column: str | Column, value: int | float | str | 
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_greater_than(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_greater_than(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -785,18 +885,24 @@ def is_num_points_not_greater_than(column: str | Column, value: int | float | st
         compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
+        convert_column=convert_column,
     )
 
 
 @requires_dbr_version("17.1")
 @register_rule("row")
-def is_num_points_not_less_than(column: str | Column, value: int | float | str | Column) -> Column:
+def is_num_points_not_less_than(
+    column: str | Column, value: int | float | str | Column, convert_column: bool = True
+) -> Column:
     """
     Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB,
+            EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native
+            GEOMETRY/GEOGRAPHY value.
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -814,6 +920,7 @@ def is_num_points_not_less_than(column: str | Column, value: int | float | str |
         compare_op=py_operator.lt,
         compare_op_label="less than",
         compare_op_name="less_than",
+        convert_column=convert_column,
     )
 
 
@@ -828,6 +935,7 @@ def _compare_spatial_sql_function_result(
     compare_op_name: str,
     srid: int | None = None,
     geodesic: bool = False,
+    convert_column: bool = True,
 ) -> Column:
     """
     Compares the results from applying a spatial SQL function (e.g. `st_area`) on a geometry column against a limit
@@ -844,6 +952,9 @@ def _compare_spatial_sql_function_result(
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
         srid: Optional integer SRID for computing measurements on the converted geometry or geography value (default `None`).
         geodesic: Whether to convert the input column to a geography type for computing geodesic distances.
+        convert_column: When True (default), the column value is parsed with *try_to_geometry* /
+            *try_to_geography* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as
+            already holding a native GEOMETRY/GEOGRAPHY value and is referenced directly.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided limit
@@ -856,27 +967,28 @@ def _compare_spatial_sql_function_result(
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
     if geodesic:
-        spatial_conversion_expr = f"try_to_geography({col_str_norm})"
+        spatial_conversion_expr = f"try_to_geography({col_str_norm})" if convert_column else col_str_norm
         spatial_data_type = "geography"
     elif srid:
-        spatial_conversion_expr = f"st_transform(st_setsrid(try_to_geometry({col_str_norm}), {DEFAULT_SRID}), {srid})"
+        geom = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
+        spatial_conversion_expr = f"st_transform(st_setsrid({geom}, {DEFAULT_SRID}), {srid})"
         spatial_data_type = "geometry"
     else:
-        spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
+        spatial_conversion_expr = _geometry_operand_sql(col_str_norm, convert_column=convert_column)
         spatial_data_type = "geometry"
 
     is_valid_cond = F.expr(f"{spatial_conversion_expr} IS NULL")
     is_valid_message = F.concat_ws(
         "",
         F.lit("value `"),
-        col_expr.cast("string"),
+        _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column),
         F.lit(f"` in column `{col_expr_str}` is not a valid {spatial_data_type}"),
     )
     compare_cond = compare_op(F.expr(f"{spatial_function}({spatial_conversion_expr})"), value_expr)
     compare_message = F.concat_ws(
         "",
         F.lit("value `"),
-        col_expr.cast("string"),
+        _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column),
         F.lit(f"` in column `{col_expr_str}` has {spatial_quantity_label} {compare_op_label} value: "),
         value_expr.cast("string"),
     )
@@ -1573,3 +1685,56 @@ def is_geo_within_distance(
         message,
         alias=f"{col_str_norm}_is_not_within_distance_from_reference_geometry",
     )
+
+
+def _geometry_operand_sql(col_str_norm: str, *, convert_column: bool) -> str:
+    """Returns the SQL for the geometry operand of a single-column geospatial check.
+
+    When *convert_column* is True (the default across the single-column geo checks), the raw column
+    value is parsed with *try_to_geometry*, accepting WKT, WKB, EWKT, EWKB, or GeoJSON. When False, the
+    column is referenced directly, for a column that is already a native GEOMETRY/GEOGRAPHY type (e.g.
+    the checks the profiler generates for native geometry columns). Mirrors the *convert_column*
+    handling of the topological *is_geo_* checks.
+
+    Args:
+        col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.
+        convert_column: When True, parse the raw value with *try_to_geometry*; when False, reference the
+            already-native geometry column directly.
+
+    Returns:
+        The SQL expression, as a string, to embed wherever the check needs the column's geometry value.
+    """
+    return f"try_to_geometry({col_str_norm})" if convert_column else col_str_norm
+
+
+def _geometry_value_sql(col_str_norm: str, col_expr: Column, *, convert_column: bool) -> Column:
+    """Returns a string rendering of a geometry value for use in a violation message.
+
+    A native GEOMETRY/GEOGRAPHY value (*convert_column* False) cannot be cast to STRING, so it is
+    rendered as WKT with *st_astext*. Otherwise the raw string/binary input is cast to string.
+
+    Args:
+        col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.
+        col_expr: Column expression for the raw input value.
+        convert_column: When False, render the native geometry as WKT; when True, cast the raw value.
+
+    Returns:
+        A Column producing a string representation of the value.
+    """
+    return col_expr.cast("string") if convert_column else F.expr(f"st_astext({col_str_norm})")
+
+
+def _geometry_value_message(col_str_norm: str, col_expr: Column, condition_str: str, *, convert_column: bool) -> Column:
+    """Builds the ``value `<geom>` <condition_str>`` violation message shared by the single-column geo checks.
+
+    Args:
+        col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.
+        col_expr: Column expression for the raw input value.
+        condition_str: Trailing message text describing the violated condition.
+        convert_column: When False, render the native geometry as WKT; when True, cast the raw value.
+
+    Returns:
+        A Column producing the full violation message.
+    """
+    value_str = _geometry_value_sql(col_str_norm, col_expr, convert_column=convert_column)
+    return F.concat_ws("", F.lit("value `"), value_str, F.lit(condition_str))

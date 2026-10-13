@@ -61,6 +61,17 @@ def _idle_default() -> ResetStatus:
     return ResetStatus(state="idle", message="", started_at="", updated_at="")
 
 
+def _interrupted(status: ResetStatus) -> ResetStatus:
+    return dataclasses.replace(
+        status,
+        state="failed",
+        message=(
+            "The previous reset did not report an outcome — the app was likely restarted "
+            "while it was running. Its result is unknown; re-run the reset if needed."
+        ),
+    )
+
+
 class ResetStatusStore:
     """Persists and retrieves the database-reset job status via *AppSettingsService*.
 
@@ -89,16 +100,21 @@ class ResetStatusStore:
         """
         status = self._load()
         if self._running_is_stale(status):
-            return ResetStatus(
-                state="failed",
-                message=(
-                    "The previous reset did not report an outcome — the app was likely restarted "
-                    "while it was running. Its result is unknown; re-run the reset if needed."
-                ),
-                started_at=status.started_at,
-                updated_at=status.updated_at,
-            )
+            return _interrupted(status)
         return status
+
+    def mark_interrupted_if_running(self) -> bool:
+        """Persist ``failed`` over a ``running`` status left behind by a previous process.
+
+        The reset runs on a daemon thread of the app process, so no reset survives a
+        restart. Called once at startup, before a new reset can be launched. Returns
+        whether a status was rewritten.
+        """
+        status = self._load()
+        if status.state != "running":
+            return False
+        self.set(_interrupted(status))
+        return True
 
     def _load(self) -> ResetStatus:
         """Load the raw persisted status, defaulting to *idle* when unset or unparseable."""

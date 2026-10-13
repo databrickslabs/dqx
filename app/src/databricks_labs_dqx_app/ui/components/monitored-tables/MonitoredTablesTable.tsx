@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, ListTree, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import {
@@ -23,7 +23,16 @@ import {
 } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
 import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
-import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
+import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
+import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
+import {
+  CollapsibleCellContent,
+  MAX_ANIMATED_GROUP_ROWS,
+  RowCollapse,
+  combinePhases,
+  rowCollapseRowClass,
+} from "@/components/data-table/row-collapse";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
@@ -33,6 +42,7 @@ import {
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
+import { TableAppliedRulesPanel } from "./ImplementedRulesExplorer";
 
 /** Effective owner for display/filter/sort — the owner's resolved display
  *  name wins, then the raw owner identity, then the creator. */
@@ -56,6 +66,9 @@ export type MonitoredTablesSortKey =
   | "severity"
   | "status";
 
+/** Every column key: the sortable ones plus the "All rules" row expander. */
+type ColumnKey = MonitoredTablesSortKey | "appliedRules";
+
 interface ColumnDef {
   labelKey: string;
   toggleable: boolean;
@@ -71,11 +84,42 @@ interface ColumnDef {
   resizable?: boolean;
   headClassName?: string;
   renderHeader(label: string): ReactNode;
-  renderCell(r: MonitoredTableSummaryOut, ctx?: MonitoredTablesRenderContext): ReactNode;
+  renderCell(r: MonitoredTableSummaryOut, ctx: MonitoredTablesRenderContext): ReactNode;
 }
 
 interface MonitoredTablesRenderContext {
   labelDefinitions: LabelColorDefinition[];
+  isExpanded: (bindingId: string) => boolean;
+  onToggleExpanded: (bindingId: string) => void;
+}
+
+/** Chevron that expands a row to list the table's applied rules (fetched on expand). */
+function AppliedRulesToggle({ r, ctx }: { r: MonitoredTableSummaryOut; ctx: MonitoredTablesRenderContext }) {
+  const { t } = useTranslation();
+  if ((r.applied_rule_count ?? 0) === 0) return null;
+  const bindingId = r.table.binding_id;
+  const expanded = ctx.isExpanded(bindingId);
+  return (
+    <button
+      type="button"
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+      onClick={(e) => {
+        e.stopPropagation();
+        ctx.onToggleExpanded(bindingId);
+      }}
+      aria-label={t(expanded ? "monitoredTables.collapseRulesAria" : "monitoredTables.expandRulesAria", {
+        name: r.table.table_fqn,
+      })}
+      aria-expanded={expanded}
+    >
+      <ChevronRight
+        className={cn(
+          "h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none",
+          expanded && "rotate-90",
+        )}
+      />
+    </button>
+  );
 }
 
 /**
@@ -182,7 +226,28 @@ function splitFqn(fqn: string): { catalog: string; schema: string; table: string
   return { catalog: parts[0] ?? "", schema: parts[1] ?? "", table: parts[2] ?? fqn };
 }
 
-const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
+const COLUMNS: Record<ColumnKey, ColumnDef> = {
+  appliedRules: {
+    // Optional row expander listing the table's applied rules. Hidden by
+    // default: the rules are fetched per row on expand, never on page load.
+    labelKey: "monitoredTables.colAppliedRules",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 48,
+    sortable: false,
+    resizable: false,
+    renderHeader: (label) => (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <ListTree className="h-4 w-4" aria-label={label} />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    ),
+    renderCell: (r, ctx) => <AppliedRulesToggle r={r} ctx={ctx} />,
+  },
   catalog: {
     labelKey: "monitoredTables.colCatalog",
     toggleable: true,
@@ -308,7 +373,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     sortable: true,
     renderHeader: (label) => label,
     renderCell: (r, ctx) => (
-      <DimensionBadges labels={r.dimensions ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+      <DimensionBadges labels={r.dimensions ?? []} labelDefinitions={ctx.labelDefinitions} />
     ),
   },
   severity: {
@@ -321,7 +386,7 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
     defaultSortDir: "desc",
     renderHeader: (label) => label,
     renderCell: (r, ctx) => (
-      <SeverityBadges labels={r.severities ?? []} labelDefinitions={ctx?.labelDefinitions ?? []} />
+      <SeverityBadges labels={r.severities ?? []} labelDefinitions={ctx.labelDefinitions} />
     ),
   },
   status: {
@@ -343,7 +408,8 @@ const COLUMNS: Record<MonitoredTablesSortKey, ColumnDef> = {
 
 // Checks/Rules column order matches dqlake's `BindingsTable` DEFAULT_ORDER
 // (owner, rulesCount, checksCount, ...) — Rules before Checks.
-const DEFAULT_ORDER: MonitoredTablesSortKey[] = [
+const DEFAULT_ORDER: ColumnKey[] = [
+  "appliedRules",
   "catalog",
   "schema",
   "table",
@@ -444,7 +510,7 @@ export interface MonitoredTablesTableSelection {
   onToggleAll: () => void;
 }
 
-export interface MonitoredTablesTableProps {
+export interface MonitoredTablesTableProps<F extends string = string> {
   /** Rows to render — already filtered, sorted, and paginated by the caller. */
   rows: MonitoredTableSummaryOut[];
   sortKey: MonitoredTablesSortKey | null;
@@ -460,6 +526,12 @@ export interface MonitoredTablesTableProps {
   selection?: MonitoredTablesTableSelection;
   /** Label-definition colors for dimension / severity badge cells. */
   labelDefinitions?: LabelColorDefinition[];
+  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  filterLayout?: SortableToggleListConfig<F>;
+  /** Inserts collapsible group headers; rows must arrive sorted by group. Omit for the flat table. */
+  groupForRow?: (row: MonitoredTableSummaryOut) => { key: string; label: string };
+  /** Expands every group (e.g. while searching, so matches are never hidden). */
+  forceGroupsExpanded?: boolean;
 }
 
 /**
@@ -469,7 +541,7 @@ export interface MonitoredTablesTableProps {
  * fields — see the `checksCount`/`dqScore`/`description` column comments
  * above for fields dqlake has that DQX's API doesn't expose yet.
  */
-export function MonitoredTablesTable({
+export function MonitoredTablesTable<F extends string = string>({
   rows,
   sortKey,
   sortDir,
@@ -481,9 +553,29 @@ export function MonitoredTablesTable({
   emptyState,
   selection,
   labelDefinitions = [],
-}: MonitoredTablesTableProps) {
+  filterLayout,
+  groupForRow,
+  forceGroupsExpanded = false,
+}: MonitoredTablesTableProps<F>) {
   const { t } = useTranslation();
-  const ctx = useMemo<MonitoredTablesRenderContext>(() => ({ labelDefinitions }), [labelDefinitions]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const groups = useMemo(() => rows.map((r) => groupForRow?.(r)), [rows, groupForRow]);
+  const groupCounts = useMemo(() => countByGroup(groups), [groups]);
+  const [expandedBindingIds, setExpandedBindingIds] = useState<Set<string>>(new Set());
+  const ctx = useMemo<MonitoredTablesRenderContext>(
+    () => ({
+      labelDefinitions,
+      isExpanded: (bindingId) => expandedBindingIds.has(bindingId),
+      onToggleExpanded: (bindingId) =>
+        setExpandedBindingIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(bindingId)) next.delete(bindingId);
+          else next.add(bindingId);
+          return next;
+        }),
+    }),
+    [labelDefinitions, expandedBindingIds],
+  );
   const showSelection = !!selection;
   const selectableCount = selection?.selectableIds.size ?? 0;
   const allSelected =
@@ -499,16 +591,17 @@ export function MonitoredTablesTable({
     handleDragEnd,
     sensors,
     onResizeStart,
-  } = useColumnLayout<MonitoredTablesSortKey>({
+  } = useColumnLayout<ColumnKey>({
     storageKey: LS_KEY_LAYOUT,
     defaultOrder: DEFAULT_ORDER,
-    columns: COLUMNS as Record<MonitoredTablesSortKey, ColumnLayoutDef>,
+    columns: COLUMNS as Record<ColumnKey, ColumnLayoutDef>,
   });
 
   const hasActions = !!renderActions;
+  const showAppliedRules = visibleKeys.includes("appliedRules");
 
-  function handleHeaderClick(key: MonitoredTablesSortKey) {
-    if (!COLUMNS[key].sortable) return;
+  function handleHeaderClick(key: ColumnKey) {
+    if (key === "appliedRules" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
@@ -519,18 +612,21 @@ export function MonitoredTablesTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {toolbarExtra}
-        <EditColumnsDropdown
-          order={colOrder}
-          labelOf={(key) => t(COLUMNS[key].labelKey)}
-          toggleableOf={(key) => COLUMNS[key].toggleable}
-          isChecked={(key) => visibleKeys.includes(key)}
-          onToggle={toggleColumn}
-          onDragEnd={handleDragEnd}
-          sensors={sensors}
-        />
-      </div>
+      <FilterToolbar
+        filters={toolbarExtra}
+        editColumns={
+          <EditColumnsDropdown
+            order={colOrder}
+            labelOf={(key) => t(COLUMNS[key].labelKey)}
+            toggleableOf={(key) => COLUMNS[key].toggleable}
+            isChecked={(key) => visibleKeys.includes(key)}
+            onToggle={toggleColumn}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+            filters={filterLayout}
+          />
+        }
+      />
 
       <div className="overflow-x-auto">
         <Table className="table-fixed" style={{ width: totalWidth, minWidth: totalWidth }}>
@@ -573,7 +669,10 @@ export function MonitoredTablesTable({
                     onClick={def.sortable ? () => handleHeaderClick(k) : undefined}
                     aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   >
-                    <span className="inline-flex items-center gap-1">
+                    {/* Block-level flex so the icon-only Applied Rules header
+                        centres in the row like the text headers (an inline box
+                        with no text would sit on the text baseline, riding high). */}
+                    <span className="flex items-center gap-1">
                       {def.renderHeader(label)}
                       {isSorted &&
                         (sortDir === "asc" ? (
@@ -605,16 +704,42 @@ export function MonitoredTablesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => {
+            {rows.map((r, rowIndex) => {
               const bindingId = r.table.binding_id;
               const busy = pendingBindingId === bindingId;
+              const isExpanded = showAppliedRules && expandedBindingIds.has(bindingId);
+              const colSpan = (showSelection ? 1 : 0) + visibleKeys.length + (hasActions ? 1 : 0);
+              const group = groups[rowIndex];
+              const showGroupHeader = !!group && group.key !== groups[rowIndex - 1]?.key;
+              const groupExpanded = !group || forceGroupsExpanded || expandedGroups.has(group.key);
+              // Snap instead of animating for "expand all while searching"
+              // and for groups too large to animate smoothly.
+              const groupInstant =
+                forceGroupsExpanded || (!!group && (groupCounts.get(group.key) ?? 0) > MAX_ANIMATED_GROUP_ROWS);
               return (
-                <TableRow key={bindingId} className="group cursor-pointer" onClick={() => onRowClick(r)}>
+                <Fragment key={bindingId}>
+                {showGroupHeader && group && (
+                  <GroupHeaderRow
+                    label={group.label}
+                    count={groupCounts.get(group.key) ?? 0}
+                    expanded={groupExpanded}
+                    onToggle={() => setExpandedGroups((prev) => toggleGroupKey(prev, group.key))}
+                    colSpan={colSpan}
+                  />
+                )}
+                <RowCollapse open={groupExpanded} instant={groupInstant}>
+                {(rowPhase) => (
+                <>
+                <TableRow
+                  className={cn("group cursor-pointer", rowCollapseRowClass(rowPhase))}
+                  onClick={() => onRowClick(r)}
+                >
                   {showSelection && (
                     <TableCell
-                      className="w-10 p-2 align-middle"
+                      className="w-10 px-2 py-0 align-middle"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <CollapsibleCellContent phase={rowPhase} className="py-2">
                       {selection!.selectableIds.has(bindingId) ? (
                         <Checkbox
                           checked={selection!.selectedIds.has(bindingId)}
@@ -628,6 +753,7 @@ export function MonitoredTablesTable({
                           )}
                         />
                       ) : null}
+                      </CollapsibleCellContent>
                     </TableCell>
                   )}
                   {visibleKeys.map((k) => {
@@ -638,29 +764,53 @@ export function MonitoredTablesTable({
                         style={{ width, minWidth: width, maxWidth: width }}
                         // Condensed to dqlake's compact row density (p-2
                         // instead of the shared primitive's default p-3) —
-                        // kept consistent with RulesTable's body cells.
+                        // kept consistent with RulesTable's body cells. The
+                        // vertical half lives in CollapsibleCellContent so a
+                        // collapsed row is zero height.
                         // align-middle keeps the status badge cell
                         // vertically centered in the row.
-                        className="overflow-hidden p-2 align-middle"
+                        className="overflow-hidden px-2 py-0 align-middle"
                       >
-                        {COLUMNS[k].renderCell(r, ctx)}
+                        <CollapsibleCellContent phase={rowPhase} className="py-2">
+                          {COLUMNS[k].renderCell(r, ctx)}
+                        </CollapsibleCellContent>
                       </TableCell>
                     );
                   })}
                   {hasActions && (
                     <TableCell
                       style={{ width: ACTIONS_COL_WIDTH }}
-                      className={cn("text-right p-2", STICKY_ACTIONS_CELL_CLASS)}
+                      className={cn("text-right px-2 py-0", STICKY_ACTIONS_CELL_CLASS)}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {busy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
-                      ) : (
-                        renderActions?.(r)
-                      )}
+                      <CollapsibleCellContent phase={rowPhase} className="py-2">
+                        {busy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground inline-block" />
+                        ) : (
+                          renderActions?.(r)
+                        )}
+                      </CollapsibleCellContent>
                     </TableCell>
                   )}
                 </TableRow>
+                <RowCollapse open={isExpanded}>
+                  {(panelPhase) => {
+                    const phase = combinePhases(rowPhase, panelPhase);
+                    return (
+                      <TableRow className={cn("hover:bg-transparent", rowCollapseRowClass(phase))}>
+                        <TableCell colSpan={colSpan} className="bg-muted/15 px-10 py-0">
+                          <CollapsibleCellContent phase={phase} className="py-3">
+                            <TableAppliedRulesPanel bindingId={bindingId} />
+                          </CollapsibleCellContent>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }}
+                </RowCollapse>
+                </>
+                )}
+                </RowCollapse>
+                </Fragment>
               );
             })}
           </TableBody>

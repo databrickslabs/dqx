@@ -1,5 +1,5 @@
 import asyncio
-from typing import Annotated
+from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_data_product_service,
+    get_monitored_table_service,
     get_obo_ws,
     get_schedule_config_service,
     get_schedule_grant_service,
@@ -17,13 +19,19 @@ from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigHistoryOut,
     ScheduleConfigIn,
     ScheduleConfigOut,
+    ScheduleOverviewOut,
+    SchedulePauseIn,
 )
+from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.schedule_config_service import (
     ScheduleConfigEntry,
     ScheduleConfigService,
 )
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
+    WarehouseUnavailableError,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -86,9 +94,13 @@ async def _enforce_scheduler_grants(
 
     async def _gate(fqn: str) -> tuple[str, bool]:
         async with sem:
-            return fqn, await grant_svc.user_can_manage_async(fqn)
+            return fqn, await grant_svc.can_schedule_async(fqn)
 
-    gate_results = await asyncio.gather(*(_gate(fqn) for fqn in target_fqns))
+    try:
+        gate_results = await asyncio.gather(*(_gate(fqn) for fqn in target_fqns))
+    except WarehouseUnavailableError as e:
+        logger.warning("Schedule gate inconclusive: %s", e)
+        raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
     manageable = [fqn for fqn, can_manage in gate_results if can_manage]
     blocked_fqns = [fqn for fqn, can_manage in gate_results if not can_manage]
 
@@ -120,7 +132,7 @@ async def _enforce_scheduler_grants(
         logger.error("Failed to grant scheduler access for schedule scope: %s", e, exc_info=True)
         raise HTTPException(
             status_code=502,
-            detail="Could not grant the scheduler read access to the scheduled tables. Please try again.",
+            detail="Could not grant the scheduler read access to the scheduled tables.",
         )
 
 
@@ -162,6 +174,130 @@ def list_schedules(
     except Exception as e:
         logger.error("Failed to list schedules: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list schedules: {e}")
+
+
+def _iso(value: object | None) -> str | None:
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    return str(isoformat()) if callable(isoformat) else str(value)
+
+
+@router.get(
+    "/overview",
+    response_model=list[ScheduleOverviewOut],
+    operation_id="listScheduleOverview",
+    dependencies=[require_role(*CAN_RUN_ROLES)],
+)
+def list_schedule_overview(
+    svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+) -> list[ScheduleOverviewOut]:
+    """List table, collection, and named-scope schedules in one normalized view."""
+    try:
+        trackers = svc.list_trackers()
+        rows: list[ScheduleOverviewOut] = []
+        for summary in monitored_tables.list_monitored_tables():
+            table = summary.table
+            if not table.schedule_cron:
+                continue
+            tracker = trackers.get(f"table:{table.binding_id}")
+            paused = bool(tracker and tracker.paused)
+            rows.append(
+                ScheduleOverviewOut(
+                    source_type="table",
+                    source_id=table.binding_id,
+                    name=table.table_fqn.split(".")[-1],
+                    target=table.table_fqn,
+                    cron=table.schedule_cron,
+                    timezone=table.schedule_tz or "UTC",
+                    schedule_kind=table.schedule_kind,
+                    sample_size=table.schedule_sample_size,
+                    enabled=not paused,
+                    paused=paused,
+                    owner=table.owner,
+                    updated_by=table.updated_by,
+                    updated_at=_iso(table.updated_at),
+                    last_run_at=tracker.last_run_at if tracker else None,
+                    next_run_at=tracker.next_run_at if tracker else None,
+                    last_run_id=tracker.last_run_id if tracker else None,
+                    run_status=tracker.status if tracker else None,
+                )
+            )
+        for detail in data_products.list_products():
+            product = detail.product
+            if not product.schedule_cron:
+                continue
+            tracker = trackers.get(f"product:{product.product_id}")
+            paused = bool(tracker and tracker.paused)
+            rows.append(
+                ScheduleOverviewOut(
+                    source_type="collection",
+                    source_id=product.product_id,
+                    name=product.name,
+                    target=f"{detail.member_count} tables",
+                    cron=product.schedule_cron,
+                    timezone=product.schedule_tz or "UTC",
+                    schedule_kind=product.schedule_kind,
+                    sample_size=product.schedule_sample_size,
+                    enabled=not paused,
+                    paused=paused,
+                    owner=product.owner,
+                    updated_by=product.updated_by,
+                    updated_at=_iso(product.updated_at),
+                    last_run_at=tracker.last_run_at if tracker else None,
+                    next_run_at=tracker.next_run_at if tracker else None,
+                    last_run_id=tracker.last_run_id if tracker else None,
+                    run_status=tracker.status if tracker else None,
+                )
+            )
+        for entry in svc.list_schedules():
+            config = entry.config
+            tracker = trackers.get(entry.schedule_name)
+            paused = bool(config.get("paused", False))
+            scope_mode = str(config.get("scope_mode") or "all")
+            rows.append(
+                ScheduleOverviewOut(
+                    source_type="scope",
+                    source_id=entry.schedule_name,
+                    name=entry.schedule_name,
+                    target=scope_mode.replace("_", " ").title(),
+                    frequency=str(config.get("frequency") or "manual"),
+                    sample_size=config.get("sample_size"),
+                    enabled=_schedule_is_enabled(config),
+                    paused=paused,
+                    owner=entry.created_by,
+                    updated_by=entry.updated_by,
+                    updated_at=entry.updated_at,
+                    last_run_at=tracker.last_run_at if tracker else None,
+                    next_run_at=tracker.next_run_at if tracker else None,
+                    last_run_id=tracker.last_run_id if tracker else None,
+                    run_status=tracker.status if tracker else None,
+                )
+            )
+        return sorted(rows, key=lambda row: ((row.next_run_at or "9999"), row.name.lower()))
+    except Exception as e:
+        logger.error("Failed to list schedule overview: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list schedule overview.")
+
+
+@router.patch(
+    "/overview/{source_type}/{source_id}/paused",
+    operation_id="setSchedulePaused",
+    dependencies=[require_role(*_ADMINS)],
+)
+def set_schedule_paused(
+    source_type: Literal["table", "collection"],
+    source_id: str,
+    body: SchedulePauseIn,
+    svc: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
+) -> dict[str, bool]:
+    """Pause or resume a table or collection schedule without deleting its configuration."""
+    prefix = "table" if source_type == "table" else "product"
+    svc.set_tracker_paused(f"{prefix}:{source_id}", body.paused)
+    scheduler_registry.notify_scheduler()
+    return {"paused": body.paused}
 
 
 @router.get(
