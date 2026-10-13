@@ -8,13 +8,26 @@ Spark session, so these tests cover the planning, which decides all of that.
 """
 
 import importlib
+from collections.abc import Callable
 import sys
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
-from pyspark.sql.types import DateType, StringType, StructField, StructType, TimestampNTZType, TimestampType
+from pyspark.sql.types import (
+    ArrayType,
+    DateType,
+    IntegerType,
+    MapType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampNTZType,
+    TimestampType,
+)
+
+from databricks_labs_dqx_app.backend import sql_utils
 
 _TASKS_SRC = Path(__file__).resolve().parent.parent / "tasks" / "src"
 if str(_TASKS_SRC) not in sys.path:
@@ -130,12 +143,69 @@ def test_zoneless_columns_are_wall_clock_decided_per_row(row_scope: ModuleType, 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["UTC", "America/New_York", "America/Los_Angeles", "Asia/Kolkata", "Etc/GMT+5"])
-def test_region_names_are_accepted(row_scope: ModuleType, name: str) -> None:
+@pytest.mark.parametrize(
+    "name",
+    [
+        "UTC",
+        "America/New_York",
+        "America/Los_Angeles",
+        "Asia/Kolkata",
+        "Etc/GMT+5",
+        # Single-word IANA zones are real, DST-aware where the region is.
+        "Singapore",
+        "Japan",
+        "Portugal",
+        "GB",
+        "Eire",
+    ],
+)
+def test_iana_zone_names_are_accepted(row_scope: ModuleType, name: str) -> None:
     assert row_scope.validate_timezone(name) == name
 
 
-@pytest.mark.parametrize("name", ["EST", "PST", "America/New_york", "Not/AZone", "", "America/New_York\n"])
+@pytest.mark.parametrize(
+    "name", ["EST", "MST", "HST", "PST", "Factory", "America/New_york", "Not/AZone", "", "America/New_York\n"]
+)
 def test_abbreviations_typos_and_junk_are_rejected(row_scope: ModuleType, name: str) -> None:
     with pytest.raises(ValueError):
         row_scope.validate_timezone(name)
+
+
+def test_the_app_and_the_task_runner_accept_the_same_zones(row_scope: ModuleType) -> None:
+    """The two wheels each keep a copy of the rule; they must never drift apart."""
+    assert sql_utils.VALID_TIMEZONES == row_scope.VALID_TIMEZONES
+    for name in ("Singapore", "EST", "America/New_York", "Not/AZone"):
+        app_ok = _accepts(sql_utils.validate_timezone, name)
+        assert app_ok == _accepts(row_scope.validate_timezone, name), name
+
+
+def _accepts(validate: Callable[[str], str], name: str) -> bool:
+    try:
+        validate(name)
+    except ValueError:
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# sample_interval_columns and the "latest N" tiebreaker
+# ---------------------------------------------------------------------------
+
+
+def test_a_column_list_given_as_a_string_is_rejected(row_scope: ModuleType) -> None:
+    # Iterating "updated_at" would try 'u', 'p', 'd', ... and silently fall back.
+    with pytest.raises(ValueError, match="list of column names"):
+        row_scope.plan_time_window(_df(StructField("updated_at", TimestampType())), 60, name_priority="updated_at")
+
+
+def test_the_tiebreak_hash_skips_maps_at_any_depth(row_scope: ModuleType) -> None:
+    df = _df(
+        StructField("id", IntegerType()),
+        StructField("tags", MapType(StringType(), StringType())),
+        StructField("meta", StructType([StructField("attrs", MapType(StringType(), StringType()))])),
+        StructField("events", ArrayType(MapType(StringType(), StringType()))),
+        StructField("point", StructType([StructField("x", IntegerType())])),
+        StructField("names", ArrayType(StringType())),
+    )
+
+    assert row_scope.hashable_columns(df) == ["id", "point", "names"]

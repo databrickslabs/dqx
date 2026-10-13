@@ -349,20 +349,24 @@ def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:
     return entity_type
 
 
-_TIMEZONE_REGION_RE = re.compile(r"\A[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)+\Z")
+# Built once: available_timezones() scans the whole tz database.
+_FIXED_OFFSET_ABBREVIATIONS = frozenset({"EST", "MST", "HST"})
+_NOT_ZONES = frozenset({"Factory", "localtime", "posixrules"})
+VALID_TIMEZONES: frozenset[str] = frozenset(available_timezones()) - _FIXED_OFFSET_ABBREVIATIONS - _NOT_ZONES
 
 
 def validate_timezone(name: str) -> str:
-    """Validate a Row Scope time zone: an IANA region name (``Area/City``) or ``UTC``.
+    """Validate a Row Scope time zone. Raises ValueError; returns the name unchanged.
 
-    Abbreviations such as ``EST`` are rejected even though the tz database
-    knows them: they are fixed offsets, so ``EST`` silently ignores daylight
-    saving time. The task runner (a separate wheel) applies the same rule in
-    ``dqx_task_runner.row_scope.validate_timezone`` — keep them in step.
+    Any IANA zone name is accepted (``America/New_York``, ``Singapore``, ``UTC``)
+    except the fixed-offset abbreviations ``EST``, ``MST`` and ``HST``: they
+    silently ignore daylight saving time where the region observes it.
 
-    Raises ValueError otherwise. Returns the name unchanged.
+    The task runner (a separate wheel the app can't import) applies the same
+    rule in ``dqx_task_runner.row_scope.validate_timezone``; a test checks that
+    both accept exactly the same names.
     """
-    if name == "UTC" or (_TIMEZONE_REGION_RE.match(name) and name in available_timezones()):
+    if name in VALID_TIMEZONES:
         return name
     raise ValueError(
         f"Invalid time zone {name!r}: use a region name such as 'America/New_York' or 'UTC' "
@@ -383,3 +387,8 @@ def validate_row_scope(config: dict) -> None:
     timezone = config.get("sample_interval_timezone")
     if timezone:
         validate_timezone(str(timezone))
+    columns = config.get("sample_interval_columns")
+    if columns is not None and (
+        not isinstance(columns, list) or not all(isinstance(c, str) and c.strip() for c in columns)
+    ):
+        raise ValueError("sample_interval_columns must be a list of column names")

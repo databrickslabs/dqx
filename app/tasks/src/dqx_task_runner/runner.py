@@ -24,7 +24,7 @@ from typing import Any, cast
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
-from dqx_task_runner.row_scope import apply_time_window, pin_session_to_utc, plan_time_window
+from dqx_task_runner.row_scope import apply_time_window, plan_time_window
 
 logger = logging.getLogger("dqx_task_runner")
 
@@ -1395,7 +1395,6 @@ def main() -> None:
     job_run_id = _parse_job_run_id(args.job_run_id)
 
     spark = SparkSession.builder.getOrCreate()
-    pin_session_to_utc(spark)
 
     try:
         if args.task_type == "profile":

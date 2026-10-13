@@ -24,7 +24,6 @@ so these conversions don't depend on a workspace's session time-zone setting.
 """
 
 import logging
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -65,17 +64,21 @@ TIME_COLUMN_NAME_PRIORITY: tuple[str, ...] = (
     "ts",
     "date",
 )
-_ZONE_NAME = re.compile(r"\A[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)+\Z")
+# Built once: available_timezones() scans the whole tz database. The backend
+# keeps an identical rule (sql_utils.validate_timezone); a test checks they agree.
+_FIXED_OFFSET_ABBREVIATIONS = frozenset({"EST", "MST", "HST"})
+_NOT_ZONES = frozenset({"Factory", "localtime", "posixrules"})
+VALID_TIMEZONES: frozenset[str] = frozenset(available_timezones()) - _FIXED_OFFSET_ABBREVIATIONS - _NOT_ZONES
 
 
 def validate_timezone(name: str) -> str:
-    """Return *name* when it is an IANA region name (``Area/City``) or ``UTC``.
+    """Return *name* when it is a usable time zone; raise ValueError otherwise.
 
-    Abbreviations such as ``EST`` are rejected even though the tz database
-    knows them: they are fixed offsets, so ``EST`` silently ignores daylight
-    saving time. Raises ValueError otherwise.
+    Any IANA zone name is accepted (``America/New_York``, ``Singapore``, ``UTC``)
+    except the fixed-offset abbreviations ``EST``, ``MST`` and ``HST``: they
+    silently ignore daylight saving time where the region observes it.
     """
-    if name == "UTC" or (_ZONE_NAME.match(name) and name in available_timezones()):
+    if name in VALID_TIMEZONES:
         return name
     raise ValueError(
         f"Invalid time zone {name!r}: use a region name such as 'America/New_York' or 'UTC' "
@@ -89,6 +92,8 @@ def pin_session_to_utc(spark: Any) -> None:
     Casting a ``TIMESTAMP_NTZ``/string to ``TIMESTAMP`` and taking the date of a
     ``TIMESTAMP`` both use the session time zone. Serverless defaults to UTC,
     but a workspace can override it; pinning keeps Row Scope windows exact.
+    Only runs that apply a window call this (see :func:`apply_time_window`), so
+    other runs keep the workspace's own session time zone.
     """
     spark.conf.set("spark.sql.session.timeZone", "UTC")
 
@@ -158,6 +163,10 @@ def plan_time_window(
     """
     if not minutes or minutes <= 0:
         return None
+    if name_priority is not None and (
+        isinstance(name_priority, str) or not all(isinstance(n, str) for n in name_priority)
+    ):
+        raise ValueError("sample_interval_columns must be a list of column names")
     zone = validate_timezone(timezone) if timezone else "UTC"
     detected = detect_time_column(
         df.schema,
@@ -173,9 +182,21 @@ def plan_time_window(
     return TimeWindow(column=column, kind=kind, source_type=source_type, minutes=int(minutes), timezone=zone)
 
 
-def _hashable_columns(df: Any) -> list[str]:
-    """Columns a row hash can include (maps and variants can't be hashed)."""
-    return [f.name for f in df.schema.fields if f.dataType.typeName() not in ("map", "variant")]
+def _contains_unhashable(data_type: Any) -> bool:
+    """Whether *data_type* is, or nests, a map or variant (which xxhash64 rejects)."""
+    name = data_type.typeName()
+    if name in ("map", "variant"):
+        return True
+    if name == "struct":
+        return any(_contains_unhashable(f.dataType) for f in data_type.fields)
+    if name == "array":
+        return _contains_unhashable(data_type.elementType)
+    return False
+
+
+def hashable_columns(df: Any) -> list[str]:
+    """Columns a row hash can include: none that is or nests a map or variant."""
+    return [f.name for f in df.schema.fields if not _contains_unhashable(f.dataType)]
 
 
 def apply_time_window(df: Any, window: TimeWindow, sample_size: int = 0) -> Any:
@@ -186,6 +207,7 @@ def apply_time_window(df: Any, window: TimeWindow, sample_size: int = 0) -> Any:
     """
     from pyspark.sql import functions as F
 
+    pin_session_to_utc(df.sparkSession)
     cutoff = F.current_timestamp() - F.expr(f"INTERVAL {int(window.minutes)} MINUTES")
     first_day = F.to_date(F.from_utc_timestamp(cutoff, window.timezone))
     value = F.col(window.column)
@@ -202,6 +224,6 @@ def apply_time_window(df: Any, window: TimeWindow, sample_size: int = 0) -> Any:
         df = df.where(value >= cutoff)
     if not sample_size:
         return df
-    hashable = _hashable_columns(df)
+    hashable = hashable_columns(df)
     tiebreak = [F.xxhash64(*[F.col(c) for c in hashable]).asc()] if hashable else []
     return df.orderBy(order_by.desc(), *tiebreak).limit(sample_size)
