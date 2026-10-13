@@ -30,7 +30,9 @@ def _settings(*, enabled: bool = True, endpoint: str = "system.ai.my-model", rat
 
 
 def _completion(content: str, finish_reason: str | None = "stop") -> dict:
-    return {"choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}]}
+    return {
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}]
+    }
 
 
 def _ws_with_response(content: str) -> MagicMock:
@@ -85,7 +87,9 @@ class TestAvailability:
 
     async def test_missing_app_scope_names_the_scope(self):
         ws = create_autospec(WorkspaceClient, instance=True)
-        ws.api_client.do.side_effect = PermissionDenied("Provided OAuth token does not have required scopes: ai-gateway")
+        ws.api_client.do.side_effect = PermissionDenied(
+            "Provided OAuth token does not have required scopes: ai-gateway"
+        )
         gateway = AIGateway(user_ws=ws, app_settings=_settings())
 
         with pytest.raises(AIUnavailableError, match="ai-gateway user API scope"):

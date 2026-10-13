@@ -374,7 +374,9 @@ class ReplayEndpoints:
         offered_set = set(offered)
         suggestions = [item for item in self._recordings.verdict_for(table_fqn) if item.get("rule_id") in offered_set]
         content = json.dumps({"suggestions": suggestions})
-        return {"choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}
+        return {
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]
+        }
 
     @staticmethod
     def _user_prompt(messages: Sequence[dict[str, Any]]) -> dict[str, Any]:
