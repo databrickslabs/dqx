@@ -201,3 +201,18 @@ CI on the preceding revision passed the contributor test on serverless without r
 The test now uses threshold zero to admit its single synthetic probe regardless of fitted calibration. It explicitly checks row/info coverage, finite score and severity, a flagged verdict, non-null contribution keys and finite nonnegative evidence before retaining both original amount-dominance assertions. Production scoring and the shared training fixture are unchanged. The existing real-estimator unit gate regression additionally covers threshold zero while retaining its positive-threshold null-map assertions. Remote confirmation remains with the existing CI workflows; no new manual workspace campaign is started.
 
 Local validation: make fmt passed; all 46 gate, orientation, source-block and ensemble attribution unit cases passed, including the added zero-threshold case. The adjusted top-contributor integration test collects successfully; its remote result is pending CI.
+
+
+## Coverage aggregation repair
+
+All six expected Codecov uploads for revision f6dc936674523bf5f29492d63a9b5440a0bbb9ae were merged. The twelve-upload baseline contains two nightly runs, rather than additional suite types. Both anomaly suites and both packaged E2E suites passed on that revision.
+
+The 22 newly missed check_funcs lines are present in retained per-process integration data, and the corresponding SQL/comparison integration tests passed. The CI merge consumed 66 parallel files; the later retained artifact contained 68. The acceptance runner posts completion from pytest_runtest_logfinish, before pytest's session-end coverage flush. Replaying the retained reports through the repaired combiner restores all 22 lines in XML without rerunning any workspace tests. Twenty additional lines changed from covered to partial as branch measurement was enabled; that is distinct from lost execution data.
+
+Acceptance sessions now atomically checkpoint cumulative process coverage before the completion notification, including in xdist workers. Checkpoints live outside pytest-cov's erase/combine glob, so its later shutdown cannot consume them. The existing combine-coverage target merges existing data, parallel files and checkpoints through coverage.py, retains inputs until XML succeeds, rejects corrupt/mixed-mode inputs, and removes stale XML before a failed merge can reach an always-run upload. Existing diagnostic artifacts retain checkpoints under their seven-day policy. No new GitHub action or workflow is introduced.
+
+The root .coveragerc now enables branch coverage, aligning unit collection with the existing PR/nightly integration and anomaly configuration. No thresholds or exclusions are relaxed. Historical baseline percentages remain a different measurement until a branch-enabled nightly baseline is available. Distributed scorer cases removed by the user's earlier scope decision remain removed; packaged worker execution still does not imply collected worker coverage.
+
+Validation: eight focused coverage regressions passed, including real serial/xdist notification-order checks with both a passing and deliberately failing nested test. The full unit suite passed with 3,226 tests, one platform skip and 19 warnings. Its XML contains branch measurements. The retained CI replay restored all 22 lost check_funcs lines. The full run preceded a lint-only list-to-tuple correction in a regression assertion; final focused checks cover that correction. Fresh CI coverage remains the remote acceptance evidence.
+
+Final validation: make fmt passed (Black, Ruff, mypy, Pylint and documentation version synchronization); the focused coverage suite passed again with eight tests after formatting. No production scoring code or public contracts changed.

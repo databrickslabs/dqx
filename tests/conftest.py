@@ -32,6 +32,8 @@ from databricks.sdk.retries import retried
 from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
 
+pytest_plugins = ["tests.coverage_support"]
+
 logger = logging.getLogger(__name__)
 
 

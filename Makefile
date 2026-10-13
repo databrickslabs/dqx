@@ -93,16 +93,8 @@ coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
 	open htmlcov/index.html
 
-combine-coverage: ## Combine xdist worker coverage data into coverage-combined.xml
-	# pytest-cov combines xdist worker files at session end, so there may be
-	# no parallel .coverage.* files left for `coverage combine` to merge.
-	# Tolerate that — the single .coverage file is still usable for the XML
-	# conversion. Leading `-` makes `make` ignore combine's non-zero exit.
-	-$(UV_RUN) coverage combine $(if $(filter 1,$(KEEP_COVERAGE)),--keep,)
-	# Fail loudly if the test run produced no coverage data.
-	@test -f .coverage || { echo "ERROR: no .coverage data found after test run"; exit 1; }
-	$(UV_RUN) coverage xml -o coverage-combined.xml
-	$(if $(filter 1,$(KEEP_COVERAGE)),@true,$(UV_RUN) coverage erase)
+combine-coverage: ## Merge existing, process and acceptance-checkpoint coverage into XML
+	KEEP_COVERAGE=$(KEEP_COVERAGE) $(UV_RUN) python -m tests.coverage_support
 
 ##@ Documentation
 

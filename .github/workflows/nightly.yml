@@ -99,6 +99,7 @@ jobs:
             anomaly-explanation-diagnostics/
             .coverage
             .coverage.*
+            .coverage-checkpoints/
             coverage-combined.xml
           include-hidden-files: true
           if-no-files-found: warn
@@ -174,6 +175,7 @@ jobs:
             anomaly-explanation-diagnostics/
             .coverage
             .coverage.*
+            .coverage-checkpoints/
             coverage-combined.xml
           include-hidden-files: true
           if-no-files-found: warn
@@ -250,6 +252,7 @@ jobs:
             anomaly-diagnostics/
             .coverage
             .coverage.*
+            .coverage-checkpoints/
             coverage-combined.xml
           include-hidden-files: true
           if-no-files-found: warn
@@ -327,6 +330,7 @@ jobs:
             anomaly-diagnostics/
             .coverage
             .coverage.*
+            .coverage-checkpoints/
             coverage-combined.xml
           include-hidden-files: true
           if-no-files-found: warn
