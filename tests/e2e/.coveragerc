@@ -1,0 +1,5 @@
+[run]
+# The acceptance action starts here and passes --cov-config=.coveragerc.
+# An explicit file also pins subprocess configuration when its working directory changes.
+branch = true
+parallel = true

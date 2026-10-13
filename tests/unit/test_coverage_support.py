@@ -141,3 +141,51 @@ def test_fail():
     assert (pytester.path / "test_fail.notified").read_text() == "flushed"
     # Session-end pytest-cov combination must not erase our independent checkpoints.
     assert list((pytester.path / ".coverage-checkpoints").glob("*.coverage"))
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_e2e_coverage_survives_subprocess_working_directory_change(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    checkout = pytester.path / "checkout"
+    suite = checkout / "tests" / "e2e"
+    suite.mkdir(parents=True)
+    source = checkout / "src" / "probe.py"
+    source.parent.mkdir()
+    source.write_text("def value(flag):\n    if flag:\n        return 42\n    return 0\n\nassert value(True) == 42\n")
+    (checkout / ".coveragerc").write_text((repository / ".coveragerc").read_text())
+    (suite / ".coveragerc").write_text((repository / "tests" / "e2e" / ".coveragerc").read_text())
+    (suite / "pytest.ini").write_text("[pytest]\n")
+    (suite / "test_probe.py").write_text(
+        '''
+from pathlib import Path
+import subprocess
+import sys
+
+
+def test_child():
+    checkout = Path(__file__).resolve().parents[2]
+    subprocess.run([sys.executable, str(checkout / "src" / "probe.py")], cwd=checkout, check=True)
+'''
+    )
+    # Isolate the third-party coverage environment from the outer unit-test run.
+    for variable in ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE", "COV_CORE_BRANCH", "COV_CORE_CONTEXT"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("COVERAGE_FILE", str(suite / ".coverage"))
+    monkeypatch.chdir(suite)
+
+    result = pytester.runpytest_subprocess(
+        "-q", "-n", str(workers), "--cov", "--cov-report=xml", "--cov-config=.coveragerc", "-p", "no:rerunfailures"
+    )
+
+    result.assert_outcomes(passed=1)
+    # Successful tests alone miss a coverage session-end crash (pytest exit 3).
+    assert result.ret == pytest.ExitCode.OK
+    combined = CoverageData(basename=str(suite / ".coverage"))
+    combined.read()
+    assert combined.has_arcs()
+    lines = combined.lines(str(source))
+    assert lines is not None and 3 in lines, "The child process's execution must survive aggregation"
+    report = ET.parse(suite / "coverage.xml").getroot()
+    assert int(report.attrib["branches-valid"]) > 0
