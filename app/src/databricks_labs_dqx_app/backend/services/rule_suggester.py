@@ -292,7 +292,7 @@ class RuleSuggester:
                 available=False,
                 reason=(
                     f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
-                    f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
+                    f" ({endpoint}). Ask a metastore admin to grant you EXECUTE on that model service."
                 ),
             )
         except AIResponseParseError as e:
@@ -408,7 +408,7 @@ class RuleSuggester:
                 available=False,
                 reason=(
                     f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
-                    f" ({endpoint}). Ask an admin to grant you EXECUTE on the serving endpoint."
+                    f" ({endpoint}). Ask a metastore admin to grant you EXECUTE on that model service."
                 ),
             )
         except AIResponseParseError as e:

@@ -214,7 +214,7 @@ resources:
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read
-        - serving.serving-endpoints
+        - ai-gateway
 
       resources:
         # Binding the bundle-managed warehouse to the app grants the app SP CAN_MANAGE

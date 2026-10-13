@@ -1,13 +1,14 @@
-"""AIGateway — dqwatch-native serving-endpoint substrate for the Rules Registry (Phase 4A).
+"""AIGateway — the model-call substrate for the Rules Registry (Phase 4A).
 
 Owns the *transport* and safety rails for every AI-assisted feature in the app:
 
 - **Kill-switch**: ``ai_enabled`` (default ``False``) must be explicitly turned on by an
   admin. A deploy with no AI infra configured behaves exactly like today — every caller
   gets a clean :class:`AIUnavailableError` (mapped to HTTP 503 by the routes), never a 500.
-- **Endpoint configuration**: ``ai_endpoint_name`` names the Databricks serving endpoint to
-  call via :meth:`WorkspaceClient.serving_endpoints.query`. Empty/unset also raises
-  :class:`AIUnavailableError`.
+- **Model configuration**: ``ai_endpoint_name`` names the Unity Gateway model service to
+  call (for example ``system.ai.claude-sonnet-4-5``) through
+  :class:`~databricks_labs_dqx_app.backend.services.model_services.ModelServices`.
+  Empty/unset also raises :class:`AIUnavailableError`.
 - **Per-user rate limiting**: ``ai_rate_limit_per_user_per_hour`` (default 30) caps calls per
   user per rolling hour. See :meth:`_enforce_rate_limit` for the documented in-memory
   limitation.
@@ -21,9 +22,11 @@ Owns the *transport* and safety rails for every AI-assisted feature in the app:
 ``WorkspaceClient`` (see ``dependencies.get_ai_gateway``), never the app's service
 principal — AI generation is a user-facing, request-scoped action, so it should run with
 the same identity and UC permissions as the rest of that user's request. This is why the
-app bundle requests the ``serving.serving-endpoints`` OBO scope (see ``databricks.yml``);
-end users must be granted ``CAN_QUERY`` on the configured serving endpoint(s) for AI
-features to work for them (kill-switch + rate limiting still apply on top).
+app bundle requests the ``ai-gateway`` OBO scope (see ``databricks.yml``); end users need
+``EXECUTE`` on the configured model service plus ``USE_CATALOG`` / ``USE_SCHEMA`` on its
+catalog and schema (Databricks grants these on ``system.ai`` to all account users by
+default). A missing model service or missing grant surfaces as :class:`AIUnavailableError`
+naming the fix. Kill-switch + rate limiting still apply on top.
 
 Purpose-specific prompt construction and DQX-native validation/repair of generated rule
 JSON live in :class:`~databricks_labs_dqx_app.backend.services.ai_rules_service.AiRulesService`,
@@ -41,18 +44,15 @@ from collections import defaultdict, deque
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors.platform import BadRequest
-from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+from databricks.sdk.errors.platform import BadRequest, NotFound, PermissionDenied
 
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.model_services import ModelServices
 
 logger = logging.getLogger(__name__)
 
-_ROLE_MAP: dict[str, ChatMessageRole] = {
-    "system": ChatMessageRole.SYSTEM,
-    "user": ChatMessageRole.USER,
-    "assistant": ChatMessageRole.ASSISTANT,
-}
+_CHAT_ROLES = frozenset({"system", "user", "assistant"})
 
 _RATE_LIMIT_WINDOW_SECONDS = 3600.0
 
@@ -60,7 +60,8 @@ _RATE_LIMIT_WINDOW_SECONDS = 3600.0
 class AIUnavailableError(Exception):
     """Raised when the AI Gateway cannot serve a request.
 
-    Covers both the kill-switch being off and no serving endpoint being configured.
+    Covers the kill-switch being off, no model being configured, the configured model service
+    not existing, and the caller lacking access to it.
     Routes map this to a clean HTTP 503 with :attr:`reason` as the detail — never a 500.
     """
 
@@ -95,7 +96,7 @@ _BUDGET_EXHAUSTED_MESSAGE = (
 
 
 class AIGateway:
-    """Serving-endpoint transport with kill-switch, per-user rate limiting, and audit logging.
+    """Model-service transport with kill-switch, per-user rate limiting, and audit logging.
 
     Rate limiting is **per-process, in-memory** — a documented limitation. Counts reset on
     restart and are not shared across multiple uvicorn workers or app replicas. This is an
@@ -107,7 +108,7 @@ class AIGateway:
     def __init__(self, user_ws: WorkspaceClient, app_settings: AppSettingsService) -> None:
         # OBO WorkspaceClient — every model call runs as the calling user, not the
         # app's service principal (see the module docstring's Authentication note).
-        self._user_ws = user_ws
+        self._models = ModelServices(user_ws)
         self._app_settings = app_settings
         # user_email -> monotonic call timestamps within the current rolling window.
         self._call_log: dict[str, deque[float]] = defaultdict(deque)
@@ -121,7 +122,7 @@ class AIGateway:
         return self._app_settings.get_ai_enabled()
 
     def endpoint_name(self) -> str:
-        """Return the configured serving endpoint name, or ``""`` if unset."""
+        """Return the configured model service name, or ``""`` if unset."""
         return self._app_settings.get_ai_endpoint_name()
 
     def rate_limit_per_hour(self) -> int:
@@ -163,57 +164,82 @@ class AIGateway:
         max_tokens: int = 2048,
         temperature: float | None = None,
     ) -> str:
-        """Query the configured serving endpoint and return the assistant's text content.
+        """Query the configured model service and return the assistant's text content.
 
         Args:
             user_email: Caller identity, used for rate limiting and the (hashed) audit log.
             purpose: Short label identifying the calling feature (e.g. ``"generate_rule"``),
                 recorded in the audit log — never the prompt content itself.
             messages: Chat messages as ``{"role": "system"|"user"|"assistant", "content": str}``.
-            max_tokens: Hard cap on the endpoint's output budget (OWASP LLM04 guard).
+            max_tokens: Hard cap on the model's output budget (OWASP LLM04 guard).
             temperature: Optional sampling temperature; omitted from the request when ``None``.
 
         Returns:
             The assistant message content from the first response choice.
 
         Raises:
-            AIUnavailableError: kill-switch is off or no endpoint is configured.
+            AIUnavailableError: kill-switch is off, no model is configured, or the model
+                service is missing or not usable by the caller.
             AIRateLimitExceededError: the caller exceeded their hourly quota.
-            AIResponseParseError: the endpoint returned no usable message content.
+            AIResponseParseError: the model returned no usable message content.
         """
         if not self.is_enabled():
             raise AIUnavailableError("AI features are disabled by the administrator.")
         endpoint = self.endpoint_name()
         if not endpoint:
-            raise AIUnavailableError("No AI serving endpoint is configured.")
+            raise AIUnavailableError("No AI model is configured.")
 
         self._enforce_rate_limit(user_email)
 
         chat_messages = [
-            ChatMessage(
-                role=_ROLE_MAP.get(message.get("role", "user"), ChatMessageRole.USER),
-                content=message.get("content", ""),
-            )
+            {
+                "role": role if (role := message.get("role", "user")) in _CHAT_ROLES else "user",
+                "content": message.get("content", ""),
+            }
             for message in messages
         ]
         query_kwargs: dict[str, Any] = {
-            "name": endpoint,
+            "model": endpoint,
             "messages": chat_messages,
             "max_tokens": max_tokens,
         }
         if temperature is not None:
             query_kwargs["temperature"] = temperature
 
-        response = await self._query_endpoint(query_kwargs)
+        try:
+            response = await self._query_endpoint(query_kwargs)
+        except NotFound as e:
+            logger.warning(f"ai_gateway_model_not_found endpoint={endpoint}")
+            raise AIUnavailableError(
+                f"AI model {endpoint} doesn't exist in this workspace. "
+                "An administrator can choose another one in Settings > AI."
+            ) from e
+        except PermissionDenied as e:
+            # Databricks' own error text (never prompt content) says which scope or grant is missing.
+            logger.warning(
+                f"ai_gateway_permission_denied endpoint={endpoint} error={replace_control_characters(str(e))[:300]}"
+            )
+            if "scope" in str(e).lower():
+                # The user's token lacks the app's ``ai-gateway`` user API scope, not a grant.
+                raise AIUnavailableError(
+                    "Studio isn't allowed to call AI models for you yet. An administrator needs to add the "
+                    "ai-gateway user API scope to the app (redeploying the bundle does this), then you "
+                    "need to sign in again."
+                ) from e
+            raise AIUnavailableError(
+                f"You don't have access to AI model {endpoint}. Ask a metastore admin to grant you "
+                f"EXECUTE on model service {endpoint}, plus USE_CATALOG and USE_SCHEMA on its "
+                "catalog and schema."
+            ) from e
         content = self._extract_content(response)
         self._audit(user_email=user_email, endpoint=endpoint, purpose=purpose, output_size=len(content))
         return content
 
     async def _query_endpoint(self, query_kwargs: dict[str, Any]) -> Any:
-        """Query the serving endpoint, retrying once without ``temperature`` if it's rejected.
+        """Query the model service, retrying once without ``temperature`` if it's rejected.
 
-        Several Databricks Foundation Model endpoints (notably the GPT-5
-        family) only accept the default sampling temperature and return a
+        Some models (notably the GPT-5 family) have only accepted the
+        default sampling temperature and returned a
         ``BadRequest`` for any explicit ``temperature`` — including ``0``,
         which callers pass for determinism. Rather than couple every caller
         to each endpoint's capabilities, drop the optional ``temperature``
@@ -221,34 +247,34 @@ class AIGateway:
         specific parameter. Any other ``BadRequest`` propagates unchanged.
         """
         try:
-            return await asyncio.to_thread(self._user_ws.serving_endpoints.query, **query_kwargs)
+            return await asyncio.to_thread(lambda: self._models.chat(**query_kwargs))
         except BadRequest as e:
             if "temperature" not in query_kwargs or "temperature" not in str(e).lower():
                 raise
             retry_kwargs = {k: v for k, v in query_kwargs.items() if k != "temperature"}
-            logger.info("Serving endpoint rejected explicit temperature; retrying with the endpoint default")
-            return await asyncio.to_thread(self._user_ws.serving_endpoints.query, **retry_kwargs)
+            logger.info("Model service rejected explicit temperature; retrying with the model default")
+            return await asyncio.to_thread(lambda: self._models.chat(**retry_kwargs))
 
     @staticmethod
-    def _extract_content(response: Any) -> str:
-        choices = getattr(response, "choices", None) or []
+    def _extract_content(response: dict[str, Any]) -> str:
+        choices = [choice for choice in response.get("choices") or [] if isinstance(choice, dict)]
         # Budget-exhaustion detection runs BEFORE the "return the first non-empty
         # content" fast path: several endpoints (notably the Claude family) DO
         # emit visible content while hitting ``max_tokens``, so a check that only
         # fires on empty content misses those cases and the caller sees a
         # generic parse error later. If ANY choice ran to the budget cap, prefer
         # the named cause — a truncated response is worse than a labelled retry.
-        finish_reasons = [str(getattr(choice, "finish_reason", None)) for choice in choices]
+        finish_reasons = [str(choice.get("finish_reason")) for choice in choices]
         if "length" in finish_reasons:
             logger.warning(f"ai_gateway_budget_exhausted finish_reasons={finish_reasons}")
             raise AIResponseParseError(_BUDGET_EXHAUSTED_MESSAGE)
         for choice in choices:
-            message = getattr(choice, "message", None)
-            content = getattr(message, "content", None) if message is not None else None
+            message = choice.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
             if content:
                 return str(content)
         logger.warning(f"ai_gateway_empty_content finish_reasons={finish_reasons}")
-        raise AIResponseParseError("AI serving endpoint returned no message content.")
+        raise AIResponseParseError("The AI model returned no message content.")
 
     @staticmethod
     def _looks_truncated_json(content: str) -> bool:

@@ -35,7 +35,7 @@ EXPECTED_SCOPES = [
     "sql.warehouses",
     "vectorsearch.vector-search-endpoints",
     "vectorsearch.vector-search-indexes",
-    "serving.serving-endpoints",
+    "ai-gateway",
     "files.files",
     "genie",
     "catalog.catalogs:read",

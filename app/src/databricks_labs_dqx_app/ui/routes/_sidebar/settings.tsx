@@ -50,7 +50,7 @@ import {
   useGetAiSettings,
   useSaveAiSettings,
   getGetAiSettingsQueryKey,
-  useListServingEndpoints,
+  useListModelServices,
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
@@ -1635,13 +1635,12 @@ function WarehouseSelect({
 }
 
 /**
- * Serving-endpoint dropdown for the AI endpoint field. Always includes the
- * currently-configured value as an option even if it's missing from the
- * fetched workspace list (e.g. typed before this dropdown existed, or the
- * endpoint was since deleted) so saving doesn't silently blank out an
- * existing setting.
+ * Model dropdown for the AI model field, listing the chat model services in
+ * system.ai. Always includes the currently-configured value as an option even
+ * if it's missing from the fetched list (e.g. a custom model service, or one
+ * since removed) so saving doesn't silently blank out an existing setting.
  */
-function ServingEndpointSelect({
+function ModelServiceSelect({
   value,
   onChange,
   endpoints,
@@ -1697,8 +1696,8 @@ function AiSettingsCard() {
   const saveMutation = useSaveAiSettings();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
-  const { data: servingEndpointsResp } = useListServingEndpoints();
-  const servingEndpoints = useMemo(() => servingEndpointsResp?.data.names ?? [], [servingEndpointsResp]);
+  const { data: modelServicesResp } = useListModelServices();
+  const modelServices = useMemo(() => modelServicesResp?.data.names ?? [], [modelServicesResp]);
   const { data: workspace } = useWorkspaceHost();
   const host = workspace?.workspace_host;
 
@@ -1744,11 +1743,7 @@ function AiSettingsCard() {
     return <Skeleton className="h-40 w-full" />;
   }
 
-  const manageHref = host
-    ? aiEndpoint
-      ? `${host}/ml/endpoints/${encodeURIComponent(aiEndpoint)}`
-      : `${host}/ml/endpoints`
-    : undefined;
+  const manageHref = host ? `${host}/ml/ai-gateway` : undefined;
 
   return (
     <Card className="border-fuchsia-500/30 dark:border-fuchsia-400/30">
@@ -1790,10 +1785,10 @@ function AiSettingsCard() {
             )}
           </div>
           <div className="w-64 shrink-0">
-            <ServingEndpointSelect
+            <ModelServiceSelect
               value={aiEndpoint}
               onChange={handleEndpointChange}
-              endpoints={servingEndpoints}
+              endpoints={modelServices}
               disabled={!isAdmin || !aiEnabled || saveMutation.isPending}
             />
           </div>
