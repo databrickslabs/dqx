@@ -7,6 +7,7 @@ from pyspark.sql import Column
 
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
+    DQPattern,
     get_normalized_column_and_expr,
     is_equal_to,
     is_not_equal_to,
@@ -147,6 +148,32 @@ def test_col_is_ipv4_address_in_cidr_trailing_line_terminator_cidr_block(termina
     # before any Spark call - keep it at the fast unit layer.
     with pytest.raises(InvalidParameterError, match="is not a valid IPv4 CIDR block"):
         is_ipv4_address_in_cidr("a", cidr_block="192.168.1.0/24" + terminator)
+
+
+@pytest.mark.parametrize(
+    "value, matches",
+    [
+        ("1", True),
+        ("-1.25", True),
+        ("+1.25", True),
+        (".5", True),
+        ("1.", True),
+        ("1.5e3", True),
+        ("1.0E-4", True),
+        ("abc", False),
+        ("", False),
+        (".", False),
+        ("1.2.3", False),
+        (" 1.25", False),
+        ("1e", False),
+        ("NaN", False),
+        *[("1.25" + terminator, False) for terminator in _TRAILING_LINE_TERMINATORS],
+    ],
+)
+def test_decimal_number_pattern(value, matches):
+    # Python's re spells Java's absolute end anchor \z as \Z.
+    pattern = DQPattern.DECIMAL_NUMBER.value.replace(r"\z", r"\Z")
+    assert bool(re.match(pattern, value)) == matches
 
 
 def test_col_is_ipv6_address_in_cidr_missing_cidr_block():

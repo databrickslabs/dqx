@@ -184,6 +184,11 @@ class DQPattern(Enum):
     UUID = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\z"
     UUID_STRICT = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\z"
 
+    # Plain or exponent number: optional sign, digits with an optional decimal point ("1", "1.", "1.25", ".5"),
+    # and an optional exponent ("1.5e3", "1.0E-4"). Group 1 is the fraction digits, group 2 the exponent.
+    # No surrounding whitespace. Anchored; ReDoS-safe.
+    DECIMAL_NUMBER = r"\A[+-]?(?:\d+\.?|\d*\.(\d+))(?:[eE]([+-]?\d+))?\z"
+
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
 # point for additional countries: add a new DQPattern member and map its ISO 3166
@@ -1519,11 +1524,15 @@ def has_num_decimal_places(
 ) -> Column:
     """Checks whether numeric values in the input column have no more than the given number of decimal places.
 
-    Column values are converted to strings before checking. A value whose string form is non-numeric fails-fast
-    and skips the decimal-place check. A numeric value passes when it has *limit* or fewer decimal places, counted
-    from its string form, and fails otherwise.
+    Values are judged by their numeric value, so trailing zeros don't count: *DOUBLE* *5.0*, *DECIMAL(10,4)*
+    *1.5000* and the string *'1.250'* have 0, 1 and 2 decimal places. *float*/*double* columns reflect the stored
+    value (1.10 is stored as 1.1). Values are read via their string form, which must be a plain or exponent
+    number: an optional sign, digits with an optional decimal point (*'1'*, *'-1.25'*, *'+1.'*, *'.5'*) and an
+    optional exponent (*'1.5e3'*, *'1.0E-4'*). Anything else, including surrounding whitespace, *NaN* and
+    *Infinity*, fails as not numeric.
 
     The *limit* may be a literal or a column expression and is evaluated lazily, so it is not validated up-front.
+    A non-null value whose *limit* evaluates to null fails with a 'null limit' message.
 
     Args:
         column: column to check; can be a string column name or a column expression.
@@ -1540,21 +1549,33 @@ def has_num_decimal_places(
     limit_expr = get_limit_expr(limit)
     str_expr = col_expr.cast("string")
 
-    is_numeric = str_expr.rlike(r"^-?\d+(\.\d+)?$")
-    has_numeric_precision = F.length(F.regexp_extract(str_expr, r"\.(\d+)", 1)) <= limit_expr
+    is_numeric = str_expr.rlike(DQPattern.DECIMAL_NUMBER.value)
+    fraction = F.regexp_replace(F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 1), r"0+\z", "")
+    exponent = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 2)
+    # Cast the exponent to double so a huge exponent in a string value can't overflow.
+    exponent_value = F.when(exponent == "", F.lit(0)).otherwise(exponent.cast("double"))
+    num_decimal_places = F.greatest(F.length(fraction) - exponent_value, F.lit(0))
+    is_limit_null = col_expr.isNotNull() & limit_expr.isNull()
 
-    condition = ~is_numeric | ~has_numeric_precision
-    message = F.when(
-        ~is_numeric,
-        F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' is not numeric")),
-    ).otherwise(
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            str_expr,
-            F.lit(f"' in Column '{col_expr_str}' has more than "),
-            limit_expr.cast("string"),
-            F.lit(" decimal places"),
+    condition = is_limit_null | ~is_numeric | (num_decimal_places > limit_expr)
+    message = (
+        F.when(
+            is_limit_null,
+            F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' has a null limit")),
+        )
+        .when(
+            ~is_numeric,
+            F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' is not numeric")),
+        )
+        .otherwise(
+            F.concat_ws(
+                "",
+                F.lit("Value '"),
+                str_expr,
+                F.lit(f"' in Column '{col_expr_str}' has more than "),
+                limit_expr.cast("string"),
+                F.lit(" decimal places"),
+            )
         )
     )
 
