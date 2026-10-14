@@ -23,7 +23,7 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
 from databricks_labs_dqx_app.backend.services.model_services import ModelServices
 from databricks_labs_dqx_app.backend.setup.checks import instruction_identifier
-from databricks_labs_dqx_app.backend.setup.grants import effective_privilege_names, has_privilege
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, effective_privilege_names, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 
@@ -75,6 +75,9 @@ class AiAccess:
         self._workspace = workspace
         self._settings = settings
         self._app_sp = app_sp_id.strip()
+        # Effective privileges per (kind, securable, principal), shared by every model in one run:
+        # both default models live in system.ai, so catalog and schema grants are read once.
+        self._grant_cache: dict[tuple[str, str, str], frozenset[str] | None] = {}
 
     def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
         """Verify every audience group can use the AI models, and report the grants they lack.
@@ -103,6 +106,7 @@ class AiAccess:
         if not enabled and not setup_owned:
             return _passed("AI features are turned off in Settings.")
 
+        self._grant_cache = {}
         problems: list[tuple[str, tuple[str, ...]]] = []
         statements: list[str] = []
         for name in self.model_names():
@@ -264,15 +268,22 @@ class AiAccess:
     def _privileges(
         self, kind: str, full_name: str, principal: str, reader_ws: WorkspaceClient | None
     ) -> frozenset[str] | None:
-        """Return *principal*'s effective privileges on a securable, or None when unreadable."""
-        for client in (self._workspace, reader_ws):
-            if client is None:
-                continue
-            try:
-                return effective_privilege_names(client.grants.get_effective(kind, full_name, principal=principal))
-            except Exception:
-                continue
-        return None
+        """Return *principal*'s effective privileges on a securable, or None when unreadable.
+
+        Reads as the app service principal, then the setup administrator; cached for the run.
+        """
+        key = (kind, full_name, principal)
+        if key not in self._grant_cache:
+            privileges = None
+            for client in (self._workspace, reader_ws):
+                if client is None:
+                    continue
+                response = GrantInspector(client).effective_permissions(kind, full_name, principal)
+                if response is not None:
+                    privileges = effective_privilege_names(response)
+                    break
+            self._grant_cache[key] = privileges
+        return self._grant_cache[key]
 
 
 def _quote_name(full_name: str) -> str:

@@ -53,6 +53,10 @@ from databricks_labs_dqx_app.backend.services.model_services import ModelService
 logger = logging.getLogger(__name__)
 
 _CHAT_ROLES = frozenset({"system", "user", "assistant"})
+# Databricks reports a token missing an OAuth scope as "... does not have required scopes: <scope>".
+# The SDK maps it to the same PermissionDenied (error code PERMISSION_DENIED) as a missing grant,
+# so the wording is the only signal; match the phrase, not any mention of "scope".
+_MISSING_SCOPE_RE = re.compile(r"required scopes?\b", re.IGNORECASE)
 
 _RATE_LIMIT_WINDOW_SECONDS = 3600.0
 
@@ -209,7 +213,7 @@ class AIGateway:
         try:
             response = await self._query_endpoint(query_kwargs)
         except NotFound as e:
-            logger.warning(f"ai_gateway_model_not_found endpoint={endpoint}")
+            logger.warning(f"ai_gateway_model_not_found endpoint={replace_control_characters(endpoint)}")
             raise AIUnavailableError(
                 f"AI model {endpoint} doesn't exist in this workspace. "
                 "An administrator can choose another one in Settings > AI."
@@ -217,9 +221,10 @@ class AIGateway:
         except PermissionDenied as e:
             # Databricks' own error text (never prompt content) says which scope or grant is missing.
             logger.warning(
-                f"ai_gateway_permission_denied endpoint={endpoint} error={replace_control_characters(str(e))[:300]}"
+                f"ai_gateway_permission_denied endpoint={replace_control_characters(endpoint)} "
+                f"error={replace_control_characters(str(e))[:300]}"
             )
-            if "scope" in str(e).lower():
+            if _MISSING_SCOPE_RE.search(str(e)):
                 # The user's token lacks the app's ``ai-gateway`` user API scope, not a grant.
                 raise AIUnavailableError(
                     "Studio isn't allowed to call AI models for you yet. An administrator needs to add the "
@@ -229,7 +234,7 @@ class AIGateway:
             raise AIUnavailableError(
                 f"You don't have access to AI model {endpoint}. Ask a metastore admin to grant you "
                 f"EXECUTE on model service {endpoint}, plus USE_CATALOG and USE_SCHEMA on its "
-                "catalog and schema."
+                "catalog and schema. If you signed in before Studio was last upgraded, sign in again first."
             ) from e
         content = self._extract_content(response)
         self._audit(user_email=user_email, endpoint=endpoint, purpose=purpose, output_size=len(content))
@@ -306,7 +311,8 @@ class AIGateway:
         """Log one audit line per call. Never logs prompt content or row/user data (CWE-117 guard)."""
         user_hash = hashlib.sha256(user_email.encode()).hexdigest()[:12]
         logger.info(
-            f"ai_gateway_call endpoint={endpoint} purpose={purpose} user_hash={user_hash} output_size={output_size}"
+            f"ai_gateway_call endpoint={replace_control_characters(endpoint)} purpose={purpose} "
+            f"user_hash={user_hash} output_size={output_size}"
         )
 
     # ------------------------------------------------------------------

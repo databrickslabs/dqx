@@ -141,6 +141,15 @@ def test_checks_catalog_schema_and_model_service_grants(resources, workspace) ->
     assert inspected == {("CATALOG", "system"), ("SCHEMA", "system.ai"), ("MODEL_SERVICE", "system.ai.chat-model")}
 
 
+def test_shared_catalog_and_schema_grants_are_read_once_per_run(resources, workspace) -> None:
+    _check(resources, workspace, FakeAiSettings())
+
+    calls = [
+        (call.args[0], call.args[1], call.kwargs["principal"]) for call in workspace.grants.get_effective.call_args_list
+    ]
+    assert len(calls) == len(set(calls)) == 4
+
+
 def test_never_grants_anything(resources, workspace) -> None:
     _check(resources, workspace, FakeAiSettings())
 

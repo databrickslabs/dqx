@@ -33,7 +33,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
     get_rule_severity,
 )
-from databricks.sdk.errors.platform import PermissionDenied
 
 from databricks_labs_dqx_app.backend.services.ai_gateway import (
     AIGateway,
@@ -285,16 +284,6 @@ class RuleSuggester:
             judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
         except (AIUnavailableError, AIRateLimitExceededError) as e:
             return SuggestRulesResult(available=False, reason=str(e))
-        except PermissionDenied:
-            logger.warning("AI judge permission denied for binding %s", binding_id, exc_info=True)
-            endpoint = self._ai_gateway.endpoint_name()
-            return SuggestRulesResult(
-                available=False,
-                reason=(
-                    f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
-                    f" ({endpoint}). Ask a metastore admin to grant you EXECUTE on that model service."
-                ),
-            )
         except AIResponseParseError as e:
             # ``AIResponseParseError`` now distinguishes the two shapes: a
             # budget-exhausted response (finish_reason=length OR mid-JSON
@@ -401,16 +390,6 @@ class RuleSuggester:
             judged = await self._judge(candidate_rules, columns, table_fqn, user_email)
         except (AIUnavailableError, AIRateLimitExceededError) as e:
             return MatchRulesResult(available=False, reason=str(e))
-        except PermissionDenied:
-            logger.warning("AI judge permission denied for NL match on binding %s", binding_id, exc_info=True)
-            endpoint = self._ai_gateway.endpoint_name()
-            return MatchRulesResult(
-                available=False,
-                reason=(
-                    f"AI suggestions are unavailable because you don't have permission to run the configured AI model"
-                    f" ({endpoint}). Ask a metastore admin to grant you EXECUTE on that model service."
-                ),
-            )
         except AIResponseParseError as e:
             logger.warning("AI judge returned an unparsable response for NL match on %s", binding_id, exc_info=True)
             return MatchRulesResult(available=False, reason=str(e))

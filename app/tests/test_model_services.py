@@ -85,6 +85,14 @@ class TestExists:
         assert ModelServices(ws).exists("system.ai.x") is True
         ws.api_client.do.assert_called_once_with("GET", "/api/2.1/unity-catalog/model-services/system.ai.x")
 
+    def test_encodes_each_name_part_into_the_path(self, ws):
+        ws.api_client.do.return_value = {}
+
+        ModelServices(ws).exists("a.b.c/../../../permissions/catalog/x?y#z")
+
+        path = ws.api_client.do.call_args.args[1]
+        assert path == "/api/2.1/unity-catalog/model-services/a.b.c%2F..%2F..%2F..%2Fpermissions%2Fcatalog%2Fx%3Fy%23z"
+
     def test_false_when_not_found(self, ws):
         ws.api_client.do.side_effect = NotFound("Resource not found")
 

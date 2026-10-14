@@ -16,6 +16,7 @@ service principal.
 """
 
 from typing import Any
+from urllib.parse import quote
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
@@ -99,11 +100,15 @@ class ModelServices:
     def exists(self, name: str) -> bool:
         """Return whether model service *name* exists and is visible to the caller.
 
+        Each dot-separated part of *name* is URL-encoded, so an admin-configured name can't
+        redirect the lookup to another API path (``/``, ``?``, ``#``, ``..``).
+
         Raises:
             DatabricksError: The lookup failed for a reason other than the model service not existing.
         """
+        encoded = ".".join(quote(part, safe="") for part in name.split("."))
         try:
-            self._ws.api_client.do("GET", f"{_MODEL_SERVICES_PATH}/{name}")
+            self._ws.api_client.do("GET", f"{_MODEL_SERVICES_PATH}/{encoded}")
         except NotFound:
             return False
         return True

@@ -95,6 +95,26 @@ class TestAvailability:
         with pytest.raises(AIUnavailableError, match="ai-gateway user API scope"):
             await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
 
+    async def test_grant_error_mentioning_scope_is_not_a_scope_error(self):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.api_client.do.side_effect = PermissionDenied("User lacks EXECUTE on model service in scope of system.ai")
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        with pytest.raises(AIUnavailableError, match="EXECUTE on model service") as excinfo:
+            await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
+        assert "sign in again" in excinfo.value.reason
+
+    async def test_log_lines_strip_control_characters_from_the_model_name(self, caplog):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.api_client.do.side_effect = NotFound("missing")
+        gateway = AIGateway(user_ws=ws, app_settings=_settings(endpoint="system.ai.x\nforged=1"))
+
+        with caplog.at_level("WARNING"), pytest.raises(AIUnavailableError):
+            await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
+        assert all("\n" not in record.getMessage() for record in caplog.records)
+
 
 class TestRateLimit:
     async def test_exceeding_the_hourly_quota_raises(self):

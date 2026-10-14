@@ -38,6 +38,8 @@ EXPECTED_SCOPES = [
     "serving.serving-endpoints",
     "ai-gateway",
     "ai-functions",
+    "workspace.workspace",
+    "mcp.functions",
     "files.files",
     "genie",
     "catalog.catalogs:read",

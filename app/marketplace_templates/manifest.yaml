@@ -18,6 +18,8 @@ user_api_scopes:
   - serving.serving-endpoints
   - ai-gateway
   - ai-functions
+  - workspace.workspace
+  - mcp.functions
   - files.files
   - genie
   - catalog.catalogs:read
