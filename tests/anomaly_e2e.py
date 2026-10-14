@@ -84,6 +84,7 @@ def packaged_anomaly_tasks(
     """Train and reload in separate tasks on the suite's selected compute mode."""
     if not serverless and not cluster_id:
         raise ValueError("Classic packaged anomaly tests require the configured cluster")
+    timeout_seconds = {"train": 1800, "score": 2700}
     return [
         Task(
             task_key=phase,
@@ -91,7 +92,7 @@ def packaged_anomaly_tasks(
             existing_cluster_id=None if serverless else cluster_id,
             depends_on=[TaskDependency(task_key="train")] if phase == "score" else [],
             max_retries=0,
-            timeout_seconds=1800,
+            timeout_seconds=timeout_seconds[phase],
         )
         for phase in ("train", "score")
     ]

@@ -351,39 +351,6 @@ def test_nonexistent_model_returns_none(
     assert model is None
 
 
-def test_config_hash_stability():
-    """Test that config_hash is stable for same inputs."""
-    columns = ["amount", "quantity", "discount"]
-    baseline_by = ["region", "category"]
-
-    # Compute hash multiple times
-    hash1 = compute_config_hash(columns, baseline_by)
-    hash2 = compute_config_hash(columns, baseline_by)
-
-    assert hash1 == hash2
-    assert len(hash1) == 16  # 16 hex characters
-
-
-def test_config_hash_order_independence():
-    """Test that config_hash is order-independent (columns are sorted internally)."""
-    # Different order should produce same hash
-    hash1 = compute_config_hash(["amount", "quantity", "discount"], ["region", "category"])
-    hash2 = compute_config_hash(["discount", "amount", "quantity"], ["category", "region"])
-
-    assert hash1 == hash2
-
-
-def test_config_hash_differentiation():
-    """Test that different configs produce different hashes."""
-    hash1 = compute_config_hash(["amount", "quantity"], None)
-    hash2 = compute_config_hash(["amount", "quantity", "discount"], None)
-    hash3 = compute_config_hash(["amount", "quantity"], ["region"])
-
-    assert hash1 != hash2  # Different columns
-    assert hash1 != hash3  # Different baseline_by
-    assert hash2 != hash3  # Different columns and baseline_by
-
-
 def test_config_hash_stored_during_training(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):

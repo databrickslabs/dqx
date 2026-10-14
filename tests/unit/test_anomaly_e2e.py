@@ -74,6 +74,7 @@ def test_packaged_tasks_share_artifact_and_reload_in_new_task(serverless: bool) 
     tasks = packaged_anomaly_tasks("/test/notebook", parameters, serverless=serverless, cluster_id="cluster")
     assert [task.task_key for task in tasks] == ["train", "score"]
     assert tasks[1].depends_on and tasks[1].depends_on[0].task_key == "train"
+    assert [task.timeout_seconds for task in tasks] == [1800, 2700]
     for task in tasks:
         assert task.notebook_task and task.notebook_task.base_parameters
         assert task.notebook_task.base_parameters["wheel_sha256"] == parameters["wheel_sha256"]
@@ -162,7 +163,7 @@ def test_packaged_model_factory_cleans_remaining_resources_after_notfound(
 ) -> None:
     monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     pytester.makeconftest(
-        rf'''
+        rf"""
 from pathlib import Path
 from unittest.mock import create_autospec
 import pytest
@@ -199,7 +200,7 @@ def ws():
     workspace.model_versions.delete.side_effect = delete_version
     workspace.registered_models.delete.side_effect = delete_model
     return workspace
-'''
+"""
     )
     pytester.makepyfile(
         """

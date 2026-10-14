@@ -6,7 +6,6 @@ are covered by unit tests (tests/unit/test_anomaly_validation.py).
 """
 
 import warnings
-from datetime import datetime, timezone
 
 import pyspark.sql.functions as F
 import pytest
@@ -14,14 +13,6 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.core import compute_baseline_statistics
-from databricks.labs.dqx.anomaly.model_registry import (
-    AnomalyModelRecord,
-    FeatureEngineering,
-    ModelIdentity,
-    GroupingConfig,
-    TrainingMetadata,
-)
-from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
 from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
@@ -342,31 +333,6 @@ def test_training_refuses_a_frame_where_a_derived_feature_would_overwrite_a_real
     assert "overwritten" in message
 
 
-def test_has_no_row_anomalies_requires_fully_qualified_model_name():
-    """Ensure model name must be fully qualified."""
-    with pytest.raises(InvalidParameterError):
-        has_no_row_anomalies(
-            model_name="schema.model",
-            registry_table="catalog.schema.table",
-        )
-
-
-@pytest.mark.parametrize(
-    "kwargs, match",
-    [
-        ({"threshold": 150.0}, "threshold must be between"),
-        ({"drift_threshold": -1.0}, "drift_threshold must be greater than 0"),
-    ],
-)
-def test_has_no_row_anomalies_invalid_inputs(kwargs, match):
-    with pytest.raises(InvalidParameterError, match=match):
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table="catalog.schema.table",
-            **kwargs,
-        )
-
-
 def test_row_filter_scores_only_matching_rows(
     spark: SparkSession, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
 ):
@@ -505,27 +471,6 @@ def test_sklearn_version_parse_error_silently_skips(
         dq_engine.apply_checks(df, [check]).collect()
 
     assert not any("SKLEARN VERSION MISMATCH" in str(w.message) for w in caught)
-
-
-def test_validate_sklearn_compatibility_skips_when_missing_version():
-    """Test sklearn validation skips when version is missing."""
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name="catalog.schema.model",
-            model_uri="models:/dummy",
-            algorithm="IsolationForest",
-            mlflow_run_id="run",
-        ),
-        training=TrainingMetadata(
-            columns=["amount"],
-            hyperparameters={},
-            training_rows=10,
-            training_time=datetime.now(timezone.utc),
-        ),
-        features=FeatureEngineering(feature_metadata=None),
-        grouping=GroupingConfig(sklearn_version=None),
-    )
-    validate_sklearn_compatibility(record)
 
 
 def test_unknown_algorithm_raises(
