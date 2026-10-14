@@ -3,13 +3,14 @@
 import hashlib
 import json
 from pathlib import Path
+from datetime import timedelta
 from zipfile import ZipFile
 from unittest.mock import create_autospec
 
 import pytest
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import OperationFailed, PermissionDenied
+from databricks.sdk.errors import DatabricksError, OperationFailed, PermissionDenied
 from databricks.sdk.service.jobs import (
     Run,
     RunOutput,
@@ -23,6 +24,7 @@ from databricks.sdk.service.jobs import (
 )
 
 from tests.anomaly_e2e import (
+    PACKAGED_MODEL_CONFIGS,
     PackagedAnomalyCase,
     packaged_anomaly_tasks,
     safe_packaged_result,
@@ -91,6 +93,12 @@ def test_remote_provenance_is_verified_and_payload_free() -> None:
     result = {
         "status": "passed",
         "phase": "score",
+        "completed_cases": sorted(
+            f"{name}:{mode}:{flag}"
+            for name, _, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for flag in ("off", "on")
+        ),
         "wheel_sha256": case.wheel_sha256,
         "revision": case.revision,
         "spark": "4.2.0",
@@ -109,6 +117,13 @@ def test_remote_provenance_is_verified_and_payload_free() -> None:
     safe = safe_packaged_result(json.dumps(result), case, "score")
     assert safe["requested_compute"] == "serverless" and safe["spark"] == "4.2.0"
     assert "SECRET" not in json.dumps(safe)
+    completed = result.pop("completed_cases")
+    with pytest.raises(ValueError, match="scoring matrix"):
+        safe_packaged_result(json.dumps(result), case, "score")
+    result["completed_cases"] = completed[:-1]
+    with pytest.raises(ValueError, match="scoring matrix"):
+        safe_packaged_result(json.dumps(result), case, "score")
+    result["completed_cases"] = completed
     result["wheel_sha256"] = "c" * 64
     with pytest.raises(ValueError, match="artifact"):
         safe_packaged_result(json.dumps(result), case, "score")
@@ -127,6 +142,12 @@ def test_both_verified_driver_and_worker_evidence_are_required(source: str, veri
     result = {
         "status": "passed",
         "phase": "score",
+        "completed_cases": sorted(
+            f"{name}:{mode}:{flag}"
+            for name, _, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for flag in ("off", "on")
+        ),
         "wheel_sha256": case.wheel_sha256,
         "revision": case.revision,
         "environments": [environment, environment],
@@ -146,9 +167,6 @@ from pathlib import Path
 from unittest.mock import create_autospec
 import pytest
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import OperationFailed, PermissionDenied
-from databricks.sdk.service.jobs import Run, RunOutput, RunTask, RunState, RunLifeCycleState, RunResultState, RunStatus, TerminationDetails, TerminationCodeCode
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import ModelVersionInfo, SchemaInfo
@@ -175,7 +193,7 @@ def ws():
     def delete_model(*, full_name: str) -> None:
         with Path("cleanup-attempts").open("a") as output:
             output.write("model\n")
-        if {absent_resource!r} == "model":
+        if {absent_resource!r} in ("model", "all"):
             raise NotFound("synthetic absent model")
 
     workspace.model_versions.delete.side_effect = delete_version
@@ -196,7 +214,9 @@ def test_train(make_anomaly_model_intent):
     result.assert_outcomes(failed=1)
     attempts = pytester.path / "cleanup-attempts"
     if absent_resource == "all":
-        assert not attempts.exists()
+        # The shared cleanup helper still attempts idempotent parent deletion when
+        # listing versions reports NotFound, and safely tolerates its absence.
+        assert attempts.read_text().splitlines() == ["model"]
     else:
         assert attempts.read_text().splitlines() == ["version-1", "version-2", "model"]
     assert "synthetic training failure" in result.stdout.str()
@@ -255,6 +275,7 @@ def test_packaged_failures_report_both_tasks_and_message_fallback(
     assert failures["train"]["diagnostics"]["hints"] == ["missing_python_dependency"]
     assert failures["train"]["output_error_type"] == ("PermissionDenied" if unreadable else None)
     assert "SENSITIVE_MODULE" not in caplog.text and "SENSITIVE_PERMISSION_PAYLOAD" not in caplog.text
+    workspace.jobs.cancel_run.assert_not_called()
 
 
 @pytest.mark.parametrize("channel", ["error", "state", "termination"])
@@ -282,3 +303,91 @@ def test_task_failure_uses_available_message_channels_without_payloads(channel: 
     assert diagnostics["error_types"] == ["ImportError"]
     assert diagnostics["hints"] == ["python_import_failure"]
     assert "SENSITIVE_NAME" not in json.dumps(failure)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        DatabricksError("Synthetic polling failure"),
+        TimeoutError("Synthetic polling timeout"),
+        KeyboardInterrupt(),
+        pytest.fail.Exception("Synthetic pytest timeout"),
+    ],
+    ids=["sdk_error", "timeout", "keyboard_interrupt", "pytest_timeout"],
+)
+def test_interrupted_packaged_polling_cancels_only_the_owned_run(failure: BaseException) -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.jobs.run_now.return_value.run_id = 123
+    workspace.jobs.run_now.return_value.result.side_effect = failure
+    with pytest.raises(type(failure)) as caught:
+        run_packaged_anomaly(workspace, PackagedAnomalyCase(1, "a" * 64, "b" * 40, True))
+    assert caught.value is failure
+    workspace.jobs.cancel_run.assert_called_once_with(run_id=123)
+    workspace.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
+        run_id=123, timeout=timedelta(minutes=5)
+    )
+    workspace.jobs.get_run.assert_not_called()
+
+
+def test_unreadable_failed_run_is_cancelled_before_propagating_polling_failure() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.jobs.run_now.return_value.run_id = 123
+    workspace.jobs.run_now.return_value.result.side_effect = OperationFailed("Synthetic failed run")
+    failure = PermissionDenied("Synthetic unreadable run")
+    workspace.jobs.get_run.side_effect = failure
+    with pytest.raises(PermissionDenied) as caught:
+        run_packaged_anomaly(workspace, PackagedAnomalyCase(1, "a" * 64, "b" * 40, True))
+    assert caught.value is failure
+    workspace.jobs.cancel_run.assert_called_once_with(run_id=123)
+    workspace.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
+        run_id=123, timeout=timedelta(minutes=5)
+    )
+
+
+@pytest.mark.parametrize(
+    "stage,cleanup_failure",
+    [
+        ("cancel_run", DatabricksError("SENSITIVE_CLEANUP_DETAILS")),
+        ("cancel_run", OperationFailed("SENSITIVE_CLEANUP_DETAILS")),
+        ("wait_get_run_job_terminated_or_skipped", TimeoutError("SENSITIVE_CLEANUP_DETAILS")),
+        ("cancel_run", RuntimeError("SENSITIVE_CLEANUP_DETAILS")),
+        ("wait_get_run_job_terminated_or_skipped", pytest.fail.Exception("SENSITIVE_CLEANUP_DETAILS")),
+    ],
+    ids=[
+        "cancel_sdk_error",
+        "cancel_operation_failed",
+        "termination_timeout",
+        "unexpected_cleanup_error",
+        "cleanup_pytest_timeout",
+    ],
+)
+def test_cleanup_failure_preserves_original_polling_failure(stage: str, cleanup_failure: BaseException, caplog) -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.jobs.run_now.return_value.run_id = 123
+    failure = DatabricksError("Synthetic original polling failure")
+    workspace.jobs.run_now.return_value.result.side_effect = failure
+    getattr(workspace.jobs, stage).side_effect = cleanup_failure
+    with pytest.raises(DatabricksError) as caught:
+        run_packaged_anomaly(workspace, PackagedAnomalyCase(1, "a" * 64, "b" * 40, True))
+    assert caught.value is failure
+    workspace.jobs.cancel_run.assert_called_once_with(run_id=123)
+    assert "cancellation did not confirm termination" in caplog.text
+    assert "SENSITIVE_CLEANUP_DETAILS" not in caplog.text
+
+
+def test_cancelled_terminal_run_does_not_report_unresolved_cleanup(caplog) -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.jobs.run_now.return_value.run_id = 123
+    failure = DatabricksError("Synthetic original polling failure")
+    workspace.jobs.run_now.return_value.result.side_effect = failure
+    workspace.jobs.wait_get_run_job_terminated_or_skipped.side_effect = OperationFailed("Synthetic terminal run")
+
+    with pytest.raises(DatabricksError) as caught:
+        run_packaged_anomaly(workspace, PackagedAnomalyCase(1, "a" * 64, "b" * 40, True))
+
+    assert caught.value is failure
+    workspace.jobs.cancel_run.assert_called_once_with(run_id=123)
+    workspace.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
+        run_id=123, timeout=timedelta(minutes=5)
+    )
+    assert "cancellation did not confirm termination" not in caplog.text

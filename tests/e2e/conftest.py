@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 import pytest
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError, NotFound, OperationFailed
+from databricks.sdk.errors import OperationFailed
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.jobs import (
     Job,
@@ -27,7 +27,15 @@ from databricks.sdk.service.ml import CreateExperimentResponse
 from databricks.labs.blueprint.paths import WorkspacePath
 from databricks.labs.pytester.fixtures.baseline import factory
 
-from tests.anomaly_e2e import AnomalyModelCleanup, PackagedAnomalyCase, packaged_anomaly_tasks, wheel_manifest
+from tests.anomaly_resources import drop_registered_model
+from tests.anomaly_e2e import (
+    PACKAGED_MODEL_CONFIGS,
+    packaged_model_suffixes,
+    AnomalyModelCleanup,
+    PackagedAnomalyCase,
+    packaged_anomaly_tasks,
+    wheel_manifest,
+)
 from tests.constants import TEST_CATALOG
 
 logger = logging.getLogger(__name__)
@@ -258,31 +266,24 @@ def packaged_anomaly_schema(make_schema: Callable[..., SchemaInfo]) -> SchemaInf
 @pytest.fixture
 def make_anomaly_model_intent(
     ws: WorkspaceClient, packaged_anomaly_schema: SchemaInfo
-) -> Generator[Callable[[], AnomalyModelCleanup], None, None]:
+) -> Generator[Callable[..., AnomalyModelCleanup], None, None]:
     """Register model cleanup before training can partially create a model."""
 
-    def create() -> AnomalyModelCleanup:
+    def create(suffix: str = "distributed_model") -> AnomalyModelCleanup:
         assert packaged_anomaly_schema.full_name
-        return AnomalyModelCleanup(f"{packaged_anomaly_schema.full_name}.distributed_model")
+        return AnomalyModelCleanup(f"{packaged_anomaly_schema.full_name}.{suffix}")
+
+    failures: list[str] = []
 
     def remove(model: AnomalyModelCleanup) -> None:
-        try:
-            for model_version in ws.model_versions.list(full_name=model.full_name):
-                if model_version.version is None:
-                    continue
-                try:
-                    ws.model_versions.delete(full_name=model.full_name, version=model_version.version)
-                except NotFound:
-                    # A version may already be absent while its parent model
-                    # and later versions still need their owned cleanup.
-                    continue
-            ws.registered_models.delete(full_name=model.full_name)
-        except NotFound:
-            return
-        except DatabricksError:
-            raise AssertionError("Packaged anomaly model cleanup failed; owned schema requires inspection") from None
+        failures.extend(drop_registered_model(ws, model.full_name))
 
     yield from factory("anomaly model cleanup intent", create, remove)
+    if failures:
+        raise AssertionError(
+            f"Packaged anomaly model cleanup failed in {len(failures)} operations "
+            f"({', '.join(sorted(set(failures)))}); owned schema requires inspection"
+        )
 
 
 @pytest.fixture
@@ -293,7 +294,7 @@ def packaged_anomaly_case(
     packaged_anomaly_schema: SchemaInfo,
     make_volume: Callable[..., VolumeInfo],
     make_experiment: Callable[..., CreateExperimentResponse],
-    make_anomaly_model_intent: Callable[[], AnomalyModelCleanup],
+    make_anomaly_model_intent: Callable[..., AnomalyModelCleanup],
     make_notebook: Callable[..., WorkspacePath],
     make_job: Callable[..., Job],
 ) -> PackagedAnomalyCase:
@@ -309,13 +310,17 @@ def packaged_anomaly_case(
     ws.files.upload(manifest_path, BytesIO(json.dumps(manifest).encode()), overwrite=False)
     experiment = make_experiment()
     assert experiment.experiment_id
-    model = make_anomaly_model_intent()
+    # Each ensemble member is a separate registered model. Own all names before
+    # submitting training, including models a partially failed task may create.
+    for suffix in packaged_model_suffixes():
+        make_anomaly_model_intent(suffix=suffix)
     parameters = {
         "wheel_path": remote_wheel,
         "manifest_path": manifest_path,
         "wheel_sha256": str(manifest["wheel_sha256"]),
         "source_revision": str(manifest["revision"]),
-        "model_name": model.full_name,
+        "model_name": f"{packaged_anomaly_schema.full_name}.distributed_model",
+        "model_configs": json.dumps(PACKAGED_MODEL_CONFIGS),
         "registry_table": f"{packaged_anomaly_schema.full_name}.registry",
         "experiment_id": experiment.experiment_id,
     }

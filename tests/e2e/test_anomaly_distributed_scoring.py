@@ -22,13 +22,21 @@ def test_run_anomaly_distributed_scoring_notebook(
     """Reload a persisted model and score with contributions on the suite's compute."""
     waiter = ws.jobs.run_now(job_id=packaged_anomaly_case.job_id)
     assert waiter.run_id is not None
+    polling_completed = False
     try:
-        run = waiter.result(timeout=timedelta(minutes=60))
-    except OperationFailed:
-        run = ws.jobs.get_run(run_id=waiter.run_id)
-    except (TimeoutError, KeyboardInterrupt):
-        _cancel_anomaly_run(ws, waiter.run_id)
-        raise
+        try:
+            run = waiter.result(timeout=timedelta(minutes=60))
+        except OperationFailed:
+            run = ws.jobs.get_run(run_id=waiter.run_id)
+        polling_completed = True
+    finally:
+        if not polling_completed:
+            # Cleanup also runs for pytest's timeout outcome (a BaseException). A failure
+            # here must not replace the original polling failure that is already unwinding.
+            try:
+                _cancel_anomaly_run(ws, waiter.run_id)
+            except BaseException:
+                logger.error("Packaged anomaly run cancellation did not confirm termination before cleanup")
     if packaged_anomaly_case.serverless:
         assert run.effective_performance_target == PerformanceTarget.STANDARD
     assert run.tasks and len(run.tasks) == 2, "Both packaged anomaly tasks must be present"
@@ -74,6 +82,10 @@ def _cancel_anomaly_run(ws: WorkspaceClient, run_id: int) -> None:
     """Cancel only this test's run and bound teardown after an interrupted wait."""
     try:
         ws.jobs.cancel_run(run_id=run_id)
+    except (DatabricksError, TimeoutError):
+        logger.error("Packaged anomaly run cancellation did not confirm termination before cleanup")
+        return
+    try:
         ws.jobs.wait_get_run_job_terminated_or_skipped(run_id=run_id, timeout=timedelta(minutes=5))
     except OperationFailed:
         # A cancelled terminal run is reported as unsuccessful by the SDK waiter.

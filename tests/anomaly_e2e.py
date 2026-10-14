@@ -11,6 +11,21 @@ from databricks.sdk.service.jobs import NotebookTask, RunOutput, RunTask, Task, 
 
 from tests.anomaly_diagnostics import dependency_provenance, worker_traceback
 
+PACKAGED_MODEL_CONFIGS = (
+    ("distribution_single", "distribution", 1),
+    ("distribution_ensemble", "distribution", 3),
+    ("correlation_single", "correlation", 1),
+)
+
+
+def packaged_model_suffixes() -> list[str]:
+    """All exact model names the packaged matrix can create, including ensemble members."""
+    return [
+        f"distributed_model_{name}" if size == 1 else f"distributed_model_{name}_ensemble_{member}"
+        for name, _, size in PACKAGED_MODEL_CONFIGS
+        for member in range(size)
+    ]
+
 
 @dataclass(frozen=True, repr=False)
 class PackagedAnomalyCase:
@@ -97,6 +112,18 @@ def safe_packaged_result(result: str, case: PackagedAnomalyCase, phase: str) -> 
         or parsed.get("status") != "passed"
     ):
         raise ValueError("Packaged anomaly task provenance does not match the submitted artifact")
+    expected_cases = (
+        sorted(name for name, _, _ in PACKAGED_MODEL_CONFIGS)
+        if phase == "train"
+        else sorted(
+            f"{name}:{mode}:{contributions}"
+            for name, _, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for contributions in ("off", "on")
+        )
+    )
+    if parsed.get("completed_cases") != expected_cases:
+        raise ValueError("Packaged anomaly task did not complete the scoring matrix")
     clients = parsed.get("environments")
     if not isinstance(clients, list) or len(clients) < 2:
         raise ValueError("Packaged anomaly task did not verify both driver and worker environments")
@@ -109,6 +136,7 @@ def safe_packaged_result(result: str, case: PackagedAnomalyCase, phase: str) -> 
         "wheel_sha256": case.wheel_sha256,
         "revision": case.revision,
         "requested_compute": "serverless" if case.serverless else "classic",
+        "completed_cases": expected_cases,
         "spark": (
             spark if isinstance(spark, str) and re.fullmatch(r"[0-9][A-Za-z0-9.+_-]{0,60}", spark) else "unavailable"
         ),

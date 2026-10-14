@@ -8,7 +8,7 @@ from pathlib import Path
 
 for parameter in (
     "wheel_path", "manifest_path", "wheel_sha256", "source_revision", "phase",
-    "model_name", "registry_table", "experiment_id",
+    "model_name", "model_configs", "registry_table", "experiment_id",
 ):
     dbutils.widgets.text(parameter, "")
 
@@ -28,6 +28,8 @@ dbutils.library.restartPython()
 import hashlib
 import json
 import math
+from collections import Counter
+from datetime import datetime, timedelta
 import os
 import platform
 from importlib.metadata import PackageNotFoundError, distribution, version
@@ -36,6 +38,7 @@ from pathlib import Path
 import mlflow
 import pandas as pd
 from pyspark.sql.functions import pandas_udf
+from pyspark.sql import functions as F
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
@@ -96,99 +99,183 @@ os.environ["MLFLOW_EXPERIMENT_ID"] = dbutils.widgets.get("experiment_id")
 
 # COMMAND ----------
 
+configurations = json.loads(dbutils.widgets.get("model_configs"))
+completed_cases = []
+start_time = datetime(2024, 1, 1)
+
 if phase == "train":
     training = spark.createDataFrame(
-        [(100.0 + index * 0.02, 2.0 + (index % 5) * 0.01) for index in range(100)],
-        "amount double, quantity double",
+        [
+            (
+                100.0 + day * 0.1 + group * 150.0 + 5.0 * math.sin(day * 2 * math.pi / 7),
+                2.0 + group + day * 0.002 + (day % 5) * 0.03,
+                f"group_{group}", start_time + timedelta(days=day),
+            )
+            for day in range(320) for group in range(2)
+        ],
+        "amount double, quantity double, region string, event_time timestamp",
     )
-    AnomalyEngine(ws, spark).train(
-        df=training,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.01, random_seed=42)),
-    )
+    for name, profile, ensemble_size in configurations:
+        combined = name == "distribution_ensemble"
+        AnomalyEngine(ws, spark).train(
+            df=training, columns=["amount", "quantity"],
+            model_name=f"{model_name}_{name}", registry_table=registry_table,
+            profile=profile, baseline_by=["region"] if combined else [],
+            baseline_over_time="event_time" if combined else None,
+            params=AnomalyParams(
+                sample_fraction=1.0, ensemble_size=ensemble_size,
+                algorithm_config=IsolationForestConfig(contamination=0.01, random_seed=42),
+            ),
+        )
+        completed_cases.append(name)
 
 # COMMAND ----------
 
+
+def original_multiset(rows, columns):
+    return Counter(
+        json.dumps({key: row[key] for key in columns}, sort_keys=True, default=str)
+        for row in rows
+    )
+
+
+def assert_contract(result, rows, source, originals, *, combined, contributions):
+    assert set(result.columns) == set(source.columns) | {"_dq_info", "_errors", "_warnings"}
+    assert [name for name in result.columns if name in source.columns] == source.columns
+    assert [result.schema[name] for name in source.columns] == list(source.schema)
+    assert original_multiset(rows, source.columns) == originals, "Input values or duplicates changed"
+    for row in rows:
+        assert len(row["_dq_info"]) == 2, "Both consecutive checks must preserve their result"
+        for info in row["_dq_info"]:
+            anomaly = info["anomaly"]
+            unseen = combined and row["transaction_id"] == 4
+            assert anomaly["is_new_baseline"] is unseen
+            assert anomaly["ai_explanation"] is None
+            if unseen:
+                assert anomaly["score"] is None and anomaly["severity_percentile"] is None
+                assert anomaly["contributions"] is None and anomaly["basis_contributions"] is None
+                assert anomaly["is_anomaly"] is False
+                continue
+            assert math.isfinite(anomaly["score"]) and math.isfinite(anomaly["severity_percentile"])
+            assert anomaly["is_anomaly"] is (anomaly["severity_percentile"] >= anomaly["threshold"])
+            assert anomaly["is_anomaly"] is True, "Threshold zero must flag every supported score"
+            expected_stale = row["transaction_id"] == 5 if combined else None
+            assert anomaly["is_stale_baseline"] is expected_stale
+            if combined:
+                assert math.isfinite(anomaly["confidence_std"]) and anomaly["confidence_std"] >= 0
+            if contributions:
+                shares = anomaly["contributions"]
+                assert shares is not None and set(shares) == {"amount", "quantity"}
+                values = [value for value in shares.values() if value is not None]
+                assert all(math.isfinite(value) and value >= 0 for value in values)
+                if values:
+                    assert math.isclose(sum(values), 100.0, abs_tol=0.2)
+                if row["transaction_id"] == 2:
+                    assert values and max(values) > 0, "Controlled perturbation needs positive evidence"
+                    if combined:
+                        basis = anomaly["basis_contributions"]
+                        assert basis, "Combined-model perturbation needs basis evidence"
+                        assert all(math.isfinite(share) and 0.0 <= share <= 100.0 for share in basis.values())
+                        assert any("group baseline" in label or "expected level at that time" in label for label in basis)
+            else:
+                assert anomaly["contributions"] is None and anomaly["basis_contributions"] is None
+        assert bool(row["_errors"]) is not (combined and row["transaction_id"] == 4)
+        assert bool(row["_warnings"]) is not (combined and row["transaction_id"] == 4)
+
+
+def assert_parity(reference, observed, *, compare_contributions):
+    left_rows = sorted(reference, key=lambda row: row.transaction_id)
+    right_rows = sorted(observed, key=lambda row: row.transaction_id)
+    assert len(left_rows) == len(right_rows)
+    for left, right in zip(left_rows, right_rows, strict=True):
+        assert left.transaction_id == right.transaction_id
+        for first, second in zip(left["_dq_info"], right["_dq_info"], strict=True):
+            a, b = first["anomaly"], second["anomaly"]
+            for field in ("score", "severity_percentile", "confidence_std"):
+                if a[field] is None:
+                    assert b[field] is None
+                else:
+                    assert b[field] is not None and math.isclose(a[field], b[field], rel_tol=1e-9, abs_tol=1e-9)
+            for field in ("is_anomaly", "is_new_baseline", "is_stale_baseline"):
+                assert a[field] == b[field]
+            if compare_contributions:
+                for field in ("contributions", "basis_contributions"):
+                    if a[field] is None:
+                        assert b[field] is None
+                    else:
+                        assert b[field] is not None and set(a[field]) == set(b[field])
+                        for key, value in a[field].items():
+                            assert b[field][key] is None if value is None else math.isclose(value, b[field][key], abs_tol=0.1)
+
+
 if phase == "score":
-    # No fitted estimator is shared with the training task. Public check APIs load
-    # the persisted model, and driver_only=False forces pandas UDF execution.
+    # Every model is reloaded from the registry in this fresh task. Original
+    # collision fields and duplicate rows exercise the public restoration boundary.
     payload = (0.42, 0.1, {"original": 0.2}, {"original basis": 0.3}, 12.0)
     probe = spark.createDataFrame(
         [
-            (1, 101.0, 2.02, *payload),
-            (2, 9999.0, 1.0, *payload),
-            (2, 9999.0, 1.0, *payload),
+            (1, 110.0, 2.2, "group_0", start_time + timedelta(days=100), *payload),
+            (2, 9999.0, 1.0, "group_0", start_time + timedelta(days=100), *payload),
+            (2, 9999.0, 1.0, "group_0", start_time + timedelta(days=100), *payload),
+            (3, None, 2.3, "group_1", start_time + timedelta(days=100), *payload),
+            (4, 130.0, 2.2, "unseen", start_time + timedelta(days=100), *payload),
+            (5, 135.0, 2.7, "group_0", start_time + timedelta(days=700), *payload),
         ],
-        "transaction_id int, amount double, quantity double, anomaly_score double, anomaly_score_std double, "
-        "anomaly_contributions map<string,double>, anomaly_basis_contributions map<string,double>, severity_percentile double",
+        "transaction_id int, amount double, quantity double, region string, event_time timestamp, "
+        "anomaly_score double, anomaly_score_std double, anomaly_contributions map<string,double>, "
+        "anomaly_basis_contributions map<string,double>, severity_percentile double",
     )
-    arguments = {
-        "model_name": model_name,
-        "registry_table": registry_table,
-        "threshold": 80.0,
-        "enable_contributions": True,
-        "enable_ai_explanation": False,
-        "driver_only": False,
-    }
-    metadata_checks = [
-        {"criticality": criticality, "check": {"function": "has_no_row_anomalies", "arguments": arguments}}
-        for criticality in ("error", "warn")
-    ]
-    class_checks = [
-        DQDatasetRule(criticality=criticality, check_func=has_no_row_anomalies, check_func_kwargs=arguments)
-        for criticality in ("error", "warn")
-    ]
+    originals = original_multiset(probe.collect(), probe.columns)
     engine = DQEngine(ws, spark)
-    metadata_result = engine.apply_checks_by_metadata(probe, metadata_checks)
-    class_result = engine.apply_checks(probe, class_checks)
-    assert metadata_result.schema == class_result.schema
-    for original_field in probe.schema.fields:
-        assert metadata_result.schema[original_field.name] == original_field
-    # Collect the tiny synthetic probe through the DataFrame API: toJSON returns
-    # an RDD and is unavailable when classic compute exposes Spark Connect.
-    expected_rows = sorted(json.dumps(row.asDict(recursive=True), sort_keys=True) for row in probe.collect())
-    results = []
-    for result in (metadata_result, class_result):
-        assert set(result.columns) == set(probe.columns) | {"_dq_info", "_errors", "_warnings"}
-        restored_rows = sorted(
-            json.dumps(row.asDict(recursive=True), sort_keys=True)
-            for row in result.select(*probe.columns).collect()
-        )
-        assert restored_rows == expected_rows, "Input values or duplicates changed"
-        rows = result.orderBy("transaction_id").collect()
-        assert len(rows) == 3 and rows[1] == rows[2], "Duplicate rows must be preserved"
-        for row in rows:
-            assert len(row["_dq_info"]) == 2
-            for info in row["_dq_info"]:
-                anomaly = info["anomaly"]
-                assert anomaly["check_name"] == "has_no_row_anomalies" and anomaly["model"] == model_name
-                assert anomaly["is_anomaly"] is (row["transaction_id"] == 2)
-                assert math.isfinite(anomaly["score"])
-                assert math.isfinite(anomaly["severity_percentile"])
-                if row["transaction_id"] == 2:
-                    assert set(anomaly["contributions"]) == {"amount", "quantity"}
-                    assert all(math.isfinite(value) for value in anomaly["contributions"].values())
-                else:
-                    assert anomaly["contributions"] is None
-                    assert row["_errors"] is None and row["_warnings"] is None
-            if row["transaction_id"] == 2:
-                assert row["_errors"] and row["_warnings"]
-                error = row["_errors"][0]
-                assert error["name"] == "has_row_anomalies" and error["function"] == "has_no_row_anomalies"
-                assert "reached threshold" in error["message"]
-                assert row["_dq_info"][0]["anomaly"]["severity_percentile"] >= 80.0
-        results.append(rows)
-    for metadata_row, class_row in zip(*results, strict=True):
-        for metadata_info, class_info in zip(metadata_row["_dq_info"], class_row["_dq_info"], strict=True):
-            for field in ("score", "severity_percentile"):
-                assert math.isclose(metadata_info["anomaly"][field], class_info["anomaly"][field], rel_tol=1e-10, abs_tol=1e-10)
-            assert metadata_info["anomaly"]["contributions"] == class_info["anomaly"]["contributions"]
+    for name, profile, ensemble_size in configurations:
+        snapshots = {}
+        for driver_only in (True, False):
+            for contributions in (False, True):
+                arguments = {
+                    "model_name": f"{model_name}_{name}", "registry_table": registry_table,
+                    "threshold": 0.0, "enable_contributions": contributions,
+                    "enable_confidence_std": True, "enable_ai_explanation": False,
+                    "driver_only": driver_only,
+                }
+                checks = [
+                    {"criticality": criticality, "check": {"function": "has_no_row_anomalies", "arguments": arguments}}
+                    for criticality in ("error", "warn")
+                ]
+                result = engine.apply_checks_by_metadata(probe, checks)
+                rows = result.collect()
+                assert_contract(result, rows, probe, originals, combined=name == "distribution_ensemble", contributions=contributions)
+                snapshots[(driver_only, contributions)] = rows
+                completed_cases.append(f"{name}:{'driver' if driver_only else 'distributed'}:{'on' if contributions else 'off'}")
+        for (driver_only, contributions), rows in snapshots.items():
+            assert_parity(snapshots[(True, False)], rows, compare_contributions=False)
+            if contributions:
+                assert_parity(snapshots[(True, True)], rows, compare_contributions=True)
+        # Programmatic and metadata APIs must also agree after column/partition changes.
+        reordered = probe.select(*reversed(probe.columns)).repartition(2, "transaction_id")
+        class_checks = [
+            DQDatasetRule(criticality=criticality, check_func=has_no_row_anomalies, check_func_kwargs=arguments)
+            for criticality in ("error", "warn")
+        ]
+        class_result = engine.apply_checks(reordered, class_checks)
+        class_rows = class_result.collect()
+        assert_contract(class_result, class_rows, reordered, originals, combined=name == "distribution_ensemble", contributions=True)
+        assert_parity(snapshots[(False, True)], class_rows, compare_contributions=True)
+        repeated = engine.apply_checks_by_metadata(result.select(*probe.columns), checks)
+        assert_parity(snapshots[(False, True)], repeated.collect(), compare_contributions=True)
+        filtered_checks = [{**check, "filter": "transaction_id != 3"} for check in checks]
+        filtered = engine.apply_checks_by_metadata(probe, filtered_checks)
+        filtered_rows = filtered.collect()
+        assert original_multiset(filtered_rows, probe.columns) == originals
+        included = [row for row in filtered_rows if row.transaction_id != 3]
+        assert_parity([row for row in snapshots[(False, True)] if row.transaction_id != 3], included, compare_contributions=True)
+        for row in filtered_rows:
+            if row.transaction_id == 3:
+                assert row["_errors"] is None and row["_warnings"] is None
 
 # COMMAND ----------
 
 dbutils.notebook.exit(json.dumps({
     "status": "passed", "phase": phase, "wheel_sha256": manifest["wheel_sha256"],
     "revision": manifest["revision"], "spark": spark.version, "environments": environments,
+    "completed_cases": sorted(completed_cases),
 }))

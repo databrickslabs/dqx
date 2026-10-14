@@ -57,10 +57,11 @@ def per_group_metrics(
     """One row of metrics per group.
 
     Groups with a single class present yield NaN PR-AUC rather than a misleading 0 or 1; callers
-    should drop those before averaging rather than have this function guess.
+    should drop those before averaging rather than have this function guess. A null group key is
+    retained as an explicit group so its rows remain accounted for.
     """
     rows = []
-    for group, chunk in frame.groupby(group_col):
+    for group, chunk in frame.groupby(group_col, dropna=False):
         rows.append(
             {
                 group_col: group,
@@ -116,15 +117,20 @@ def trivial_baselines(frame: pd.DataFrame, metric_cols: list[str], *, seed: int 
     ``random`` is the sanity check Kim et al. recommend. ``max_abs_z`` is the cheapest defensible
     detector — the largest absolute z-score across metrics — and is a genuinely competitive baseline
     on data whose anomalies are simply extreme, which makes it the honest thing to compare against.
+
+    All evaluated metric values must be finite. Missing or non-finite values cannot be reduced into a
+    meaningful baseline score, so they are rejected before the feature-wise statistics are computed.
     """
     rng = np.random.default_rng(seed)
     labels = frame["label"]
 
     values = frame[metric_cols].to_numpy(dtype=float)
-    means = np.nanmean(values, axis=0)
-    stds = np.nanstd(values, axis=0)
+    if not np.isfinite(values).all():
+        raise ValueError("metric_cols must contain only finite values")
+    means = np.mean(values, axis=0)
+    stds = np.std(values, axis=0)
     stds[stds == 0] = 1.0
-    max_abs_z = np.nanmax(np.abs((values - means) / stds), axis=1)
+    max_abs_z = np.max(np.abs((values - means) / stds), axis=1)
 
     return {
         "random": pr_auc(labels, pd.Series(rng.random(len(frame)), index=frame.index)),

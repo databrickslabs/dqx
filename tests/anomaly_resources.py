@@ -87,7 +87,8 @@ def _drop_model_versions(ws: WorkspaceClient, model_name: str) -> list[str]:
     return failures
 
 
-def _drop_registered_model(ws: WorkspaceClient, model_name: str) -> list[str]:
+def drop_registered_model(ws: WorkspaceClient, model_name: str) -> list[str]:
+    """Attempt every version and its owned model, returning payload-free failures."""
     failures = _drop_model_versions(ws, model_name)
     try:
         ws.registered_models.delete(full_name=model_name)
@@ -114,7 +115,7 @@ def drop_registered_models_in_schemas(ws: WorkspaceClient, schemas: list[tuple[s
             if not model.full_name:
                 failures.append(f"schema={schema_key}, error=MissingModelName")
                 continue
-            failures.extend(_drop_registered_model(ws, model.full_name))
+            failures.extend(drop_registered_model(ws, model.full_name))
     if failures:
         raise ResourceCleanupError("Registered model cleanup failed: " + "; ".join(failures)) from None
 
