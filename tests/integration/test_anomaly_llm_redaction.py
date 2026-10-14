@@ -13,6 +13,8 @@ SparkSession — no MLflow/UC — and mirrors the metrics_observer escaping roun
 test_summary_metrics.py, so it runs on every integration CI rather than nightly-only.
 """
 
+import json
+
 import pytest
 from pyspark.sql import SparkSession
 
@@ -33,7 +35,7 @@ def test_pattern_spark_expr_redacts_escaped_key(spark: SparkSession, name: str):
     # array_contains it would surface in the top-2 pattern. Correct escaping filters it out, leaving
     # only the non-sensitive feature.
     pattern = _pattern(spark, {name: 10.0, "safe_col": 5.0}, {name})
-    assert pattern == "safe_col"
+    assert json.loads(pattern) == {"features": ["safe_col"], "evidence": "visible"}
 
 
 def test_pattern_spark_expr_keeps_unredacted_quoted_key(spark: SparkSession):

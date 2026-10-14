@@ -1,8 +1,8 @@
 """LLM-based group explanation for row anomaly detection.
 
 The algorithm is group-based: anomalous rows are grouped by a deterministic
-pattern key — the sorted top-2 contributing features — and the LLM is invoked
-once per group. Every row in a group shares the same
+pattern key — the sorted top-2 contributing features — and each retained group
+with visible attribution supplies one serving input. Every row in a group shares the same
 narrative/business_impact/action; group_size and group_avg_severity signal that
 the explanation describes a pattern, not a row.
 
@@ -19,17 +19,25 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pyspark.sql.functions as F
+from pyspark.errors import PySparkException
 from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql.types import DoubleType, LongType, MapType, StringType, StructField, StructType
+from pyspark.sql.types import ArrayType, DoubleType, LongType, MapType, StringType, StructField, StructType
 
+from databricks.labs.dqx.ai_endpoint import endpoint_unavailable_reason
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
-from databricks.labs.dqx.anomaly.feature_naming import engineered_from, human_label
+from databricks.labs.dqx.anomaly.feature_naming import (
+    AttributionKeys,
+    basis_label_mapping,
+    engineered_from,
+    human_label,
+)
 from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import displayed_severity_expr
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 from databricks.labs.dqx.check_funcs import join_results_on_null_safe_columns
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
 
 # Single source of truth for the per-group prompt. The instructions, input-field semantics, and
 # output-field rules below are rendered into one text prompt by *_render_ai_query_prompt_header*
@@ -150,10 +158,9 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
         "baseline_grouping",
         "The columns whose values define each row's baseline group, e.g. 'region' or "
-        "'region, product'. Anomalies are judged relative to the row's own group baseline; "
-        "'none' when the model is not grouped. When set, a value can be ordinary for the table as a "
-        "whole and still be wrong for its own group, so say the metric departed from what its group "
-        "normally looks like rather than that it was unusual outright.",
+        "'region, product', or 'none' when the model is not grouped. This means a group comparison was available; "
+        "it does not establish that this comparison drove the anomaly. Name it as context, and attribute "
+        "a departure to it only when basis_contributions supplies that evidence.",
     ),
     (
         "temporal_baseline",
@@ -166,7 +173,7 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "metric unusual, high or low overall on the strength of this field, and do not state that it "
         "departed from its expected level -- say the comparison was available.",
     ),
-    ("threshold", "The severity percentile threshold configured by the user (0–100)."),
+    ("threshold", "The severity percentile threshold configured by the user ([0, 100))."),
     (
         "drift_summary",
         "Baseline drift signal from the scoring run, e.g. 'drift detected: amount=4.12; "
@@ -228,7 +235,7 @@ _PROMPT_EXAMPLES = (
     "drift_summary: none\n"
     'Response: {"narrative":"Across 312 rows, amount accounts for most of what the model measured (61%), '
     'with quantity next (22%); these rows are judged against their own region.","business_impact":"If '
-    "amount is wrong on these rows, revenue reporting for the affected regions would be affected too.\","
+    'amount is wrong on these rows, revenue reporting for the affected regions would be affected too.",'
     '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
     "Example (value basis, judged against time, with drift):\n"
     "attribution_basis: each feature's own value compared against the rows it was scored against\n"
@@ -256,9 +263,9 @@ _PROMPT_EXAMPLES = (
     # deterministic clause is appended to every withheld narrative, and an exemplar that stated it too would
     # model saying it twice.
     'Response: {"narrative":"Of what can be shown across these 88 rows, latency_ms carries most (74%) '
-    'and retries a small part (12%); latency_ms has also moved from its training baseline. Almost all of '
+    "and retries a small part (12%); latency_ms has also moved from its training baseline. Almost all of "
     "latency_ms's own evidence (91%) is against what its history expects at that point in time rather than "
-    'against its overall range, so these rows depart from their expected level for when they '
+    "against its overall range, so these rows depart from their expected level for when they "
     'arrived.","business_impact":"If these rows are wrong, downstream consumers with SLAs would be the '
     'first to notice.","action":"Compare latency_ms against its expected level for that period rather than '
     'against its overall range, and take account of the evidence this explanation could not include."}'
@@ -279,6 +286,9 @@ _BASIS_MAX_ENTRIES = 12
 # *ExplanationContext.pattern_col*) so it can never collide with a user column; the constant is
 # only the fallback for direct *ExplanationContext* construction.
 _DEFAULT_PATTERN_COL = "__dqx_pattern"
+_PATTERN_SCHEMA = StructType(
+    [StructField("features", ArrayType(StringType()), False), StructField("evidence", StringType(), False)]
+)
 _LLM_FIELD_MAX_LEN = 500
 # Confidence-label thresholds on the per-group mean ensemble std. Single source of truth for the
 # ai_query confidence expression (see *_build_ai_query_prompt_column*).
@@ -355,12 +365,9 @@ class ExplanationContext:
     # no conclusion about which comparison objected.
     basis_contributions_col: str = ScoringOutputColumns().basis_contributions
     llm_model_config: LLMModelConfig | None = None
-    # Cap on LLM calls made by a single ``add_explanation_column`` invocation. When the
-    # caller is *score_segmented* this is the *per-segment budget* (split equally across
-    # segments by the caller); the *user-facing* global cap lives on
-    # ``ScoringConfig.max_groups`` and is divided before being threaded through here.
-    # When calling ``add_explanation_column`` directly (no segmentation), this value is
-    # the absolute cap on LLM calls for that one call.
+    # Cap on retained explanation groups. Groups without visible attribution receive deterministic
+    # explanations within the same cap; others supply one serving input each. Platform retries
+    # are controlled by the serving system rather than this group limit.
     max_groups: int = 500
     redact_columns: tuple[str, ...] = ()
     # Internal working-column name for the (baseline group, pattern) group key. Defaults to a fixed
@@ -421,6 +428,8 @@ def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadat
     """
     expanded = set(redact_columns)
     if metadata is not None:
+        attribution_keys = AttributionKeys.from_metadata(metadata)
+        basis_labels = basis_label_mapping(attribution_keys.blocks, attribution_keys.labels)
         for column in redact_columns:
             derived = engineered_from(column, metadata)
             expanded.update(derived)
@@ -429,40 +438,34 @@ def redaction_set(redact_columns: tuple[str, ...], metadata: SparkFeatureMetadat
             # the names would match nothing there and a redacted column's evidence would reach the prompt
             # through that map. Covered here rather than at the filter, so every consumer of this set is
             # covered at once however it keys its own map.
-            expanded.update(human_label(name, metadata) for name in derived)
+            expanded.update(label for (source, _), label in basis_labels.items() if source == column)
     else:
         expanded.update(f"{column}{BASELINE_RELATIVE_SUFFIX}" for column in redact_columns)
     return frozenset(expanded)
 
 
 def pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
-    """Pattern key as a pure-Spark-SQL expression (no Python UDFs shipped to executors).
+    """Collision-free internal identity for the top two visible contributing features.
 
-    Drops null, zero and redacted entries, takes the top-2 features by value desc,
-    sorts their names asc, and joins with '+'. Empty or null maps yield 'unknown'.
-    Zero entries are dropped because a feature that earned no share did not contribute,
-    and pairing it into the key would group rows by a feature neither of them was flagged
-    for. Values are non-negative shares, so ordering by value and by |value| agree; the
-    abs() is kept only so the comparator matches `format_contributions_map`'s.
-    Implemented in SQL so Databricks Connect / serverless workers don't need the dqx
-    package installed.
+    The JSON identity separates the feature array from evidence availability. Null, empty,
+    and zero maps are unavailable; fully redacted positive maps are withheld. Names are
+    ranked by contribution and then lexically, so map insertion order cannot break ties.
     """
-    col = f"`{contributions_col}`"
+    col = quote_column_name(contributions_col)
+    positive = f"filter(map_entries({col}), e -> e.value is not null and e.value > 0)"
+    entries = positive
     if redact_set:
         redact_arr = "array(" + ", ".join(f"'{_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
-        entries = (
-            f"filter(map_entries({col}), e -> e.value is not null and e.value > 0 "
-            f"and not array_contains({redact_arr}, e.key))"
-        )
-    else:
-        entries = f"filter(map_entries({col}), e -> e.value is not null and e.value > 0)"
-    sql = (
-        f"case when {col} is null or size({entries}) = 0 then 'unknown' "
-        f"else concat_ws('+', array_sort(transform(slice(array_sort({entries}, "
-        f"(a, b) -> case when abs(b.value) > abs(a.value) then 1 "
-        f"when abs(b.value) < abs(a.value) then -1 else 0 end), 1, 2), e -> e.key))) end"
+        entries = f"filter({positive}, e -> not array_contains({redact_arr}, e.key))"
+    names = (
+        f"array_sort(transform(slice(array_sort({entries}, "
+        f"(a, b) -> case when b.value > a.value then 1 when b.value < a.value then -1 "
+        f"when a.key < b.key then -1 when a.key > b.key then 1 else 0 end), 1, 2), e -> e.key))"
     )
-    return F.expr(sql)
+    state = (
+        f"case when size({entries}) > 0 then 'visible' when size({positive}) > 0 then 'withheld' else 'unavailable' end"
+    )
+    return F.expr(f"to_json(named_struct('features', coalesce({names}, array()), 'evidence', {state}))")
 
 
 def _baseline_grouping_str(metadata: SparkFeatureMetadata | None, redact_set: frozenset[str] = frozenset()) -> str:
@@ -721,7 +724,8 @@ def _format_contributions_sql(top_n: int, labels: dict[str, str] | None = None) 
     sorted_entries = (
         f"array_sort({entries}, (a, b) -> "
         f"case when abs(b.value) > abs(a.value) then 1 "
-        f"when abs(b.value) < abs(a.value) then -1 else 0 end)"
+        f"when abs(b.value) < abs(a.value) then -1 "
+        f"when a.key < b.key then -1 when a.key > b.key then 1 else 0 end)"
     )
     top = f"slice({sorted_entries}, 1, {int(top_n)})"
     abs_sum = f"aggregate({sorted_entries}, 0.0D, (acc, e) -> acc + abs(e.value))"
@@ -748,7 +752,7 @@ def _format_basis_contributions_sql(max_entries: int) -> Column:
     normalised within each column and several columns share this one map, so renormalising across the map
     would turn "71% of what made units depart" into a share of something with no meaning.
 
-    Keys are already reader-facing labels, produced by ``feature_naming.human_label`` at scoring time, so
+    Keys are already reader-facing labels, disambiguated by *basis_label_mapping* at scoring time, so
     there is no label lookup here and nothing user-derived is interpolated into the SQL.
 
     A null or empty map renders 'not measured', which the prompt instructions define as "the split could
@@ -757,7 +761,8 @@ def _format_basis_contributions_sql(max_entries: int) -> Column:
     entries = "filter(map_entries(`mean_basis_contributions`), e -> e.value is not null and e.value > 0)"
     sorted_entries = (
         f"array_sort({entries}, (a, b) -> "
-        f"case when b.value > a.value then 1 when b.value < a.value then -1 else 0 end)"
+        f"case when b.value > a.value then 1 when b.value < a.value then -1 "
+        f"when a.key < b.key then -1 when a.key > b.key then 1 else 0 end)"
     )
     top = f"slice({sorted_entries}, 1, {int(max_entries)})"
     formatted = f"transform({top}, e -> concat(e.key, ' (', cast(round(e.value) as int), '%)'))"
@@ -841,7 +846,7 @@ def _aggregate_groups_spark(
     score_std_col: str,
     redact_set: frozenset[str],
     max_groups: int,
-) -> tuple[DataFrame, int, int, int]:
+) -> tuple[DataFrame, int, int, int, bool]:
     """Aggregate anomalous rows into per-pattern group metadata, kept inside Spark.
 
     Returns the per-pattern aggregate as a DataFrame so the LLM call can run on executors via
@@ -907,7 +912,8 @@ def _aggregate_groups_spark(
         .join(per_pattern_contrib, on=pattern_col, how="left")
         .join(per_pattern_basis, on=pattern_col, how="left")
     )
-    return kept, dropped_groups_count, dropped_rows_count, total_groups
+    has_visible = any(json.loads(key)["evidence"] == "visible" for key in kept_pattern_values)
+    return kept, dropped_groups_count, dropped_rows_count, total_groups, has_visible
 
 
 def _mean_column_contributions(
@@ -980,7 +986,7 @@ def _call_llm_for_groups_ai_query(
     is_ensemble: bool,
     drift_summary: str,
 ) -> DataFrame:
-    """Invoke ``ai_query`` once per retained group inside Spark and return rows shaped for
+    """Submit each retained visible-attribution group to ``ai_query`` and return rows shaped for
     *_attach_explanation_struct* (pattern key + narrative/business_impact/action + group stats).
 
     Budget caps (max_tokens, temperature) come from *LLMModelConfig* via *modelParameters*.
@@ -1099,6 +1105,31 @@ def _call_llm_for_groups_ai_query(
     )
 
 
+def _explanations_without_visible_attribution(groups: DataFrame, ctx: ExplanationContext) -> DataFrame:
+    """State the evidence limit without asking a model to invent an explanation."""
+    disclosure = F.coalesce(F.col("__disclosure"), F.lit(DISCLOSURE_COMPLETE))
+    withheld = disclosure != F.lit(DISCLOSURE_COMPLETE)
+    narrative = F.concat(
+        F.format_string("Across %s rows, the anomaly score crossed the configured threshold. ", F.col("group_size")),
+        F.when(withheld, F.lit("No contributing metrics can be shown.")).otherwise(
+            F.lit("Feature attribution is unavailable.")
+        ),
+        _disclosure_clause_expr(disclosure),
+    )
+    return groups.select(
+        F.col(ctx.pattern_col),
+        narrative.alias("narrative"),
+        F.lit(None).cast(StringType()).alias("business_impact"),
+        F.lit("Review these rows against source records before drawing conclusions.").alias("action"),
+        F.lit("unknown").alias("top_drivers"),
+        F.col("group_size").cast(LongType()).alias("group_size"),
+        displayed_severity_expr(F.col("group_avg_severity"), ctx.threshold)
+        .cast(DoubleType())
+        .alias("group_avg_severity"),
+        disclosure.alias("__disclosure"),
+    )
+
+
 def _attach_explanation_struct(
     df_with_pattern: DataFrame,
     result_sdf: DataFrame,
@@ -1117,7 +1148,12 @@ def _attach_explanation_struct(
             F.struct(
                 F.col("narrative").alias("narrative"),
                 F.col("business_impact").alias("business_impact"),
-                F.col(pattern_col).alias("top_features"),
+                F.when(
+                    F.size(F.from_json(F.col(pattern_col), _PATTERN_SCHEMA)["features"]) > 0,
+                    F.concat_ws("+", F.from_json(F.col(pattern_col), _PATTERN_SCHEMA)["features"]),
+                )
+                .otherwise(F.lit("unknown"))
+                .alias("top_features"),
                 F.col("top_drivers").alias("top_drivers"),
                 F.col("action").alias("action"),
                 F.col("group_size").alias("group_size"),
@@ -1151,8 +1187,8 @@ def _endpoint_reachable(spark: object, endpoint: str) -> bool:
 
     AI explanations are on by default, but ``ai_query`` runs lazily — a missing or un-entitled
     endpoint (no Foundation Model APIs, wrong region, etc.) would otherwise fail the whole scoring
-    run at action time. Probe once with a 1-token call; on any failure the caller skips
-    explanations and logs a warning instead of breaking scoring.
+    run at action time. Probe once with a 1-token call. Only recognized availability
+    failures degrade to null explanations; unexpected application errors propagate.
     """
     try:
         spark.sql(  # type: ignore[attr-defined]
@@ -1160,10 +1196,14 @@ def _endpoint_reachable(spark: object, endpoint: str) -> bool:
         ).collect()
         return True
     except Exception as exc:
-        detail = str(exc).replace("\n", " ").replace("\r", " ")[:200]
-        logger.warning(
-            f"ai_explanation: serving endpoint {endpoint!r} not reachable; skipping AI explanations. {detail}"
-        )
+        error_class = None
+        if isinstance(exc, PySparkException):
+            error_class = exc.getCondition() if hasattr(exc, "getCondition") else exc.getErrorClass()
+        reason = endpoint_unavailable_reason(error_class, str(exc))
+        if reason is None:
+            raise
+        # Only classifier-owned text reaches the log; endpoint names and response bodies may be sensitive.
+        logger.warning(f"ai_explanation: serving endpoint not reachable: {reason}; skipping AI explanations.")
         return False
 
 
@@ -1171,9 +1211,9 @@ def probe_endpoint_reachable(spark: object, llm_model_config: LLMModelConfig | N
     """Resolve the serving endpoint from *llm_model_config* and probe its reachability once.
 
     Public entry point so a caller that invokes ``add_explanation_column`` repeatedly within a
-    single scoring run (e.g. *score_segmented*, once per segment) can probe **once** up front and
-    pass the result down via ``add_explanation_column(..., endpoint_reachable=...)``, instead of
-    paying one billable 1-token ``ai_query`` probe per segment.
+    single scoring run can reuse a known reachability result through
+    ``add_explanation_column(..., endpoint_reachable=...)``. Prefer letting the explainer probe
+    lazily when there may be no visible attribution, because those groups need no serving call.
 
     Raises:
         InvalidParameterError: When *model_name* does not resolve to a Databricks serving endpoint.
@@ -1194,13 +1234,14 @@ def _add_explanation_column_ai_query(
     The per-group LLM results are materialised (collected and rebuilt as a local DataFrame)
     before being joined onto the scored rows. Left lazy, the join would re-invoke ``ai_query``
     for every downstream action on the scored DataFrame (each ``count``/``display``/write is a
-    fresh execution of the lineage), multiplying LLM cost and latency per action and breaking
-    the documented "one call per group per scoring run" cost model. The collected payload is
-    small and bounded: at most ``max_groups`` rows, each holding three length-capped text fields.
+    fresh execution of the lineage), multiplying LLM cost and latency per action. Materialising
+    once prevents caller actions from resubmitting the serving inputs; platform retries remain
+    outside this function's control. The collected payload is bounded by ``max_groups`` rows,
+    each holding three length-capped text fields.
     """
     redact_set = redaction_set(ctx.redact_columns, ctx.feature_metadata)
     anomalous = df_with_pattern.filter(F.col(ctx.severity_col) >= F.lit(ctx.threshold))
-    kept_sdf, dropped_groups_count, dropped_rows_count, total_groups = _aggregate_groups_spark(
+    kept_sdf, dropped_groups_count, dropped_rows_count, total_groups, has_visible = _aggregate_groups_spark(
         anomalous,
         pattern_col=ctx.pattern_col,
         contributions_col=ctx.contributions_col,
@@ -1215,21 +1256,20 @@ def _add_explanation_column_ai_query(
         return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(
             ctx.pattern_col
         )
-    # Endpoint resolution is a config check (raises for a non-Databricks provider); reachability is
-    # a runtime check — if the endpoint isn't available, degrade to null explanations + a warning
-    # rather than failing the scoring run (AI explanations are on by default). *endpoint_reachable*
-    # is passed by callers that already probed once for the whole run (e.g. score_segmented across
-    # segments); when None we probe here, so direct single callers keep working unchanged.
-    if endpoint_reachable is None:
-        endpoint = _resolve_ai_query_endpoint((ctx.llm_model_config or LLMModelConfig()).model_name)
-        endpoint_reachable = _endpoint_reachable(df_with_pattern.sparkSession, endpoint)
-    if not endpoint_reachable:
-        return df_with_pattern.withColumn(ctx.ai_explanation_col, _build_empty_explanation_column()).drop(
-            ctx.pattern_col
-        )
     _log_dropped_groups(dropped_groups_count, dropped_rows_count, ctx.max_groups)
-    result_sdf = _call_llm_for_groups_ai_query(kept_sdf, ctx, is_ensemble, drift_summary)
-    # Pin the LLM responses: one ai_query execution per scoring run, regardless of how many
+    visible = F.from_json(F.col(ctx.pattern_col), _PATTERN_SCHEMA)["evidence"] == F.lit("visible")
+    # Unavailable attribution is not redaction. These groups need neither a serving probe nor
+    # a completion; keep them within the same ranking and group limit as all other groups.
+    result_sdf = _explanations_without_visible_attribution(kept_sdf.filter(~visible), ctx)
+    if has_visible:
+        if endpoint_reachable is None:
+            endpoint = _resolve_ai_query_endpoint((ctx.llm_model_config or LLMModelConfig()).model_name)
+            endpoint_reachable = _endpoint_reachable(df_with_pattern.sparkSession, endpoint)
+        if endpoint_reachable:
+            result_sdf = result_sdf.unionByName(
+                _call_llm_for_groups_ai_query(kept_sdf.filter(visible), ctx, is_ensemble, drift_summary)
+            )
+    # Pin the generated responses once, regardless of how many
     # actions the caller takes on the returned DataFrame afterwards.
     result_rows = result_sdf.collect()
     result_local = df_with_pattern.sparkSession.createDataFrame(result_rows, schema=result_sdf.schema)
@@ -1246,8 +1286,9 @@ def add_explanation_column(
     """Add the AI explanation column to df using the group-based algorithm.
 
     Anomalous rows are bucketed by a deterministic pattern key — the sorted top-2 contributing SHAP
-    features. The LLM is called once per group via the Spark SQL ``ai_query`` function against a
-    Databricks Model Serving endpoint, and every row in that group receives the same
+    features. Each retained group with visible attribution supplies one input to Spark SQL
+    ``ai_query`` against a Databricks Model Serving endpoint. Groups without visible attribution
+    receive a deterministic statement of that limit. Every row in a group receives the same
     narrative/business_impact/action, plus the group's size and mean severity. Rows below threshold
     or in groups exceeding ``ctx.max_groups`` receive a null struct.
 

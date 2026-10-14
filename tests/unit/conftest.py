@@ -9,6 +9,7 @@ from pyspark.sql import types as T
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import RegisteredModelsAPI, ModelVersionsAPI
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     FeatureEngineering,
@@ -25,6 +26,19 @@ from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
+
+
+@pytest.fixture
+def colliding_basis_metadata() -> SparkFeatureMetadata:
+    """Two source columns whose separate attribution views share a human-readable label."""
+    second_source = "x vs its group baseline"
+    return SparkFeatureMetadata(
+        column_infos=[{"name": name, "category": "numeric"} for name in ("x", second_source)],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=["x", "x_rel_baseline", second_source, f"{second_source}_rel_baseline"],
+        baseline_by=["group"],
+    )
 
 
 @pytest.fixture

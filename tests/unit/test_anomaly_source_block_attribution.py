@@ -16,8 +16,14 @@ import pandas as pd
 import pytest
 from sklearn.ensemble import IsolationForest
 
-from databricks.labs.dqx.anomaly.explainability import compute_row_attributions, format_shap_contributions
+from databricks.labs.dqx.anomaly.explainability import (
+    compute_gated_shap_contributions,
+    compute_row_attributions,
+    format_shap_contributions,
+)
 from databricks.labs.dqx.anomaly.correlation_detector import MahalanobisDetector
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
+from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -44,6 +50,40 @@ def test_a_single_view_per_column_is_left_exactly_as_the_unblocked_map():
     blocked = _shares(model, row, columns, {"amount": [0], "quantity": [1]})
 
     assert blocked == unblocked
+
+
+@pytest.mark.parametrize("profile", ["distribution", "correlation"])
+@pytest.mark.parametrize(
+    "source,feature,category,values",
+    [
+        ("enabled", "enabled_bool", "boolean", [0.0, 1.0]),
+        ("channel", "channel_freq", "categorical", [0.1, 0.2, 0.7]),
+    ],
+)
+def test_single_transformed_feature_uses_source_name(profile, source, feature, category, values):
+    """A one-column model must use the same source-key contract as a wider model."""
+    metadata = SparkFeatureMetadata(
+        column_infos=[{"name": source, "category": category}],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=[feature],
+    )
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    train = pd.DataFrame({feature: values * 30})
+    model = (
+        IsolationForest(n_estimators=10, random_state=42) if profile == "distribution" else MahalanobisDetector()
+    ).fit(train)
+    probe = train.iloc[:2]
+    scores = -model.score_samples(probe)
+
+    result = compute_gated_shap_contributions(
+        [model], probe, [feature], scores, None, None, AttributionKeys.from_metadata(restored)
+    )
+
+    assert result.by_column == [{source: 100.0}, {source: 100.0}]
+    assert result.by_basis == [None, None]
+    unblocked = compute_gated_shap_contributions([model], probe, [feature], scores, None, None)
+    assert unblocked.by_column == [{feature: 100.0}, {feature: 100.0}]
 
 
 def test_the_views_of_one_column_are_summed_into_that_column():

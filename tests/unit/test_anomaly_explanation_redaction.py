@@ -7,7 +7,12 @@ column -- flowing into an LLM prompt sent to an external serving endpoint. A cal
 sensitive means everything computed from it is sensitive.
 """
 
+import numpy as np
+import pytest
+
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import redaction_set
+from databricks.labs.dqx.anomaly.explainability import format_basis_contributions
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 from databricks.labs.dqx.anomaly.drift import DriftResult, format_drift_summary
 from databricks.labs.dqx.anomaly.transformers import BASELINE_RELATIVE_SUFFIX, SparkFeatureMetadata
 
@@ -119,6 +124,28 @@ def test_metadata_driven_redaction_leaves_other_columns_untouched():
 
     assert "amount" not in result
     assert "amount_rel_baseline" not in result
+
+
+@pytest.mark.parametrize("redact_all", [False, True])
+def test_redaction_matches_qualified_basis_keys_without_hiding_another_source(colliding_basis_metadata, redact_all):
+    second_source = "x vs its group baseline"
+    keys = AttributionKeys.from_metadata(colliding_basis_metadata)
+    basis = format_basis_contributions(np.array([[1.0, 3.0, 1.0, 1.0]]), keys.blocks, keys.labels, np.array([True]), 1)[
+        0
+    ]
+    assert basis is not None
+    excluded = redaction_set(("x", second_source) if redact_all else ("x",), colliding_basis_metadata)
+
+    visible = {name: value for name, value in basis.items() if name not in excluded}
+
+    if redact_all:
+        assert visible == {}
+    else:
+        assert second_source not in excluded, "a source name must not be mistaken for another source's label"
+        assert visible == {
+            "x vs its group baseline [column: 'x vs its group baseline']": 50.0,
+            "x vs its group baseline vs its group baseline": 50.0,
+        }
 
 
 def test_drift_summary_uses_the_same_metadata_expanded_redaction_as_contributions():

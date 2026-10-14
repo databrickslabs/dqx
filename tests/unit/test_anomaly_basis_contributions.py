@@ -131,6 +131,24 @@ def test_features_that_render_to_the_same_label_are_summed_not_overwritten():
     assert shares.get("signup hour") == pytest.approx(40.0, abs=0.5), "the two hour terms add, not replace"
 
 
+@pytest.mark.parametrize("reverse_blocks", [False, True])
+def test_basis_label_collisions_keep_source_columns_separate(colliding_basis_metadata, reverse_blocks):
+    """A literal source name can equal another source's rendered comparison label."""
+    keys = AttributionKeys.from_metadata(SparkFeatureMetadata.from_json(colliding_basis_metadata.to_json()))
+    blocks = dict(reversed(list(keys.blocks.items()))) if reverse_blocks else keys.blocks
+
+    basis = format_basis_contributions(np.array([[1.0, 3.0, 1.0, 1.0]]), blocks, keys.labels, np.array([True]), 1)
+
+    assert basis == [
+        {
+            "x": 25.0,
+            "x vs its group baseline [column: 'x']": 75.0,
+            "x vs its group baseline [column: 'x vs its group baseline']": 50.0,
+            "x vs its group baseline vs its group baseline": 50.0,
+        }
+    ]
+
+
 def test_a_short_label_list_drops_trailing_features_rather_than_raising(
     customer_metadata: SparkFeatureMetadata,
 ):

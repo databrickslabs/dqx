@@ -3,6 +3,7 @@
 import pytest
 
 from databricks.labs.dqx.anomaly.feature_naming import (
+    basis_label_mapping,
     engineered_from,
     human_label,
     source_blocks,
@@ -247,3 +248,27 @@ def test_source_blocks_keep_an_unresolvable_feature_as_its_own_block():
     )
 
     assert source_blocks(future)["amount_some_future_transform"] == ["amount_some_future_transform"]
+
+
+def test_basis_label_mapping_reserves_crafted_secondary_names():
+    """A qualified key must not overwrite a literal label or another source's name."""
+    reserved_label = "shared [column: 'left']"
+    reserved_source = "shared [column: 'left'] #2"
+    labels = ["shared", "left view", "shared", "right view", reserved_label, "other view", "last view"]
+    blocks = {"left": [0, 1], "right": [2, 3], "other": [4, 5], reserved_source: [6]}
+
+    mapping = basis_label_mapping(blocks, labels)
+
+    assert mapping["left", "shared"] == "shared [column: 'left'] #3"
+    assert mapping["right", "shared"] == "shared [column: 'right']"
+    assert mapping["other", reserved_label] == reserved_label
+    assert len(set(mapping.values())) == len(mapping)
+    assert basis_label_mapping(dict(reversed(list(blocks.items()))), labels) == mapping
+
+
+def test_basis_label_mapping_keeps_shared_views_within_one_source_together():
+    labels = ["event hour", "event hour", "amount"]
+
+    mapping = basis_label_mapping({"event": [0, 1], "amount": [2]}, labels)
+
+    assert mapping == {("event", "event hour"): "event hour", ("amount", "amount"): "amount"}

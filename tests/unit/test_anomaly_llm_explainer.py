@@ -6,6 +6,10 @@ structured-output schema, and the pattern-column threading through ExplanationCo
 """
 
 from pathlib import Path
+from unittest.mock import create_autospec
+
+from pyspark.errors.exceptions.connect import AnalysisException
+from pyspark.sql import SparkSession
 
 import pytest
 
@@ -28,7 +32,7 @@ class _FakeSpark:
     def sql(self, query: str) -> "_FakeSpark":
         self.queries.append(query)
         if self.fail:
-            raise RuntimeError("endpoint not entitled")
+            raise AnalysisException("private endpoint detail", errorClass="PERMISSION_DENIED")
         return self
 
     def collect(self) -> list:
@@ -100,7 +104,7 @@ def test_resolve_ai_query_endpoint_strips_databricks_prefix():
         pytest.param(
             "my-endpoint'; DROP TABLE x--", "not a valid Databricks Model Serving name", id="sql_injection_quote"
         ),
-        pytest.param("ep\"injected", "not a valid Databricks Model Serving name", id="double_quote"),
+        pytest.param('ep"injected', "not a valid Databricks Model Serving name", id="double_quote"),
         pytest.param("ep with spaces", "not a valid Databricks Model Serving name", id="contains_space"),
         # Databricks-prefixed but the bare part is invalid — the prefix is stripped first,
         # then the regex must still reject what's left.
@@ -584,3 +588,38 @@ def test_spread_contributions_do_not_license_a_broken_relationship_claim():
     assert "do not claim a relationship between them broke" in correlation.lower()
     # The instruction this replaced.
     assert "describe it as the metrics no longer agreeing with each other" not in correlation
+
+
+@pytest.mark.parametrize("status", [403, 404, 429, 503])
+def test_endpoint_availability_failure_logs_no_response_payload(status, caplog):
+    spark = create_autospec(SparkSession)
+    spark.sql.side_effect = AnalysisException(
+        f"request failed with code {status}, SYNTHETIC_SECRET_MARKER\n/Workspace/private/path",
+        errorClass="REMOTE_FUNCTION_HTTP_FAILED_ERROR",
+    )
+    assert llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="my-endpoint")) is False
+    assert "SYNTHETIC_SECRET_MARKER" not in caplog.text
+    assert "/Workspace/private/path" not in caplog.text
+    assert str(status) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("unexpected application failure"),
+        AnalysisException("invalid expression", errorClass="UNRESOLVED_COLUMN.WITH_SUGGESTION"),
+        AnalysisException("request failed with code 500", errorClass="REMOTE_FUNCTION_HTTP_FAILED_ERROR"),
+        AnalysisException("invalid response schema", errorClass="REMOTE_FUNCTION_HTTP_FAILED_ERROR"),
+    ],
+)
+def test_endpoint_probe_propagates_unexpected_failures(error):
+    spark = create_autospec(SparkSession)
+    spark.sql.side_effect = error
+    with pytest.raises(type(error), match="unexpected application|invalid expression|code 500|invalid response"):
+        llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name="my-endpoint"))
+
+
+def test_grouping_context_does_not_claim_the_group_comparison_caused_the_flag():
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
+    assert "group comparison was available" in header
+    assert "rather than that it was unusual outright" not in header

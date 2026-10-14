@@ -252,6 +252,44 @@ def feature_labels(metadata: SparkFeatureMetadata) -> list[str]:
     return [human_label(name, metadata) for name in metadata.engineered_feature_names]
 
 
+def basis_label_mapping(blocks: dict[str, list[int]], labels: list[str]) -> dict[tuple[str, str], str]:
+    """Map source/label identities to unique display keys without merging different columns.
+
+    Repeated labels within a source, such as a sine/cosine pair, retain one key. Labels shared by
+    different sources gain a quoted column qualifier. Existing labels and source names are reserved,
+    so a caller's literal name cannot collide with a newly qualified key. A numeric suffix resolves
+    any such secondary collision deterministically, independent of source-block ordering.
+
+    Args:
+        blocks: Source columns mapped to positions in the engineered feature list.
+        labels: Human-readable labels in engineered feature order.
+
+    Returns:
+        A display key for each distinct (source column, original label) pair.
+    """
+    owners: dict[str, set[str]] = {}
+    for source, positions in blocks.items():
+        for position in positions:
+            if 0 <= position < len(labels):
+                owners.setdefault(labels[position], set()).add(source)
+
+    resolved = {(source, label): label for label, sources in owners.items() for source in sources}
+    reserved = set(labels) | set(blocks)
+    for label, sources in sorted(owners.items()):
+        if len(sources) < 2:
+            continue
+        for source in sorted(sources):
+            qualified = f"{label} [column: {source!r}]"
+            candidate = qualified
+            suffix = 2
+            while candidate in reserved:
+                candidate = f"{qualified} #{suffix}"
+                suffix += 1
+            resolved[source, label] = candidate
+            reserved.add(candidate)
+    return resolved
+
+
 def source_block_indices(metadata: SparkFeatureMetadata) -> dict[str, list[int]]:
     """*source_blocks* as positions into the feature matrix, which is what an estimator needs.
 

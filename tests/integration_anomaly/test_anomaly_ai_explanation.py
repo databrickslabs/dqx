@@ -135,14 +135,32 @@ def test_ai_query_explanation_redact_columns_filters_output(
         redact_columns=["amount"],
     )
     row = result_df.collect()[0]
-    explanation = row["_dq_info"][0]["anomaly"]["ai_explanation"]
+    anomaly = row["_dq_info"][0]["anomaly"]
+    explanation = anomaly["ai_explanation"]
+    contributions = anomaly["contributions"]
 
+    assert anomaly["is_anomaly"] is True
+    assert contributions is not None
     assert explanation is not None
     assert "amount" not in explanation["top_features"]
+    visible = any(name != "amount" and share is not None and share > 0 for name, share in contributions.items())
+    if visible:
+        for field_name in ("narrative", "business_impact", "action"):
+            assert isinstance(explanation[field_name], str) and explanation[field_name].strip()
+    else:
+        assert explanation["business_impact"] is None
+        assert explanation["top_features"] == explanation["top_drivers"] == "unknown"
+        if (contributions.get("amount") or 0) > 0:
+            assert explanation["evidence_scope"] == "limited"
+            assert "No contributing metrics can be shown" in explanation["narrative"]
+            assert "could not be disclosed" in explanation["narrative"]
+        else:
+            assert explanation["evidence_scope"] == "complete"
+            assert "Feature attribution is unavailable" in explanation["narrative"]
+            assert "disclos" not in explanation["narrative"]
+        assert explanation["action"].strip()
     for field_name in ("narrative", "business_impact", "action"):
-        assert (
-            "amount" not in explanation[field_name].lower()
-        ), f"redacted column 'amount' leaked into {field_name}: {explanation[field_name]!r}"
+        assert "amount" not in (explanation[field_name] or "").lower(), f"redacted column leaked into {field_name}"
 
 
 def test_ai_query_explanation_is_shared_within_group(

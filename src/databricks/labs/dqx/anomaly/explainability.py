@@ -26,7 +26,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StringType
 
-from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
+from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys, basis_label_mapping
 from databricks.labs.dqx.anomaly.scoring_config import (
     TAIL_ANCHOR_PERCENTILE,
     TAIL_RATE_PERCENTILE,
@@ -229,6 +229,9 @@ def format_basis_contributions(
     and emitting ``{col: 100}`` for it would pad the map with rows carrying no information -- the same
     emptiness that makes a single-metric ``by_column`` map useless.
 
+    A display label shared by different source columns gains a column qualifier, so independent
+    percentages never combine. Ordinary labels and shared labels within one source remain unchanged.
+
     Negative values are dropped here, matching *format_shap_contributions*: a view arguing the row is
     *normal* is not a driver. The clip happens after blocking there and within the block here, so in both
     places the signed values survive exactly as long as they are still being combined.
@@ -263,12 +266,13 @@ def format_basis_contributions(
         return results
 
     width = min(per_feature.shape[1], len(feature_labels))
+    resolved_labels = basis_label_mapping(blocks, feature_labels)
     valid_row = 0
     for row in range(num_rows):
         if not valid_indices[row]:
             continue
         accumulated: dict[str, float] = {}
-        for positions in multi_view.values():
+        for source, positions in multi_view.items():
             usable = [p for p in positions if 0 <= p < width]
             # Qualifying is decided on the block's *signed* sum, which is the same quantity that decides
             # whether the column reaches the column map at all: blocking sums the views and only then does
@@ -291,7 +295,7 @@ def format_basis_contributions(
                 # rather than 100 on a five-feature block and contradicted both the published contract and
                 # what the prompt tells the model. Adding them is also the right arithmetic: the two terms
                 # together are that column's hour evidence.
-                label = feature_labels[position]
+                label = resolved_labels[source, feature_labels[position]]
                 accumulated[label] = accumulated.get(label, 0.0) + float(magnitude) / total * 100.0
         # Rounded once, at the end, so summing before rounding cannot drift the block off 100.
         shares: dict[str, float | None] = {label: round(value, 1) for label, value in accumulated.items()}
@@ -350,7 +354,7 @@ def compute_row_attributions(
     feature_values = scaler.transform(feature_matrix) if scaler else feature_matrix.values
     valid_indices = ~pd.isna(feature_values).any(axis=1)
 
-    blocked = bool(blocks) and len(engineered_feature_cols) > 1
+    blocked = bool(blocks)
     keys = list(blocks) if blocked and blocks is not None else engineered_feature_cols
 
     attribution = np.array([])
