@@ -21,7 +21,7 @@ from databricks.labs.dqx.anomaly.model_config import (
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.utils import table_exists
+from databricks.labs.dqx.utils import sanitize_for_logging, table_exists
 
 
 logger = logging.getLogger(__name__)
@@ -193,7 +193,7 @@ class AnomalyModelRegistry:
             return
 
         logger.warning(
-            f"Registry table '{table}' uses the pre-release schema. Migrating it to the current one: "
+            f"Registry table '{sanitize_for_logging(table)}' uses the pre-release schema. Migrating it to the current one: "
             f"'{LEGACY_GROUPING_COLUMN}' becomes 'grouping', and segment_values and is_global_model are "
             f"dropped because there is one pooled model now. Previous versions remain in Delta history."
         )

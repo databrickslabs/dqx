@@ -27,26 +27,17 @@ def _in_fresh_interpreter(body: str) -> str:
     return result.stdout
 
 
-def test_the_mlflow_field_naming_warning_is_filtered_and_others_are_not():
-    """mlflow declares a pydantic field named *model_name*, which trips pydantic's ``model_`` namespace.
-
-    Traced to ``mlflow.entities.model_registry.prompt_version.PromptModelConfig``; it fires on
-    ``import mlflow`` itself, before any DQX module loads, so DQX can neither avoid triggering it nor fix
-    it upstream. The shape is reproduced here by setting *protected_namespaces* explicitly rather than by
-    importing mlflow, because pydantic narrowed its own default in 2.9 and reworded the message: under the
-    version pinned here a bare ``model_name`` field warns about nothing at all, so a test that declared
-    one would pass whether or not the filter existed.
-    """
+def test_application_field_naming_and_unrelated_warnings_remain_visible():
     output = _in_fresh_interpreter(
         """
         import warnings
-        import databricks.labs.dqx  # installs the filters
+        import databricks.labs.dqx
         from pydantic import BaseModel, ConfigDict
 
         survivors = []
         warnings.showwarning = lambda message, category, *a, **k: survivors.append(str(message))
 
-        class LikeMlflowsPromptModelConfig(BaseModel):
+        class ApplicationConfig(BaseModel):
             model_config = ConfigDict(protected_namespaces=("model_",))
             model_name: str = ""
 
@@ -55,33 +46,24 @@ def test_the_mlflow_field_naming_warning_is_filtered_and_others_are_not():
         print("UNRELATED:", any("an unrelated user warning" in s for s in survivors))
         """
     )
+    assert "PROTECTED: True" in output, output
+    assert "UNRELATED: True" in output, output
 
-    assert "PROTECTED: False" in output, f"the mlflow naming warning should be filtered, got:\n{output}"
-    assert "UNRELATED: True" in output, f"an unrelated UserWarning must still reach the user, got:\n{output}"
 
-
-def test_mlflows_logger_stays_quiet_after_mlflow_is_imported():
-    """The regression guard for an ordering bug: mlflow re-configures its own logger while importing.
-
-    DQX set the level with the other logger levels, *before* importing mlflow a few lines later, so
-    mlflow's import overwrote it and every mlflow INFO line reached the user anyway -- model-registration
-    lines and tracing notices filling the anomaly demos' cell output. Measured sequence before the fix:
-    NOTSET, then ERROR once DQX set it, then back to INFO once mlflow imported.
-    """
+def test_import_preserves_the_applications_mlflow_log_level():
     output = _in_fresh_interpreter(
         """
         import logging
-        import databricks.labs.dqx  # sets the level, after importing mlflow itself
-        print("AFTER_DQX:", logging.getLevelName(logging.getLogger("mlflow").level))
-        import mlflow.sklearn  # a later submodule import must not undo it
-        print("AFTER_SUBMODULE:", logging.getLevelName(logging.getLogger("mlflow").level))
-        print("INFO_ENABLED:", logging.getLogger("mlflow.tracking").isEnabledFor(logging.INFO))
+        logger = logging.getLogger("mlflow")
+        logger.setLevel(logging.WARNING)
+        import databricks.labs.dqx
+        import mlflow.sklearn
+        print("LEVEL:", logging.getLevelName(logger.level))
+        print("WARNING_ENABLED:", logger.isEnabledFor(logging.WARNING))
         """
     )
-
-    assert "AFTER_DQX: ERROR" in output, f"expected mlflow quiet right after importing dqx, got:\n{output}"
-    assert "AFTER_SUBMODULE: ERROR" in output, f"a later mlflow submodule import undid it:\n{output}"
-    assert "INFO_ENABLED: False" in output, f"mlflow INFO records are still enabled:\n{output}"
+    assert "LEVEL: WARNING" in output, output
+    assert "WARNING_ENABLED: True" in output, output
 
 
 def test_dqx_leaves_its_own_logger_at_info():
