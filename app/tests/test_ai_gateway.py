@@ -166,6 +166,30 @@ class TestHappyPath:
         assert body["max_tokens"] == 512
         assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            # gpt-oss: a reasoning part, then the answer.
+            [
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}]},
+                {"type": "text", "text": '{"a": 1}'},
+            ],
+            # Gemini: a text part carrying a thought signature.
+            [{"type": "text", "text": '{"a": 1}', "thoughtSignature": "sig"}],
+        ],
+    )
+    async def test_list_content_returns_only_the_text_parts(self, content):
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.api_client.do.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]
+        }
+        gateway = AIGateway(user_ws=ws, app_settings=_settings())
+
+        result = await gateway.query(user_email="a@x", purpose="p", messages=[{"role": "user", "content": "hi"}])
+
+        assert result == '{"a": 1}'
+        assert AIGateway.parse_json_object(result) == {"a": 1}
+
     async def test_unknown_roles_are_sent_as_user(self):
         ws = _ws_with_response("ok")
         gateway = AIGateway(user_ws=ws, app_settings=_settings())

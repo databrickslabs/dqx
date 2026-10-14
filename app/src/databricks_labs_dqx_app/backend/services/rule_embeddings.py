@@ -210,10 +210,10 @@ class RuleEmbeddingsService:
         for start in range(0, len(texts), chunk):
             batch = texts[start : start + chunk]
             response = models.embed(model=model, inputs=batch)
-            data = response.get("data") or []
-            for position, item in enumerate(data):
+            data = response.get("data")
+            for position, item in enumerate(data if isinstance(data, list) else []):
                 embedding = item.get("embedding") if isinstance(item, dict) else None
-                if not embedding:
+                if not isinstance(embedding, list) or not embedding:
                     continue
                 # Prefer the response's ``index`` when present; fall back to
                 # response order.

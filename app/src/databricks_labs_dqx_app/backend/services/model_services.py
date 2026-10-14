@@ -15,11 +15,16 @@ user (OBO, which needs the app's ``ai-gateway`` user API scope) or the app's
 service principal.
 """
 
-from typing import Any
+import logging
+import re
 from urllib.parse import quote
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
+from databricks.sdk.errors import NotFound, PermissionDenied
+
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+
+JsonObject = dict[str, object]
 
 SYSTEM_MODEL_SCHEMA = "system.ai"
 CHAT_COMPLETIONS_API = "mlflow/v1/chat/completions"
@@ -30,6 +35,23 @@ _NAME_PREFIX = "model-services/"
 _CHAT_PATH = "/ai-gateway/mlflow/v1/chat/completions"
 _EMBEDDINGS_PATH = "/ai-gateway/mlflow/v1/embeddings"
 _MODEL_SERVICES_PATH = "/api/2.1/unity-catalog/model-services"
+# Databricks reports a token missing an OAuth scope as "... does not have required scopes: <scope>".
+# The SDK maps it to the same PermissionDenied (error code PERMISSION_DENIED) as a missing grant,
+# so the wording is the only signal; match the phrase, not any mention of "scope".
+_MISSING_SCOPE_RE = re.compile(r"required scopes?\b", re.IGNORECASE)
+
+logger = logging.getLogger(__name__)
+
+
+class ModelServiceUnavailableError(Exception):
+    """Raised when a model service can't be called: it doesn't exist, or the caller lacks access.
+
+    :attr:`reason` names the fix and is safe to show to the user.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def model_service_name(name: str) -> str:
@@ -68,7 +90,7 @@ class ModelServices:
         messages: list[dict[str, str]],
         max_tokens: int,
         temperature: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Send an OpenAI-compatible chat completion request to *model*.
 
         Args:
@@ -79,13 +101,16 @@ class ModelServices:
 
         Returns:
             The raw chat completion response.
+
+        Raises:
+            ModelServiceUnavailableError: The model doesn't exist or the caller lacks access.
         """
-        body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        body: JsonObject = {"model": model, "messages": messages, "max_tokens": max_tokens}
         if temperature is not None:
             body["temperature"] = temperature
-        return self._post(_CHAT_PATH, body)
+        return self._post(_CHAT_PATH, model, body)
 
-    def embed(self, *, model: str, inputs: list[str]) -> dict[str, Any]:
+    def embed(self, *, model: str, inputs: list[str]) -> JsonObject:
         """Embed *inputs* with *model*; the response holds one ``data`` element per input.
 
         Args:
@@ -94,8 +119,11 @@ class ModelServices:
 
         Returns:
             The raw embeddings response.
+
+        Raises:
+            ModelServiceUnavailableError: The model doesn't exist or the caller lacks access.
         """
-        return self._post(_EMBEDDINGS_PATH, {"model": model, "input": inputs})
+        return self._post(_EMBEDDINGS_PATH, model, {"model": model, "input": inputs})
 
     def exists(self, name: str) -> bool:
         """Return whether model service *name* exists and is visible to the caller.
@@ -125,20 +153,52 @@ class ModelServices:
         """
         names: set[str] = set()
         query: dict[str, str] = {"parent": f"schemas/{schema}"}
+        seen_tokens: set[str] = set()
         while True:
             response = self._ws.api_client.do("GET", _MODEL_SERVICES_PATH, query=query)
             if not isinstance(response, dict):
                 break
-            for service in response.get("model_services") or []:
+            services = response.get("model_services")
+            for service in services if isinstance(services, list) else []:
+                if not isinstance(service, dict):
+                    continue
                 name = str(service.get("name") or "").removeprefix(_NAME_PREFIX)
-                if name and api_type in (service.get("supported_api_types") or []):
+                api_types = service.get("supported_api_types")
+                if name and isinstance(api_types, list) and api_type in api_types:
                     names.add(name)
-            token = response.get("next_page_token")
-            if not token:
+            token = str(response.get("next_page_token") or "")
+            # A repeated token would page forever; stop instead.
+            if not token or token in seen_tokens:
                 break
-            query = {**query, "page_token": str(token)}
+            seen_tokens.add(token)
+            query = {**query, "page_token": token}
         return sorted(names)
 
-    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        response = self._ws.api_client.do("POST", path, body=body)
+    def _post(self, path: str, model: str, body: JsonObject) -> JsonObject:
+        try:
+            response = self._ws.api_client.do("POST", path, body=body)
+        except NotFound as e:
+            logger.warning(f"model_service_not_found model={replace_control_characters(model)}")
+            raise ModelServiceUnavailableError(
+                f"AI model {model} doesn't exist in this workspace. An administrator can check the AI "
+                "settings in Settings > AI."
+            ) from e
+        except PermissionDenied as e:
+            # Databricks' own error text (never prompt content) says which scope or grant is missing.
+            logger.warning(
+                f"model_service_permission_denied model={replace_control_characters(model)} "
+                f"error={replace_control_characters(str(e))[:300]}"
+            )
+            if _MISSING_SCOPE_RE.search(str(e)):
+                # The user's token lacks the app's ``ai-gateway`` user API scope, not a grant.
+                raise ModelServiceUnavailableError(
+                    "Studio isn't allowed to call AI models for you yet. An administrator needs to add the "
+                    "ai-gateway user API scope to the app (redeploying the bundle does this), then you "
+                    "need to sign in again."
+                ) from e
+            raise ModelServiceUnavailableError(
+                f"You don't have access to AI model {model}. Ask a metastore admin to grant you "
+                f"EXECUTE on model service {model}, plus USE_CATALOG and USE_SCHEMA on its "
+                "catalog and schema. If you signed in before Studio was last upgraded, sign in again first."
+            ) from e
         return response if isinstance(response, dict) else {}

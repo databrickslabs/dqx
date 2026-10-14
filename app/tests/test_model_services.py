@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.services.model_services import (
     CHAT_COMPLETIONS_API,
     EMBEDDINGS_API,
     ModelServices,
+    ModelServiceUnavailableError,
     model_service_name,
 )
 
@@ -78,6 +79,39 @@ class TestEmbed:
         )
 
 
+class TestCallErrors:
+    """Chat and embeddings share one mapping from Databricks errors to a fix the user can act on."""
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_model_names_the_model(self, ws, call):
+        ws.api_client.do.side_effect = NotFound("'system.ai.x' does not exist.")
+
+        with pytest.raises(ModelServiceUnavailableError, match="system.ai.x doesn't exist"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_scope_says_to_sign_in_again(self, ws, call):
+        ws.api_client.do.side_effect = PermissionDenied(
+            "Provided OAuth token does not have required scopes: ai-gateway"
+        )
+
+        with pytest.raises(ModelServiceUnavailableError, match="sign in again"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_grant_names_the_privileges(self, ws, call):
+        ws.api_client.do.side_effect = PermissionDenied("User does not have EXECUTE on model service")
+
+        with pytest.raises(ModelServiceUnavailableError, match="EXECUTE on model service system.ai.x"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+
+def _call(models: ModelServices, call: str, model: str) -> object:
+    if call == "chat":
+        return models.chat(model=model, messages=[{"role": "user", "content": "hi"}], max_tokens=5)
+    return models.embed(model=model, inputs=["hi"])
+
+
 class TestExists:
     def test_true_when_the_model_service_resolves(self, ws):
         ws.api_client.do.return_value = {"name": "model-services/system.ai.x"}
@@ -106,6 +140,16 @@ class TestExists:
 
 
 class TestListNames:
+    def test_stops_on_a_repeated_page_token(self, ws):
+        page = {
+            "model_services": [{"name": "model-services/system.ai.a", "supported_api_types": [CHAT_COMPLETIONS_API]}],
+            "next_page_token": "same",
+        }
+        ws.api_client.do.return_value = page
+
+        assert ModelServices(ws).list_names(api_type=CHAT_COMPLETIONS_API) == ["system.ai.a"]
+        assert ws.api_client.do.call_count == 2
+
     def test_filters_by_api_type_and_follows_pages(self, ws):
         ws.api_client.do.side_effect = [
             {

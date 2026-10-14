@@ -35,6 +35,7 @@ _GRANT_GUIDANCE = (
     "model services) needs to run these statements in a SQL editor, then click Verify again:"
 )
 logger = logging.getLogger(__name__)
+_GrantCache = dict[tuple[str, str, str], frozenset[str] | None]
 
 
 class AiSettings(Protocol):
@@ -75,9 +76,6 @@ class AiAccess:
         self._workspace = workspace
         self._settings = settings
         self._app_sp = app_sp_id.strip()
-        # Effective privileges per (kind, securable, principal), shared by every model in one run:
-        # both default models live in system.ai, so catalog and schema grants are read once.
-        self._grant_cache: dict[tuple[str, str, str], frozenset[str] | None] = {}
 
     def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
         """Verify every audience group can use the AI models, and report the grants they lack.
@@ -106,11 +104,15 @@ class AiAccess:
         if not enabled and not setup_owned:
             return _passed("AI features are turned off in Settings.")
 
-        self._grant_cache = {}
+        # Effective privileges per (kind, securable, principal), shared by every model in this run:
+        # both default models live in system.ai, so catalog and schema grants are read once.
+        grant_cache: _GrantCache = {}
         problems: list[tuple[str, tuple[str, ...]]] = []
         statements: list[str] = []
         for name in self.model_names():
-            problem, missing = self._model_problem(name, self._principals_for(name, embedding_model), reader_ws)
+            problem, missing = self._model_problem(
+                name, self._principals_for(name, embedding_model), reader_ws, grant_cache
+            )
             if problem:
                 problems.append(problem)
             statements.extend(statement for statement in missing if statement not in statements)
@@ -167,7 +169,7 @@ class AiAccess:
         return True
 
     def _model_problem(
-        self, name: str, principals: Sequence[str], reader_ws: WorkspaceClient | None
+        self, name: str, principals: Sequence[str], reader_ws: WorkspaceClient | None, grant_cache: _GrantCache
     ) -> tuple[tuple[str, tuple[str, ...]] | None, list[str]]:
         """Inspect model service *name* for *principals*.
 
@@ -205,7 +207,7 @@ class AiAccess:
         unreadable: list[str] = []
         for principal in principals:
             for kind, full_name, privilege, quoted in requirements:
-                privileges = self._privileges(kind, full_name, principal, reader_ws)
+                privileges = self._privileges(kind, full_name, principal, reader_ws, grant_cache)
                 if privileges is None:
                     if principal not in unreadable:
                         unreadable.append(principal)
@@ -266,14 +268,14 @@ class AiAccess:
         )
 
     def _privileges(
-        self, kind: str, full_name: str, principal: str, reader_ws: WorkspaceClient | None
+        self, kind: str, full_name: str, principal: str, reader_ws: WorkspaceClient | None, grant_cache: _GrantCache
     ) -> frozenset[str] | None:
         """Return *principal*'s effective privileges on a securable, or None when unreadable.
 
         Reads as the app service principal, then the setup administrator; cached for the run.
         """
         key = (kind, full_name, principal)
-        if key not in self._grant_cache:
+        if key not in grant_cache:
             privileges = None
             for client in (self._workspace, reader_ws):
                 if client is None:
@@ -282,8 +284,8 @@ class AiAccess:
                 if response is not None:
                     privileges = effective_privilege_names(response)
                     break
-            self._grant_cache[key] = privileges
-        return self._grant_cache[key]
+            grant_cache[key] = privileges
+        return grant_cache[key]
 
 
 def _quote_name(full_name: str) -> str:

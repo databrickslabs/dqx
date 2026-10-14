@@ -44,19 +44,19 @@ from collections import defaultdict, deque
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors.platform import BadRequest, NotFound, PermissionDenied
+from databricks.sdk.errors.platform import BadRequest
 
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.services.model_services import ModelServices
+from databricks_labs_dqx_app.backend.services.model_services import (
+    JsonObject,
+    ModelServices,
+    ModelServiceUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
 
 _CHAT_ROLES = frozenset({"system", "user", "assistant"})
-# Databricks reports a token missing an OAuth scope as "... does not have required scopes: <scope>".
-# The SDK maps it to the same PermissionDenied (error code PERMISSION_DENIED) as a missing grant,
-# so the wording is the only signal; match the phrase, not any mention of "scope".
-_MISSING_SCOPE_RE = re.compile(r"required scopes?\b", re.IGNORECASE)
 
 _RATE_LIMIT_WINDOW_SECONDS = 3600.0
 
@@ -97,6 +97,24 @@ _BUDGET_EXHAUSTED_MESSAGE = (
     "produce large mapping responses). Please try again — the caller now "
     "scales the budget with column count, so a retry should succeed."
 )
+
+
+def _message_text(content: object) -> str:
+    """Return the text of an OpenAI-compatible message ``content``.
+
+    Most models return a string. Reasoning and multi-part models (for example gpt-oss and
+    Gemini) return a list of parts such as ``{"type": "reasoning", ...}`` and
+    ``{"type": "text", "text": "..."}``; only the ``text`` parts are the answer.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict) and part.get("type", "text") == "text"
+        )
+    return ""
 
 
 class AIGateway:
@@ -212,35 +230,13 @@ class AIGateway:
 
         try:
             response = await self._query_endpoint(query_kwargs)
-        except NotFound as e:
-            logger.warning(f"ai_gateway_model_not_found endpoint={replace_control_characters(endpoint)}")
-            raise AIUnavailableError(
-                f"AI model {endpoint} doesn't exist in this workspace. "
-                "An administrator can choose another one in Settings > AI."
-            ) from e
-        except PermissionDenied as e:
-            # Databricks' own error text (never prompt content) says which scope or grant is missing.
-            logger.warning(
-                f"ai_gateway_permission_denied endpoint={replace_control_characters(endpoint)} "
-                f"error={replace_control_characters(str(e))[:300]}"
-            )
-            if _MISSING_SCOPE_RE.search(str(e)):
-                # The user's token lacks the app's ``ai-gateway`` user API scope, not a grant.
-                raise AIUnavailableError(
-                    "Studio isn't allowed to call AI models for you yet. An administrator needs to add the "
-                    "ai-gateway user API scope to the app (redeploying the bundle does this), then you "
-                    "need to sign in again."
-                ) from e
-            raise AIUnavailableError(
-                f"You don't have access to AI model {endpoint}. Ask a metastore admin to grant you "
-                f"EXECUTE on model service {endpoint}, plus USE_CATALOG and USE_SCHEMA on its "
-                "catalog and schema. If you signed in before Studio was last upgraded, sign in again first."
-            ) from e
+        except ModelServiceUnavailableError as e:
+            raise AIUnavailableError(e.reason) from e
         content = self._extract_content(response)
         self._audit(user_email=user_email, endpoint=endpoint, purpose=purpose, output_size=len(content))
         return content
 
-    async def _query_endpoint(self, query_kwargs: dict[str, Any]) -> Any:
+    async def _query_endpoint(self, query_kwargs: dict[str, Any]) -> JsonObject:
         """Query the model service, retrying once without ``temperature`` if it's rejected.
 
         Some models (notably the GPT-5 family) have only accepted the
@@ -261,8 +257,11 @@ class AIGateway:
             return await asyncio.to_thread(lambda: self._models.chat(**retry_kwargs))
 
     @staticmethod
-    def _extract_content(response: dict[str, Any]) -> str:
-        choices = [choice for choice in response.get("choices") or [] if isinstance(choice, dict)]
+    def _extract_content(response: JsonObject) -> str:
+        raw_choices = response.get("choices")
+        choices = (
+            [choice for choice in raw_choices if isinstance(choice, dict)] if isinstance(raw_choices, list) else []
+        )
         # Budget-exhaustion detection runs BEFORE the "return the first non-empty
         # content" fast path: several endpoints (notably the Claude family) DO
         # emit visible content while hitting ``max_tokens``, so a check that only
@@ -275,9 +274,9 @@ class AIGateway:
             raise AIResponseParseError(_BUDGET_EXHAUSTED_MESSAGE)
         for choice in choices:
             message = choice.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
+            content = _message_text(message.get("content")) if isinstance(message, dict) else ""
             if content:
-                return str(content)
+                return content
         logger.warning(f"ai_gateway_empty_content finish_reasons={finish_reasons}")
         raise AIResponseParseError("The AI model returned no message content.")
 
