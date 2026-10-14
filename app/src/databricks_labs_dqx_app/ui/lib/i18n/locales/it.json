@@ -224,7 +224,6 @@
     "kwTheme": "stile tema colori preimpostazione modalità scura chiara intestazione barra laterale",
     "styling": {
       "companyNameLabel": "Nome dell'azienda",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Mostrato nella barra superiore",
       "logoRequirements": "PNG, JPEG o WebP, fino a 256 KB",
       "logoErrorType": "SVG e altri tipi di file non sono supportati. Usa un'immagine PNG, JPEG o WebP.",

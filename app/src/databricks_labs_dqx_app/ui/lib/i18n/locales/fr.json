@@ -224,7 +224,6 @@
     "kwTheme": "style thème couleurs préréglage mode sombre clair en-tête barre latérale",
     "styling": {
       "companyNameLabel": "Nom de l'entreprise",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Affiché dans la barre supérieure",
       "logoRequirements": "PNG, JPEG ou WebP, 256 Ko maximum",
       "logoErrorType": "Le SVG et les autres types de fichiers ne sont pas pris en charge. Utilisez une image PNG, JPEG ou WebP.",
