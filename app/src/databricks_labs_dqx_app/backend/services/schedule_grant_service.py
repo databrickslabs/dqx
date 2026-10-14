@@ -46,7 +46,8 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
@@ -87,7 +88,23 @@ class WarehouseUnavailableError(RuntimeError):
 
 
 class PrivilegeInspectionError(WarehouseUnavailableError):
-    """Privileges or scheduler identities could not be verified, not a confirmed denial."""
+    """Privileges or scheduler identities could not be verified, not a confirmed denial.
+
+    *warehouse_unavailable* is ``True`` when the inspection failed only because the
+    SQL warehouse gave no answer, so the caller can tell a cold warehouse apart from
+    permissions that can't be read.
+    """
+
+    def __init__(self, message: str, *, warehouse_unavailable: bool = False) -> None:
+        super().__init__(message)
+        self.warehouse_unavailable = warehouse_unavailable
+
+
+def inspection_failure_reason(error: WarehouseUnavailableError) -> Literal["warehouse", "permissions"]:
+    """Return why access couldn't be checked: the warehouse, or unreadable permissions."""
+    if isinstance(error, PrivilegeInspectionError) and not error.warehouse_unavailable:
+        return "permissions"
+    return "warehouse"
 
 
 WAREHOUSE_UNAVAILABLE_DETAIL = (
@@ -126,12 +143,20 @@ def manage_block_detail(blocked: list[tuple[str, list[dict[str, str]]]]) -> dict
 
 @dataclass
 class TablePreflight:
-    """Per-table result of the schedule preflight."""
+    """Per-table result of the schedule preflight.
+
+    *missing_grants* lists the catalog and schema usage grants the scheduler service
+    principals still need; it is non-empty only when that is what blocks the schedule.
+    *unverified_reason* says why access couldn't be checked: ``"warehouse"`` when the
+    SQL warehouse gave no answer, ``"permissions"`` when the permissions couldn't be read.
+    """
 
     fqn: str
     can_manage: bool
     manage_holders: list[dict[str, str]]
     access_unverified: bool = False
+    missing_grants: list[dict[str, str]] = field(default_factory=list)
+    unverified_reason: Literal["", "warehouse", "permissions"] = ""
 
 
 def _is_real_three_part_fqn(fqn: str) -> bool:
@@ -144,6 +169,15 @@ def _is_real_three_part_fqn(fqn: str) -> bool:
     if not fqn or fqn.startswith("__sql_check__/"):
         return False
     return len(fqn.split(".")) == 3
+
+
+# The built-in sample catalog: readable by everyone, and it rejects every permission
+# statement (SAMPLE_TABLE_PERMISSIONS), so scheduling one never needs a grant.
+_SAMPLES_CATALOG = "samples"
+
+
+def _is_sample_table(fqn: str) -> bool:
+    return fqn.split(".", 1)[0].casefold() == _SAMPLES_CATALOG
 
 
 # A service principal appears in UC grants as its application id: a bare UUID.
@@ -181,6 +215,7 @@ class ScheduleGrantService:
         self._parent_blocks: dict[str, list[dict[str, str]]] = {}
         self._owner_inspection_failed: set[str] = set()
         self._scheduler_principals_cache: dict[str, set[str]] = {}
+        self._sp_display_name_cache: dict[str, str] = {}
         # Instance-local only: the dependency factory creates a fresh service
         # per request. Unknown results stay errors, never confirmed denials.
         self._parent_usage_cache: dict[tuple[str, str, str], bool | PrivilegeInspectionError] = {}
@@ -359,6 +394,12 @@ class ScheduleGrantService:
                     raise PrivilegeInspectionError("The SQL warehouse returned incomplete grant chunks.")
                 seen.add(index)
                 chunk = self._obo.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
+        except WarehouseUnavailableError as e:
+            if isinstance(e, PrivilegeInspectionError):
+                raise
+            raise PrivilegeInspectionError(
+                "The SQL warehouse didn't answer while inspecting schedule privileges.", warehouse_unavailable=True
+            ) from None
         except Exception:
             raise PrivilegeInspectionError(
                 "Could not inspect schedule privileges. Verify as an owner, MANAGE or READ METADATA holder, "
@@ -401,6 +442,25 @@ class ScheduleGrantService:
                 for row in self._show_grants(kind, name)
                 if row["principal"].strip().casefold() in principals
             }
+
+    def service_principal_name(self, application_id: str) -> str:
+        """Return a service principal's display name, or *application_id* when it can't be read.
+
+        Unity Catalog names a service principal by its application id, which means
+        nothing to the people reading Studio's messages.
+        """
+        key = application_id.strip()
+        if key not in self._sp_display_name_cache:
+            name = ""
+            try:
+                for sp in self._sp_ws.service_principals.list(filter=f"applicationId eq {json.dumps(key)}"):
+                    if (sp.application_id or "").casefold() == key.casefold():
+                        name = (sp.display_name or "").strip()
+                        break
+            except Exception:
+                logger.debug("Could not read a service principal display name", exc_info=True)
+            self._sp_display_name_cache[key] = name or key
+        return self._sp_display_name_cache[key]
 
     def _scheduler_principals(self, principal: str) -> set[str]:
         """Resolve scheduler group membership with app credentials, never OBO impersonation."""
@@ -506,7 +566,11 @@ class ScheduleGrantService:
                 missing.append(
                     {
                         "principal": principal,
+                        "display_name": self.service_principal_name(principal),
                         "type": "service_principal",
+                        "privilege": required,
+                        "securable_type": kind,
+                        "securable": name,
                         "remediation": (
                             f"GRANT {required} ON {kind} {quote_fqn(name)} " f"TO {quote_ident(principal)};"
                         ),
@@ -620,7 +684,7 @@ class ScheduleGrantService:
         """
         if not self._warehouse_id:
             return
-        targets = [f for f in dict.fromkeys(fqns) if f and _is_real_three_part_fqn(f)]
+        targets = [f for f in dict.fromkeys(fqns) if f and _is_real_three_part_fqn(f) and not _is_sample_table(f)]
         jobs = [(self._sp_ws, f, self._scheduler_can_read_cache) for f in targets] + [
             (self._obo, f, self._user_can_read_cache) for f in targets
         ]
@@ -666,6 +730,8 @@ class ScheduleGrantService:
         validate_fqn(fqn)
         if not _is_real_three_part_fqn(fqn):
             return False
+        if _is_sample_table(fqn):
+            return True
         if not self._require_source_parents(fqn):
             return False
         try:
@@ -700,7 +766,14 @@ class ScheduleGrantService:
             if who and row["actiontype"].upper() in ("MANAGE", "OWN", "OWNERSHIP"):
                 holders.setdefault(who.strip(), self._classify_principal(who.strip()))
 
-        return [{"principal": p, "type": t} for p, t in holders.items()]
+        return [
+            {
+                "principal": p,
+                "type": t,
+                "display_name": self.service_principal_name(p) if t == "service_principal" else p,
+            }
+            for p, t in holders.items()
+        ]
 
     def preflight(self, fqns: list[str]) -> list[TablePreflight]:
         """Per-table grantability + manage-holder enumeration for the UI editor."""
@@ -722,13 +795,26 @@ class ScheduleGrantService:
                 continue
             try:
                 can_manage = self.can_schedule(fqn)
-                holders = [] if can_manage else self.manage_holders(fqn)
-            except WarehouseUnavailableError:
+                missing_grants = [] if can_manage else self._parent_blocks.get(fqn, [])
+                # Missing catalog/schema usage blocks the schedule whoever saves it,
+                # so report those grants instead of who could grant on the table.
+                holders = [] if can_manage or missing_grants else self.manage_holders(fqn)
+            except WarehouseUnavailableError as e:
                 # Report this table as unverified rather than failing the whole
                 # preflight, so the other tables still show their grantability.
-                out.append(TablePreflight(fqn=fqn, can_manage=False, manage_holders=[], access_unverified=True))
+                out.append(
+                    TablePreflight(
+                        fqn=fqn,
+                        can_manage=False,
+                        manage_holders=[],
+                        access_unverified=True,
+                        unverified_reason=inspection_failure_reason(e),
+                    )
+                )
                 continue
-            out.append(TablePreflight(fqn=fqn, can_manage=can_manage, manage_holders=holders))
+            out.append(
+                TablePreflight(fqn=fqn, can_manage=can_manage, manage_holders=holders, missing_grants=missing_grants)
+            )
         return out
 
     # ------------------------------------------------------------------
@@ -811,7 +897,8 @@ class ScheduleGrantService:
         any grant is attempted.
         """
         validate_fqn(fqn)
-        if not _is_real_three_part_fqn(fqn):
+        if not _is_real_three_part_fqn(fqn) or _is_sample_table(fqn):
+            # Synthetic keys have no table, and sample tables are readable by everyone.
             return []
         if not self._require_source_parents(fqn):
             raise CannotManageError(fqn, self._parent_blocks[fqn])

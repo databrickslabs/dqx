@@ -25,6 +25,30 @@ describe("splitPreflightTables", () => {
     expect(result.hasGrantIssue).toBe(true);
   });
 
+  it("reports missing scheduler grants separately from MANAGE denials", () => {
+    const result = splitPreflightTables([
+      {
+        fqn: "c.s.parents",
+        can_manage: false,
+        missing_grants: [
+          {
+            principal: "runner-sp",
+            display_name: "dqx-task-runner-sp",
+            privilege: "USE_CATALOG",
+            securable_type: "CATALOG",
+            securable: "c",
+            statement: "GRANT USE_CATALOG ON CATALOG `c` TO `runner-sp`;",
+          },
+        ],
+      },
+    ]);
+    expect(result.missingGrantTables.map((t) => t.fqn)).toEqual([
+      "c.s.parents",
+    ]);
+    expect(result.blockedTables).toEqual([]);
+    expect(result.hasGrantIssue).toBe(true);
+  });
+
   it("no issue when every table is grantable", () => {
     expect(
       splitPreflightTables([{ fqn: "c.s.ok", can_manage: true }]).hasGrantIssue,

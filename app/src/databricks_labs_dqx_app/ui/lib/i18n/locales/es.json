@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "No puedes configurar esta programación",
-      "descriptionTable": "Las ejecuciones programadas leen esta tabla como una cuenta de servicio, por lo que configurar una programación concede acceso de lectura a esa cuenta, lo que requiere el privilegio MANAGE que no tienes sobre esta tabla.",
-      "descriptionCollection": "Las ejecuciones programadas leen cada tabla como una cuenta de servicio, por lo que configurar una programación concede acceso de lectura a esa cuenta, lo que requiere el privilegio MANAGE que no tienes sobre una o más tablas de esta colección.",
-      "holdersLabel": "Pide a una de estas que la configure en tu lugar:",
-      "holdersLabelForTable": "Quién puede conceder acceso a {{fqn}}:",
+      "descriptionTable": "Las programaciones necesitan el privilegio MANAGE en esta tabla, y no lo tienes.",
+      "descriptionCollection": "Las programaciones necesitan el privilegio MANAGE en cada tabla que leen, y no lo tienes en una o más de estas tablas.",
+      "holdersLabel": "Pide a alguien que lo tenga que configure la programación:",
+      "holdersLabelForTable": "Quién tiene MANAGE en {{fqn}}:",
       "noHolders": "No se encontraron usuarios ni grupos con el permiso necesario. Contacta con el administrador de tu área de trabajo o con el propietario de la tabla.",
       "typeUser": "usuario",
       "typeGroup": "grupo",
@@ -40,7 +40,14 @@
       "unverifiedTitle": "No se pudo comprobar el acceso a la tabla",
       "unverifiedDescriptionTable": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer esta tabla. Puede que aún se esté iniciando.",
       "unverifiedDescriptionCollection": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer estas tablas. Puede que aún se esté iniciando.",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "missingGrantsDescriptionTable": "Las ejecuciones programadas leen esta tabla como las entidades de servicio de Studio, que aún no pueden usar su catálogo o esquema.",
+      "missingGrantsDescriptionCollection": "Las ejecuciones programadas leen estas tablas como las entidades de servicio de Studio, que aún no pueden usar algunos de sus catálogos o esquemas.",
+      "missingGrant": "{{name}} necesita {{privilege}} en {{securable}}",
+      "missingGrantsInstructions": "Pide al propietario del catálogo y del esquema, o a alguien con MANAGE sobre ellos, que ejecute estas instrucciones en un editor SQL y luego haz clic en Reintentar:",
+      "unverifiedPermissionsTitle": "No se pudieron comprobar los permisos",
+      "unverifiedPermissionsDescriptionTable": "Studio no pudo leer los permisos de esta tabla, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide al propietario de la tabla que la configure.",
+      "unverifiedPermissionsDescriptionCollection": "Studio no pudo leer los permisos de estas tablas, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide a los propietarios de las tablas que la configuren."
     }
   },
   "lifecycle": {

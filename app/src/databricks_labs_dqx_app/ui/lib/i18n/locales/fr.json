@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "Vous ne pouvez pas configurer cette planification",
-      "descriptionTable": "Les exécutions planifiées lisent cette table via un compte de service ; configurer une planification accorde donc un accès en lecture à ce compte, ce qui nécessite le privilège MANAGE dont vous ne disposez pas sur cette table.",
-      "descriptionCollection": "Les exécutions planifiées lisent chaque table via un compte de service ; configurer une planification accorde donc un accès en lecture à ce compte, ce qui nécessite le privilège MANAGE dont vous ne disposez pas sur une ou plusieurs tables de cette collection.",
-      "holdersLabel": "Demandez à l'une de ces personnes ou groupes de la configurer à votre place :",
-      "holdersLabelForTable": "Qui peut accorder l'accès à {{fqn}} :",
+      "descriptionTable": "Les planifications nécessitent le privilège MANAGE sur cette table, que vous n'avez pas.",
+      "descriptionCollection": "Les planifications nécessitent le privilège MANAGE sur chaque table qu'elles lisent, et vous ne l'avez pas sur une ou plusieurs de ces tables.",
+      "holdersLabel": "Demandez à quelqu'un qui l'a de configurer la planification :",
+      "holdersLabelForTable": "Qui a MANAGE sur {{fqn}} :",
       "noHolders": "Aucun utilisateur ni groupe disposant de l'autorisation requise n'a été trouvé. Contactez l'administrateur de votre espace de travail ou le propriétaire de la table.",
       "typeUser": "utilisateur",
       "typeGroup": "groupe",
@@ -40,7 +40,14 @@
       "unverifiedTitle": "Impossible de vérifier l'accès à la table",
       "unverifiedDescriptionTable": "Le SQL warehouse n'a pas répondu à temps : nous n'avons pas pu vérifier si les exécutions planifiées peuvent lire cette table. Il est peut-être encore en cours de démarrage.",
       "unverifiedDescriptionCollection": "Le SQL warehouse n'a pas répondu à temps : nous n'avons pas pu vérifier si les exécutions planifiées peuvent lire ces tables. Il est peut-être encore en cours de démarrage.",
-      "retry": "Réessayer"
+      "retry": "Réessayer",
+      "missingGrantsDescriptionTable": "Les exécutions planifiées lisent cette table en tant que principaux de service de Studio, qui ne peuvent pas encore utiliser son catalogue ou son schéma.",
+      "missingGrantsDescriptionCollection": "Les exécutions planifiées lisent ces tables en tant que principaux de service de Studio, qui ne peuvent pas encore utiliser certains de leurs catalogues ou schémas.",
+      "missingGrant": "{{name}} a besoin de {{privilege}} sur {{securable}}",
+      "missingGrantsInstructions": "Demandez au propriétaire du catalogue et du schéma, ou à toute personne disposant de MANAGE sur ceux-ci, d'exécuter ces instructions dans un éditeur SQL, puis cliquez sur Réessayer :",
+      "unverifiedPermissionsTitle": "Impossible de vérifier les autorisations",
+      "unverifiedPermissionsDescriptionTable": "Studio n'a pas pu lire les autorisations de cette table et ne peut donc pas savoir si vous pouvez configurer une planification. Réessayez ou demandez au propriétaire de la table de la configurer.",
+      "unverifiedPermissionsDescriptionCollection": "Studio n'a pas pu lire les autorisations de ces tables et ne peut donc pas savoir si vous pouvez configurer une planification. Réessayez ou demandez aux propriétaires des tables de la configurer."
     }
   },
   "lifecycle": {

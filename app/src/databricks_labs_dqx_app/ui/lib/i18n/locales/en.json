@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "You can't set up this schedule",
-      "descriptionTable": "Scheduled runs read this table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on this table.",
-      "descriptionCollection": "Scheduled runs read each table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on one or more of this collection's tables.",
-      "holdersLabel": "Ask one of these to set it up instead:",
-      "holdersLabelForTable": "Who can grant access to {{fqn}}:",
+      "descriptionTable": "Schedules need the MANAGE privilege on this table, which you don't have.",
+      "descriptionCollection": "Schedules need the MANAGE privilege on every table they read, and you don't have it on one or more of these tables.",
+      "holdersLabel": "Ask someone who has it to set up the schedule:",
+      "holdersLabelForTable": "Who has MANAGE on {{fqn}}:",
       "noHolders": "No users or groups with the required permission were found. Contact your workspace administrator or the table's owner.",
       "typeUser": "user",
       "typeGroup": "group",
@@ -40,7 +40,14 @@
       "unverifiedTitle": "Couldn't check table access",
       "unverifiedDescriptionTable": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read this table. It may still be starting up.",
       "unverifiedDescriptionCollection": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read these tables. It may still be starting up.",
-      "retry": "Try again"
+      "retry": "Try again",
+      "missingGrantsDescriptionTable": "Scheduled runs read this table as Studio's service principals, and they can't use its catalog or schema yet.",
+      "missingGrantsDescriptionCollection": "Scheduled runs read these tables as Studio's service principals, and they can't use some of their catalogs or schemas yet.",
+      "missingGrant": "{{name}} needs {{privilege}} on {{securable}}",
+      "missingGrantsInstructions": "Ask the owner of the catalog and schema, or anyone with MANAGE on them, to run these statements in a SQL editor, then click Try again:",
+      "unverifiedPermissionsTitle": "Couldn't check permissions",
+      "unverifiedPermissionsDescriptionTable": "Studio couldn't read the permissions on this table, so it can't tell whether you can set up a schedule. Try again, or ask the table's owner to set it up.",
+      "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up."
     }
   },
   "lifecycle": {

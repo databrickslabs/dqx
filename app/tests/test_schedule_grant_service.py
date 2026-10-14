@@ -168,7 +168,9 @@ def test_manage_on_later_sql_chunk(
         data_array=[["alice@example.com", "MANAGE", "TABLE", FQN]]
     )
     assert service.user_can_manage(FQN)
-    assert service.manage_holders(FQN) == [{"principal": "alice@example.com", "type": "user"}]
+    assert service.manage_holders(FQN) == [
+        {"principal": "alice@example.com", "type": "user", "display_name": "alice@example.com"}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -248,6 +250,7 @@ def test_parent_inspection_unknown_blocks_owner(
     obo.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
     result = service.preflight([FQN, "cat.sch.other"])
     assert all(r.access_unverified and not r.can_manage for r in result)
+    assert all(r.unverified_reason == "permissions" for r in result)
     assert sp.grants.get_effective.call_count == 1
     sp.catalogs.get.assert_called_once_with("cat")
     obo.catalogs.get.assert_called_once_with("cat")
@@ -444,16 +447,11 @@ def test_parent_cache_separates_securables_and_principals(
         (True, False),
         (True, False),
     ]
+    assert result[0].manage_holders == result[1].manage_holders == []
     assert (
-        result[0].manage_holders
-        == result[1].manage_holders
-        == [
-            {
-                "principal": "runner-sp",
-                "type": "service_principal",
-                "remediation": "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
-            }
-        ]
+        [g["remediation"] for g in result[0].missing_grants]
+        == [g["remediation"] for g in result[1].missing_grants]
+        == ["GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;"]
     )
     assert sp.grants.get_effective.call_count == 10
 
@@ -575,3 +573,76 @@ def test_readable_app_cannot_bypass_missing_parent(
     assert not service.can_schedule(FQN)
     with pytest.raises(CannotManageError):
         service.grant_select_to_schedulers(FQN)
+
+
+def _named_service_principals(sp: WorkspaceClient, names: dict[str, str]) -> None:
+    sp.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], display_name=names.get(filter.split('"')[1]), groups=[])]
+    )
+
+
+def test_sample_tables_need_no_grant(service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient) -> None:
+    fqn = "samples.bakehouse.sales_customers"
+    result = service.preflight([fqn])
+    assert [(r.can_manage, r.access_unverified, r.missing_grants) for r in result] == [(True, False, [])]
+    assert service.grant_select_to_schedulers(fqn) == []
+    obo.statement_execution.execute_statement.assert_not_called()
+    sp.grants.get_effective.assert_not_called()
+
+
+def test_missing_parent_grants_are_reported_with_display_names(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    _named_service_principals(sp, {"app-sp": "dqx-studio app", "runner-sp": "dqx-task-runner-sp"})
+
+    result = service.preflight([FQN])[0]
+
+    assert not result.can_manage
+    assert not result.access_unverified
+    assert result.manage_holders == []
+    assert [
+        (g["display_name"], g["privilege"], g["securable_type"], g["securable"], g["remediation"])
+        for g in result.missing_grants
+    ] == [
+        ("dqx-studio app", "USE_CATALOG", "CATALOG", "cat", "GRANT USE_CATALOG ON CATALOG `cat` TO `app-sp`;"),
+        ("dqx-studio app", "USE_SCHEMA", "SCHEMA", "cat.sch", "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `app-sp`;"),
+        ("dqx-task-runner-sp", "USE_CATALOG", "CATALOG", "cat", "GRANT USE_CATALOG ON CATALOG `cat` TO `runner-sp`;"),
+        (
+            "dqx-task-runner-sp",
+            "USE_SCHEMA",
+            "SCHEMA",
+            "cat.sch",
+            "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
+        ),
+    ]
+
+
+def test_service_principal_holders_show_display_names(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp_id = "37f263d6-1794-4873-8347-1f919b834fff"
+    _named_service_principals(sp, {sp_id: "dqx-task-runner-sp"})
+    obo.statement_execution.execute_statement.return_value = sql_response(rows=[[sp_id, "MANAGE", "TABLE", FQN]])
+    assert service.manage_holders(FQN) == [
+        {"principal": sp_id, "type": "service_principal", "display_name": "dqx-task-runner-sp"}
+    ]
+
+
+def test_unreadable_service_principal_name_falls_back_to_id(service: ScheduleGrantService, sp: WorkspaceClient) -> None:
+    sp.service_principals.list.side_effect = PermissionDenied("no SCIM")
+    assert service.service_principal_name("runner-sp") == "runner-sp"
+
+
+@pytest.mark.parametrize(
+    "state,reason", [(StatementState.CANCELED, "warehouse"), (StatementState.FAILED, "permissions")]
+)
+def test_unverified_reason_separates_warehouse_from_permissions(
+    service: ScheduleGrantService, obo: WorkspaceClient, state: StatementState, reason: str
+) -> None:
+    obo.statement_execution.execute_statement.return_value = sql_response(state)
+    result = service.preflight([FQN])[0]
+    assert result.access_unverified
+    assert not result.can_manage
+    assert result.unverified_reason == reason

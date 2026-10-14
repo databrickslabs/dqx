@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { preflightScheduleGrants, type SchedulePreflightTableOut } from "@/lib/api";
+import {
+  preflightScheduleGrants,
+  type SchedulePreflightTableOut,
+} from "@/lib/api";
 
 export interface ScheduleGrantPreflight {
   /** Tables the caller can't grant the scheduler service principals SELECT on. */
   blockedTables: SchedulePreflightTableOut[];
-  /** Tables whose access couldn't be checked because the SQL warehouse didn't answer. */
+  /** Tables whose catalog or schema the scheduler service principals can't use yet. */
+  missingGrantTables: SchedulePreflightTableOut[];
+  /** Tables whose access couldn't be checked (warehouse silent or permissions unreadable). */
   unverifiedTables: SchedulePreflightTableOut[];
   /** True when either list is non-empty — the backend would reject the save. */
   hasGrantIssue: boolean;
@@ -14,14 +19,35 @@ export interface ScheduleGrantPreflight {
   retry: () => void;
 }
 
-/** Split preflight rows into denied (needs a MANAGE holder) and unverified
- *  (warehouse gave no answer). Either kind blocks the save. */
+/** Split preflight rows into denied (needs a MANAGE holder), missing scheduler
+ *  catalog/schema grants, and unverified (access couldn't be checked). Any kind
+ *  blocks the save. */
 export function splitPreflightTables(
   tables: readonly SchedulePreflightTableOut[],
-): Pick<ScheduleGrantPreflight, "blockedTables" | "unverifiedTables" | "hasGrantIssue"> {
-  const blockedTables = tables.filter((table) => !table.can_manage && !table.access_unverified);
+): Pick<
+  ScheduleGrantPreflight,
+  "blockedTables" | "missingGrantTables" | "unverifiedTables" | "hasGrantIssue"
+> {
   const unverifiedTables = tables.filter((table) => table.access_unverified);
-  return { blockedTables, unverifiedTables, hasGrantIssue: blockedTables.length > 0 || unverifiedTables.length > 0 };
+  const missingGrantTables = tables.filter(
+    (table) =>
+      !table.access_unverified && (table.missing_grants ?? []).length > 0,
+  );
+  const blockedTables = tables.filter(
+    (table) =>
+      !table.can_manage &&
+      !table.access_unverified &&
+      (table.missing_grants ?? []).length === 0,
+  );
+  return {
+    blockedTables,
+    missingGrantTables,
+    unverifiedTables,
+    hasGrantIssue:
+      blockedTables.length > 0 ||
+      missingGrantTables.length > 0 ||
+      unverifiedTables.length > 0,
+  };
 }
 
 /**
@@ -34,10 +60,14 @@ export function splitPreflightTables(
  * edit rights: the preflight issues ownership reads plus paginated
  * grants.get_effective calls per table.
  */
-export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled: boolean): ScheduleGrantPreflight {
+export function useScheduleGrantPreflight(
+  tableFqns: readonly string[],
+  enabled: boolean,
+): ScheduleGrantPreflight {
   const query = useQuery({
     queryKey: ["scheduleGrantPreflight", tableFqns],
-    queryFn: async () => (await preflightScheduleGrants({ table_fqns: [...tableFqns] })).data,
+    queryFn: async () =>
+      (await preflightScheduleGrants({ table_fqns: [...tableFqns] })).data,
     enabled: enabled && tableFqns.length > 0,
     staleTime: 60_000,
   });

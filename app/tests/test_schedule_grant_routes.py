@@ -470,6 +470,43 @@ class TestSchedulePreflightRoute:
             ("cat.sch.t2", False, True),
         ]
 
+    async def test_reports_missing_parent_grants_holders_and_unverified_reason(self, grant_svc):
+        grant = {
+            "principal": "runner-sp",
+            "display_name": "dqx-task-runner-sp",
+            "type": "service_principal",
+            "privilege": "USE_SCHEMA",
+            "securable_type": "SCHEMA",
+            "securable": "cat.sch",
+            "remediation": "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
+        }
+        holder = {"principal": "runner-sp", "type": "service_principal", "display_name": "dqx-task-runner-sp"}
+        grant_svc.preflight_async.return_value = [
+            TablePreflight(fqn="cat.sch.t1", can_manage=False, manage_holders=[], missing_grants=[grant]),
+            TablePreflight(fqn="cat.sch.t2", can_manage=False, manage_holders=[holder]),
+            TablePreflight(
+                fqn="cat.sch.t3",
+                can_manage=False,
+                manage_holders=[],
+                access_unverified=True,
+                unverified_reason="permissions",
+            ),
+        ]
+
+        out = await preflight_schedule_grants(
+            SchedulePreflightIn(table_fqns=["cat.sch.t1", "cat.sch.t2", "cat.sch.t3"]), grant_svc
+        )
+
+        missing = out.tables[0].missing_grants[0]
+        assert (missing.display_name, missing.privilege, missing.securable, missing.statement) == (
+            "dqx-task-runner-sp",
+            "USE_SCHEMA",
+            "cat.sch",
+            "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
+        )
+        assert out.tables[1].manage_holders[0].display_name == "dqx-task-runner-sp"
+        assert [t.unverified_reason for t in out.tables] == [None, None, "permissions"]
+
 
 class TestScheduleOverviewRoute:
     def test_failure_returns_a_fixed_message(self):

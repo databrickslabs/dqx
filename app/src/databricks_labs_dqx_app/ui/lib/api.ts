@@ -2330,13 +2330,20 @@ export interface LifecycleRationaleIn {
 }
 
 /**
+ * Name to show: a service principal's display name, otherwise the principal
+ */
+export type ManageHolderOutDisplayName = string | null;
+
+/**
  * A user or group that can grant on a table (holds MANAGE or is an owner).
  */
 export interface ManageHolderOut {
-  /** User name / email or group name that can grant on the table */
+  /** User name / email, group name or service principal application id */
   principal: string;
-  /** Best-effort classification: 'user' or 'group' */
+  /** Best-effort classification: 'user', 'group' or 'service_principal' */
   type: string;
+  /** Name to show: a service principal's display name, otherwise the principal */
+  display_name?: ManageHolderOutDisplayName;
 }
 
 export interface MarketplacePackOut {
@@ -4368,6 +4375,24 @@ export interface ScheduleConfigOut {
   updated_at?: ScheduleConfigOutUpdatedAt;
 }
 
+/**
+ * A catalog or schema usage grant a scheduler service principal still needs.
+ */
+export interface ScheduleMissingGrantOut {
+  /** Service principal application id (the grantee in the statement) */
+  principal: string;
+  /** Service principal display name, or its application id */
+  display_name: string;
+  /** Missing privilege, e.g. USE_CATALOG */
+  privilege: string;
+  /** CATALOG or SCHEMA */
+  securable_type: string;
+  /** Catalog or schema name */
+  securable: string;
+  /** GRANT statement that adds the privilege */
+  statement: string;
+}
+
 export type ScheduleOverviewOutSourceType = typeof ScheduleOverviewOutSourceType[keyof typeof ScheduleOverviewOutSourceType];
 
 
@@ -4445,6 +4470,8 @@ export interface SchedulePreflightOut {
   tables?: SchedulePreflightTableOut[];
 }
 
+export type SchedulePreflightTableOutUnverifiedReason = 'warehouse' | 'permissions' | null;
+
 /**
  * Per-table grantability for the schedule editor.
 
@@ -4453,16 +4480,22 @@ service principals (they own the table/schema/catalog or hold MANAGE,
 directly or via a group). When ``False`` the schedule save is hard-blocked
 and ``manage_holders`` names who to ask instead.
 
-``access_unverified`` is ``True`` when the SQL warehouse gave no answer
-(e.g. still starting) and the caller lacks MANAGE, so grantability is
-unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
-the user to retry.
+``missing_grants`` is non-empty when the scheduler service principals lack
+``USE CATALOG`` / ``USE SCHEMA`` on the table's parents. That blocks the
+schedule whoever saves it, so ``manage_holders`` is then empty.
+
+``access_unverified`` is ``True`` when grantability is unknown rather than
+denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
+no answer (e.g. still starting) and ``"permissions"`` when the permissions
+couldn't be read. ``can_manage`` is ``False`` and the UI asks the user to retry.
  */
 export interface SchedulePreflightTableOut {
   fqn: string;
   can_manage: boolean;
   manage_holders?: ManageHolderOut[];
+  missing_grants?: ScheduleMissingGrantOut[];
   access_unverified?: boolean;
+  unverified_reason?: SchedulePreflightTableOutUnverifiedReason;
 }
 
 export type SchemaOutComment = string | null;
