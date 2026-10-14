@@ -68,6 +68,8 @@ result.filter(F.col("_dq_info")[0].anomaly.is_new_baseline).select("_dq_info")
 
 It is not flagged as a violation. Neither categorical encoder can represent an unseen value honestly: one-hot makes it look maximally normal, and frequency encoding makes it look maximally extreme. So DQX cannot judge the row, and "could not judge" is a different claim from "is anomalous". Previously such rows were scored 0.0 and silently passed, which is the most normal-looking value in the table.
 
+A known group with fewer than 30 usable metric values or scores is different: it remains a known group and DQX uses pooled statistics and calibration rather than pretending that a small group has a stable standalone estimate. The 30-value support floor is a safeguard for when group-specific statistics are used; it is not an accuracy guarantee, including at p99. Among rows eligible for scoring, only a group value absent from training is left unscored; rows excluded by `row_filter` are also left without scores.
+
 If an unrecognised group value is itself something you want to fail on, that is a membership question rather than an anomaly one: use `foreign_key` or `is_in_list` on the baseline column against your set of known values.
 
 ## Comparing against time
@@ -214,8 +216,8 @@ expected accuracy gap.
 <summary><strong>The measured difference, and what it does and does not tell you</strong></summary>
 
 Measured on the Server Machine Dataset: real machine telemetry, 28 machines, 38 metrics, 327 labelled
-incidents. Trained on an earlier period and scored on a later one, which is what you do when you train once
-and check new data:
+incidents. That benchmark used an earlier training period and a later scoring period; a demo or evaluation
+whose inputs overlap in time should be described as an independent scoring batch, not a future holdout.
 
 | `profile` | Incidents surfaced at a 1% flagged share | Average precision |
 |---|---|---|
@@ -382,7 +384,8 @@ cannot state.
 
 ## How to choose a threshold
 
-The threshold controls how many rows are flagged as anomalies (percentile cutoff; default 95). Lower values
+The threshold controls how many rows are flagged as anomalies (finite percentile cutoff in `[0, 100)`;
+default 95). Lower values
 (for example 90) flag more rows; higher values (for example 98) flag fewer (only extreme anomalies). Start
 with the default (95). If you are missing issues you care about, lower it; if you are investigating more
 rows than you have time for, raise it.
@@ -392,8 +395,9 @@ rows than you have time for, raise it.
 `threshold=95` means "flag a row that is more unusual than 95% of what I saw while training". It does
 **not** mean "flag 5% of the rows I am scoring now", and that one distinction explains most surprises.
 
-Put practically: at 95, expect to review **about 5% of a clean batch**. A batch that genuinely contains more
-problems than your training data did gives you more than that, and the extra alerts are the problems.
+In a clean batch drawn from a similar distribution, the alert share may be near the upper training tail,
+but no future alert count or share is guaranteed. A batch that genuinely contains more problems than training
+can give you more alerts, and those alerts still need review.
 
 | You see | Most likely because | Do this |
 |---|---|---|
@@ -410,22 +414,26 @@ Set `drift_threshold=3.0` to be *told* that the input has moved, rather than inf
 </Admonition>
 
 The third row is worth spelling out, because it looks like a bad model and is not. If 65 rows are flagged and
-24 of them are genuinely wrong, then no detector can do better than 24 out of 65, however well it ranks the
-rows. Against 100% that reads as weak. Against its actual ceiling it can be perfect, and on one DQX test
-fixture it was: the 24 most severe rows were exactly the 24 faults.
+24 of them are genuinely wrong, then no detector can exceed 24 out of 65, however well it ranks the rows.
+If all 24 are among those alerts, recall is 100% but the remaining 41 alerts are still false positives.
+Against 100% that reads as weak; against its actual ceiling it is perfect. On one DQX test fixture, the 24
+most severe rows were exactly the 24 faults.
 
 ### Calibrating on your own data
 
-`severity_percentile` is computed for every row, including rows below the threshold, so you can count
-would-be alerts at other cutoffs without rescoring anything:
+`severity_percentile` is computed for every scored row, including rows below the threshold. Count rows
+without scores before calculating alert rates, then you can compare cutoffs without rescoring anything:
 
 ```python
 scored = spark.table("catalog.schema.scored")
 severity = F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("severity_percentile")
-total = scored.count()
+null_scores = scored.filter(severity.isNull()).count()
+scored_rows = scored.filter(severity.isNotNull())
+print(f"Rows without scores: {null_scores}")
+total = scored_rows.count()
 
 for cutoff in (90, 95, 98, 99, 99.5):
-    alerts = scored.filter(severity >= cutoff).count()
+    alerts = scored_rows.filter(severity >= cutoff).count()
     print(f"threshold {cutoff}: {alerts} alerts ({alerts / total:.2%} of rows)")
 ```
 
@@ -463,9 +471,9 @@ above.
 
 AI explanations are **on by default**: each anomalous row gets a plain-language, LLM-generated explanation in `_dq_info[0].anomaly.ai_explanation` answering *why was this flagged, what's the impact, and what should I do*, without anyone reading raw contribution percentages. Set `enable_ai_explanation=False` to turn it off (or `enable_contributions=False`, which disables explanations too, since they use the contributions as input). The explanation is AI-generated from the anomaly signal (feature names + contributions + severity); it is **not** grounded in your catalog's table/column descriptions, so treat the business-impact and action as a starting point, not authoritative.
 
-The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint, so it needs no extra setup and scales with the cluster. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together and the model is called **once per group** rather than once per row, so cost stays predictable on large datasets.
+The call runs inside Spark via the SQL `ai_query` function against a Databricks Model Serving endpoint. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS or above** (where `ai_query` is available); on older runtimes explanations are skipped with a warning and scoring still completes. Similar anomalous rows are grouped together to bound explanation work with `max_groups`; the exact number of endpoint requests depends on the executed Spark plan and any retries.
 
-Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and get one shared explanation. That's intentional: it keeps the number of AI calls (and the cost) low, at the price of a slightly more general explanation for those rows.
+Rows are grouped by their top two contributing features, so occasionally two different kinds of anomaly that share the same top two features land in the same group and receive one shared explanation. That's intentional: it bounds the amount of explanation work, at the price of a slightly more general explanation for those rows.
 
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule
@@ -489,7 +497,7 @@ checks = [
 ```
 
 <Admonition type="note" title="Cost and privacy">
-* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many anomaly groups the model is called for per run. Set `enable_ai_explanation=False` to turn explanations off.
+* Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many anomaly groups are eligible for explanation per run; it is not an exact request count. Set `enable_ai_explanation=False` to turn explanations off.
 * No serving endpoint? If the configured endpoint isn't reachable (e.g. Foundation Model APIs aren't enabled in the workspace), explanations are skipped with a warning and scoring still completes, so nothing breaks.
 * `redact_columns` keeps the listed feature names out of the prompt. Their contribution entries are **dropped** from what the model is shown, not relabelled, and they are excluded from the group's pattern key too. The remaining shares are renormalised across what is left, so the explanation says how much of the *disclosed* evidence each column carried and states plainly when evidence was withheld — a column shown at 100% can be a small part of what the model actually measured. Note the scope: this governs what is sent to the serving endpoint. Your own `_dq_info[0].anomaly.contributions` map is unchanged and still lists every column, so anyone who can read the scored table can see the full picture; `redact_columns` is not an access control.
 </Admonition>
@@ -514,7 +522,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `confidence_std` | double | Ensemble score standard deviation. Present when `enable_confidence_std=True`; `null` otherwise. |
 | `is_new_baseline` | boolean | `true` when the row's group was absent from training, in which case `score` and `severity_percentile` are `null` and the row is **not** flagged. See [Groups that appear after training](#groups-that-appear-after-training). |
 | `new_baseline_key` | string | The unrecognised group key, for rows where `is_new_baseline` is `true`; `null` otherwise. |
-| `ai_explanation` | struct | LLM-generated explanation for the row's anomaly group (rows sharing the same top contributing features). On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when disabled, or when no serving endpoint is reachable. See [AI explanations](#ai-explanations) below. |
+| `ai_explanation` | struct | LLM-generated explanation for the row's anomaly group (rows sharing the same top contributing features). On by default (`enable_ai_explanation=True`); `null` for non-anomalous rows, when contributions are disabled or unavailable, or when no serving endpoint is reachable. A missing explanation is distinct from redaction: redaction limits the prompt, while the scored row's attribution map remains unchanged. See [AI explanations](#ai-explanations) below. |
 | `is_stale_baseline` | boolean | `true` when the row's timestamp falls beyond the window a `baseline_over_time` baseline was fitted on, so its expected level is an extrapolation. Unlike an unseen group the row **is** still scored and can be flagged — a fitted curve does extrapolate, and near the boundary it stays usable — but accuracy degrades with distance, so treat it as a signal to retrain rather than as a verdict about the row. `null` when no temporal baseline was fitted. |
 | `stale_baseline_horizon` | string | How far beyond the fitted window the row sits, so you can tell *just past the edge* from *far outside it*. `null` when no temporal baseline was fitted. |
 | `basis_contributions` | map&lt;string, double&gt; | **Which comparison** made each column depart, where `contributions` says only which column did. Keyed by a readable label — `units`, `units vs its group baseline`, `units vs its expected level at that time` — with each column's entries totalling 100 among themselves, so they refine a `contributions` entry rather than competing with it. See [Which comparison fired](#which-comparison-fired). `null` under `profile="correlation"`, and for columns compared only one way. |
@@ -550,7 +558,7 @@ Use row anomaly detection when you want to catch unusual combinations across col
 <details>
 <summary><strong>Q: I upgraded and my `segment_by` code stopped working. What do I do?</strong></summary>
 
-`segment_by` has been removed. Replace it with `baseline_by`, which compares each metric against its own group's baseline on a single model instead of training one model per group, and retrain (models from earlier releases no longer load). Row anomaly detection was Experimental in earlier releases, which is what allowed this break, and it is now Beta. See [Upgrading and breaking changes](#upgrading-and-breaking-changes).
+`segment_by` has been removed and is rejected. DQX does not map it automatically to `baseline_by`: the old option trained separate models, while `baseline_by` compares each metric with its group's baseline in one model. If that is the behavior you want, choose `baseline_by` deliberately and retrain. Models from earlier releases no longer load. Row anomaly detection was Experimental in earlier releases, which is what allowed this break, and it is now Alpha. See [Upgrading and breaking changes](#upgrading-and-breaking-changes).
 </details>
 
 <details>
@@ -599,7 +607,7 @@ that job, and the two work well together.
 <details>
 <summary><strong>Q: How much training data do I really need?</strong></summary>
 
-See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. If you use `baseline_by`, each group needs enough rows for a stable baseline, and DQX will not auto-pick a grouping that leaves fewer than ~30 rows per group. Ensure training data includes all realistic values for categorical columns (regions, types, etc.); a categorical value absent from training is not scored reliably.
+See the **Training data requirements** tip under Quick start. In short: 1,000+ rows preferred; quality and coverage matter more than quantity. With `baseline_by`, known groups with fewer than 30 usable metric values or scores use pooled statistics and calibration and remain scored; 30 is a support safeguard, not a p99 accuracy guarantee. A group absent from training is new and remains unscored. Ensure training data includes all realistic values for categorical columns (regions, types, etc.).
 </details>
 
 <details>
@@ -767,11 +775,11 @@ solutions to common problems.
 
 ## Upgrading and breaking changes
 
-Row anomaly detection was **Experimental** in earlier releases and is now **Beta**. This release replaces the old per-group model path (`segment_by`) with `baseline_by`, which measured better on detection, reliability, and cost, and removes one parameter that never did what its name promised.
+Row anomaly detection was **Experimental** in earlier releases and is now **Alpha**. This release removes the old per-group model path (`segment_by`) and adds `baseline_by`, which judges each metric against its group's baseline in one model. These are different behaviors, so migration requires a deliberate choice and retraining; there is no automatic mapping.
 
 Two changes need action from you, and the rest is handled. **Every existing model must be retrained** whether or not you used any of this. And if you passed `segment_by` or `expected_anomaly_rate` to `train()`, those calls will now raise.
 
-- **Replace `segment_by` with `baseline_by`.** They are not the same. `segment_by` trained one model per group; `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change. `AnomalyParams.max_segment_models` is gone too, since there is only ever one model now.
+- **If you used `segment_by`, choose a replacement deliberately.** The parameter is rejected; `baseline_by` is not an automatic translation. `segment_by` trained one model per group, while `baseline_by` judges each metric against its own group's baseline on a single model. Your scores will change after a deliberate retraining. `AnomalyParams.max_segment_models` is gone too, since there is only ever one model now.
 - **Remove `expected_anomaly_rate`.** It set the estimator's `contamination`, which places only scikit-learn's own `predict` boundary, so it never changed which rows DQX flagged. Nothing replaces it, because nothing needs to: to change how much gets flagged, set `threshold` on the check, which is a cutoff on training severity. If you were relying on `contamination` itself — because you load the registered model and call `predict` yourself — set `params.algorithm_config.contamination` instead. The default is unchanged at 0.02, so a call that did not pass it behaves identically.
 - **Retrain your models.** A model trained before this release, including an earlier pre-release build with the old feature-metadata format, raises a retraining error at scoring time. Retraining records the current categorical feature mapping and known baseline groups, so later scoring uses the same representation as training.
 - **Your registry table is handled for you.** Retraining writes the new schema into your existing table in place. The `segmentation` column becomes `grouping`, and a table you never retrain into keeps the old column and will not be read.

@@ -174,8 +174,8 @@ anomaly_engine.train(
 )
 ```
 
-<Admonition type="info" title="Sampling doesn't hurt quality">
-Sampling doesn't hurt model quality if the sample is representative!
+<Admonition type="info" title="Sampling supports practical training">
+A representative sample can support practical training on large tables, but it is an estimate of the training distribution and does not guarantee model quality. Validate the scored results on data you understand.
 </Admonition>
 
 ---
@@ -245,7 +245,7 @@ anomaly_engine.train(df=clean_data, ...)
 ### Q: No anomalies detected but I see unusual data
 
 **Likely causes**:
-1. Threshold too high (95 = only top 5%)
+1. Threshold too high (95 selects the upper training severity tail; it does not guarantee 5% of the scored batch)
 2. Unusual data was in training set: model learned it as "normal"
 
 **Solutions**:

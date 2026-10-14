@@ -7,7 +7,7 @@
 # MAGIC **What you'll do:**
 # MAGIC - Generate healthy telemetry where the metrics move together, as real machines do
 # MAGIC - Break the *relationship* between three of them while every reading stays in range
-# MAGIC - Prove no threshold or range check could ever catch it
+# MAGIC - Show that the demonstrated per-metric range checks do not catch it
 # MAGIC - Train with `profile="correlation"` and read the explanation
 # MAGIC
 # MAGIC **Dataset**: Eight metrics per reading across four CNC machines (no domain expertise required)
@@ -45,12 +45,9 @@
 # MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"correlation"` | Metrics that normally move **together** stop doing so, each staying in its own range |
 # MAGIC
 # MAGIC This notebook uses `"correlation"`, because the bearing story above is exactly its case. The default
-# MAGIC detector splits on one column at a time, so a broken relationship between two in-range values is close
-# MAGIC to invisible to it. On the **Server Machine Dataset**, 28 machines of real telemetry with labelled
-# MAGIC incidents, trained the way DQX trains, the correlation-aware detector surfaces **96.8%** of incidents
-# MAGIC inside an alert budget of 1% of rows against **65.4%** for the default, and it wins on 22 of the 28
-# MAGIC machines while losing on 1. See the guide for the full protocol and for the metrics where the two are
-# MAGIC level.
+# MAGIC detector splits on one column at a time, so it has difficulty distinguishing a broken relationship
+# MAGIC between two in-range values. The results below are intentionally limited to this generated fleet and its demonstrated range
+# MAGIC checks. Use labelled data from your own telemetry to compare detector choices.
 # MAGIC
 # MAGIC #### 2. Compared to its own group (`baseline_by`)
 # MAGIC
@@ -203,15 +200,17 @@ def report_quality(scored_df, label_col: str, severity_col, budget: float, thres
     model can exceed 24/65 = 37% however well it ranks, so the ceiling is printed beside what was achieved:
     where the two are equal the ranking is optimal and only the alert count is costing anything.
 
-    Expect more alerts than the threshold's share of rows, and do not read that as a fault. `threshold=95`
+    A batch can produce more alerts than the threshold's nominal share, and that is not itself a fault. `threshold=95`
     means "above the 95th percentile of severity seen *during training*", so a batch that contains real
     problems clears that line more often than 5% of the time. Measured on this notebook's own data, the
-    alert rate among the genuinely healthy readings is 5.2% against 5.0% nominal; the rest of the total is
-    the faults being found.
+    alert rate among the genuinely healthy readings is 5.2% against 5.0% nominal in this generated run;
+    inspect the false-positive and false-negative counts rather than treating that as a guarantee.
     """
     total = scored_df.count()
     faults = scored_df.filter(F.col(label_col) == 1.0).count()
+    unscored = scored_df.filter(F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("score").isNull()).count()
     print(f"🎚️  {total:,} rows, {faults} of them genuinely wrong ({faults / total:.1%}).\n")
+    print(f"   Rows without a score (for example, unseen groups): {unscored}\n")
     print("Threshold | Alerts | Caught | Precision | Best possible | Recall")
     print("-" * 68)
     for threshold in thresholds:
@@ -294,7 +293,7 @@ healthy_table = f"{catalog}.{schema}.fleet_telemetry_healthy"
 healthy_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(healthy_table)
 
 print("📊 Sample of healthy readings:")
-display(healthy_df.limit(10))
+display(healthy_df.orderBy("machine_id", "reading_seq").limit(10))
 
 print(f"\n✅ {healthy_df.count():,} readings saved to {healthy_table}")
 
@@ -319,7 +318,7 @@ for left, right, reason in PAIRS:
     print(f"{left + ' vs ' + right:<34}{correlations[f'{left}__{right}']:>13.3f}   {reason}")
 
 print("\n💡 Strong pairs are what the detector exploits. Not every metric relates to every other,")
-print("   and real telemetry looks exactly like this.")
+print("   as in this generated fleet; validate the relationships in your own telemetry.")
 
 # COMMAND ----------
 
@@ -328,14 +327,15 @@ print("   and real telemetry looks exactly like this.")
 # MAGIC
 # MAGIC ## Section 2: The Incident
 # MAGIC
-# MAGIC Two hours in which spindle load, motor current and coolant flow stop tracking each other, while
-# MAGIC every single reading stays inside the range it has always occupied.
+# MAGIC A contiguous incident block in which spindle load, motor current and coolant flow stop tracking each
+# MAGIC other, while every single reading stays inside the range it has occupied in this generated fleet.
 # MAGIC
 
 # COMMAND ----------
 # DBTITLE 1,Inject the correlation break
 
-print("🔄 Generating a batch containing the incident...\n")
+# This independent synthetic scoring batch uses the same generated historical window; it is not a future holdout.
+print("🔄 Generating an independent batch containing the incident...\n")
 
 incident_df = generate_telemetry(1500, seed=77, break_correlation=True)
 incident_table = f"{catalog}.{schema}.fleet_telemetry_incident"
@@ -348,7 +348,7 @@ print(f"✅ {total_readings:,} readings saved to {incident_table}")
 print(f"   {injected} of them during the incident")
 
 # COMMAND ----------
-# DBTITLE 1,Prove no range check could catch it
+# DBTITLE 1,Show what the demonstrated range checks can see
 
 readings = spark.table(incident_table)
 during = readings.filter(F.col("is_incident") == 1.0)
@@ -366,8 +366,8 @@ for metric in METRICS[:3]:
     broken_range = f"{broken.lo:.1f} – {broken.hi:.1f}"
     print(f"{metric:<18}{healthy_range:>22}{broken_range:>22}   {'inside ✅' if inside else 'OUTSIDE'}")
 
-print("\n⚠️  Every incident reading sits inside the healthy range for its own metric.")
-print("   No threshold, no range check and no per-metric z-score can separate these rows.")
+print("\n⚠️  The three checked incident metrics stay inside their healthy ranges.")
+print("   A per-metric range check alone cannot separate these rows; the relationship is what changed.")
 
 # COMMAND ----------
 
@@ -469,18 +469,28 @@ dq_engine.apply_checks_and_save_in_table(
 )
 
 scored = spark.table(scored_table)
+assert readings.exceptAll(scored.select(*readings.columns)).count() == 0
+assert scored.select(*readings.columns).exceptAll(readings).count() == 0
 anomaly = F.element_at(F.col("_dq_info"), 1).getField("anomaly")
-flagged = scored.filter(anomaly.getField("is_anomaly"))
+predicted = F.coalesce(anomaly.getField("is_anomaly"), F.lit(False))
+flagged = scored.filter(predicted)
+unscored = scored.filter(anomaly.getField("score").isNull()).count()
+assert unscored == 0
 
 print(f"✅ Scoring complete — {flagged.count()} of {total_readings:,} readings flagged")
+print(f"   Readings without a score (for example, unseen groups): {unscored}")
 
 # COMMAND ----------
 # DBTITLE 1,Which relationships broke
 
 caught = flagged.filter(F.col("is_incident") == 1.0).count()
 n_alerts = flagged.count()
-print(f"🔝 Caught {caught} of the {injected} incident readings — none of which any range check could see.")
-print(f"   That cost {n_alerts} alerts on {total_readings:,} readings, so {caught / n_alerts:.0%} of them were real.")
+false_positive = flagged.filter(F.col("is_incident") == 0.0).count()
+false_negative = scored.filter((F.col("is_incident") == 1.0) & ~predicted).count()
+precision = caught / n_alerts if n_alerts else 0.0
+print(f"🔝 Caught {caught} of the {injected} incident readings; the demonstrated range checks do not flag them.")
+print(f"   Row confusion counts: TP={caught}, FP={false_positive}, FN={false_negative}")
+print(f"   That cost {n_alerts} alerts on {total_readings:,} readings, so {precision:.0%} of them were real.")
 print("   The next cell sweeps the threshold, which is the honest way to read that number.\n")
 
 display(
@@ -489,10 +499,10 @@ display(
         "reading_seq",
         F.round("spindle_load", 1).alias("spindle_load"),
         F.round("motor_current", 1).alias("motor_current"),
-        anomaly.getField("severity_percentile").alias("severity"),
+        F.round(anomaly.getField("severity_percentile"), 1).alias("severity"),
         anomaly.getField("contributions").alias("contributions"),
     )
-    .orderBy(F.desc("severity"))
+    .orderBy(F.desc("severity"), F.asc("machine_id"), F.asc("reading_seq"))
     .limit(10)
 )
 
@@ -501,9 +511,9 @@ display(
 
 report_quality(scored, "is_incident", anomaly.getField("severity_percentile"), budget=95.0)
 
-print("\n💡 More alerts than 5% of rows is correct, not a fault: the extra ones are the faults being")
-print("   found. The alert count grows with the size of the problem instead of being capped at a fixed")
-print("   share, which is what you want from a quality check.")
+print("\n💡 More than 5% of rows can be flagged when the scored batch differs from training or contains")
+print("   injected faults; that count is not a guarantee that every extra alert is a fault. Inspect the")
+print("   false-positive and false-negative counts rather than assuming all alert slots are genuine.")
 print("   What the table is for is the tradeoff. Raising the threshold here buys a large drop in false")
 print("   alarms for a small loss of recall, because severity ranks the incident readings well above the")
 print("   healthy ones. Severity is stored for every row, so producing this costs nothing and no")
@@ -512,10 +522,9 @@ print("   rescoring, and it is how to pick the number on your own data rather th
 # COMMAND ----------
 # DBTITLE 1,Why each group was flagged, in plain language
 
-# One explanation per *pattern*, not per row: readings driven by the same broken relationship share a
-# single ai_query call, so cost scales with how many distinct problems there are rather than with how many
-# readings have them. Grouping the display the same way is the only way to see that.
-print("🤖 AI explanations. One call per pattern, however many readings share it:\n")
+# Readings with the same selected contributors share an explanation pattern.
+# Spark execution and retries determine the actual number of serving requests. Grouping the display the same way is the only way to see that.
+print("🤖 AI explanations, grouped by pattern (the exact request count depends on Spark execution):\n")
 
 display(
     flagged.groupBy(
@@ -525,7 +534,14 @@ display(
     )
     .agg(F.count("*").alias("readings"), F.min("machine_id").alias("example_machine"))
     .filter(F.col("narrative").isNotNull())
-    .orderBy(F.desc("readings"))
+    .select(
+        "readings",
+        "example_machine",
+        F.substring("narrative", 1, 240).alias("narrative"),
+        "impact",
+        "action",
+    )
+    .orderBy(F.desc("readings"), F.asc("example_machine"), F.asc("narrative"), F.asc("impact"), F.asc("action"))
 )
 
 print("💡 Note the wording: broken *relationships*, not abnormal metrics. DQX tells the model which")
@@ -594,6 +610,8 @@ def generate_wear_history(n_hours: int, seed: int, late_fault: bool = False):
 wear_train = f"{catalog}.{schema}.bearing_wear_history"
 wear_test = f"{catalog}.{schema}.bearing_wear_recent"
 generate_wear_history(24 * 45, seed=11).write.mode("overwrite").saveAsTable(wear_train)
+# The independent fault batch covers an overlapping historical window. This example
+# checks the fitted trend; it does not validate extrapolation into a future window.
 generate_wear_history(24 * 20, seed=12, late_fault=True).write.mode("overwrite").saveAsTable(wear_test)
 
 print(f"📊 45 days of hourly service history, and 20 days of recent readings with a fault")
@@ -667,6 +685,12 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 
 anomaly = F.col("_dq_info")[0].getField("anomaly")
 wear_result = spark.table(wear_scored)
+wear_source = spark.table(wear_test)
+assert wear_source.exceptAll(wear_result.select(*wear_source.columns)).count() == 0
+assert wear_result.select(*wear_source.columns).exceptAll(wear_source).count() == 0
+wear_unscored = wear_result.filter(anomaly.getField("score").isNull()).count()
+assert wear_unscored == 0
+print(f"   Wear readings without a score (for example, unseen groups): {wear_unscored}")
 caught = wear_result.filter(anomaly.getField("is_anomaly") & (F.col("is_incident") == 1.0)).count()
 total = wear_result.filter(F.col("is_incident") == 1.0).count()
 print(f"🔍 Caught {caught} of {total} rows that were wrong for how worn the bearing should have been.\n")
@@ -694,7 +718,7 @@ display(
         anomaly.getField("contributions").alias("contributions"),
         anomaly.getField("is_stale_baseline").alias("extrapolating"),
     )
-    .orderBy(F.desc("severity"))
+    .orderBy(F.desc("severity"), F.asc("reading_ts"))
     .limit(8)
 )
 
@@ -730,7 +754,8 @@ display(
 # MAGIC **Key takeaways:**
 # MAGIC - Some failures are **broken relationships**, not extreme values. Every gauge reads normal and the
 # MAGIC   machine is still in trouble.
-# MAGIC - Per-metric alerts cannot see those, however well tuned — verified above, not asserted.
+# MAGIC - The demonstrated per-metric range checks cannot see those readings; a different range policy may
+# MAGIC   still be useful for other telemetry.
 # MAGIC - `profile="correlation"` switches to a detector that models how metrics move together. One word;
 # MAGIC   everything else is unchanged.
 # MAGIC - It needs no timestamp column and trains a single model rather than an ensemble.
@@ -758,10 +783,6 @@ display(
 # MAGIC - **A single metric.** With nothing to correlate against, use a rule or a threshold.
 # MAGIC - **Forecasting.** DQX judges readings against learned normal; it does not predict the next value.
 # MAGIC
-# MAGIC The SMD figures quoted earlier are a large gain on the data this detector is for, and they are *not*
-# MAGIC state of the art for multivariate time-series anomaly detection. Published figures near 0.80 F1 use
-# MAGIC point adjustment, which [Kim et al. (AAAI 2022)](https://arxiv.org/abs/2109.05257) showed random
-# MAGIC scores also reach, so they are not a fair comparison in either direction.
 # MAGIC
 
 # COMMAND ----------

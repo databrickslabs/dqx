@@ -101,8 +101,10 @@ pip install 'databricks-labs-dqx[anomaly]'
 Getting started is two steps: train once on recent "good" data, then run the same model as a check on new or incoming data. No configuration files or tuning required to begin. The example below uses defaults that work for most tables.
 
 <Admonition type="tip" title="Training data requirements">
-**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX automatically samples a representative portion (default 30%, capped at 1M rows) before training. See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) for full parameter details.
+**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX samples a portion (default 30%, capped at 1M rows) to support practical training; sampling is an estimate of the training distribution, not a guarantee of model quality. See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) for full parameter details.
 </Admonition>
+
+Row anomaly detection requires Spark 3.5 or newer. Databricks Runtime 15.4 LTS or newer is recommended when you use AI explanations, because it provides the `ai_query` function.
 
 <Admonition type="warning" title="Exclude identifier columns">
 Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. IDs often look unique and can drown out real patterns, which makes the model less useful. If you need to keep them in your table, use `exclude_columns` or provide an explicit `columns` list of behavioral fields (amounts, counts, rates, timestamps).
@@ -137,6 +139,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
     # ----------------------------------------
 
     # Note that columns are not specified in the check; Scoring uses the columns the model was trained on
+    # has_no_row_anomalies is a dataset-level check, so use DQDatasetRule.
     checks = [
       DQDatasetRule(
         criticality="error",
@@ -210,7 +213,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
 
 ## What you get out of the box in DQX
 
-Each row is scored and enriched with:
+Rows eligible for scoring are scored and enriched with the following fields. Rows excluded by `row_filter` or carrying an unseen `baseline_by` group can have null scores:
 - **Severity percentile (0–100)**: how unusual the row is compared to training data.
 - **Anomaly flag**: whether the row crosses your chosen threshold (default 95). The threshold is set from what DQX saw while *training*, not from the batch you are scoring. So a batch that genuinely contains more problems produces more alerts, instead of always flagging the same fixed share of rows. See [How to choose a threshold](/docs/guide/row_anomaly_detection/tuning#how-to-choose-a-threshold).
 - **Top contributors (explainability)**: which fields most influenced the anomaly score, so you can see *why* a row was flagged. This turns a black-box score into an actionable insight.
@@ -224,7 +227,7 @@ However, when you run a row anomaly detection check, DQX also adds a `_dq_info` 
 
 The info column is an array of structs, with one element per anomaly detection check that was applied.
 
-Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold). Non-anomalous rows carry a `null` contributions map, so the cost of computing them scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are always computed for every row, so you can still count would-be anomalies at other thresholds after scoring; but if you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
+Feature contributions are on by default and are computed only for anomalous rows (severity at or above the threshold). Non-anomalous rows carry a `null` contributions map, so the cost of computing them scales with the number of anomalies, not the table size. Set `enable_contributions=False` to skip them entirely for the fastest scoring. Severity percentiles are computed for scored rows, so you can still count would-be anomalies at other thresholds after scoring; rows excluded by `row_filter` or carrying an unseen group have null scores. If you want contributions (and AI explanations) for rows below your enforcement threshold, score with the lower exploration threshold and filter afterwards:
 
 ```python
 DQDatasetRule(

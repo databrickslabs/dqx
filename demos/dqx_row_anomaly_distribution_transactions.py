@@ -7,7 +7,7 @@
 # MAGIC **What you'll do:**
 # MAGIC - Write the quality rules a good payments team would already have
 # MAGIC - Watch them pass a batch that contains real problems
-# MAGIC - Train a DQX anomaly model with no thresholds and no labels
+# MAGIC - Train a DQX anomaly model without per-column thresholds or labels
 # MAGIC - Read *why* each row was flagged, in plain language
 # MAGIC
 # MAGIC **Dataset**: Card transactions across twelve merchant categories (no domain expertise required)
@@ -227,7 +227,7 @@ history_table = f"{catalog}.{schema}.card_transactions_history"
 history_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(history_table)
 
 print("📊 Sample of historical transactions:")
-display(history_df.limit(10))
+display(history_df.orderBy("transaction_time", "transaction_id").limit(10))
 
 print(f"\n✅ {history_df.count():,} transactions saved to {history_table}")
 
@@ -266,12 +266,13 @@ rules = [
 print(f"✅ {len(rules)} rules defined")
 
 # COMMAND ----------
-# DBTITLE 1,Generate a new batch containing real problems
+# DBTITLE 1,Generate an independent scoring batch containing real problems
 
 # Nothing is cached in this notebook: PERSIST is unsupported on serverless compute, which is what most
 # readers will run this on. These frames are small local relations built from seeded RNGs, so
 # recomputation is both cheap and deterministic.
-print("🔄 Generating a new batch with problems injected...\n")
+# This independent batch uses the same historical window as the training fixture; it is not a future holdout.
+print("🔄 Generating an independent scoring batch with problems injected...\n")
 
 new_df = generate_transactions(1500, seed=99, inject=True)
 new_table = f"{catalog}.{schema}.card_transactions_new"
@@ -289,7 +290,7 @@ print(f"   {injected} of them jointly implausible")
 print("🔍 Applying the rule-based checks...\n")
 
 rule_results = dq_engine.apply_checks(new_df, rules)
-caught_by_rules = rule_results.filter(F.col("_errors").isNotNull() & (F.col("is_anomaly") == 1.0)).count()
+caught_by_rules = rule_results.filter(F.size(F.col("_errors")) > 0).filter(F.col("is_anomaly") == 1.0).count()
 
 print(f"⚠️  Rules caught {caught_by_rules} of the {injected} implausible transactions.")
 print("   Every injected row sits inside every threshold — each value is ordinary on its own.")
@@ -302,7 +303,7 @@ print("   Widening the rules cannot help; tightening them would reject legitimat
 # MAGIC
 # MAGIC ## Section 3: Train the Anomaly Model
 # MAGIC
-# MAGIC Note what is **not** passed: no thresholds, no per-category limits, no labels. DQX learns the
+# MAGIC Note what is **not** passed: no per-column thresholds, no per-category limits, no labels. DQX learns the
 # MAGIC patterns from the history table.
 # MAGIC
 # MAGIC `baseline_by=["merchant_category"]` is the one modelling decision, and it says what a payments
@@ -383,7 +384,7 @@ print("   Four features from two columns, and every one of them carries signal."
 # COMMAND ----------
 # DBTITLE 1,Apply the anomaly check
 
-print("🔍 Scoring the new batch...\n")
+print("🔍 Scoring the independent batch from the same historical window...\n")
 
 anomaly_check = [
     DQDatasetRule(
@@ -409,16 +410,26 @@ dq_engine.apply_checks_and_save_in_table(
 )
 
 scored = spark.table(scored_table)
+# Compare complete row multisets; exceptAll retains duplicate counts.
+assert new_df.exceptAll(scored.select(*new_df.columns)).count() == 0
+assert scored.select(*new_df.columns).exceptAll(new_df).count() == 0
 anomaly = F.element_at(F.col("_dq_info"), 1).getField("anomaly")
-flagged = scored.filter(anomaly.getField("is_anomaly"))
+predicted = F.coalesce(anomaly.getField("is_anomaly"), F.lit(False))
+flagged = scored.filter(predicted)
+unscored = scored.filter(anomaly.getField("score").isNull()).count()
+assert unscored == 0
 
 print(f"✅ Scoring complete — {flagged.count()} of {total_new:,} rows flagged")
+print(f"   Rows without a score (for example, unseen groups): {unscored}")
 
 # COMMAND ----------
 # DBTITLE 1,Which columns combined badly
 
-caught = flagged.filter(F.col("is_anomaly") == 1.0).count()
-print(f"🔝 Anomaly detection caught {caught} of the {injected} implausible transactions.\n")
+true_positive = flagged.filter(F.col("is_anomaly") == 1.0).count()
+false_positive = flagged.filter(F.col("is_anomaly") == 0.0).count()
+false_negative = scored.filter((F.col("is_anomaly") == 1.0) & ~predicted).count()
+print(f"🔝 Anomaly detection caught {true_positive} of the {injected} implausible transactions.")
+print(f"   Row confusion counts: TP={true_positive}, FP={false_positive}, FN={false_negative}\n")
 
 display(
     flagged.select(
@@ -429,17 +440,16 @@ display(
         anomaly.getField("severity_percentile").alias("severity"),
         anomaly.getField("contributions").alias("contributions"),
     )
-    .orderBy(F.desc("severity"))
+    .orderBy(F.desc("severity"), F.asc("transaction_id"))
     .limit(10)
 )
 
 # COMMAND ----------
 # DBTITLE 1,Why each group was flagged, in plain language
 
-# One explanation per *pattern*, not per row: rows driven by the same combination of features share a
-# single ai_query call, so the cost scales with how many distinct problems there are rather than with how
-# many rows have them. Grouping the display the same way is the only way to see that.
-print("🤖 AI explanations. One call per pattern, however many rows share it:\n")
+# Rows with the same selected contributors share an explanation pattern.
+# Spark execution and retries determine the actual number of serving requests. Grouping the display the same way is the only way to see that.
+print("🤖 AI explanations, grouped by pattern (the exact request count depends on Spark execution):\n")
 
 display(
     flagged.groupBy(
@@ -447,9 +457,16 @@ display(
         anomaly.getField("ai_explanation").getField("narrative").alias("narrative"),
         anomaly.getField("ai_explanation").getField("action").alias("action"),
     )
-    .agg(F.count("*").alias("transactions"), F.collect_list("merchant_category")[0].alias("example_category"))
+    .agg(F.count("*").alias("transactions"), F.min("merchant_category").alias("example_category"))
     .filter(F.col("narrative").isNotNull())
-    .orderBy(F.desc("transactions"))
+    .select(
+        "transactions",
+        "example_category",
+        F.substring("narrative", 1, 240).alias("narrative"),
+        "pattern",
+        "action",
+    )
+    .orderBy(F.desc("transactions"), F.asc("example_category"), F.asc("narrative"), F.asc("pattern"), F.asc("action"))
 )
 
 # COMMAND ----------
@@ -459,19 +476,19 @@ display(
 # MAGIC
 # MAGIC ## Section 5: (Optional) Tune the Threshold
 # MAGIC
-# MAGIC **The threshold is an alert budget, not a confidence score.** `threshold=95` means "flag the rows
-# MAGIC above the 95th percentile of *training* severity" — so on 1,500 rows it flags roughly 75 before a
-# MAGIC single anomaly exists. A row at severity 97 is not "97% likely to be a problem"; it is in the top 3%
-# MAGIC most unusual. This is the most commonly misread number in the feature.
+# MAGIC **The threshold is an alert budget, not a confidence score.** `threshold=95` means "flag rows above
+# MAGIC the 95th percentile of *training* severity". It does not promise 75 alerts on a 1,500-row batch, even
+# MAGIC before anomalies are present; the scored distribution determines the actual count. A row at severity
+# MAGIC 97 is not "97% likely to be a problem"; it is in the top 3% most unusual. This is the most commonly
+# MAGIC misread number in the feature.
 # MAGIC
-# MAGIC A batch that contains real problems therefore flags **more** than 5%, and that is correct rather
-# MAGIC than a fault: roughly 5% of the ordinary rows, plus the anomalies on top. The alert count grows with
-# MAGIC the size of the problem instead of being capped at a fixed share of the table.
+# MAGIC A batch that contains real problems can flag more than 5%, but no fixed count or share is guaranteed
+# MAGIC for another batch: the cutoff is calibrated on training severity, and the ranking determines the
+# MAGIC resulting alert count.
 # MAGIC
-# MAGIC That also puts a hard ceiling on precision. Ask for the top 5% of 1,500 rows and you get 75 alerts;
-# MAGIC if only 30 rows are genuinely bad, the best precision anyone could achieve is 30/75 = **40%**. The
-# MAGIC table below prints that ceiling next to what the model actually achieved, which is the only fair way
-# MAGIC to read the number.
+# MAGIC The alert count also puts a ceiling on precision. If a batch has 75 alerts and only 30 rows are
+# MAGIC genuinely bad, the best precision is 30/75 = **40%**. If alerts outnumber planted anomalies, catching
+# MAGIC all planted rows still leaves false positives; the table prints that ceiling beside the measured result.
 # MAGIC
 # MAGIC Severity is computed for **every** row, so you can count would-be anomalies at other thresholds
 # MAGIC without rescoring.
@@ -490,29 +507,32 @@ def report_thresholds(scored_df, label: str, thresholds=(90.0, 95.0, 98.0), labe
     severity_col = F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("severity_percentile")
     is_planted = F.col(label_col) == 1.0
     planted = scored_df.filter(is_planted).count()
+    unscored = scored_df.filter(F.element_at(F.col("_dq_info"), 1).getField("anomaly").getField("score").isNull()).count()
 
     print(f"🎚️  {label}\n")
+    print(f"Rows without a score (for example, unseen groups): {unscored}")
     print("Threshold | Alerts | Caught | Precision | Best possible | Recall")
     print("-" * 68)
     for threshold in thresholds:
         alerts = scored_df.filter(severity_col >= threshold)
         n_alerts = alerts.count()
         n_caught = alerts.filter(is_planted).count()
-        # The ceiling: you cannot be more precise than "every alert is a real anomaly".
+        # The ceiling: no more than one planted anomaly can be credited per alert.
         ceiling = min(1.0, planted / n_alerts) if n_alerts else 0.0
         precision = n_caught / n_alerts if n_alerts else 0.0
+        recall = n_caught / planted if planted else 0.0
         print(
             f"   {threshold:>5.0f} | {n_alerts:>6d} | {n_caught:>4d}/{planted:<3d}|"
-            f"   {precision:>6.1%}  |    {ceiling:>7.1%}    | {n_caught / planted:>5.1%}"
+            f"   {precision:>6.1%}  |    {ceiling:>7.1%}    | {recall:>5.1%}"
         )
 
 
 report_thresholds(scored, "Testing different thresholds:")
 
 print("\n💡 Read precision against the ceiling, not against 100%. Where the two are equal, every")
-print("   planted anomaly is inside the model's ranking and no alert is wasted — the ranking is")
-print("   optimal for that budget. A tighter threshold then trades recall for precision; it does")
-print("   not reveal a better model.")
+print("   row that could be caught at that alert count was caught in this seeded example.")
+print("   False positives can still remain when there are more alerts than planted anomalies.")
+print("   Changing the threshold changes the precision/recall tradeoff, not the model ranking.")
 print("\n   Where precision sits *below* the ceiling, something different is happening: ordinary rows are")
 print("   outranking real anomalies. That is a statement about the ranking, not about the budget, and no")
 print("   choice of threshold fixes it — the feature set or the comparison basis is what needs attention.")
@@ -537,7 +557,7 @@ print("   choice of threshold fixes it — the feature set or the comparison bas
 # MAGIC | timestamp passed as `baseline_over_time` | **never a feature.** It is the axis; DQX fits each metric's expected level along it | this value is wrong for *where the trend had got to* |
 # MAGIC
 # MAGIC The failure below is one every data team recognises: a feed partially breaks, volumes quietly revert to
-# MAGIC an earlier level, and every number stays inside the year's range. No range check fires. Nothing is
+# MAGIC an earlier level, and every number stays inside the year's range. No demonstrated range check fires. Nothing is
 # MAGIC extreme. It is only wrong for the point in time it arrived at.
 
 # COMMAND ----------
@@ -577,6 +597,8 @@ def generate_daily_volume(n_days: int, seed: int, stalled_week: bool = False):
 volume_history = f"{catalog}.{schema}.processor_daily_history"
 volume_recent = f"{catalog}.{schema}.processor_daily_recent"
 generate_daily_volume(540, seed=21).write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(volume_history)
+# This independent synthetic batch covers an overlapping historical window. It demonstrates
+# a deviation from the fitted trend, not future forecasting.
 generate_daily_volume(180, seed=22, stalled_week=True).write.mode("overwrite").option(
     "overwriteSchema", "true"
 ).saveAsTable(volume_recent)
@@ -639,7 +661,13 @@ dq_engine.apply_checks_and_save_in_table(
 )
 
 volume_result = spark.table(volume_scored)
+volume_source = spark.table(volume_recent)
+assert volume_source.exceptAll(volume_result.select(*volume_source.columns)).count() == 0
+assert volume_result.select(*volume_source.columns).exceptAll(volume_source).count() == 0
 volume_anomaly = F.element_at(F.col("_dq_info"), 1).getField("anomaly")
+volume_unscored = volume_result.filter(volume_anomaly.getField("score").isNull()).count()
+assert volume_unscored == 0
+print(f"   Volume rows without a score (for example, unseen groups): {volume_unscored}")
 stalled = volume_result.filter(F.col("is_anomaly") == 1.0).count()
 caught = volume_result.filter(volume_anomaly.getField("is_anomaly") & (F.col("is_anomaly") == 1.0)).count()
 print(f"🔍 Caught {caught} of the {stalled} days when the feed had quietly reverted\n")
@@ -663,7 +691,7 @@ display(
         volume_anomaly.getField("contributions").alias("contributions"),
         volume_anomaly.getField("is_stale_baseline").alias("extrapolating"),
     )
-    .orderBy(F.desc("severity"))
+    .orderBy(F.desc("severity"), F.asc("settlement_date"))
     .limit(8)
 )
 
@@ -708,9 +736,9 @@ display(
 # MAGIC ## Summary & Next Steps
 # MAGIC
 # MAGIC **Key takeaways:**
-# MAGIC - Rules catch what you can name in advance. They caught **none** of these rows, and no threshold
-# MAGIC   would have, because every individual value was ordinary.
-# MAGIC - Row anomaly detection finds implausible **combinations**, with no thresholds to choose.
+# MAGIC - Rules catch what you can name in advance. The demonstrated single-column rules caught **none** of
+# MAGIC   these rows because every individual value was ordinary; a different rule set may answer a different question.
+# MAGIC - Row anomaly detection finds implausible **combinations**, with one overall alert cutoff to tune.
 # MAGIC - `baseline_by` makes "normal" contextual, so one model covers a coffee shop and an electronics store.
 # MAGIC - Contributions and AI explanations tell you *which columns combined badly*, so a flagged row is
 # MAGIC   actionable rather than merely suspicious.
@@ -768,8 +796,8 @@ display(
 # MAGIC ### 🎉 You're Ready!
 # MAGIC
 # MAGIC You now understand:
-# MAGIC - ✅ Why rule-based checks cannot catch implausible combinations
-# MAGIC - ✅ How to train an anomaly model with no thresholds and no labels
+# MAGIC - ✅ Why the demonstrated rule checks did not catch these combinations
+# MAGIC - ✅ How to train an anomaly model without per-column thresholds or labels
 # MAGIC - ✅ How `baseline_by` makes "normal" depend on context
 # MAGIC - ✅ How to read contributions and AI explanations to triage a flagged row
 # MAGIC
