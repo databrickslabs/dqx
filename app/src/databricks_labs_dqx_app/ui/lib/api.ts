@@ -4635,6 +4635,8 @@ export const SetupState = {
   ready: 'ready',
 } as const;
 
+export type SetupStatusResponseTaskRunnerJobId = number | null;
+
 export type SetupStatusResponseConfiguration = SetupConfigurationView | null;
 
 /**
@@ -4644,6 +4646,8 @@ export interface SetupStatusResponse {
   report: SetupReport;
   can_manage: boolean;
   admin_group: string;
+  user_name?: string;
+  task_runner_job_id?: SetupStatusResponseTaskRunnerJobId;
   configuration?: SetupStatusResponseConfiguration;
 }
 

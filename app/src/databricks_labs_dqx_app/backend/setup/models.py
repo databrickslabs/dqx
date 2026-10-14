@@ -135,4 +135,6 @@ class SetupStatusResponse(_ImmutableModel):
     report: SetupReport
     can_manage: bool
     admin_group: str
+    user_name: str = ""
+    task_runner_job_id: int | None = None
     configuration: SetupConfigurationView | None = None

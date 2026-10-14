@@ -10,6 +10,7 @@ from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.configuration import (
@@ -207,10 +208,16 @@ class FakeJobs:
     resolved: ResolvedJob = ResolvedJob(job_id=27, created=False)
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
     grant_failure: Exception | None = None
+    run_as_failure: Exception | None = None
+    job_exists: bool = True
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
         return self.resolved
+
+    def exists(self, job_id: int) -> bool:
+        self.events.append(f"job_exists:{job_id}")
+        return self.job_exists
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         self.events.append(f"grant_admin:{job_id}:{user_name}")
@@ -219,6 +226,8 @@ class FakeJobs:
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
+        if self.run_as_failure is not None:
+            raise self.run_as_failure
         return self.run_as_result
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
@@ -777,6 +786,19 @@ async def test_ready_unattended_reconcile_returns_cached_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ready_reverify_by_an_admin_without_a_user_name_still_runs() -> None:
+    """An administrator whose user record has no name must still be able to verify again."""
+    harness = _harness(resolved=SAVED)
+    await harness.orchestrator.reconcile()
+    harness.events.clear()
+
+    await harness.orchestrator.reconcile(setup_user=None, reader_ws=create_autospec(WorkspaceClient, instance=True))
+
+    assert SetupStepId.UNITY_CATALOG.value in harness.events
+    assert not any(event.startswith("grant_admin:") for event in harness.events)
+
+
+@pytest.mark.asyncio
 async def test_invalid_saved_configuration_is_action_required() -> None:
     events: list[str] = []
     invalid = ResolvedConfiguration(
@@ -931,6 +953,67 @@ async def test_reconcile_stops_at_external_run_as_action() -> None:
     assert report.current_step == SetupStepId.TASK_RUNNER
     assert "publish_wheels" not in harness.events
     assert "delta" not in harness.events
+
+
+@pytest.mark.asyncio
+async def test_reconcile_forgets_a_deleted_task_runner_job() -> None:
+    """A deleted job must not stay pinned in the runtime, so the next run can find or recreate one."""
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.run_as_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
+    assert harness.runtime.job_id is None
+
+    harness.jobs.run_as_failure = None
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+    del harness.events[:]
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert "resolve_job:discover" in harness.events
+    assert harness.runtime.job_id == 81
+
+
+@pytest.mark.asyncio
+async def test_reconcile_points_to_a_redeploy_when_the_bundle_job_is_deleted() -> None:
+    """Verify again can't recover a bundle-defined job: it falls back to the same deleted ID."""
+    harness = _harness()
+    harness.jobs.grant_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    step = report.step(SetupStepId.TASK_RUNNER)
+    assert step.code == "task_runner_job_missing"
+    assert step.summary.startswith("Studio's task-runner job no longer exists. Redeploy the bundle")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_a_job_that_still_exists_after_an_unrelated_not_found() -> None:
+    """A NotFound from the permissions update (for example an unknown principal) isn't a deleted job."""
+    harness = _harness()
+    harness.jobs.grant_failure = NotFound("principal does not exist")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_reconciliation_failed"
+    assert harness.runtime.job_id == 27
+    assert "job_exists:27" in harness.events
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_the_job_after_a_transient_lookup_error() -> None:
+    harness = _harness()
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.run_as_failure = RuntimeError("timeout")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_reconciliation_failed"
+    assert harness.runtime.job_id == 27
 
 
 @pytest.mark.asyncio
@@ -1479,7 +1562,7 @@ async def test_override_is_refused_without_an_override_store() -> None:
 @pytest.mark.asyncio
 async def test_ai_step_runs_between_access_and_app_sharing_and_its_warning_does_not_block() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_unverified", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_unverified", StepState.WARNING))
     harness = _harness(events, ai=ai)
 
     report = await harness.orchestrator.reconcile()
@@ -1494,7 +1577,7 @@ async def test_ai_step_runs_between_access_and_app_sharing_and_its_warning_does_
 @pytest.mark.asyncio
 async def test_ai_override_keeps_ai_on_and_marks_the_step_overridden() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_missing", StepState.WARNING))
     harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
     await harness.orchestrator.reconcile()
 
@@ -1508,7 +1591,7 @@ async def test_ai_override_keeps_ai_on_and_marks_the_step_overridden() -> None:
 @pytest.mark.asyncio
 async def test_ai_override_stops_applying_when_the_endpoint_changes() -> None:
     events: list[str] = []
-    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_access_missing", StepState.WARNING))
+    ai = FakeAi(events, result=_overridable(SetupStepId.AI, "ai_endpoint_missing", StepState.WARNING))
     harness = _harness(events, ai=ai, overrides=SetupOverrides(MemorySettings()))
     await harness.orchestrator.reconcile()
     await harness.orchestrator.override(SetupStepId.AI, setup_user="admin@example.com")

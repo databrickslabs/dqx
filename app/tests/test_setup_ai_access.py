@@ -22,6 +22,7 @@ class FakeAiSettings:
     endpoint: str = "system.ai.chat-model"
     embedding: str = "system.ai.embed-model"
     saves: list[tuple[bool, AiEnabledSource, str | None]] = field(default_factory=list)
+    save_failure: Exception | None = None
 
     def get_ai_enabled(self) -> bool:
         return self.enabled
@@ -32,6 +33,8 @@ class FakeAiSettings:
     def save_ai_enabled(
         self, enabled: bool, *, user_email: str | None = None, source: AiEnabledSource = "admin"
     ) -> bool:
+        if self.save_failure is not None:
+            raise self.save_failure
         self.enabled, self.source = enabled, source
         self.saves.append((enabled, source, user_email))
         return enabled
@@ -303,11 +306,62 @@ def test_admin_enabled_ai_stays_on_when_access_fails(resources, workspace, grant
 def test_setup_turned_off_ai_comes_back_once_access_is_confirmed(resources, workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(resources, workspace, settings)
+    step = _check(resources, workspace, settings, workspace)
 
     assert step.state == StepState.PASSED
     assert settings.enabled is True
     assert settings.saves == [(True, "setup", None)]
+
+
+def test_unattended_check_asks_an_administrator_to_turn_ai_back_on(resources, workspace) -> None:
+    """A restart never flips the setting, but it must not hide that AI is still off."""
+    settings = FakeAiSettings(enabled=False, source="setup")
+
+    step = _check(resources, workspace, settings)
+
+    assert step.state == StepState.WARNING
+    assert step.code == "ai_reenable_pending"
+    assert "Verify again" in step.summary
+    assert settings.saves == []
+
+
+def test_unattended_check_never_turns_ai_off(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    grants.default = set()
+    settings = FakeAiSettings()
+
+    step = _check(resources, workspace, settings)
+
+    assert step.state == StepState.WARNING
+    assert settings.enabled is True
+    assert settings.saves == []
+    assert "until an administrator clicks Verify again" in step.summary
+
+
+def test_unverified_access_never_turns_ai_off(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants)
+    reader.api_client.do.side_effect = PermissionError("denied")
+    settings = FakeAiSettings()
+
+    step = _check(resources, workspace, settings, reader)
+
+    assert step.code == "ai_access_unverified"
+    assert settings.enabled is True
+    assert settings.saves == []
+
+
+def test_reports_ai_still_on_when_turning_it_off_fails(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants, existing={"system.ai.embed-model"})
+    settings = FakeAiSettings(save_failure=RuntimeError("lakebase unavailable"))
+
+    step = _check(resources, workspace, settings, reader)
+
+    assert step.code == "ai_endpoint_missing"
+    assert settings.enabled is True
+    assert "couldn't turn AI features off" in step.summary
+    assert "lakebase unavailable" not in str(step)
 
 
 def test_setup_turned_off_ai_stays_off_while_access_fails(resources, workspace, grants) -> None:

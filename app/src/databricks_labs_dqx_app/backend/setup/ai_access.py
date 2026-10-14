@@ -9,9 +9,11 @@ this on ``system.ai`` to account users by default, but a metastore admin can rev
 
 Studio never grants these itself (only a metastore admin can grant on ``system.ai``); it reads
 the effective grants and lists the exact GRANT statements to run. The check never blocks
-readiness: when access is missing or cannot be confirmed it reports a warning and, unless an
-administrator chose the AI setting themselves, turns AI features off. It turns them back on
-once access is confirmed.
+readiness: it reports a warning when access is missing or cannot be confirmed. Only a check an
+administrator runs changes the AI setting, so an unattended restart never flips it. Unless an
+administrator chose the AI setting themselves, an attended check turns AI features off when a
+model is missing or access is missing, and back on once access is confirmed. Access that only
+couldn't be confirmed never turns AI off.
 """
 
 import logging
@@ -120,22 +122,46 @@ class AiAccess:
             problems.append(("ai_access_missing", (f"{_GRANT_GUIDANCE}\n" + "\n".join(statements),)))
         if not chat_model:
             problems.append(("ai_endpoint_missing", ("No AI model is selected. Choose one in Settings > AI.",)))
+        attended = reader_ws is not None
         if not problems:
-            if not enabled and self._save_enabled(True):
+            if not enabled and attended and self._save_enabled(True):
                 return _passed("Studio users can use the AI models again, so AI features are back on.")
+            if not enabled:
+                return SetupStep(
+                    id=SetupStepId.AI,
+                    state=StepState.WARNING,
+                    code="ai_reenable_pending",
+                    summary="Studio users can use the AI models again. Click Verify again to turn AI features back on.",
+                    actions=(SetupActionId.VERIFY_AGAIN,),
+                )
             return _passed("Studio users can use the AI models.")
 
         code = min((problem_code for problem_code, _ in problems), key=_PROBLEM_ORDER.index)
         instructions = tuple(instruction for _, lines in problems for instruction in lines)
-        if setup_owned:
-            if enabled:
-                self._save_enabled(False)
+        # Unconfirmed access may already be fine, so it never turns AI off.
+        confirmed = code != "ai_access_unverified"
+        if setup_owned and attended and confirmed and enabled and not self._save_enabled(False):
+            summary = (
+                "Studio users may not be able to use the AI models, and Studio couldn't turn AI features off, "
+                "so they're still on. Fix the access below, then click Verify again, or turn AI off in Settings."
+            )
+        elif setup_owned and attended and confirmed:
             summary = (
                 "AI features are turned off because Studio users may not be able to use the AI models. "
                 "Fix the access below, then click Verify again, or turn AI back on in Settings."
             )
-        else:
+        elif not enabled:
+            summary = (
+                "AI features are off because Studio users may not be able to use the AI models. "
+                "Fix the access below, then click Verify again."
+            )
+        elif attended or not setup_owned:
             summary = "AI features are on, but Studio users may not be able to use the AI models."
+        else:
+            summary = (
+                "Studio users may not be able to use the AI models. AI features stay as they are until an "
+                "administrator clicks Verify again."
+            )
         return SetupStep(
             id=SetupStepId.AI,
             state=StepState.WARNING,

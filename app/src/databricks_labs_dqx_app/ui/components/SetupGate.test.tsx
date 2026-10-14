@@ -15,7 +15,7 @@ import {
   setupPollingInBackground,
   setupPollingInterval,
 } from "./SetupGate";
-import { SetupShell, SetupWizard } from "./setup/SetupWizard";
+import { SetupShell, SetupWizard, workspaceJobsLink } from "./setup/SetupWizard";
 import { getGetSetupStatusQueryKey, type SetupStatusResponse } from "@/lib/api";
 import { getWorkspaceHostQueryKey } from "@/lib/api-custom";
 import { useTheme } from "@/components/layout/theme-provider";
@@ -174,6 +174,114 @@ describe("SetupGate", () => {
     );
 
     expect(markup).toContain('href="https://workspace.example.com/#job/list"');
+  });
+
+  test("links straight to the task-runner job once setup knows it", () => {
+    const status = setupStatus(true);
+    status.task_runner_job_id = 914148714803833;
+
+    const markup = renderGate(status, "https://workspace.example.com/");
+
+    expect(markup).toContain(
+      'href="https://workspace.example.com/jobs/914148714803833"',
+    );
+    expect(markup).toContain(en.setup.actions.openTaskRunnerJob);
+  });
+
+  test("tells a non-administrator who they are and who can finish setup", () => {
+    const status = setupStatus(false);
+    status.user_name = "analyst@example.com";
+    status.report.steps.push({
+      id: "configuration",
+      state: "action_required",
+      code: "configuration_required",
+      summary: "Choose the catalog, storage prefix and audience group for DQX Studio.",
+      actions: ["configure"],
+    });
+
+    const markup = renderGate(status);
+
+    expect(markup).toContain(en.setup.notAdmin.title.replace("'", "&#x27;"));
+    expect(markup).toContain("analyst@example.com");
+    expect(markup).toContain("dqx-admins");
+    expect(markup).toContain(en.setup.notAdmin.configurationPending);
+    expect(markup).not.toContain("Choose the catalog, storage prefix");
+    expect(markup).not.toContain('name="catalog"');
+  });
+
+  test("non-administrators get the waiting message for any configuration problem, with its code", () => {
+    const status = setupStatus(false);
+    status.report.steps.push({
+      id: "configuration",
+      state: "action_required",
+      code: "saved_configuration_invalid",
+      summary: "The Studio catalog, storage prefix or audience group isn't valid.",
+    });
+
+    const markup = renderGate(status);
+
+    expect(markup).toContain(en.setup.notAdmin.configurationPending);
+    expect(markup).toContain("saved_configuration_invalid");
+    expect(markup).not.toContain("storage prefix or audience group isn");
+  });
+
+  test.each(["failed", "warning"] as const)(
+    "non-administrators get the waiting message when configuration is %p",
+    (state) => {
+      const status = setupStatus(false);
+      status.report.steps.push({
+        id: "configuration",
+        state,
+        code: "configuration_unreadable",
+        summary: "Fix the catalog, storage prefix or audience group, then click Verify again.",
+      });
+
+      const markup = renderGate(status);
+
+      expect(markup).toContain(en.setup.notAdmin.configurationPending);
+      expect(markup).toContain("configuration_unreadable");
+      expect(markup).not.toContain("Fix the catalog");
+    },
+  );
+
+  test("names a custom administrator group once", () => {
+    const markup = renderGate(setupStatus(false));
+
+    expect(markup.split("Only workspace admins").length - 1).toBe(1);
+    expect(markup).toContain("members of dqx-admins");
+  });
+
+  test.each(["", "admins", "Admins"])(
+    "uses the admins-only wording when the group is %p",
+    (group) => {
+      const status = setupStatus(false);
+      status.admin_group = group;
+      status.user_name = "analyst@example.com";
+
+      const markup = renderGate(status);
+
+      expect(markup).toContain("Only workspace admins can set up DQX Studio");
+      expect(markup).toContain("analyst@example.com");
+      expect(markup).not.toContain("members of");
+    },
+  );
+
+  test("labels the link by what it opens", () => {
+    expect(workspaceJobsLink("https://host/", 42)).toEqual({
+      href: "https://host/jobs/42",
+      isTaskRunnerJob: true,
+    });
+    expect(workspaceJobsLink("https://host", 0)).toEqual({
+      href: "https://host/#job/list",
+      isTaskRunnerJob: false,
+    });
+    expect(workspaceJobsLink("", 42)).toBeNull();
+  });
+
+  test("administrators never see the not-admin notice", () => {
+    const markup = renderGate(setupStatus(true));
+
+    expect(markup).not.toContain(en.setup.notAdmin.title.replace("'", "&#x27;"));
   });
 
   test("polls slowly while setup is waiting for external action", () => {

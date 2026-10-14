@@ -3088,7 +3088,6 @@
     "checkingTitle": "Comprobando la preparación de Studio",
     "checkingDescription": "DQX Studio está comprobando las capacidades necesarias para iniciarse de forma segura.",
     "waitingTitle": "La configuración de Studio necesita un administrador",
-    "waitingDescription": "Póngase en contacto con un miembro de {{adminGroup}} para completar los pasos restantes de la configuración.",
     "statusUnavailableTitle": "El estado de configuración no está disponible",
     "statusUnavailableDescription": "Actualice la página para comprobar de nuevo la preparación de Studio.",
     "reconcileFailed": "No se pudo completar la configuración. Revise los pasos indicados e inténtelo de nuevo.",
@@ -3136,7 +3135,15 @@
       "reconcile": "Ejecutar configuración",
       "verify_again": "Comprobar de nuevo",
       "openJobs": "Abrir trabajos",
+      "openTaskRunnerJob": "Abrir el job de ejecución",
       "configure": "Guardar configuración"
+    },
+    "notAdmin": {
+      "title": "No puedes completar la configuración",
+      "description": "Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "signedInAs": "Has iniciado sesión como {{userName}}.",
+      "adminsOnly": "Solo los administradores del área de trabajo pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "configurationPending": "Esperando a que un administrador elija el catálogo, el prefijo de almacenamiento y el grupo de usuarios."
     },
     "warningsReview": {
       "title": "La configuración de Studio terminó con advertencias",
@@ -3173,7 +3180,7 @@
         "ai": "Mantener la IA activada"
       },
       "help": {
-        "default": "Studio solo ve los permisos concedidos directamente a un usuario o grupo. Si concediste este acceso a través de un grupo principal, o lo configuraste a mano en el área de trabajo, puede parecer que falta. Si estás seguro de que está configurado, puedes continuar de todos modos.",
+        "default": "Studio solo ve los permisos concedidos directamente a un usuario o grupo, o a todos los usuarios del área de trabajo. Si concediste este acceso a través de otro grupo principal, o lo configuraste a mano en el área de trabajo, puede parecer que falta. Si estás seguro de que está configurado, puedes continuar de todos modos.",
         "app_sharing": "Studio no tiene permiso para leer con quién está compartida la aplicación, así que no puede comprobarlo. Cuando hayas compartido la aplicación con tus usuarios, confírmalo aquí.",
         "ai": "Si tus usuarios ya pueden usar este modelo de IA (por ejemplo, a través de un grupo principal), puedes mantener activadas las funciones de IA."
       }

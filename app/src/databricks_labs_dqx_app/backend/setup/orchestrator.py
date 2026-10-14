@@ -11,6 +11,7 @@ from functools import partial
 from typing import Literal, Protocol
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.setup.configuration import (
     ConfigurationSource,
@@ -123,6 +124,8 @@ class SetupJobs(Protocol):
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob: ...
 
+    def exists(self, job_id: int) -> bool: ...
+
     def grant_setup_admin(self, job_id: int, user_name: str) -> None: ...
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep: ...
@@ -202,7 +205,7 @@ class SetupOrchestrator:
     Lakebase is bootstrapped first so saved setup choices can be read before any
     Unity Catalog storage exists; storage-bound collaborators are created once the
     configuration resolves. An administrator can override steps whose requirement may
-    be met in a way Studio cannot see (for example a grant through a parent group);
+    be met in a way Studio cannot see (for example a grant through a nested group);
     overridden steps no longer block.
     """
 
@@ -311,9 +314,12 @@ class SetupOrchestrator:
         async with self.runtime.activation_lock:
             actor = _sanitize_identity(setup_user)
             if self.runtime.report().state == SetupState.READY:
-                if actor is None:
+                # An administrator's request always carries their client, even when their
+                # user record has no name; only unattended calls return the report unchanged.
+                if actor is None and reader_ws is None:
                     return self.runtime.report()
-                await self._refresh_job_admin(actor)
+                if actor is not None:
+                    await self._refresh_job_admin(actor)
                 return await self._run_steps(
                     actor=actor,
                     grant_user=None,
@@ -649,9 +655,25 @@ class SetupOrchestrator:
         try:
             resolved = await asyncio.to_thread(self.jobs.resolve, configured)
             self.runtime.job_id = resolved.job_id
-            if setup_user is not None:
-                await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
-            step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            try:
+                if setup_user is not None:
+                    await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
+                step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+            except NotFound:
+                # NotFound can also mean an unknown principal; only forget a job that is really gone.
+                if await asyncio.to_thread(self.jobs.exists, resolved.job_id):
+                    raise
+                self.runtime.job_id = None
+                return _failed(
+                    SetupStepId.TASK_RUNNER,
+                    "task_runner_job_missing",
+                    (
+                        "Studio's task-runner job no longer exists. Redeploy the bundle to recreate it, "
+                        "then click Verify again."
+                        if self.bootstrap.job_id
+                        else "Studio's task-runner job no longer exists. Click Verify again to set up a new one."
+                    ),
+                )
             if step.state != StepState.PASSED:
                 return step
             return await asyncio.to_thread(

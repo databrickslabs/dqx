@@ -3088,7 +3088,6 @@
     "checkingTitle": "Vérification de l’état de préparation de Studio",
     "checkingDescription": "DQX Studio vérifie les capacités nécessaires pour démarrer en toute sécurité.",
     "waitingTitle": "La configuration de Studio nécessite un administrateur",
-    "waitingDescription": "Contactez un membre de {{adminGroup}} pour terminer les étapes de configuration restantes.",
     "statusUnavailableTitle": "L’état de la configuration est indisponible",
     "statusUnavailableDescription": "Actualisez la page pour vérifier à nouveau l’état de préparation de Studio.",
     "reconcileFailed": "La configuration n’a pas pu être terminée. Examinez les étapes indiquées et réessayez.",
@@ -3136,7 +3135,15 @@
       "reconcile": "Lancer la configuration",
       "verify_again": "Vérifier à nouveau",
       "openJobs": "Ouvrir les jobs",
+      "openTaskRunnerJob": "Ouvrir le job d'exécution",
       "configure": "Enregistrer la configuration"
+    },
+    "notAdmin": {
+      "title": "Vous ne pouvez pas terminer la configuration",
+      "description": "Seuls les administrateurs de l'espace de travail ou les membres de {{adminGroup}} peuvent configurer DQX Studio. Demandez à l'un d'eux de terminer les étapes ci-dessous.",
+      "signedInAs": "Vous êtes connecté en tant que {{userName}}.",
+      "adminsOnly": "Seuls les administrateurs de l'espace de travail peuvent configurer DQX Studio. Demandez à l'un d'eux de terminer les étapes ci-dessous.",
+      "configurationPending": "En attente qu'un administrateur choisisse le catalogue, le préfixe de stockage et le groupe d'utilisateurs."
     },
     "warningsReview": {
       "title": "La configuration de Studio s'est terminée avec des avertissements",
@@ -3173,7 +3180,7 @@
         "ai": "Garder l'IA activée"
       },
       "help": {
-        "default": "Studio ne voit que les autorisations accordées directement à un utilisateur ou à un groupe. Si vous avez accordé cet accès via un groupe parent, ou manuellement dans l'espace de travail, il peut sembler manquant ici. Si vous êtes sûr qu'il est en place, vous pouvez continuer quand même.",
+        "default": "Studio ne voit que les autorisations accordées directement à un utilisateur ou à un groupe, ou à tous les utilisateurs de l'espace de travail. Si vous avez accordé cet accès via un autre groupe parent, ou manuellement dans l'espace de travail, il peut sembler manquant ici. Si vous êtes sûr qu'il est en place, vous pouvez continuer quand même.",
         "app_sharing": "Studio n'est pas autorisé à lire avec qui l'application est partagée ; il ne peut donc pas le vérifier lui-même. Une fois l'application partagée avec vos utilisateurs, confirmez-le ici.",
         "ai": "Si vos utilisateurs peuvent déjà utiliser ce modèle d'IA (par exemple via un groupe parent), vous pouvez garder les fonctionnalités d'IA activées."
       }

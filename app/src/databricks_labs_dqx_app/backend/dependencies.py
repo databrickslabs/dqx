@@ -1260,7 +1260,7 @@ CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 class SetupAccess:
     """Authenticated setup-management access derived without application storage."""
 
-    user_name: str
+    user_name: str | None
     can_manage: bool
 
 
@@ -1288,7 +1288,7 @@ def setup_access(user: User, admin_group: str) -> SetupAccess:
         if (display := sanitize_setup_display(group.display)) is not None
     }
     return SetupAccess(
-        user_name=sanitize_setup_display(user.user_name) or "unknown",
+        user_name=sanitize_setup_display(user.user_name),
         can_manage=not setup_groups.isdisjoint(groups),
     )
 
