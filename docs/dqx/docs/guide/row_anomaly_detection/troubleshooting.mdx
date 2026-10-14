@@ -237,7 +237,11 @@ has_no_row_anomalies(
 clean_data = spark.table("orders").filter(
   F.col("order_date") >= F.current_date() - F.expr("INTERVAL 30 DAYS")
 )
-anomaly_engine.train(df=clean_data, ...)
+anomaly_engine.train(
+  df=clean_data,
+  model_name=model_name,
+  registry_table=registry_table,
+)
 ```
 
 ---

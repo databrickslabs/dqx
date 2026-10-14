@@ -30,7 +30,7 @@ making it good on your data.
 **Start with a rule, not a model.** If you can write down what "wrong" means — must not be null, must be
 inside a range, must match a format, must be unique, must be fresh — then a
 [quality check](/docs/reference/quality_checks) does it more precisely, more cheaply, and with an audit trail
-a model cannot give you. DQX ships 55 of them.
+a model cannot give you. Browse the reference for the full set of built-in checks.
 
 Reach for anomaly detection for the thing a rule cannot state: **rows where every value is individually fine
 and the combination is wrong.** An amount, a quantity and a discount that each pass their own check, on a row
@@ -70,8 +70,10 @@ you would actually want flagged. No benchmark substitutes for that.
 
 ## The options, briefly
 
-Everything below is optional. With none of them set, each metric is judged against the whole table using the
-default detector, which is a reasonable place to start.
+Everything below is optional. If you omit both `columns` and `baseline_by`, DQX auto-discovers useful feature
+columns and may auto-discover a bounded grouping; naming `columns` keeps the comparison pooled unless you also
+set `baseline_by`. To force an explicitly pooled comparison while still using auto-discovered features, pass
+`baseline_by=[]`. The default detector is `"distribution"`.
 
 | Option | What it does | When you want it |
 |---|---|---|

@@ -556,15 +556,15 @@ print("   choice of threshold fixes it — the feature set or the comparison bas
 # MAGIC | timestamp listed in `columns` | turns it into seven calendar features (hour, day of week, month, weekend) | 3am is odd and 3pm is not |
 # MAGIC | timestamp passed as `baseline_over_time` | **never a feature.** It is the axis; DQX fits each metric's expected level along it | this value is wrong for *where the trend had got to* |
 # MAGIC
-# MAGIC The failure below is one every data team recognises: a feed partially breaks, volumes quietly revert to
-# MAGIC an earlier level, and every number stays inside the year's range. No demonstrated range check fires. Nothing is
-# MAGIC extreme. It is only wrong for the point in time it arrived at.
+# MAGIC The failure below is a sudden downward shift in a growing feed. The example compares each observation
+# MAGIC with a time-conditioned expectation. Some injected values can also cross the historical range, so range
+# MAGIC checks remain an independent useful control.
 
 # COMMAND ----------
-# DBTITLE 1,A processor whose volume grows, and a week where a feed silently reverts
+# DBTITLE 1,A processor whose volume grows, and a week with a sudden downward shift
 
-# 18 months of daily counts, growing as merchants are onboarded. The fault holds one week at the level of
-# roughly five months earlier -- inside the range the year covers, so nothing about it is out of bounds.
+# 18 months of daily counts, growing as merchants are onboarded. The fault applies a downward shift equal to
+# 150 days of nominal trend; it illustrates comparison with the learned time-conditioned expectation.
 DAILY_START = datetime(2024, 1, 1)
 
 
@@ -670,17 +670,16 @@ assert volume_unscored == 0
 print(f"   Volume rows without a score (for example, unseen groups): {volume_unscored}")
 stalled = volume_result.filter(F.col("is_anomaly") == 1.0).count()
 caught = volume_result.filter(volume_anomaly.getField("is_anomaly") & (F.col("is_anomaly") == 1.0)).count()
-print(f"🔍 Caught {caught} of the {stalled} days when the feed had quietly reverted\n")
+print(f"🔍 Caught {caught} of the {stalled} days with a downward shift against the learned trend\n")
 
 report_thresholds(volume_result, "Daily volume, judged against its own trend:", label_col="is_anomaly")
 
 # COMMAND ----------
 # DBTITLE 1,Read the contributions, which name the expected level
 
-print("💡 The contributions name the metric, not the comparison that objected to it. Every one of")
-print("   these counts sits inside the range the history covers, so what is wrong is their position")
-print("   against the trend rather than their value -- but the map says 'this metric mattered', and")
-print("   it is baseline_over_time being set that tells you the comparison it mattered against.\n")
+print("💡 The contributions map names the source metric, not the comparison that objected to it.")
+print("   baseline_over_time supplies time-aware features, while the contributions map reports source metrics.")
+print("   An injected value can also cross the historical range; inspect its values and time context.\n")
 
 display(
     volume_result.filter(volume_anomaly.getField("is_anomaly"))
@@ -745,8 +744,7 @@ display(
 # MAGIC - The threshold is an **alert budget**, not a confidence score. Judge precision against the ceiling
 # MAGIC   that budget implies.
 # MAGIC - A timestamp can be a **feature** or an **axis**, and the difference matters. Section 6 uses one as
-# MAGIC   an axis via `baseline_over_time` to catch a feed that silently reverted to an earlier level, with
-# MAGIC   every value still inside the year's range.
+# MAGIC   an axis via `baseline_over_time` to detect a downward shift against a learned time-conditioned expectation.
 # MAGIC
 # MAGIC **Apply to your data:**
 # MAGIC ```python

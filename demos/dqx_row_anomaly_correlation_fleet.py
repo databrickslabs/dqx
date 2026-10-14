@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # ⚙️ When Every Gauge Reads Normal and the Machine Still Fails
+# MAGIC # ⚙️ When Plausible Gauges Stop Aligning
 # MAGIC
 # MAGIC ## Learn Row Anomaly Detection on Machine Telemetry in 10 Minutes
 # MAGIC
 # MAGIC **What you'll do:**
 # MAGIC - Generate healthy telemetry where the metrics move together, as real machines do
-# MAGIC - Break the *relationship* between three of them while every reading stays in range
+# MAGIC - Move three metrics together as a block relative to the other telemetry, while their individual readings stay in range
 # MAGIC - Show that the demonstrated per-metric range checks do not catch it
 # MAGIC - Train with `profile="correlation"` and read the explanation
 # MAGIC
@@ -24,12 +24,10 @@
 # MAGIC hydraulic pressure, air pressure and throughput. Every metric has a safe band, and every band has
 # MAGIC an alert.
 # MAGIC
-# MAGIC A bearing fails. Afterwards the logs show every gauge sat inside its band for two hours
-# MAGIC beforehand. No alert fired.
-# MAGIC
-# MAGIC But something *was* visible: **motor current stopped tracking spindle load**. On a healthy machine
-# MAGIC those rise and fall together, because cutting harder draws more current. For two hours load was
-# MAGIC high while current sat mid-band. Both readings were ordinary. Their relationship was not.
+# MAGIC This synthetic telemetry-alignment fault pairs spindle load, motor current and coolant flow from a
+# MAGIC nearby, different reading with the remaining telemetry. The three values keep their relationships to
+# MAGIC each other, and their individual readings remain plausible. Their alignment with the remaining
+# MAGIC telemetry does not.
 # MAGIC
 # MAGIC ## "Normal" compared to what?
 # MAGIC
@@ -44,7 +42,7 @@
 # MAGIC | **Independent records.** Card payments, insurance claims, customer records, product listings. | `"distribution"` (default) | A row whose values, or combination of values, is unusual |
 # MAGIC | **Repeated measurements of the same things.** Machine sensors, server metrics, patient vitals, smart meters. | `"correlation"` | Metrics that normally move **together** stop doing so, each staying in its own range |
 # MAGIC
-# MAGIC This notebook uses `"correlation"`, because the bearing story above is exactly its case. The default
+# MAGIC This notebook uses `"correlation"`, because the alignment fixture above is exactly its case. The default
 # MAGIC detector splits on one column at a time, so it has difficulty distinguishing a broken relationship
 # MAGIC between two in-range values. The results below are intentionally limited to this generated fleet and its demonstrated range
 # MAGIC checks. Use labelled data from your own telemetry to compare detector choices.
@@ -261,9 +259,9 @@ print(f"📊 {len(METRICS)} metrics driven by 2 hidden factors")
 def generate_telemetry(n_rows: int, seed: int, break_correlation: bool = False):
     """Telemetry driven by two shared latent factors.
 
-    With *break_correlation*, a contiguous block has three metrics decoupled by **permuting their values
-    among those rows** — the same values, reordered. Every metric's own distribution is preserved
-    exactly, so only the joint behaviour changes.
+    With *break_correlation*, a contiguous block moves the first three metrics together by **permuting
+    their rows**. Their distributions and relationships to each other are preserved exactly; their
+    joint relationship to the remaining metrics changes.
     """
     rng = np.random.default_rng(seed)
     factors = rng.normal(0.0, 1.0, size=(n_rows, 2))
@@ -327,8 +325,8 @@ print("   as in this generated fleet; validate the relationships in your own tel
 # MAGIC
 # MAGIC ## Section 2: The Incident
 # MAGIC
-# MAGIC A contiguous incident block in which spindle load, motor current and coolant flow stop tracking each
-# MAGIC other, while every single reading stays inside the range it has occupied in this generated fleet.
+# MAGIC A contiguous incident block in which spindle load, motor current and coolant flow move together as a
+# MAGIC block relative to the remaining metrics, while the three checked readings stay inside their healthy ranges.
 # MAGIC
 
 # COMMAND ----------
@@ -367,7 +365,7 @@ for metric in METRICS[:3]:
     print(f"{metric:<18}{healthy_range:>22}{broken_range:>22}   {'inside ✅' if inside else 'OUTSIDE'}")
 
 print("\n⚠️  The three checked incident metrics stay inside their healthy ranges.")
-print("   A per-metric range check alone cannot separate these rows; the relationship is what changed.")
+print("   A per-metric range check alone cannot separate these rows; their alignment with the remaining metrics changed.")
 
 # COMMAND ----------
 
@@ -584,9 +582,9 @@ WEAR_START = datetime.datetime(2025, 1, 6)
 def generate_wear_history(n_hours: int, seed: int, late_fault: bool = False):
     """Bearing temperature and vibration that drift upward as the bearing wears.
 
-    With *late_fault*, a block near the end is held at the level it had 600 hours earlier. Every value
-    stays inside the range the whole history covers, so nothing about it is extreme -- it is simply wrong
-    for how worn the bearing should be by then.
+    With *late_fault*, a block near the end receives a downward shift equivalent to 600 hours of the
+    nominal trend. The example compares those observations with the time-conditioned expectation; some
+    injected values can also cross the historical range.
     """
     rng = np.random.default_rng(seed)
     hours = np.arange(n_hours)
@@ -705,15 +703,15 @@ report_quality(wear_result, "is_incident", anomaly.getField("severity_percentile
 # DBTITLE 1,Read the contributions, which name the expected level
 
 print("💡 Contributions name the metric, once, however many ways the model compared it.")
-print("   Read them as 'this metric mattered', not 'this metric's value was extreme': every one of")
-print("   these readings sits inside the history's own range, and it is baseline_over_time being set")
-print("   that tells you the comparison they failed.")
+print("   Read them as 'this metric mattered', not 'this metric's value was extreme':")
+print("   baseline_over_time supplies time-aware features, while the contributions map reports source metrics.")
+print("   An injected value can also cross the historical range; inspect its values and time context.")
 display(
     spark.table(wear_scored)
     .filter(anomaly.getField("is_anomaly"))
     .select(
         "reading_ts",
-        "bearing_temp",
+        F.round("bearing_temp", 1).alias("bearing_temp"),
         anomaly.getField("severity_percentile").alias("severity"),
         anomaly.getField("contributions").alias("contributions"),
         anomaly.getField("is_stale_baseline").alias("extrapolating"),
