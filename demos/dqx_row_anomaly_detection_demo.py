@@ -841,11 +841,16 @@ else:
     print(f"\nFeature Contributions:")
 
     contributions = top_anomaly['contributions']
-    if contributions:
-        # Sort by contribution value
-        sorted_contrib = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
+    visible_contrib = (
+        [(feature, value) for feature, value in contributions.items() if value is not None and value > 0]
+        if contributions
+        else []
+    )
+    if visible_contrib:
+        # Sort by contribution value, then feature name for deterministic ties.
+        sorted_contrib = sorted(visible_contrib, key=lambda item: (-item[1], item[0]))
         for feature, value in sorted_contrib[:3]:  # Top 3
-            print(f"   {feature}: {abs(value):.1f}% contribution")
+            print(f"   {feature}: {value:.1f}% contribution")
 
         print(f"\n🎯 Investigation Tip:")
         top_feature = sorted_contrib[0][0]
