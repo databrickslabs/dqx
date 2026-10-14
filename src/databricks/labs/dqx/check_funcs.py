@@ -2432,6 +2432,7 @@ def is_unique(
         row_filter: Optional SQL expression for filtering rows before checking uniqueness. Auto-injected from the check filter.
         trim_strings: Whether to trim leading and trailing spaces from string keys before
             checking uniqueness (default: False). Non-string keys and input values are unchanged.
+            Nested string values inside arrays or structs are not trimmed.
 
     Returns:
         A tuple of:

@@ -5425,3 +5425,27 @@ def test_is_unique_trim_strings_with_row_filter(spark: SparkSession):
     violations = {row.id: row.violation for row in actual.collect() if row.violation is not None}
     assert set(violations) == {0, 1}
     assert all("found 2 duplicates" in message for message in violations.values())
+
+
+@pytest.mark.parametrize("trim_strings", [False, True])
+def test_is_unique_trim_strings_with_lower_expression(
+    spark: SparkSession,
+    trim_strings: bool,
+):
+    df = spark.createDataFrame(
+        [(0, "ABC"), (1, " abc "), (2, "different")],
+        "id: int, a: string",
+    )
+    condition, apply_method = is_unique(
+        [F.lower(F.col("a"))],
+        trim_strings=trim_strings,
+    )
+    collected = apply_method(df).select("id", "a", condition.alias("violation")).collect()
+
+    violations = {row.id for row in collected if row.violation is not None}
+    assert violations == ({0, 1} if trim_strings else set())
+    assert sorted((row.id, row.a) for row in collected) == [
+        (0, "ABC"),
+        (1, " abc "),
+        (2, "different"),
+    ]
