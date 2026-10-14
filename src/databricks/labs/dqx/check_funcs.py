@@ -185,9 +185,9 @@ class DQPattern(Enum):
     UUID_STRICT = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\z"
 
     # Plain or exponent number: optional sign, digits with an optional decimal point ("1", "1.", "1.25", ".5"),
-    # and an optional exponent ("1.5e3", "1.0E-4"). Group 1 is the fraction digits, group 2 the exponent.
+    # and an optional exponent ("1.5e3", "1.0E-4"). Groups: 1 integer digits, 2 fraction digits, 3 exponent.
     # No surrounding whitespace. Anchored; ReDoS-safe.
-    DECIMAL_NUMBER = r"\A[+-]?(?:\d+\.?|\d*\.(\d+))(?:[eE]([+-]?\d+))?\z"
+    DECIMAL_NUMBER = r"\A[+-]?(?=\.?\d)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?\z"
 
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
@@ -1550,11 +1550,17 @@ def has_num_decimal_places(
     str_expr = col_expr.cast("string")
 
     is_numeric = str_expr.rlike(DQPattern.DECIMAL_NUMBER.value)
-    fraction = F.regexp_replace(F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 1), r"0+\z", "")
-    exponent = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 2)
+    integer = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 1)
+    fraction = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 2)
+    exponent = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 3)
     # Cast the exponent to double so a huge exponent in a string value can't overflow.
     exponent_value = F.when(exponent == "", F.lit(0)).otherwise(exponent.cast("double"))
-    num_decimal_places = F.greatest(F.length(fraction) - exponent_value, F.lit(0))
+    # Trailing zeros of the whole significand don't count ("100e-2" is 1); an all-zero significand is zero.
+    significand = F.regexp_replace(F.concat(integer, fraction), r"0+\z", "")
+    trailing_zeros = F.length(integer) + F.length(fraction) - F.length(significand)
+    num_decimal_places = F.when(significand == "", F.lit(0)).otherwise(
+        F.greatest(F.length(fraction) - trailing_zeros - exponent_value, F.lit(0))
+    )
     is_limit_null = col_expr.isNotNull() & limit_expr.isNull()
 
     condition = is_limit_null | ~is_numeric | (num_decimal_places > limit_expr)

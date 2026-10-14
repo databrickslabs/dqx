@@ -1512,6 +1512,8 @@ def test_col_has_num_decimal_places(spark):
             [".5", 7],
             ["1.", 7],
             ["1.5e3", 7],
+            ["100e-2", 7],
+            ["0e-999", 7],
             ["1.234", 7],
             ["abc", 7],
             [" 1.25", 7],
@@ -1536,6 +1538,8 @@ def test_col_has_num_decimal_places(spark):
             [None, None, None],
             [None, None, None],
             [None, None, None],
+            [None, None, None],
+            [None, None, None],
             ["Value '1.234' in Column 'val' has more than 2 decimal places", None, None],
             ["Value 'abc' in Column 'val' is not numeric", None, None],
             ["Value ' 1.25' in Column 'val' is not numeric", None, None],
@@ -1543,6 +1547,19 @@ def test_col_has_num_decimal_places(spark):
             [None, None, "Column 'i' value is null"],
         ],
         expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_exponent_trailing_zeros(spark):
+    test_df = spark.createDataFrame([["100e-2"], ["0e-999"], ["0.000"], ["150e-2"]], "val: string")
+
+    actual = test_df.select(has_num_decimal_places("val", 0).alias("val_max0"))
+
+    expected = spark.createDataFrame(
+        [[None], [None], [None], ["Value '150e-2' in Column 'val' has more than 0 decimal places"]],
+        "val_max0: string",
     )
 
     assertDataFrameEqual(actual, expected)

@@ -160,6 +160,8 @@ def test_col_is_ipv4_address_in_cidr_trailing_line_terminator_cidr_block(termina
         ("1.", True),
         ("1.5e3", True),
         ("1.0E-4", True),
+        ("100e-2", True),
+        ("0e-999", True),
         ("abc", False),
         ("", False),
         (".", False),
