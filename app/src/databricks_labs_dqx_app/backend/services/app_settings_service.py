@@ -24,6 +24,7 @@ from databricks_labs_dqx_app.backend.common.branding import (
     validate_preset,
 )
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+from databricks_labs_dqx_app.backend.services.model_services import model_service_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -1035,7 +1036,7 @@ class AppSettingsService:
     # request) so the AI-assisted authoring surfaces work out of the box on
     # a fresh deploy. The admin kill-switch remains: setting ``ai_enabled``
     # to ``false`` turns every AI affordance off app-wide. Note the cost
-    # implication — AI serving-endpoint calls run On-Behalf-Of the caller
+    # implication — AI model calls run On-Behalf-Of the caller
     # (see ``get_ai_gateway``), so an enabled default means those calls can
     # be incurred without an explicit opt-in.
     # ------------------------------------------------------------------
@@ -1047,14 +1048,14 @@ class AppSettingsService:
 
     AI_RATE_LIMIT_DEFAULT = 30
 
-    # Seeded default AI serving endpoint — a reasonable out-of-the-box
+    # Seeded default AI model service — a reasonable out-of-the-box
     # selection for the admin dropdown (Rules Registry Phase 7F). AI is ON by
     # default (see :meth:`get_ai_enabled`) and this endpoint is what shows up
     # pre-selected. An admin who explicitly saves an empty value gets that
     # empty value back (see the ``raw is None`` check below) rather than being
     # forced back to the default on every read.
     #
-    # Chosen over the previous ``databricks-gpt-5-4-nano`` default because a
+    # Chosen over the previous gpt-5-4-nano default because a
     # live golden-set eval against field-eng (see
     # ``tests/ai_eval/test_rule_suggester_live.py``) showed nano returning
     # NO suggestions on tables past ~50 columns (blew the fixed max_tokens
@@ -1064,7 +1065,12 @@ class AppSettingsService:
     # wide tables successfully. Admins can still switch to nano/mini/haiku
     # via the AI settings dropdown, but the fresh-deploy default now points
     # at a model that works on realistic (wide) tables out of the box.
-    AI_ENDPOINT_NAME_DEFAULT = "databricks-claude-sonnet-4-5"
+    #
+    # Names are Unity Gateway model services (``system.ai.*``): the legacy
+    # ``databricks-*`` pay-per-token serving endpoints are retired on
+    # March 30, 2027. Names saved before the migration are mapped onto their
+    # model service on read (see :func:`model_service_name`).
+    AI_ENDPOINT_NAME_DEFAULT = "system.ai.claude-sonnet-4-5"
 
     def get_ai_enabled(self) -> bool:
         """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.
@@ -1107,21 +1113,22 @@ class AppSettingsService:
         return "setup" if self.get_setting(self._AI_ENABLED_SOURCE_KEY) == "setup" else "admin"
 
     def get_ai_endpoint_name(self) -> str:
-        """Return the configured AI serving endpoint name.
+        """Return the configured AI model service name.
 
         Defaults to :data:`AI_ENDPOINT_NAME_DEFAULT` when the setting has
         never been saved (no row). An admin who explicitly saves an empty
         value gets ``""`` back, not the default — the row exists, it's just
-        empty.
+        empty. A legacy ``databricks-*`` endpoint name is returned as its
+        ``system.ai`` model service.
         """
         raw = self.get_setting(self._AI_ENDPOINT_NAME_KEY)
         if raw is None:
             return self.AI_ENDPOINT_NAME_DEFAULT
-        return raw.strip()
+        return model_service_name(raw)
 
     def save_ai_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
-        """Persist the AI serving endpoint name. Returns the cleaned (trimmed) value."""
-        cleaned = (endpoint_name or "").strip()
+        """Persist the AI model service name. Returns the cleaned value (legacy names mapped)."""
+        cleaned = model_service_name(endpoint_name)
         self.save_setting(self._AI_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 
@@ -1188,42 +1195,43 @@ class AppSettingsService:
     # endpoint dropdown; the embedding endpoint defaults so cosine rule
     # suggestions work from that alone.
     #
-    #   * ``embedding_endpoint_name`` — Databricks serving endpoint that
+    #   * ``embedding_endpoint_name`` — Unity Gateway model service that
     #     turns rule/query text into an embedding vector
     #     (``services/rule_embeddings.py``). Defaults to
-    #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Foundation Model API
-    #     embedding endpoint available out-of-the-box in most workspaces.
+    #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Databricks-provided
+    #     embedding model available out-of-the-box in most workspaces.
     #
     # The setter is kept (and the setting remains independently overridable
     # via direct API calls) for backwards compatibility/testing — nothing
     # in the UI writes to it anymore. ``AiBootstrap.ensure_ai_ready`` /
-    # the suggester degrade gracefully if the embedding endpoint isn't
+    # the suggester degrade gracefully if the embedding model isn't
     # usable yet — see ``services/ai_bootstrap.py``.
     # ------------------------------------------------------------------
 
     _EMBEDDING_ENDPOINT_NAME_KEY = "embedding_endpoint_name"
 
-    # A widely-available Foundation Model API embedding endpoint — a
+    # A widely-available Databricks-provided embedding model service — a
     # reasonable out-of-the-box default so the rule-mapping suggester
     # works the moment an admin flips "Enable AI" on, without a separate
     # embedding-endpoint field to fill in.
-    EMBEDDING_ENDPOINT_NAME_DEFAULT = "databricks-gte-large-en"
+    EMBEDDING_ENDPOINT_NAME_DEFAULT = "system.ai.gte-large-en"
 
     def get_embedding_endpoint_name(self) -> str:
-        """Return the embedding serving endpoint name.
+        """Return the embedding model service name.
 
         Defaults to :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT` when the
         setting is unset — either no row at all, or a row holding an
-        empty/whitespace-only value.
+        empty/whitespace-only value. A legacy ``databricks-*`` endpoint
+        name is returned as its ``system.ai`` model service.
         """
         raw = self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY)
         if raw is None or not raw.strip():
             return self.EMBEDDING_ENDPOINT_NAME_DEFAULT
-        return raw.strip()
+        return model_service_name(raw)
 
     def save_embedding_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
-        """Persist the embedding serving endpoint name. Returns the cleaned (trimmed) value."""
-        cleaned = (endpoint_name or "").strip()
+        """Persist the embedding model service name. Returns the cleaned value (legacy names mapped)."""
+        cleaned = model_service_name(endpoint_name)
         self.save_setting(self._EMBEDDING_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 

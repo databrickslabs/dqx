@@ -1,4 +1,4 @@
-"""Tests for the non-blocking AI model endpoint setup check."""
+"""Tests for the non-blocking AI model access setup check."""
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -10,15 +10,17 @@ from databricks.sdk.errors import NotFound
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
 from databricks_labs_dqx_app.backend.setup.ai_access import AiAccess
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 
 
 @dataclass
 class FakeAiSettings:
     enabled: bool = True
     source: AiEnabledSource = "default"
-    endpoint: str = "chat-endpoint"
-    embedding: str = "embed-endpoint"
+    endpoint: str = "system.ai.chat-model"
+    embedding: str = "system.ai.embed-model"
     saves: list[tuple[bool, AiEnabledSource, str | None]] = field(default_factory=list)
     save_failure: Exception | None = None
 
@@ -45,53 +47,165 @@ class FakeAiSettings:
 
 
 @pytest.fixture
-def workspace() -> MagicMock:
+def resources() -> ActiveResources:
+    return ActiveResources(
+        volume=VolumeLocation("main", "dqx_studio", "wheels", "/Volumes/main/dqx_studio/wheels"),
+        lakebase=LakebaseConnection(
+            endpoint="projects/p/branches/b/endpoints/e",
+            host=None,
+            port=5432,
+            database="databricks_postgres",
+            username=None,
+            password=None,
+            schema="dqx_studio",
+        ),
+        warehouse_id="warehouse-id",
+        job_id=None,
+        tmp_schema="dqx_studio_tmp",
+        genie_schema="dqx_studio_genie",
+        demo_schema="dqx_studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
+    )
+
+
+_DEFAULT_GRANTS = {"USE_CATALOG", "USE_SCHEMA", "EXECUTE"}
+
+
+class FakeGrants:
+    """Effective Unity Catalog privileges per (principal, securable kind, full name)."""
+
+    def __init__(self) -> None:
+        self.privileges: dict[tuple[str, str, str], set[str]] = {}
+        self.default: set[str] | None = set(_DEFAULT_GRANTS)
+        self.unreadable = False
+
+    def get_effective(self, kind: str, full_name: str, *, principal: str) -> SimpleNamespace:
+        if self.unreadable:
+            raise PermissionError("denied")
+        held = self.privileges.get((principal, kind, full_name), self.default or set())
+        return SimpleNamespace(
+            privilege_assignments=[
+                SimpleNamespace(principal=principal, privileges=[SimpleNamespace(privilege=p) for p in sorted(held)])
+            ]
+        )
+
+
+def _client(grants: FakeGrants, existing: set[str] | None = None) -> MagicMock:
     client = create_autospec(WorkspaceClient, instance=True)
-    # Databricks-hosted models are listed without an endpoint ID.
-    client.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id=None, name=name)
+    known = existing if existing is not None else {"system.ai.chat-model", "system.ai.embed-model"}
+
+    def _do(method: str, path: str, **_: object) -> dict:
+        name = path.rsplit("/", 1)[-1]
+        if name not in known:
+            raise NotFound("Resource not found")
+        return {"name": f"model-services/{name}"}
+
+    client.api_client.do.side_effect = _do
+    client.grants.get_effective.side_effect = grants.get_effective
     return client
 
 
 @pytest.fixture
-def admin() -> MagicMock:
-    """Setup administrator's client; its presence makes the check attended."""
-    client = create_autospec(WorkspaceClient, instance=True)
-    client.serving_endpoints.get.side_effect = NotFound("not visible to the admin either")
-    return client
+def grants() -> FakeGrants:
+    return FakeGrants()
 
 
-def _check(workspace: MagicMock, settings: FakeAiSettings, reader: MagicMock | None = None):
-    return AiAccess(workspace=workspace, settings=settings).check_ai_access(reader)
+@pytest.fixture
+def workspace(grants: FakeGrants) -> MagicMock:
+    return _client(grants)
 
 
-def test_passes_when_every_endpoint_is_listed(workspace) -> None:
+def _check(
+    resources: ActiveResources,
+    workspace: MagicMock,
+    settings: FakeAiSettings,
+    reader: MagicMock | None = None,
+    *,
+    app_sp_id: str = "",
+):
+    access = AiAccess(resources=resources, workspace=workspace, settings=settings, app_sp_id=app_sp_id)
+    return access.check_ai_access(reader)
+
+
+def test_passes_when_the_audience_can_use_every_model(resources, workspace) -> None:
     settings = FakeAiSettings()
 
-    step = _check(workspace, settings)
+    step = _check(resources, workspace, settings)
 
     assert step.id == SetupStepId.AI
     assert step.state == StepState.PASSED
-    assert step.summary == "The AI models are available."
     assert settings.saves == []
-    assert {call.args[0] for call in workspace.serving_endpoints.get.call_args_list} == {
-        "chat-endpoint",
-        "embed-endpoint",
+
+
+def test_checks_catalog_schema_and_model_service_grants(resources, workspace) -> None:
+    _check(resources, workspace, FakeAiSettings(embedding="system.ai.chat-model"))
+
+    inspected = {(call.args[0], call.args[1]) for call in workspace.grants.get_effective.call_args_list}
+    assert inspected == {("CATALOG", "system"), ("SCHEMA", "system.ai"), ("MODEL_SERVICE", "system.ai.chat-model")}
+
+
+def test_shared_catalog_and_schema_grants_are_read_once_per_run(resources, workspace) -> None:
+    _check(resources, workspace, FakeAiSettings())
+
+    calls = [
+        (call.args[0], call.args[1], call.kwargs["principal"]) for call in workspace.grants.get_effective.call_args_list
+    ]
+    assert len(calls) == len(set(calls)) == 4
+
+
+def test_never_grants_anything(resources, workspace) -> None:
+    _check(resources, workspace, FakeAiSettings())
+
+    workspace.grants.update.assert_not_called()
+
+
+def test_missing_grants_list_the_statements_to_run(resources, workspace, grants) -> None:
+    grants.privileges[("data-team", "MODEL_SERVICE", "system.ai.chat-model")] = set()
+    grants.privileges[("data-team", "SCHEMA", "system.ai")] = {"EXECUTE"}
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.state == StepState.WARNING
+    assert step.code == "ai_access_missing"
+    assert len(step.instructions) == 1
+    instruction = step.instructions[0]
+    assert "metastore admin" in instruction
+    assert instruction.count("GRANT USE_SCHEMA ON SCHEMA `system`.`ai` TO `data-team`;") == 1
+    assert "GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`chat-model` TO `data-team`;" in instruction
+    assert "USE_CATALOG" not in instruction
+
+
+def test_all_privileges_satisfies_every_requirement(resources, workspace, grants) -> None:
+    grants.default = {"ALL_PRIVILEGES"}
+
+    assert _check(resources, workspace, FakeAiSettings()).state == StepState.PASSED
+
+
+def test_app_service_principal_needs_the_embedding_model(resources, workspace, grants) -> None:
+    sp = "11111111-2222-3333-4444-555555555555"
+    grants.privileges[(sp, "MODEL_SERVICE", "system.ai.embed-model")] = set()
+
+    step = _check(resources, workspace, FakeAiSettings(), app_sp_id=sp)
+
+    assert step.code == "ai_access_missing"
+    assert any(
+        f"GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`embed-model` TO `{sp}`;" in instruction
+        for instruction in step.instructions
+    )
+    inspected_for_chat = {
+        call.kwargs["principal"]
+        for call in workspace.grants.get_effective.call_args_list
+        if call.args[1] == "system.ai.chat-model"
     }
+    assert sp not in inspected_for_chat
 
 
-def test_never_reads_permissions_grants_or_queries(workspace) -> None:
-    _check(workspace, FakeAiSettings())
-
-    workspace.serving_endpoints.get_permissions.assert_not_called()
-    workspace.serving_endpoints.update_permissions.assert_not_called()
-    workspace.serving_endpoints.query.assert_not_called()
-
-
-def test_missing_endpoint_warns_and_turns_default_ai_off(workspace, admin) -> None:
-    workspace.serving_endpoints.get.side_effect = NotFound("no such endpoint")
+def test_missing_model_warns_and_turns_default_ai_off(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants, existing={"system.ai.embed-model"})
     settings = FakeAiSettings()
 
-    step = _check(workspace, settings, admin)
+    step = _check(resources, workspace, settings, reader)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_endpoint_missing"
@@ -99,47 +213,89 @@ def test_missing_endpoint_warns_and_turns_default_ai_off(workspace, admin) -> No
     assert settings.enabled is False
     assert settings.source == "setup"
     assert "turned off" in step.summary
-    assert any("`chat-endpoint`" in instruction for instruction in step.instructions)
+    assert any("Settings > AI" in instruction for instruction in step.instructions)
 
 
-def test_missing_endpoint_reports_ai_still_on_when_turning_it_off_fails(workspace, admin) -> None:
-    workspace.serving_endpoints.get.side_effect = NotFound("no such endpoint")
-    settings = FakeAiSettings(save_failure=RuntimeError("lakebase unavailable"))
+def test_model_hidden_from_the_app_is_looked_up_as_the_administrator(resources, grants) -> None:
+    workspace = _client(grants, existing=set())
+    reader = _client(grants)
 
-    step = _check(workspace, settings, admin)
+    assert _check(resources, workspace, FakeAiSettings(), reader).state == StepState.PASSED
+
+
+def test_model_hidden_from_the_app_without_an_administrator_is_unverified(resources, grants) -> None:
+    """At startup there is no administrator client, so the app SP's miss can't prove the model is gone."""
+    sp = "11111111-2222-3333-4444-555555555555"
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+
+    step = _check(resources, workspace, FakeAiSettings(), app_sp_id=sp)
+
+    assert step.code == "ai_access_unverified"
+    assert any(
+        f"GRANT READ_METADATA ON MODEL SERVICE `system`.`ai`.`chat-model` TO `{sp}`;" in instruction
+        for instruction in step.instructions
+    )
+    assert not any("doesn't exist" in instruction for instruction in step.instructions)
+
+
+def test_failed_administrator_lookup_is_unverified_not_missing(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants)
+    reader.api_client.do.side_effect = PermissionError("denied")
+
+    step = _check(resources, workspace, FakeAiSettings(), reader)
+
+    assert step.code == "ai_access_unverified"
+
+
+def test_non_model_service_name_asks_for_a_model_choice(resources, workspace) -> None:
+    step = _check(resources, workspace, FakeAiSettings(endpoint="my-provisioned-endpoint"))
+
+    assert step.code == "ai_endpoint_missing"
+    assert any("isn't a Unity Gateway model service" in instruction for instruction in step.instructions)
+
+
+def test_no_chat_model_selected_warns(resources, workspace) -> None:
+    step = _check(resources, workspace, FakeAiSettings(endpoint=""))
+
+    assert step.code == "ai_endpoint_missing"
+    assert any("No AI model is selected" in instruction for instruction in step.instructions)
+
+
+def test_unreadable_grants_are_confirmed_by_the_app_seeing_the_model(resources, workspace, grants) -> None:
+    """Only owners and MANAGE holders can read grants on system.ai, so most installs can't read them."""
+    grants.unreadable = True
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.state == StepState.PASSED
+
+
+def test_unreadable_grants_on_a_model_the_app_cant_see_are_unverified(resources, grants) -> None:
+    grants.unreadable = True
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants)
+
+    step = _check(resources, workspace, FakeAiSettings(), reader)
 
     assert step.state == StepState.WARNING
-    assert settings.enabled is True
-    assert "couldn't turn AI features off" in step.summary
-    assert "lakebase unavailable" not in str(step)
+    assert step.code == "ai_access_unverified"
+    assert "denied" not in str(step)
+    assert any("`data-team`" in instruction for instruction in step.instructions)
 
 
-def test_endpoint_lookup_failure_is_unverified_without_leaking_details(workspace) -> None:
-    workspace.serving_endpoints.get.side_effect = RuntimeError("internal timeout detail")
+def test_grants_fall_back_to_the_administrator_client(resources, workspace) -> None:
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+    reader = _client(FakeGrants())
 
-    step = _check(workspace, FakeAiSettings())
-
-    assert step.state == StepState.WARNING
-    assert step.code == "ai_endpoint_unverified"
-    assert "internal timeout detail" not in str(step)
+    assert _check(resources, workspace, FakeAiSettings(), reader).state == StepState.PASSED
 
 
-def test_missing_endpoint_outranks_a_failed_lookup(workspace) -> None:
-    def get(name: str) -> SimpleNamespace:
-        if name == "chat-endpoint":
-            raise NotFound("missing")
-        raise RuntimeError("timeout")
-
-    workspace.serving_endpoints.get.side_effect = get
-
-    assert _check(workspace, FakeAiSettings()).code == "ai_endpoint_missing"
-
-
-def test_admin_enabled_ai_stays_on_when_an_endpoint_is_missing(workspace, admin) -> None:
-    workspace.serving_endpoints.get.side_effect = NotFound("missing")
+def test_admin_enabled_ai_stays_on_when_access_fails(resources, workspace, grants) -> None:
+    grants.default = set()
     settings = FakeAiSettings(source="admin")
 
-    step = _check(workspace, settings, admin)
+    step = _check(resources, workspace, settings)
 
     assert step.state == StepState.WARNING
     assert settings.enabled is True
@@ -147,93 +303,111 @@ def test_admin_enabled_ai_stays_on_when_an_endpoint_is_missing(workspace, admin)
     assert "AI features are on" in step.summary
 
 
-def test_setup_turned_off_ai_comes_back_once_endpoints_are_listed(workspace, admin) -> None:
+def test_setup_turned_off_ai_comes_back_once_access_is_confirmed(resources, workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(workspace, settings, admin)
+    step = _check(resources, workspace, settings, workspace)
 
     assert step.state == StepState.PASSED
     assert settings.enabled is True
     assert settings.saves == [(True, "setup", None)]
 
 
-def test_setup_turned_off_ai_stays_off_while_an_endpoint_is_missing(workspace, admin) -> None:
-    workspace.serving_endpoints.get.side_effect = NotFound("missing")
+def test_unattended_check_asks_an_administrator_to_turn_ai_back_on(resources, workspace) -> None:
+    """A restart never flips the setting, but it must not hide that AI is still off."""
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    step = _check(workspace, settings, admin)
+    step = _check(resources, workspace, settings)
+
+    assert step.state == StepState.WARNING
+    assert step.code == "ai_reenable_pending"
+    assert "Verify again" in step.summary
+    assert settings.saves == []
+
+
+def test_unattended_check_never_turns_ai_off(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    grants.default = set()
+    settings = FakeAiSettings()
+
+    step = _check(resources, workspace, settings)
+
+    assert step.state == StepState.WARNING
+    assert settings.enabled is True
+    assert settings.saves == []
+    assert "until an administrator clicks Verify again" in step.summary
+
+
+def test_unverified_access_never_turns_ai_off(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants)
+    reader.api_client.do.side_effect = PermissionError("denied")
+    settings = FakeAiSettings()
+
+    step = _check(resources, workspace, settings, reader)
+
+    assert step.code == "ai_access_unverified"
+    assert settings.enabled is True
+    assert settings.saves == []
+
+
+def test_reports_ai_still_on_when_turning_it_off_fails(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants, existing={"system.ai.embed-model"})
+    settings = FakeAiSettings(save_failure=RuntimeError("lakebase unavailable"))
+
+    step = _check(resources, workspace, settings, reader)
+
+    assert step.code == "ai_endpoint_missing"
+    assert settings.enabled is True
+    assert "couldn't turn AI features off" in step.summary
+    assert "lakebase unavailable" not in str(step)
+
+
+def test_setup_turned_off_ai_stays_off_while_access_fails(resources, workspace, grants) -> None:
+    grants.default = set()
+    settings = FakeAiSettings(enabled=False, source="setup")
+
+    step = _check(resources, workspace, settings)
 
     assert step.state == StepState.WARNING
     assert settings.enabled is False
     assert settings.saves == []
 
 
-def test_admin_turned_off_ai_is_not_checked(workspace) -> None:
+def test_admin_turned_off_ai_is_not_checked(resources, workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="admin")
 
-    step = _check(workspace, settings)
+    step = _check(resources, workspace, settings)
 
     assert step.state == StepState.PASSED
     assert "turned off in Settings" in step.summary
-    workspace.serving_endpoints.get.assert_not_called()
+    workspace.api_client.do.assert_not_called()
+    workspace.grants.get_effective.assert_not_called()
     assert settings.saves == []
 
 
-def test_unreadable_settings_warn_without_blocking(workspace) -> None:
+def test_unreadable_settings_warn_without_blocking(resources, workspace) -> None:
     settings = FakeAiSettings()
     settings.get_ai_enabled = MagicMock(side_effect=RuntimeError("lakebase down"))
 
-    step = _check(workspace, settings)
+    step = _check(resources, workspace, settings)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_settings_unreadable"
 
 
-def test_keep_enabled_is_an_administrator_choice(workspace) -> None:
+def test_keep_enabled_is_an_administrator_choice(resources, workspace) -> None:
     settings = FakeAiSettings(enabled=False, source="setup")
 
-    AiAccess(workspace=workspace, settings=settings).keep_enabled(user_email="admin@example.com")
+    AiAccess(resources=resources, workspace=workspace, settings=settings).keep_enabled(user_email="admin@example.com")
 
     assert settings.saves == [(True, "admin", "admin@example.com")]
 
 
-def test_endpoint_names_are_sorted_and_deduplicated(workspace) -> None:
-    access = AiAccess(workspace=workspace, settings=FakeAiSettings(endpoint="b", embedding="a"))
+def test_model_names_are_sorted_and_deduplicated(resources, workspace) -> None:
+    access = AiAccess(resources=resources, workspace=workspace, settings=FakeAiSettings(endpoint="b", embedding="a"))
 
-    assert access.endpoint_names() == ("a", "b")
-    same = AiAccess(workspace=workspace, settings=FakeAiSettings(endpoint="x", embedding="x"))
-    assert same.endpoint_names() == ("x",)
-
-
-def test_unattended_check_reports_but_never_changes_the_ai_setting(workspace) -> None:
-    """A restart may not see an endpoint the administrator can, so it must not flip AI off."""
-    workspace.serving_endpoints.get.side_effect = NotFound("not visible to the app")
-    settings = FakeAiSettings()
-
-    step = _check(workspace, settings)
-
-    assert step.state == StepState.WARNING
-    assert step.code == "ai_endpoint_missing"
-    assert settings.saves == []
-    assert "until an administrator" in step.summary
-
-
-def test_unattended_check_does_not_turn_setup_disabled_ai_back_on(workspace) -> None:
-    settings = FakeAiSettings(enabled=False, source="setup")
-
-    step = _check(workspace, settings)
-
-    assert step.state == StepState.PASSED
-    assert settings.enabled is False
-    assert settings.saves == []
-
-
-def test_endpoint_the_app_cannot_see_is_found_as_the_administrator(workspace, admin) -> None:
-    workspace.serving_endpoints.get.side_effect = NotFound("no CAN_VIEW for the app")
-    admin.serving_endpoints.get.side_effect = lambda name: SimpleNamespace(id="custom-id", name=name)
-    settings = FakeAiSettings()
-
-    step = _check(workspace, settings, admin)
-
-    assert step.state == StepState.PASSED
-    assert settings.saves == []
+    assert access.model_names() == ("a", "b")
+    same = AiAccess(resources=resources, workspace=workspace, settings=FakeAiSettings(endpoint="x", embedding="x"))
+    assert same.model_names() == ("x",)

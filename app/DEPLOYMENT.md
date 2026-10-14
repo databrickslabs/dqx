@@ -20,7 +20,7 @@ Both paths finish in the same readiness workflow (setup page). Studio APIs stay 
 2. **Share the app** with the audience group and the administrator group: **Compute > Apps > `<app-name>` > Permissions**, assign `Can Use`. Studio cannot always read or change its own app sharing, so this is a manual step (see [App sharing](#app-sharing)).
 3. **Open Studio as a workspace administrator** (a member of `admins` or of the group named by `DQX_ADMIN_GROUP`).
 4. In the setup form, enter the **catalog**, the **storage prefix** (default `dqx_studio`), and the **audience group**, then submit.
-5. **Run the printed `GRANT` statements** if setup reports missing access. The app service principal needs `USE CATALOG` and `CREATE SCHEMA` on the catalog, and the audience (and a custom admin group) needs `USE CATALOG`. Setup attempts the audience grants first; the app service principal and runner grants need an administrator with grant authority. Choose **Verify again** after each change. Assign the task-runner service principal as the job's `run_as` identity when prompted. Studio sees grants made directly to a principal or to the built-in `users` / `account users` groups: if you granted access through another parent group, or set it up by hand (for example the warehouse or app sharing), choose **Continue anyway** on that step. Studio records the override and stops blocking on it until the catalog, prefix, audience, warehouse or AI endpoint changes. If a configured AI model endpoint doesn't exist in the workspace, setup turns AI features off with a warning when an administrator verifies setup; pick another endpoint in **Settings** and choose **Verify again**, choose **Keep AI features on**, or turn AI back on in **Settings**. Setup only checks that the endpoints exist. Databricks-hosted models (for example `databricks-claude-sonnet-4-5`) can be queried by every workspace user, but for a custom serving endpoint you must give the audience group **Can query** on it yourself (**Serving** > the endpoint > **Permissions**), because AI calls run as the signed-in user.
+5. **Run the printed `GRANT` statements** if setup reports missing access. The app service principal needs `USE CATALOG` and `CREATE SCHEMA` on the catalog, and the audience (and a custom admin group) needs `USE CATALOG`. Setup attempts the audience grants first; the app service principal and runner grants need an administrator with grant authority. Choose **Verify again** after each change. Assign the task-runner service principal as the job's `run_as` identity when prompted. Studio sees grants made directly to a principal or to the built-in `users` / `account users` groups: if you granted access through another parent group, or set it up by hand (for example the warehouse or app sharing), choose **Continue anyway** on that step. Studio records the override and stops blocking on it until the catalog, prefix, audience, warehouse or AI model changes. AI features call Unity Gateway model services in `system.ai` (for example `system.ai.claude-sonnet-4-5`) as the signed-in user, so Studio users need `EXECUTE` on the model service plus `USE CATALOG` on `system` and `USE SCHEMA` on `system.ai`. Databricks grants these to all account users by default; if they have been revoked, setup lists the `GRANT` statements a metastore admin must run and, when an administrator verifies setup, turns AI features off with a warning. Run the statements and choose **Verify again**, choose **Keep AI features on**, or turn AI back on in **Settings**.
 6. **Assign roles**: in Studio open **Admin Settings > Entitlements** and map the audience groups to the Author, Approver, and Viewer roles. Onboarding afterwards is group membership.
 
 ### DAB
@@ -195,6 +195,34 @@ These are configured at the workspace or account level — not by you, not by th
 ### The catalog must already exist
 
 The bundle **does not create the catalog itself** — that's deliberate. Catalogs are typically owned by a governance team and creating them requires `CREATE CATALOG` on the metastore. Pick an existing catalog you (or an admin group you're in) have rights on, and set `catalog_name` in [Step 4](#step-4-configure-databricksyml). The bundle creates the main, temporary, Genie, and demo schemas and the wheels volume *inside* that catalog — no `CREATE CATALOG` permission required at the metastore level.
+
+### AI model access (Unity Gateway)
+
+AI features (rule generation, rule suggestions, test data, natural-language table queries) call Databricks-provided **Unity Gateway model services** in `system.ai` — by default `system.ai.claude-sonnet-4-5` for chat and `system.ai.gte-large-en` for embeddings — through the `/ai-gateway/mlflow/v1` routes. They replace the legacy `databricks-*` pay-per-token serving endpoints, which retire on March 30, 2027 (and stop working sooner if a workspace admin turns on **Enforce Unity Gateway**).
+
+Studio's AI features are **AI Gateway only**. Legacy Model Serving endpoints — pay-per-token, custom, provisioned throughput and external-model endpoints — are not supported. A saved `databricks-*` name is mapped to its `system.ai` model service (`databricks-claude-sonnet-4-5` → `system.ai.claude-sonnet-4-5`); any other name must be a Unity Gateway model service (`catalog.schema.name`).
+
+The app requests two user API scopes for this, which users see on the consent screen:
+
+- `ai-gateway` — query Unity Gateway model services on the user's behalf
+- `ai-functions` — invoke Databricks AI Functions on the user's behalf
+
+Calls run as the signed-in user, except embedding newly published rules, which runs as the app service principal. So the Studio audience group (and a custom admin group) needs, and the app service principal needs on the embedding model:
+
+- `EXECUTE` on each configured model service
+- `USE CATALOG` on `system` and `USE SCHEMA` on `system.ai`
+
+Databricks grants all of these to `account users` by default, so most workspaces need no action. If a metastore admin has restricted `system.ai`, a **metastore admin** (or anyone with `MANAGE` on the model services) must grant them — Studio can't. Setup's AI step checks the grants where it can read them and prints the exact `GRANT` statements to run. Only owners and `MANAGE` holders can read grants on `system.ai`, so when they can't be read, Studio treats the app service principal being able to see the model as confirmation of access. Example statements:
+
+```sql
+GRANT USE_CATALOG ON CATALOG `system` TO `dqx-studio-users`;
+GRANT USE_SCHEMA ON SCHEMA `system`.`ai` TO `dqx-studio-users`;
+GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`claude-sonnet-4-5` TO `dqx-studio-users`;
+```
+
+Existing deployments need no settings change. Pick a different model under **Settings → AI**.
+
+**Upgrading an existing deployment:** a user's app token carries the scopes the app had when they signed in. After the first deploy that adds `ai-gateway`, users who were already signed in see "Studio isn't allowed to call AI models for you yet" until they sign in to the app again (a new browser session, or clearing the app's cookies, is enough).
 
 ## Step 1: Create a Service Principal
 

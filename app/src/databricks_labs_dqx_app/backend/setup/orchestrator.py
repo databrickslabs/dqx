@@ -110,13 +110,13 @@ class AccessChecks(Protocol):
 
 
 class AiChecks(Protocol):
-    """Non-blocking check that the configured AI model endpoints exist."""
+    """Non-blocking check that Studio users can use the AI model services."""
 
     def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep: ...
 
     def keep_enabled(self, *, user_email: str | None) -> None: ...
 
-    def endpoint_names(self) -> tuple[str, ...]: ...
+    def model_names(self) -> tuple[str, ...]: ...
 
 
 class SetupJobs(Protocol):
@@ -531,7 +531,7 @@ class SetupOrchestrator:
             if step_id == SetupStepId.WAREHOUSE:
                 subject = bound.checkers.effective_warehouse_id()
             elif step_id == SetupStepId.AI and bound.ai is not None:
-                subject = ",".join(bound.ai.endpoint_names())
+                subject = ",".join(bound.ai.model_names())
             else:
                 subject = ""
         except Exception:

@@ -175,7 +175,7 @@ class FakeAi:
     def keep_enabled(self, *, user_email: str | None) -> None:
         self.kept_enabled_by.append(user_email)
 
-    def endpoint_names(self) -> tuple[str, ...]:
+    def model_names(self) -> tuple[str, ...]:
         return self.endpoints
 
 
