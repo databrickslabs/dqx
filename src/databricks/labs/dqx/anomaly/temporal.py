@@ -37,11 +37,13 @@ on a tail the fit never saw.
 
 import logging
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from sklearn.linear_model import HuberRegressor
+from sklearn.exceptions import ConvergenceWarning
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ HOLDOUT_FRACTION = 0.2
 HUBER_EPSILON = 1.35
 HUBER_ALPHA = 1e-4
 HUBER_MAX_ITER = 400
+HUBER_RETRY_MAX_ITER = 1600
 
 # Scales a median absolute deviation to a standard deviation for Gaussian data. Used for the robust
 # residual scale that changepoint selection is judged on.
@@ -220,14 +223,34 @@ def _fit_one(design: np.ndarray, values: np.ndarray) -> list[float] | None:
     centre, spread = _response_scale(values)
     try:
         model = HuberRegressor(epsilon=HUBER_EPSILON, alpha=HUBER_ALPHA, max_iter=HUBER_MAX_ITER)
-        model.fit(design[:, 1:], (values - centre) / spread)
+        for iteration_limit in (HUBER_MAX_ITER, HUBER_RETRY_MAX_ITER):
+            model.set_params(max_iter=iteration_limit, warm_start=iteration_limit != HUBER_MAX_ITER)
+            if _fit_converged(model, design[:, 1:], (values - centre) / spread):
+                break
+        else:
+            logger.warning("Temporal fit did not converge after a bounded retry; omitting this expectation")
+            return None
     except (ValueError, FloatingPointError) as exc:
-        logger.debug(f"Temporal fit failed, falling back to no temporal feature for this metric: {exc}")
+        logger.debug(f"Temporal fit failed ({type(exc).__name__}); omitting this expectation")
         return None
     return [
         float(model.intercept_) * spread + centre,
         *(float(c) * spread for c in model.coef_),
     ]
+
+
+def _fit_converged(model: HuberRegressor, design: np.ndarray, values: np.ndarray) -> bool:
+    """Fit once, preserving unrelated warnings even when fitting raises."""
+    captured: list[warnings.WarningMessage] = []
+    try:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", ConvergenceWarning)
+            model.fit(design, values)
+    finally:
+        for warning in captured:
+            if not issubclass(warning.category, ConvergenceWarning):
+                warnings.warn(warning.message, warning.category, stacklevel=2)
+    return not any(issubclass(warning.category, ConvergenceWarning) for warning in captured)
 
 
 def _response_scale(values: np.ndarray) -> tuple[float, float]:
@@ -430,12 +453,17 @@ def trend_strength(seconds: np.ndarray, metrics: dict[str, np.ndarray], basis: T
     shares: list[float] = []
     for values in metrics.values():
         values = np.asarray(values, dtype=float)
+        observed = np.isfinite(values) & np.all(np.isfinite(design), axis=1)
+        values = values[observed]
+        metric_design = design[observed]
+        if values.size < 3:
+            continue
         variance = float(np.var(values))
         if variance <= 0:
             continue
-        coefficients = _fit_one(design, values)
+        coefficients = _fit_one(metric_design, values)
         if coefficients is None:
             continue
-        residual = values - design @ np.asarray(coefficients)
+        residual = values - metric_design @ np.asarray(coefficients)
         shares.append(max(0.0, 1.0 - float(np.var(residual)) / variance))
     return float(np.median(shares)) if shares else 0.0

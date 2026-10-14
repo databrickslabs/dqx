@@ -1,5 +1,7 @@
 import inspect
 import logging
+from decimal import Decimal
+from typing import cast
 from unittest.mock import create_autospec, patch
 
 import pytest
@@ -51,23 +53,28 @@ def test_has_no_row_anomalies_requires_fully_qualified_registry_table():
     assert "registry_table must be fully qualified" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_rejects_threshold_out_of_range():
-    """threshold must be between 0.0 and 100.0."""
+@pytest.mark.parametrize("threshold", [100.0, 120.0, -0.1, float("nan"), float("inf"), float("-inf")])
+def test_has_no_row_anomalies_rejects_invalid_thresholds(threshold: float):
+    """Thresholds must be finite percentiles in the half-open interval [0, 100)."""
     with pytest.raises(InvalidParameterError) as exc_info:
         has_no_row_anomalies(
             model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
-            threshold=120.0,
+            threshold=threshold,
         )
-    assert "threshold must be between 0.0 and 100.0" in str(exc_info.value)
+    assert "finite number" in str(exc_info.value)
 
-    with pytest.raises(InvalidParameterError) as exc_info:
-        has_no_row_anomalies(
-            model_name="catalog.schema.model",
-            registry_table="catalog.schema.table",
-            threshold=-0.1,
-        )
-    assert "threshold must be between 0.0 and 100.0" in str(exc_info.value)
+
+@pytest.mark.parametrize("threshold", ["99.5", Decimal("99.75")])
+def test_has_no_row_anomalies_keeps_finite_threshold_coercion(threshold: object):
+    """Existing finite values accepted by float coercion remain accepted."""
+    check, apply_fn, _info = has_no_row_anomalies(
+        model_name="catalog.schema.model",
+        registry_table="catalog.schema.table",
+        threshold=cast(float, threshold),
+        enable_contributions=False,
+    )
+    assert check is not None and apply_fn is not None
 
 
 def test_has_no_row_anomalies_rejects_non_positive_drift_threshold():

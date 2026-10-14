@@ -25,11 +25,11 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 
 def test_validate_spark_version_raises_for_old_spark():
-    """Test that validate_spark_version raises for Spark < 3.4."""
+    """Test that validate_spark_version raises for Spark < 3.5."""
     mock_spark = type("MockSpark", (), {"version": "3.2.0"})()
     with pytest.raises(InvalidParameterError) as exc_info:
         validation.validate_spark_version(mock_spark)
-    assert "Spark >= 3.4" in str(exc_info.value)
+    assert "Spark >= 3.5" in str(exc_info.value)
     assert "3.2" in str(exc_info.value)
 
 
@@ -38,8 +38,15 @@ def test_validate_spark_version_raises_for_spark_2():
     mock_spark = type("MockSpark", (), {"version": "2.4.8"})()
     with pytest.raises(InvalidParameterError) as exc_info:
         validation.validate_spark_version(mock_spark)
-    assert "Spark >= 3.4" in str(exc_info.value)
+    assert "Spark >= 3.5" in str(exc_info.value)
     assert "2.4" in str(exc_info.value)
+
+
+def test_validate_spark_version_rejects_spark_3_4_and_accepts_3_5() -> None:
+    with pytest.raises(InvalidParameterError, match="Spark >= 3.5"):
+        validation.validate_spark_version(type("MockSpark", (), {"version": "3.4.9"})())
+
+    validation.validate_spark_version(type("MockSpark", (), {"version": "3.5.0"})())
 
 
 # ============================================================================

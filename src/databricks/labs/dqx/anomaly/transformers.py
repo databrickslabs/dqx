@@ -38,6 +38,7 @@ from pyspark.sql.functions import (
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
+from databricks.labs.dqx.anomaly.group_config import MIN_ROWS_PER_BASELINE_GROUP
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis, fit_temporal, select_basis
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
@@ -274,7 +275,10 @@ class ColumnTypeClassifier:
         column_infos = []
         unsupported_cols = []
 
-        null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in columns]
+        null_exprs = [
+            F.count(F.when(F.col(quote_column_name(col_name)).isNull(), 1)).alias(f"{col_name}__nulls")
+            for col_name in columns
+        ]
         nulls_row = df.agg(*null_exprs).first()
         if nulls_row is None:
             raise ComputationError("Failed to compute null counts for columns")
@@ -284,7 +288,7 @@ class ColumnTypeClassifier:
         distinct_counts: dict[str, int] = {}
         if string_columns:
             distinct_exprs = [
-                F.approx_count_distinct(col_name, rsd=0.05).alias(f"{col_name}__distinct")
+                F.approx_count_distinct(col(quote_column_name(col_name)), rsd=0.05).alias(f"{col_name}__distinct")
                 for col_name in string_columns
             ]
             distinct_row = df.agg(*distinct_exprs).first()
@@ -516,7 +520,9 @@ class ColumnTypeClassifier:
         for col_name in numeric_columns:
             # Use approx_count_distinct with 5% error (rsd=0.05) for fast cardinality estimation
             # This is accurate enough for ID detection (>1000 or >80% thresholds)
-            agg_exprs.append(F.approx_count_distinct(col_name, rsd=0.05).alias(f"_distinct_{col_name}"))
+            agg_exprs.append(
+                F.approx_count_distinct(col(quote_column_name(col_name)), rsd=0.05).alias(f"_distinct_{col_name}")
+            )
 
         stats_row = df.agg(*agg_exprs).first()
         if stats_row is None:
@@ -568,8 +574,7 @@ class ColumnTypeClassifier:
                     # Cap display at 100% since approx_count_distinct can slightly exceed total_rows
                     display_ratio = min(uniqueness_ratio, 1.0)
                     issues.append(
-                        f"has very high cardinality (~{distinct_count} distinct values, "
-                        f"~{display_ratio:.0%} unique)"
+                        f"has very high cardinality (~{distinct_count} distinct values, ~{display_ratio:.0%} unique)"
                     )
 
         return issues
@@ -744,7 +749,9 @@ def _apply_frequency_encoding(
             engineered_features.append(feature_name)
             return transformed_df
 
-        freq_counts = transformed_df.groupBy(col_name).agg((F.count("*") / F.lit(total_count)).alias(lookup_val_col))
+        freq_counts = transformed_df.groupBy(col(quote_column_name(col_name))).agg(
+            (F.count("*") / F.lit(total_count)).alias(lookup_val_col)
+        )
         freq_map = {row[col_name]: float(row[lookup_val_col]) for row in freq_counts.collect()}
         frequency_maps[col_name] = freq_map
 
@@ -764,10 +771,10 @@ def _apply_frequency_encoding(
     freq_lookup_df = transformed_df.sparkSession.createDataFrame(freq_rows, schema=freq_schema)
     transformed_df = transformed_df.join(
         broadcast(freq_lookup_df),
-        transformed_df[col_name] == freq_lookup_df[lookup_key_col],
+        transformed_df[quote_column_name(col_name)] == freq_lookup_df[quote_column_name(lookup_key_col)],
         "left",
     )
-    transformed_df = transformed_df.withColumn(feature_name, coalesce(col(lookup_val_col), lit(0.0)))
+    transformed_df = transformed_df.withColumn(feature_name, coalesce(col(quote_column_name(lookup_val_col)), lit(0.0)))
     transformed_df = transformed_df.drop(lookup_key_col, lookup_val_col)
     engineered_features.append(feature_name)
 
@@ -820,14 +827,15 @@ def _process_datetime_columns(
 
         # Impute nulls with epoch
         transformed_df = transformed_df.withColumn(
-            col_name, coalesce(col(col_name).cast(TimestampType()), to_timestamp(lit("1970-01-01 00:00:00")))
+            col_name,
+            coalesce(col(quote_column_name(col_name)).cast(TimestampType()), to_timestamp(lit("1970-01-01 00:00:00"))),
         )
 
         # Extract cyclical features. Paired with their suffixes rather than written out one
         # ``withColumn`` at a time, so the emitted order is the order of CALENDAR_FEATURE_SUFFIXES by
         # construction: that tuple is what collision validation checks against, and
         # engineered_feature_names is positional, so the two must not be able to drift apart.
-        timestamp = col(col_name)
+        timestamp = col(quote_column_name(col_name))
         calendar_expressions = (
             sin(hour(timestamp) * 2 * pi() / 24),
             cos(hour(timestamp) * 2 * pi() / 24),
@@ -864,7 +872,10 @@ def _process_boolean_columns(
         # Map to 0/1 (nulls -> 0)
         feature_name = f"{col_name}{BOOLEAN_FEATURE_SUFFIX}"
         transformed_df = transformed_df.withColumn(
-            feature_name, when(col(col_name).isNull(), 0.0).when(col(col_name), 1.0).otherwise(0.0)
+            feature_name,
+            when(col(quote_column_name(col_name)).isNull(), 0.0)
+            .when(col(quote_column_name(col_name)), 1.0)
+            .otherwise(0.0),
         )
         engineered_features.append(feature_name)
 
@@ -891,7 +902,7 @@ def _process_numeric_columns(
         # Add null indicator if needed
         transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
 
-        transformed_df = transformed_df.withColumn(col_name, col(col_name).cast(DoubleType()))
+        transformed_df = transformed_df.withColumn(col_name, col(quote_column_name(col_name)).cast(DoubleType()))
         engineered_features.append(col_name)
 
     return transformed_df
@@ -958,10 +969,10 @@ def _epoch_seconds(time_column: str, t_min: float) -> Column:
     Kept in one place because training and scoring must agree on it exactly. A different origin or a
     different unit produces an expectation for a design the coefficients were never fitted to.
     """
-    return F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType()) - lit(t_min)
+    return F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType()) - lit(t_min)
 
 
-def _temporal_expected_column(basis: "TemporalBasis", coefficients: list[float], seconds: Column) -> Column:
+def _temporal_expected_column(basis: TemporalBasis, coefficients: list[float], seconds: Column) -> Column:
     """The fitted expected level, as a Spark expression.
 
     Deliberately a column expression rather than a UDF: it is a closed-form function of the row's own
@@ -1062,9 +1073,9 @@ def _process_baseline_relative_features(
             continue
 
         global_baseline = global_medians.get(metric, 0.0)
-        resolved_baseline = coalesce(col(baseline_cols[metric]), lit(global_baseline))
+        resolved_baseline = coalesce(col(quote_column_name(baseline_cols[metric])), lit(global_baseline))
         transformed_df = transformed_df.withColumn(
-            feature_name, _signed_log1p(col(metric)) - _signed_log1p(resolved_baseline)
+            feature_name, _signed_log1p(col(quote_column_name(metric))) - _signed_log1p(resolved_baseline)
         )
         engineered_features.append(feature_name)
 
@@ -1081,29 +1092,44 @@ def _process_baseline_relative_features(
 def _compute_baseline_medians(
     df: DataFrame, metrics: list[str], group_key_col: str
 ) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
-    """Compute each metric's per-group median, plus a global median for unseen groups.
+    """Compute supported group medians, using the pooled median for undersized known groups.
 
     One ``groupBy`` over all metrics rather than one per metric, and one global aggregation.
     ``percentile_approx`` rather than an exact median: the baseline only has to be
     representative, and an exact median would need a full sort per group.
     """
-    group_exprs = [F.percentile_approx(col(m), 0.5).alias(m) for m in metrics]
-    group_rows = df.groupBy(group_key_col).agg(*group_exprs).collect()
-
-    baseline_medians: dict[str, dict[str, float]] = {m: {} for m in metrics}
-    for row in group_rows:
-        key = row[group_key_col]
-        for metric in metrics:
-            value = row[metric]
-            if value is not None:
-                baseline_medians[metric][key] = float(value)
-
-    global_row = df.agg(*[F.percentile_approx(col(m), 0.5).alias(m) for m in metrics]).first()
+    usable_values = {
+        metric: F.when(
+            col(quote_column_name(metric)).isNotNull()
+            & ~F.isnan(col(quote_column_name(metric)))
+            & (F.abs(col(quote_column_name(metric))) < lit(float("inf"))),
+            col(quote_column_name(metric)),
+        )
+        for metric in metrics
+    }
+    # Aggregated fields use ordinal aliases so arbitrary metric names cannot collide with counts.
+    medians = [
+        F.percentile_approx(usable_values[metric], 0.5).alias(f"median_{index}") for index, metric in enumerate(metrics)
+    ]
+    counts = [F.count(usable_values[metric]).alias(f"count_{index}") for index, metric in enumerate(metrics)]
+    group_rows = df.groupBy(group_key_col).agg(*medians, *counts).collect()
+    global_row = df.agg(*medians).first()
     global_medians: dict[str, float] = {}
     if global_row is not None:
-        for metric in metrics:
-            value = global_row[metric]
+        for index, metric in enumerate(metrics):
+            value = global_row[f"median_{index}"]
             global_medians[metric] = float(value) if value is not None else 0.0
+
+    baseline_medians: dict[str, dict[str, float]] = {metric: {} for metric in metrics}
+    for row in group_rows:
+        key = row[group_key_col]
+        for index, metric in enumerate(metrics):
+            value = row[f"median_{index}"]
+            baseline_medians[metric][key] = (
+                float(value)
+                if value is not None and row[f"count_{index}"] >= MIN_ROWS_PER_BASELINE_GROUP
+                else global_medians.get(metric, 0.0)
+            )
 
     return baseline_medians, global_medians
 
@@ -1134,7 +1160,7 @@ def _fit_temporal_from_buckets(
     df: DataFrame,
     time_column: str,
     source_columns: dict[str, str],
-) -> tuple["TemporalBasis", dict[str, list[float]], dict[float, str], dict[str, float]]:
+) -> tuple[TemporalBasis, dict[str, list[float]], dict[float, str], dict[str, float]]:
     """Fit the temporal basis from a bucketed aggregate of the training frame.
 
     The fit needs the data on the driver, and a table can be arbitrarily large, so the frame is first
@@ -1162,8 +1188,12 @@ def _fit_temporal_from_buckets(
         ``(basis, coefficients, rejected_periods, window)``.
     """
     bounds = df.agg(
-        F.min(F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType())).alias("t_min"),
-        F.max(F.unix_timestamp(col(time_column).cast(TimestampType())).cast(DoubleType())).alias("t_max"),
+        F.min(F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())).alias(
+            "t_min"
+        ),
+        F.max(F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())).alias(
+            "t_max"
+        ),
     ).first()
     if bounds is None or bounds["t_min"] is None or bounds["t_max"] is None:
         raise ComputationError(
@@ -1180,10 +1210,12 @@ def _fit_temporal_from_buckets(
     # unparseable row was enough to fail training outright. Dropping them removes the bucket rather than
     # guarding its symptom; the all-null case is already refused above, with an explanation.
     # Scoring has always tolerated a null timestamp by emitting a zero residual, so this aligns the two.
-    bucketed = df.filter(col(time_column).cast(TimestampType()).isNotNull()).withColumn(
+    bucketed = df.filter(col(quote_column_name(time_column)).cast(TimestampType()).isNotNull()).withColumn(
         "__dqx_time_bucket", F.floor(seconds / lit(bucket_width))
     )
-    aggregations = [F.percentile_approx(col(source), 0.5).alias(name) for name, source in source_columns.items()]
+    aggregations = [
+        F.percentile_approx(col(quote_column_name(source)), 0.5).alias(name) for name, source in source_columns.items()
+    ]
     rows = (
         bucketed.groupBy("__dqx_time_bucket")
         .agg(F.min(seconds).alias("__dqx_bucket_seconds"), *aggregations)
@@ -1280,7 +1312,7 @@ def _process_temporal_baseline_features(
             continue
         expected_level = _temporal_expected_column(basis, coefficient_vector, seconds)
         transformed_df = transformed_df.withColumn(
-            feature_name, coalesce(col(source_columns[metric]) - expected_level, lit(0.0))
+            feature_name, coalesce(col(quote_column_name(source_columns[metric])) - expected_level, lit(0.0))
         )
         engineered_features.append(feature_name)
 
@@ -1317,14 +1349,14 @@ def _impute_numeric_features(
         if baseline_over_time:
             names.append(f"{metric}{TEMPORAL_RELATIVE_SUFFIX}")
         for name in names:
-            transformed_df = transformed_df.withColumn(name, coalesce(col(name), lit(0.0)))
+            transformed_df = transformed_df.withColumn(name, coalesce(col(quote_column_name(name)), lit(0.0)))
 
     return transformed_df
 
 
 def _log_temporal_fit(
     time_column: str,
-    basis: "TemporalBasis",
+    basis: TemporalBasis,
     coefficients: dict[str, list[float]],
     rejected: dict[float, str],
     metrics: list[str],

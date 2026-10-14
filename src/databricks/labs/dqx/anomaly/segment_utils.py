@@ -6,6 +6,8 @@ from typing import Any
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.utils import quote_column_name
+
 
 # Separator between group column values in a composite group key. ASCII unit separator: a
 # control character, so ordinary categorical data (names, codes, countries) cannot contain it and
@@ -82,7 +84,10 @@ def baseline_key_column(baseline_by: list[str]) -> Column:
     truth — it is what runs at scoring time — so *_as_spark_string* is written to match
     ``cast("string")`` rather than the other way round.
     """
-    parts = [F.coalesce(F.col(name).cast("string"), F.lit(BASELINE_KEY_NULL)) for name in sorted(baseline_by, key=str)]
+    parts = [
+        F.coalesce(F.col(quote_column_name(name)).cast("string"), F.lit(BASELINE_KEY_NULL))
+        for name in sorted(baseline_by, key=str)
+    ]
     return F.concat_ws(BASELINE_KEY_SEPARATOR, *parts)
 
 

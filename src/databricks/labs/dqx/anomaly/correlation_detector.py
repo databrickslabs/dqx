@@ -243,7 +243,7 @@ class MahalanobisDetector(BaseEstimator, OutlierMixin):
         contributions[:, self.active_] = active_contributions
         return contributions
 
-    def block_contributions(self, X: np.ndarray, blocks: "Sequence[Sequence[int]]") -> np.ndarray:
+    def block_contributions(self, X: np.ndarray, blocks: Sequence[Sequence[int]]) -> np.ndarray:
         """Joint-marginalisation drop for each *group* of features, rather than one feature at a time.
 
         Feature engineering can give one source column several engineered views -- the metric itself, its

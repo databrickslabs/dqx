@@ -26,6 +26,7 @@ from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
 from databricks.labs.dqx.anomaly.feature_prep import collect_feature_matrix
+from databricks.labs.dqx.anomaly.group_config import MIN_ROWS_PER_BASELINE_GROUP
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
@@ -35,6 +36,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.anomaly.types import ScoreCalibration
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,9 @@ def sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple
     missing_cols = [c for c in columns if c not in df.columns]
     if missing_cols:
         raise InvalidParameterError(f"Columns not found in DataFrame: {missing_cols}")
-    sampled = df.select(*columns).sample(withReplacement=False, fraction=fraction, seed=42)
+    sampled = df.select(*[F.col(quote_column_name(name)) for name in columns]).sample(
+        withReplacement=False, fraction=fraction, seed=42
+    )
     if params.max_rows:
         sampled = sampled.limit(params.max_rows)
     count = sampled.count()
@@ -116,7 +120,12 @@ def prepare_training_features(
 
     # Group columns ride along for the relative transform but are never classified as features:
     # analyze_columns sees only feature_columns.
-    feature_df = train_df.select(*_with_basis_columns(feature_columns, params.baseline_by, params.baseline_over_time))
+    feature_df = train_df.select(
+        *[
+            F.col(quote_column_name(name))
+            for name in _with_basis_columns(feature_columns, params.baseline_by, params.baseline_over_time)
+        ]
+    )
     column_infos, _ = classifier.analyze_columns(feature_df, feature_columns)
 
     engineered_df, feature_metadata = apply_feature_engineering(
@@ -208,7 +217,12 @@ def score_with_model(
     """
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
         df.select(
-            *_with_basis_columns(feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time)
+            *[
+                F.col(quote_column_name(name))
+                for name in _with_basis_columns(
+                    feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time
+                )
+            ]
         ),
         feature_metadata,
     )
@@ -236,7 +250,9 @@ def score_with_model(
 
         return pd.DataFrame({"anomaly_score": scores, "prediction": predictions})
 
-    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    result = engineered_df.withColumn(
+        "_scores", predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
+    )
     # Calibration needs scores and group identity, not another copy of the features. Selecting
     # only these outputs also permits a real training feature named anomaly_score or prediction.
     grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
@@ -251,7 +267,12 @@ def score_with_ensemble_models(
     """Score DataFrame using an ensemble of models and return mean scores."""
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
         df.select(
-            *_with_basis_columns(feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time)
+            *[
+                F.col(quote_column_name(name))
+                for name in _with_basis_columns(
+                    feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time
+                )
+            ]
         ),
         feature_metadata,
     )
@@ -275,7 +296,9 @@ def score_with_ensemble_models(
         mean_scores = np.mean(np.vstack(scores_list), axis=0)
         return pd.DataFrame({"anomaly_score": mean_scores})
 
-    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    result = engineered_df.withColumn(
+        "_scores", predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
+    )
     grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
     result = result.select(*grouping, "_scores.anomaly_score")
 
@@ -381,14 +404,20 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
     # Accuracy stated rather than left to the default, so the per-group calibration cannot drift away from
     # the global one above. `percentile_approx` expresses it as 1/relativeError.
     accuracy = int(round(1.0 / SEVERITY_QUANTILE_RELATIVE_ERROR))
+    score = F.col("anomaly_score")
+    usable_score = F.when(score.isNotNull() & ~F.isnan(score) & (F.abs(score) < F.lit(float("inf"))), score)
     quantile_exprs = [
-        F.percentile_approx(F.col("anomaly_score"), prob, accuracy).alias(key)
+        F.percentile_approx(usable_score, prob, accuracy).alias(key)
         for prob, key in zip(SCORE_QUANTILE_PROBS, SCORE_QUANTILE_KEYS, strict=True)
     ]
     # Read the key feature engineering already computed rather than rebuilding it from the raw
     # group columns, which this frame no longer has: it is the scored *engineered* frame, and
     # feature engineering drops the group columns before the model sees them.
-    grouped = with_baseline_key(scored_df, baseline_by).groupBy(BASELINE_KEY_COLUMN).agg(*quantile_exprs)
+    grouped = (
+        with_baseline_key(scored_df, baseline_by)
+        .groupBy(BASELINE_KEY_COLUMN)
+        .agg(*quantile_exprs, F.count(usable_score).alias("__dqx_usable_scores"))
+    )
 
     result: dict[str, dict[str, float]] = {}
     known_group_keys: list[str] = []
@@ -397,7 +426,7 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
         quantiles = {key: float(row[key]) for key in SCORE_QUANTILE_KEYS if row[key] is not None}
         # A group missing any quantile cannot be interpolated over, so it is left out entirely
         # and falls back to the global calibration rather than being half-calibrated.
-        if len(quantiles) == len(SCORE_QUANTILE_KEYS):
+        if row["__dqx_usable_scores"] >= MIN_ROWS_PER_BASELINE_GROUP and len(quantiles) == len(SCORE_QUANTILE_KEYS):
             result[row[BASELINE_KEY_COLUMN]] = quantiles
     return ScoreCalibration({}, result, tuple(sorted(known_group_keys)))
 
@@ -426,7 +455,11 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
     # mean/std/min/max of every column, and one multi-column approxQuantile — instead of
     # two separate actions (full table scans) per column.
     def _col_expr(col_name: str) -> Column:
-        return F.col(col_name).cast("double") if col_types[col_name] == "boolean" else F.col(col_name)
+        return (
+            F.col(quote_column_name(col_name)).cast("double")
+            if col_types[col_name] == "boolean"
+            else F.col(quote_column_name(col_name))
+        )
 
     agg_exprs = []
     for i, col_name in enumerate(eligible):
@@ -444,7 +477,7 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
         raise ComputationError(f"Failed to compute stats for {eligible}")
 
     casted_df = train_df.select(*[_col_expr(c).alias(c) for c in eligible])
-    all_quantiles = casted_df.approxQuantile(eligible, [0.25, 0.5, 0.75], 0.01)
+    all_quantiles = casted_df.approxQuantile([quote_column_name(name) for name in eligible], [0.25, 0.5, 0.75], 0.01)
 
     baseline_stats = {}
     for i, col_name in enumerate(eligible):

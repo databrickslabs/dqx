@@ -3,7 +3,8 @@ from abc import ABC
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, ValidationError, model_validator
+from pydantic_core import PydanticCustomError, core_schema
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -244,6 +245,48 @@ class AnomalyConfig:
     # the two above: a run config written before it existed keeps training a model with no temporal
     # notion, which is byte-identical to what it produced before.
     baseline_over_time: str | None = None
+    # Kept solely to reject pre-release run configs with a useful migration message. It is a
+    # non-dataclass marker so blueprint calls its custom from_dict before collection coercion.
+    segment_by: "_LegacySegmentBy | None" = field(default=None, repr=False, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.segment_by is not None:
+            raise InvalidConfigError(_LEGACY_SEGMENT_BY_MESSAGE)
+
+
+_LEGACY_SEGMENT_BY_MESSAGE = (
+    "anomaly_config.segment_by is no longer supported because it trained a separate model per segment. "
+    "Use anomaly_config.baseline_by for one pooled model with group-relative features, then retrain."
+)
+
+
+class _LegacySegmentBy:
+    """Deserialize the removed configuration field only to give a targeted migration error."""
+
+    @staticmethod
+    def _validate(value: object) -> None:
+        if value is not None:
+            raise PydanticCustomError("legacy_segment_by", _LEGACY_SEGMENT_BY_MESSAGE)
+
+    @staticmethod
+    def _serialize(_: object) -> None:
+        return None
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: object, _handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        """Expose the legacy marker as a nullable field to Pydantic dataclass adapters."""
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            json_schema_input_schema=core_schema.none_schema(),
+            serialization=core_schema.plain_serializer_function_ser_schema(cls._serialize),
+        )
+
+    @classmethod
+    def from_dict(cls, value: object) -> None:
+        if value is not None:
+            raise InvalidConfigError(_LEGACY_SEGMENT_BY_MESSAGE)
 
 
 @dataclass
@@ -388,7 +431,12 @@ class WorkspaceConfig:
         Returns:
             A dictionary representation of the WorkspaceConfig.
         """
-        return asdict(self)
+        serialized = asdict(self)
+        for run_config in serialized["run_configs"]:
+            anomaly_config = run_config.get("anomaly_config")
+            if anomaly_config is not None:
+                anomaly_config.pop("segment_by", None)
+        return serialized
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

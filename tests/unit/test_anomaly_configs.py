@@ -1,6 +1,10 @@
 """Unit tests for anomaly detection configuration classes."""
 
-from databricks.labs.blueprint.installation import MockInstallation
+from collections.abc import Callable
+
+from pydantic import TypeAdapter, ValidationError
+import pytest
+from databricks.labs.blueprint.installation import JsonValue, MockInstallation
 
 from databricks.labs.dqx.config import (
     AnomalyConfig,
@@ -11,6 +15,7 @@ from databricks.labs.dqx.config import (
     RunConfig,
     WorkspaceConfig,
 )
+from databricks.labs.dqx.errors import InvalidConfigError
 
 # ============================================================================
 # IsolationForestConfig Tests
@@ -226,6 +231,14 @@ def test_anomaly_config_omitting_profile_keeps_the_distribution_default():
     assert cfg.profile is None
 
 
+@pytest.mark.parametrize("legacy_value", [[], ["region"], "region", 1, True, {"region": "north"}])
+def test_anomaly_config_rejects_direct_legacy_segment_by(legacy_value: JsonValue) -> None:
+    """A removed setting gets the same migration error in direct Python construction."""
+    with pytest.raises(InvalidConfigError, match="segment_by.*baseline_by"):
+        constructor: Callable[..., AnomalyConfig] = AnomalyConfig
+        constructor(segment_by=legacy_value)
+
+
 def test_anomaly_config_with_columns_and_baseline():
     """Test AnomalyConfig with custom columns and a baseline grouping."""
     cfg = AnomalyConfig(
@@ -413,3 +426,107 @@ def test_an_installation_written_before_these_fields_existed_still_loads():
     assert loaded.baseline_by is None
     assert loaded.profile is None
     assert loaded.baseline_over_time is None
+
+
+def test_an_installation_with_null_legacy_segment_by_still_loads() -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "anomaly_config": {"columns": ["amount"], "segment_by": None},
+                    }
+                ],
+            }
+        }
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("orders").anomaly_config
+    assert loaded is not None
+    assert loaded.columns == ["amount"]
+
+
+@pytest.mark.parametrize("legacy_value", [[], ["region"], "region", 1, True, {"region": "north"}])
+def test_an_installation_rejects_non_null_legacy_segment_by(legacy_value: JsonValue) -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {"name": "orders", "anomaly_config": {"columns": ["amount"], "segment_by": legacy_value}},
+                ],
+            }
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="segment_by.*baseline_by"):
+        installation.load(WorkspaceConfig)
+
+
+def test_an_installation_rejects_mixed_legacy_and_pooled_grouping() -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "anomaly_config": {
+                            "columns": ["amount"],
+                            "baseline_by": ["region"],
+                            "segment_by": ["region"],
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="separate model per segment.*one pooled model"):
+        installation.load(WorkspaceConfig)
+
+
+def test_workspace_config_round_trip_omits_legacy_segment_by() -> None:
+    config = WorkspaceConfig(
+        run_configs=[
+            RunConfig(
+                input_config=InputConfig(location="catalog.schema.orders", options={"segment_by": "preserve"}),
+                anomaly_config=AnomalyConfig(columns=["amount"]),
+            )
+        ]
+    )
+    serialized = config.as_dict()
+    assert "segment_by" not in serialized["run_configs"][0]["anomaly_config"]
+    assert serialized["run_configs"][0]["input_config"]["options"]["segment_by"] == "preserve"
+
+    installation = MockInstallation()
+    installation.save(config)
+    saved = installation.load(WorkspaceConfig).get_run_config().anomaly_config
+    assert saved is not None
+    assert saved.columns == ["amount"]
+
+
+def test_workspace_config_type_adapter_accepts_null_legacy_marker_and_omits_it_on_dump() -> None:
+    adapter = TypeAdapter(WorkspaceConfig)
+    loaded = adapter.validate_python({"run_configs": [{"anomaly_config": {"columns": ["amount"], "segment_by": None}}]})
+
+    assert loaded.run_configs[0].anomaly_config == AnomalyConfig(columns=["amount"])
+    dumped = adapter.dump_python(
+        WorkspaceConfig(run_configs=[RunConfig(anomaly_config=AnomalyConfig())]), exclude_none=True
+    )
+    assert "segment_by" not in dumped["run_configs"][0]["anomaly_config"]
+
+
+def test_workspace_config_type_adapter_rejects_legacy_marker_with_migration_message() -> None:
+    adapter = TypeAdapter(WorkspaceConfig)
+
+    with pytest.raises(ValidationError, match="separate model per segment.*one pooled model"):
+        adapter.validate_python({"run_configs": [{"anomaly_config": {"segment_by": ["region"]}}]})
+
+
+def test_workspace_config_type_adapter_exposes_legacy_marker_as_null_in_json_schema() -> None:
+    schema = TypeAdapter(WorkspaceConfig).json_schema()
+    segment_by = schema["$defs"]["AnomalyConfig"]["properties"]["segment_by"]
+    assert segment_by["type"] == "null"

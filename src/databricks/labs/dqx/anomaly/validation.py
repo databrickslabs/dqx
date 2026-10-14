@@ -9,6 +9,7 @@ import collections
 import collections.abc
 import math
 import warnings
+from typing import Literal, overload
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
@@ -21,6 +22,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     FREQUENCY_FEATURE_SUFFIX,
     NULL_INDICATOR_SUFFIX,
     TEMPORAL_RELATIVE_SUFFIX,
+    ColumnTypeInfo,
     ColumnTypeClassifier,
     feature_category_for_type,
 )
@@ -36,10 +38,8 @@ from databricks.labs.dqx.errors import InvalidParameterError
 def validate_spark_version(spark: SparkSession) -> None:
     """Validate Spark version is compatible with anomaly detection."""
     major, minor, *_ = spark.version.split(".")
-    if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
-        raise InvalidParameterError(
-            f"Anomaly detection requires Spark >= 3.4 for SynapseML compatibility. Found Spark {major}.{minor}."
-        )
+    if int(major) < 3 or (int(major) == 3 and int(minor) < 5):
+        raise InvalidParameterError(f"Anomaly detection requires Spark >= 3.5. Found Spark {major}.{minor}.")
 
 
 def validate_fully_qualified_name(value: str, *, label: str) -> None:
@@ -49,6 +49,7 @@ def validate_fully_qualified_name(value: str, *, label: str) -> None:
         raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.table, got: {value!r}.")
 
 
+@overload
 def validate_columns(
     df: DataFrame,
     columns: collections.abc.Iterable[str],
@@ -56,7 +57,31 @@ def validate_columns(
     *,
     baseline_by: list[str] | None = None,
     baseline_over_time: str | None = None,
-) -> list[str]:
+    include_column_infos: Literal[True],
+) -> tuple[list[ColumnTypeInfo], list[str]]: ...
+
+
+@overload
+def validate_columns(
+    df: DataFrame,
+    columns: collections.abc.Iterable[str],
+    params: AnomalyParams | None = None,
+    *,
+    baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
+    include_column_infos: Literal[False] = False,
+) -> list[str]: ...
+
+
+def validate_columns(
+    df: DataFrame,
+    columns: collections.abc.Iterable[str],
+    params: AnomalyParams | None = None,
+    *,
+    baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
+    include_column_infos: bool = False,
+) -> list[str] | tuple[list[ColumnTypeInfo], list[str]]:
     """Validate columns for row anomaly detection with multi-type support.
 
     *baseline_by* and *baseline_over_time* are passed for the feature-width warning alone: each adds one
@@ -72,9 +97,11 @@ def validate_columns(
         max_engineered_features=fe_config.max_engineered_features,
     )
 
-    _column_infos, warnings_list = classifier.analyze_columns(
+    column_infos, warnings_list = classifier.analyze_columns(
         df, list(columns), baseline_by=baseline_by, baseline_over_time=baseline_over_time
     )
+    if include_column_infos:
+        return column_infos, warnings_list
     return warnings_list
 
 
@@ -182,32 +209,41 @@ def generated_feature_names(
     columns: collections.abc.Iterable[str],
     baseline_by: list[str] | None,
     baseline_over_time: str | None,
+    *,
+    column_infos: collections.abc.Iterable[ColumnTypeInfo] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Every ``(generated name, source column, transform)`` feature engineering will create.
 
     A list rather than a name-keyed mapping so that two sources generating the *same* name stay visible;
     a dict would silently keep one, which is the shape of the bug this feeds.
 
-    Deliberately independent of null counts and cardinality, both of which need a Spark action. Being
-    conservative in those two places is the point rather than a compromise:
-
-    - a null indicator is only built for a column that has nulls *in the training frame*, but a schema
-      whose generated indicator name collides is a bug waiting for the first null to arrive, so the name
-      is claimed unconditionally
-    - a categorical column is frequency-encoded only above the cardinality threshold, and its one-hot
-      names depend on the values themselves, which no schema can predict. The frequency name is claimed
-      unconditionally; the one-hot names are checked where they are built.
+    When *column_infos* is provided, it describes the exact transformed projection from the classifier.
+    Null indicators are then claimed only for columns that have nulls, and categorical frequency features
+    only when frequency encoding is selected. One-hot aliases are collision-safe UUIDs and continue to be
+    checked where they are allocated.
     """
     generated: list[tuple[str, str, str]] = []
 
-    for name in columns:
-        col_type = schema_fields.get(name)
-        if col_type is None:
-            continue  # A missing feature column is validate_columns' complaint, not this one's.
+    infos = list(column_infos) if column_infos is not None else None
+    if infos is None:
+        infos = [
+            ColumnTypeInfo(name=name, spark_type=col_type, category=feature_category_for_type(col_type))
+            for name in columns
+            if (col_type := schema_fields.get(name)) is not None
+        ]
 
-        generated.append((f"{name}{NULL_INDICATOR_SUFFIX}", name, "the null indicator"))
+    for info in infos:
+        name = info.name
+        if info.category == "numeric":
+            generated.append((name, name, "the numeric feature"))
+        if info.null_count and info.null_count > 0:
+            generated.append((f"{name}{NULL_INDICATOR_SUFFIX}", name, "the null indicator"))
         derived = _derived_names_for_category(
-            name, feature_category_for_type(col_type), baseline_by, baseline_over_time
+            name,
+            info.category,
+            baseline_by,
+            baseline_over_time,
+            frequency_enabled=info.encoding_strategy == "frequency",
         )
         generated.extend((derived_name, name, transform) for derived_name, transform in derived)
 
@@ -219,24 +255,26 @@ def _derived_names_for_category(
     category: str,
     baseline_by: list[str] | None,
     baseline_over_time: str | None,
+    *,
+    frequency_enabled: bool,
 ) -> list[tuple[str, str]]:
     """``(generated name, transform)`` for one column, from its category alone.
 
     Split out from the caller so each category's answer is one flat branch. An 'unsupported' column
     generates nothing because feature engineering skips it entirely.
     """
-    if category == 'numeric':
+    if category == "numeric":
         derived = []
         if baseline_by:
             derived.append((f"{name}{BASELINE_RELATIVE_SUFFIX}", "the baseline_by comparison"))
         if baseline_over_time:
             derived.append((f"{name}{TEMPORAL_RELATIVE_SUFFIX}", "the baseline_over_time comparison"))
         return derived
-    if category == 'boolean':
+    if category == "boolean":
         return [(f"{name}{BOOLEAN_FEATURE_SUFFIX}", "the boolean encoding")]
-    if category == 'datetime':
+    if category == "datetime":
         return [(f"{name}{suffix}", "the calendar encoding") for suffix in CALENDAR_FEATURE_SUFFIXES]
-    if category == 'categorical':
+    if category == "categorical" and frequency_enabled:
         return [(f"{name}{FREQUENCY_FEATURE_SUFFIX}", "the frequency encoding")]
     return []
 
@@ -246,6 +284,8 @@ def validate_generated_feature_names(
     columns: collections.abc.Iterable[str],
     baseline_by: list[str] | None,
     baseline_over_time: str | None,
+    *,
+    column_infos: collections.abc.Iterable[ColumnTypeInfo] | None = None,
 ) -> None:
     """Refuse a schema where a generated feature would land on the name of a real column.
 
@@ -260,12 +300,22 @@ def validate_generated_feature_names(
     list disagreeing with the suffix that redaction and attribution both key on, and dropping either
     column silently discards data the caller asked to be checked.
     """
+    feature_columns = list(columns)
     generated = generated_feature_names(
-        {field.name: field.dataType for field in df.schema.fields}, columns, baseline_by, baseline_over_time
+        {field.name: field.dataType for field in df.schema.fields},
+        feature_columns,
+        baseline_by,
+        baseline_over_time,
+        column_infos=column_infos,
     )
 
-    existing = set(df.columns)
-    overwrites = sorted(entry for entry in generated if entry[0] in existing)
+    # Feature engineering projects only supported requested features. Incidental input columns are neither
+    # features nor comparison bases, so their names cannot change the model projection and must not block
+    # training. Bases stay here because the transforms still read them after derived columns are added.
+    existing = set(feature_columns) | set(baseline_by or [])
+    if baseline_over_time:
+        existing.add(baseline_over_time)
+    overwrites = sorted(entry for entry in generated if entry[0] != entry[1] and entry[0] in existing)
     if overwrites:
         details = "; ".join(
             f"'{name}' already exists and would be overwritten by {transform} of '{source}'"

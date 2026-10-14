@@ -80,6 +80,7 @@ def _add_severity(
     parsed_metadata: SparkFeatureMetadata,
     group_quantile_points: dict[str, list[tuple[float, float]]],
     global_quantile_points: list[tuple[float, float]],
+    group_key_col: str,
 ) -> DataFrame:
     """Calibrate severity per group where the model has per-group quantiles, globally otherwise."""
     if parsed_metadata.baseline_by and group_quantile_points:
@@ -90,6 +91,7 @@ def _add_severity(
             baseline_by=parsed_metadata.baseline_by,
             group_quantile_points=group_quantile_points,
             fallback_quantile_points=global_quantile_points,
+            group_key_col=group_key_col,
         )
     return add_severity_percentile_column(
         scored_df,
@@ -159,11 +161,11 @@ def score_global_model(
     )
 
     model_uris = record.identity.model_uris
-    if record.features.feature_metadata is None:
+    if record.features.feature_metadata is None or trained_metadata is None:
         raise InvalidParameterError(f"Model {record.identity.model_name} missing feature_metadata")
 
     global_quantile_points = extract_quantile_points(record)
-    parsed_metadata = SparkFeatureMetadata.from_json(record.features.feature_metadata)
+    parsed_metadata = trained_metadata
     group_quantile_points = _group_quantile_points(parsed_metadata)
     # Admit any row that a real comparison curve would flag. Public severity and the final
     # contribution mask still use the row's own calibration, not this permissive gate.
@@ -241,7 +243,9 @@ def score_global_model(
         group_key_col=group_key_col,
     )
 
-    scored_df = _add_severity(scored_df, config, parsed_metadata, group_quantile_points, global_quantile_points)
+    scored_df = _add_severity(
+        scored_df, config, parsed_metadata, group_quantile_points, global_quantile_points, group_key_col
+    )
 
     scored_df = null_out_unseen_baseline_scores(
         scored_df,

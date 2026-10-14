@@ -87,7 +87,7 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     )
 
     dq_engine = DQEngine(ws, spark)
-    threshold = 100.0
+    threshold = 99.9
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -107,8 +107,8 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
-def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_schema, anomaly_engine):
-    """Test that model_name and registry_table can be omitted for scoring."""
+def test_scoring_with_explicit_model_names(ws, spark: SparkSession, make_random, make_schema, anomaly_engine):
+    """A trained model can be scored through its explicit registry identifiers."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -133,7 +133,7 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
     # Model URI should still be returned
     assert model_uri is not None
 
-    # Score with normal data (within training distribution) without explicit names
+    # Score normal data (within the training distribution) with the persisted names.
     test_points = get_standard_test_points_2d()
     test_df = spark.createDataFrame(
         [(1, *test_points["normal_in_center"])],
@@ -141,7 +141,7 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
     )
 
     dq_engine = DQEngine(ws, spark)
-    threshold = 100.0
+    threshold = 99.9
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,

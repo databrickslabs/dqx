@@ -69,7 +69,7 @@ class AnomalyEngine(DQEngineBase):
         """
             Train a row anomaly detection model with intelligent auto-discovery.
 
-            Requires Spark >= 3.4 and the 'anomaly' extras installed:
+            Requires Spark >= 3.5 and the 'anomaly' extras installed:
                 pip install 'databricks-labs-dqx[anomaly]'
 
             Auto-discovery behavior:
@@ -137,6 +137,7 @@ class AnomalyEngine(DQEngineBase):
             The model name (e.g., 'catalog.schema.model_name').
 
         Examples:
+            ```python
             # Auto-discovery with default training settings
             anomaly_engine.train(
                 df,
@@ -154,10 +155,16 @@ class AnomalyEngine(DQEngineBase):
 
             # How much gets flagged is set on the *check*, not at training time: threshold is an
             # cutoff calibrated against training scores, not a fixed fraction of future rows.
-            check = has_no_row_anomalies(
-                model_name="catalog.schema.fraud_detector",
-                registry_table="catalog.schema.dqx_anomaly_models",
-                threshold=99.0,  # a tighter budget for a rare-event table
+            from databricks.labs.dqx.rule import DQDatasetRule
+            from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
+            check = DQDatasetRule(
+                check_func=has_no_row_anomalies,
+                check_func_kwargs={
+                    "model_name": "catalog.schema.fraud_detector",
+                    "registry_table": "catalog.schema.dqx_anomaly_models",
+                    "threshold": 99.0,
+                },
             )
 
             # Explicit columns
@@ -177,6 +184,7 @@ class AnomalyEngine(DQEngineBase):
                 columns=["event_count"],
                 baseline_by=["country", "product"],
             )
+            ```
         """
         training_service = AnomalyTrainingService(self.spark)
         context = training_service.build_context(

@@ -286,6 +286,29 @@ def test_trend_strength_ignores_constant_metrics_rather_than_scoring_them_zero()
     assert trend_strength(seconds, metrics, basis) > 0.8
 
 
+def test_trend_strength_keeps_each_metrics_values_aligned_with_its_timestamps():
+    seconds = np.arange(1000, dtype=float)
+    first = np.full(1000, np.nan)
+    second = np.full(1000, np.nan)
+    first_positions = np.array([0, 1, 2, 997, 998, 999])
+    second_positions = np.array([0, 200, 400, 600, 800, 999])
+    first[first_positions] = 10.0 + 2.0 * seconds[first_positions]
+    second[second_positions] = 100.0 - 0.5 * seconds[second_positions]
+    metrics = {"first": first, "second": second, "absent": np.full(1000, np.nan)}
+
+    strength = trend_strength(seconds, metrics, TemporalBasis(trend=True, span=999.0))
+
+    # Both observed series are exactly linear in their actual observation times.
+    assert strength == pytest.approx(1.0, abs=1e-8)
+
+
+def test_trend_strength_without_usable_observations_has_no_evidence():
+    seconds = np.arange(8, dtype=float)
+    metrics = {"absent": np.full(8, np.nan), "one_value": np.array([1.0] + [np.nan] * 7)}
+
+    assert trend_strength(seconds, metrics, TemporalBasis(trend=True, span=7.0)) == 0.0
+
+
 # ── persistence ────────────────────────────────────────────────────────────────────────────────────
 
 

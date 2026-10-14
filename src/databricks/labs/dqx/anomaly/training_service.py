@@ -12,7 +12,7 @@ from datetime import datetime
 
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import types as T
+from pyspark.sql import functions as F, types as T
 from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
@@ -58,7 +58,7 @@ from databricks.labs.dqx.anomaly.validation import (
 )
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.utils import sanitize_for_logging
+from databricks.labs.dqx.utils import quote_column_name, sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
@@ -93,22 +93,33 @@ class AnomalyTrainingService:
 
     @staticmethod
     def _perform_auto_discovery(
-        df_filtered: DataFrame, baseline_by: list[str] | None, baseline_over_time: str | None
+        df_filtered: DataFrame,
+        baseline_by: list[str] | None,
+        baseline_over_time: str | None,
+        params: AnomalyParams,
     ) -> tuple[list[str], list[str] | None]:
         """Discover feature columns and a baseline grouping.
 
         The grouping is chosen for baseline conditioning: finer, bounded by rows per group rather
         than by model count, because there is one model however many groups result.
         """
-        profile = auto_discover_columns(df_filtered, baseline_by=baseline_by, baseline_over_time=baseline_over_time)
-        logger.info(f"Auto-selected {len(profile.recommended_columns)} columns: {profile.recommended_columns}")
+        profile = auto_discover_columns(
+            df_filtered,
+            baseline_by=baseline_by,
+            baseline_over_time=baseline_over_time,
+            sample_fraction=params.sample_fraction,
+            train_ratio=params.train_ratio,
+            max_rows=params.max_rows,
+        )
+        safe_columns = [sanitize_for_logging(name) for name in profile.recommended_columns]
+        logger.info(f"Auto-selected {len(profile.recommended_columns)} columns: {safe_columns}")
         if profile.recommended_segments:
             logger.info(
                 f"Auto-detected {len(profile.recommended_segments)} baseline columns: "
-                f"{profile.recommended_segments} ({profile.segment_count} total groups)"
+                f"{[sanitize_for_logging(name) for name in profile.recommended_segments]} ({profile.segment_count} total groups)"
             )
         for warning in profile.warnings:
-            logger.warning(warning)
+            logger.warning(sanitize_for_logging(warning))
         return profile.recommended_columns, profile.recommended_segments or None
 
     @staticmethod
@@ -144,8 +155,9 @@ class AnomalyTrainingService:
             return columns, df
         if exclude_list:
             remaining = [col for col in df.columns if col not in exclude_list]
-            logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
-            return None, df.select(*remaining)
+            safe_excluded = [sanitize_for_logging(name) for name in exclude_list]
+            logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {safe_excluded}")
+            return None, df.select(*[F.col(quote_column_name(name)) for name in remaining])
         return None, df
 
     def _discover_columns_and_grouping(
@@ -154,6 +166,7 @@ class AnomalyTrainingService:
         columns: list[str] | None,
         declared_baseline_by: list[str] | None,
         baseline_over_time: str | None,
+        params: AnomalyParams,
     ) -> tuple[list[str], list[str] | None]:
         """Fill in whichever of the feature columns and the grouping the caller left unspecified.
 
@@ -165,7 +178,9 @@ class AnomalyTrainingService:
         an hours-long run however many groups it finds.
         """
         if columns is None:
-            columns, discovered = self._perform_auto_discovery(df_filtered, declared_baseline_by, baseline_over_time)
+            columns, discovered = self._perform_auto_discovery(
+                df_filtered, declared_baseline_by, baseline_over_time, params
+            )
             return columns, declared_baseline_by if declared_baseline_by is not None else discovered
 
         if declared_baseline_by is None:
@@ -174,13 +189,13 @@ class AnomalyTrainingService:
             # asked for would also make the feature set data-dependent, so a retrain after a
             # cardinality shift would silently move every score and drift their threshold.
             # Discovery still runs here, but only to advise.
-            self._advise_baseline_columns(df_filtered, columns)
+            self._advise_baseline_columns(df_filtered, columns, params)
             return columns, None
 
         return columns, declared_baseline_by
 
     @staticmethod
-    def _advise_baseline_columns(df_filtered: DataFrame, columns: list[str]) -> None:
+    def _advise_baseline_columns(df_filtered: DataFrame, columns: list[str], params: AnomalyParams) -> None:
         """Warn when the data looks grouped but the caller left the comparison pooled.
 
         Advisory only, and silent when there is nothing to act on, which is what keeps it worth
@@ -190,7 +205,13 @@ class AnomalyTrainingService:
         to have measured must not be offered as the basis it is measured against, which
         ``validate_baseline_columns`` would reject anyway.
         """
-        suggestion = suggest_baseline_columns(df_filtered, exclude=columns)
+        suggestion = suggest_baseline_columns(
+            df_filtered,
+            exclude=columns,
+            sample_fraction=params.sample_fraction,
+            train_ratio=params.train_ratio,
+            max_rows=params.max_rows,
+        )
         if suggestion is None:
             return
         # Column names come from the caller's schema, so they are untrusted for logging (CWE-117).
@@ -229,7 +250,7 @@ class AnomalyTrainingService:
         # telemetry.py and table_manager.py catch broadly. No suppression comment, because the rule that
         # would flag this is not enabled -- one was here and suppressed nothing.
         except Exception as exc:
-            logger.debug(f"Could not measure trend strength: {exc}")
+            logger.debug(f"Could not measure trend strength ({type(exc).__name__})")
             return
         if strength >= TREND_STRENGTH_ADVISORY_FLOOR:
             return
@@ -285,7 +306,7 @@ class AnomalyTrainingService:
         One ``countDistinct`` action, paid only when a grouping is declared. Reuses the ceiling
         auto-discovery already respects rather than introducing a second, so the two cannot drift.
         """
-        group_count = df.select(*baseline_by).distinct().count()
+        group_count = df.select(*[F.col(quote_column_name(name)) for name in baseline_by]).distinct().count()
         if group_count <= MAX_BASELINE_GROUPS:
             return
         safe_columns = [sanitize_for_logging(name) for name in baseline_by]
@@ -343,34 +364,41 @@ class AnomalyTrainingService:
         columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
         auto_discovery_used = columns is None
         columns, baseline_by = self._discover_columns_and_grouping(
-            df_filtered, columns, declared_baseline_by, resolved_over_time
+            df_filtered, columns, declared_baseline_by, resolved_over_time, params
         )
 
         if not columns:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
 
-        validation_warnings = validate_columns(
-            df, columns, params, baseline_by=baseline_by, baseline_over_time=resolved_over_time
+        column_infos, validation_warnings = validate_columns(
+            df,
+            columns,
+            params,
+            baseline_by=baseline_by,
+            baseline_over_time=resolved_over_time,
+            include_column_infos=True,
         )
         for warning in validation_warnings:
-            logger.warning(warning)
+            logger.warning(sanitize_for_logging(warning))
 
         validate_baseline_columns(df, baseline_by, columns)
         if baseline_by:
             self._reject_unbounded_grouping(df_filtered, baseline_by)
-            logger.info(f"Judging each metric against its own group's baseline, grouped by {baseline_by}")
+            safe_baseline = [sanitize_for_logging(name) for name in baseline_by]
+            logger.info(f"Judging each metric against its own group's baseline, grouped by {safe_baseline}")
 
         validate_baseline_over_time(df, resolved_over_time, columns)
         # After both bases are resolved, because which derived features exist depends on them.
-        validate_generated_feature_names(df, columns, baseline_by, resolved_over_time)
+        validate_generated_feature_names(df, columns, baseline_by, resolved_over_time, column_infos=column_infos)
         self._advise_calendar_features(df, columns, resolved_over_time)
         if resolved_over_time:
             self._advise_trend_strength(df_filtered, columns, resolved_over_time)
-            safe_time_column = sanitize_for_logging(resolved_over_time)
             # Saying "within its group" when both are set matters: the expectation is then fitted on the
             # group-relative value rather than the raw metric, which is a different model of the data.
             within = ", within its own group" if baseline_by else ""
-            logger.info(f"Judging each metric against its expected level over '{safe_time_column}'{within}")
+            logger.info(
+                f"Judging each metric against its expected level over '{sanitize_for_logging(resolved_over_time)}'{within}"
+            )
 
         self._prepare_training_config(
             model_name=model_name,
@@ -421,10 +449,11 @@ class AnomalyTrainingService:
         """Validate and prepare training configuration."""
         validate_fully_qualified_name(model_name, label="model_name")
         validate_fully_qualified_name(registry_table, label="registry_table")
+        safe_model_name = sanitize_for_logging(model_name)
 
         if self._model_exists_in_uc(model_name):
             logger.warning(
-                f"Model '{model_name}' already exists. Creating a new version. Previous versions remain available."
+                f"Model '{safe_model_name}' already exists. Creating a new version. Previous versions remain available."
             )
 
         registry = AnomalyModelRegistry(self._spark)
@@ -438,11 +467,15 @@ class AnomalyTrainingService:
             )
 
             if config_changed:
+                old_columns = [sanitize_for_logging(name) for name in existing.training.columns]
+                old_baseline = [sanitize_for_logging(name) for name in (existing.grouping.baseline_by or [])]
+                new_columns = [sanitize_for_logging(name) for name in columns]
+                new_baseline = [sanitize_for_logging(name) for name in (baseline_by or [])]
                 logger.warning(
-                    f"⚠️  Model '{model_name}' exists with different configuration:\n"
-                    f"   Existing: columns={existing.training.columns}, "
-                    f"baseline_by={existing.grouping.baseline_by}\n"
-                    f"   New: columns={columns}, baseline_by={baseline_by}\n"
+                    f"⚠️  Model '{safe_model_name}' exists with different configuration:\n"
+                    f"   Existing: columns={old_columns}, "
+                    f"baseline_by={old_baseline}\n"
+                    f"   New: columns={new_columns}, baseline_by={new_baseline}\n"
                     f"   The old model will be archived. Consider using a different model_name "
                     f"if this is a different use case."
                 )
@@ -455,8 +488,7 @@ class AnomalyTrainingService:
         sampled_df, _, truncated = sample_df(context.df_filtered, context.columns, context.params)
         if not sampled_df.head(1):
             raise InvalidParameterError(
-                "Sampling produced 0 rows. Provide more data or adjust sampling parameters "
-                "(sample_fraction/max_rows)."
+                "Sampling produced 0 rows. Provide more data or adjust sampling parameters (sample_fraction/max_rows)."
             )
 
         train_df, val_df = train_validation_split(sampled_df, context.params)

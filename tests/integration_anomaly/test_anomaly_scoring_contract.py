@@ -8,6 +8,7 @@ distributed scoring is exercised by the packaged E2E suite. AI is disabled here.
 from collections import Counter
 import json
 import math
+from datetime import datetime, timedelta
 
 import pytest
 from pyspark.sql import DataFrame, Row
@@ -16,6 +17,7 @@ from pyspark.sql import functions as F
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
 
 
 def _original_rows(rows: list[Row], columns: list[str]) -> Counter[str]:
@@ -23,6 +25,60 @@ def _original_rows(rows: list[Row], columns: list[str]) -> Counter[str]:
         json.dumps({name: row.asDict(recursive=True)[name] for name in columns}, sort_keys=True, default=str)
         for row in rows
     )
+
+
+@pytest.mark.parametrize("separator", [".", "`"])
+def test_public_reload_preserves_literal_names_nested_values_and_duplicates(
+    ws, spark, quick_model_factory, separator: str
+) -> None:
+    metric, group, time = (
+        separator.join(parts) for parts in (("net", "amount"), ("store", "region"), ("event", "time"))
+    )
+    schema = (
+        f"{quote_column_name(metric)} double, {quote_column_name(group)} string, {quote_column_name(time)} timestamp"
+    )
+    start = datetime(2025, 1, 1)
+    model, registry, _ = quick_model_factory(
+        spark,
+        columns=[metric],
+        baseline_by=[group],
+        baseline_over_time=time,
+        train_schema=schema,
+        train_data=[(10.0 + i * 0.1, "known", start + timedelta(hours=i)) for i in range(100)],
+        params=AnomalyParams(sample_fraction=1.0, algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42)),
+    )
+    # This unrelated payload deliberately resembles a generated feature name.
+    source = spark.createDataFrame(
+        [(500.0, "known", start + timedelta(hours=50))] * 2 + [(20.0, "unseen", start)], schema
+    ).withColumn(f"{metric}_rel_baseline", F.struct(F.lit("preserved").alias("nested")))
+    original = source.collect()
+    result = DQEngine(ws, spark).apply_checks_by_metadata(
+        source,
+        [
+            {
+                "check": {
+                    "function": "has_no_row_anomalies",
+                    "arguments": {
+                        "model_name": model,
+                        "registry_table": registry,
+                        "driver_only": True,
+                        "enable_contributions": True,
+                        "enable_ai_explanation": False,
+                        "threshold": 0.0,
+                    },
+                }
+            }
+        ],
+    )
+    observed = result.collect()
+    _assert_original_rows(source, original, result, observed)
+    for row in observed:
+        info = row["_dq_info"][0]["anomaly"]
+        if row[group] == "unseen":
+            assert info["score"] is None and info["is_anomaly"] is False
+        else:
+            assert math.isfinite(info["score"]) and info["is_anomaly"] is True
+            assert info["contributions"] is not None and set(info["contributions"]) == {metric}
 
 
 def _assert_original_rows(source: DataFrame, expected: list[Row], result: DataFrame, rows: list[Row]) -> None:

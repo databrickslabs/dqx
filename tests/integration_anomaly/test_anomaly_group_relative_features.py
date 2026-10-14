@@ -23,6 +23,8 @@ from databricks.labs.dqx.anomaly.segment_utils import (
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     apply_feature_engineering,
+    apply_feature_engineering_from_metadata,
+    SparkFeatureMetadata,
 )
 
 
@@ -203,7 +205,7 @@ def test_group_columns_do_not_become_features(spark: SparkSession):
 
 def test_relative_value_is_the_signed_log_ratio_to_the_group_median(spark: SparkSession):
     """Hand-computed value, so the formula is pinned rather than merely self-consistent."""
-    rows = [("DE", 100.0), ("DE", 100.0), ("DE", 100.0), ("IT", 10.0), ("IT", 10.0), ("IT", 10.0)]
+    rows = [("DE", 100.0)] * 30 + [("IT", 10.0)] * 30
     df = spark.createDataFrame(rows, "country string, amount double")
 
     engineered, _ = apply_feature_engineering(df, [_numeric_info("amount")], baseline_by=["country"])
@@ -224,6 +226,48 @@ def test_relative_value_is_the_signed_log_ratio_to_the_group_median(spark: Spark
     assert row["amount_rel_baseline"] == pytest.approx(math.log1p(200.0) - math.log1p(100.0), abs=1e-6)
 
 
+def test_undersized_known_group_uses_pooled_medians_per_metric_after_reload(spark: SparkSession):
+    rows: list[tuple[str, float, float | None]] = [("large", 10.0, 20.0)] * 100
+    rows += [("below", 100.0, 200.0)] * 29
+    rows += [("at", 1000.0, 2000.0)] * 29 + [("at", 1000.0, None)]
+    rows += [("above", 10000.0, 20000.0)] * 31
+    df = spark.createDataFrame(rows, "country string, amount double, quantity double")
+    _, metadata = apply_feature_engineering(
+        df, [_numeric_info("amount"), _numeric_info("quantity")], baseline_by=["country"]
+    )
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    keys = {name: build_baseline_key({"country": name}) for name in ("large", "below", "at", "above")}
+    assert restored.baseline_medians["amount"] == {
+        keys["large"]: 10.0,
+        keys["below"]: 10.0,
+        keys["at"]: 1000.0,
+        keys["above"]: 10000.0,
+    }
+    assert restored.baseline_medians["quantity"] == {
+        keys["large"]: 20.0,
+        keys["below"]: 20.0,
+        keys["at"]: 20.0,
+        keys["above"]: 20000.0,
+    }
+    probe = spark.createDataFrame(
+        [("below", 100.0, 200.0), ("at", 1000.0, 20.0)], "country string, amount double, quantity double"
+    )
+    transformed, _ = apply_feature_engineering_from_metadata(probe, restored)
+    values = {row["amount"]: row["amount_rel_baseline"] for row in transformed.collect()}
+    assert values[100.0] == pytest.approx(math.log1p(100.0) - math.log1p(10.0))
+    assert values[1000.0] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("metric, group", [("net.amount", "store.region"), ("net`amount", "store`region")])
+def test_group_relative_features_treat_schema_names_as_literal_identifiers(spark, metric, group):
+    schema = T.StructType([T.StructField(group, T.StringType()), T.StructField(metric, T.DoubleType())])
+    df = spark.createDataFrame([("North", 10.0)] * 30 + [("South", 100.0)] * 30, schema)
+    transformed, metadata = apply_feature_engineering(df, [_numeric_info(metric)], baseline_by=[group])
+    assert transformed.count() == df.count()
+    assert set(metadata.baseline_medians[metric].values()) == {10.0, 100.0}
+    assert all(row[metric + "_rel_baseline"] == pytest.approx(0.0) for row in transformed.collect())
+
+
 def test_multiple_metrics_get_independent_group_baselines(spark: SparkSession):
     """Each metric deviates from its own per-group median, computed in one joined lookup.
 
@@ -239,6 +283,7 @@ def test_multiple_metrics_get_independent_group_baselines(spark: SparkSession):
         ("IT", 10.0, 40.0),
         ("IT", 10.0, 80.0),  # quantity at 2x its IT median; amount on its median
     ]
+    rows = [("DE", 100.0, 4.0)] * 30 + [("IT", 10.0, 40.0)] * 30 + rows
     df = spark.createDataFrame(rows, "country string, amount double, quantity double")
 
     engineered, _ = apply_feature_engineering(

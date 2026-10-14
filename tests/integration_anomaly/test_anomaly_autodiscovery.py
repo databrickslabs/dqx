@@ -6,6 +6,7 @@ import logging
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns, suggest_baseline_columns
 from databricks.labs.dqx.anomaly.training_service import AnomalyTrainingService
@@ -16,6 +17,68 @@ from tests.integration_anomaly.conftest import qualify_model_name
 
 #: A Monday, so the weekday and weekend calendar features the advisory warns about are meaningful.
 START = datetime.datetime(2025, 1, 6)
+
+
+@pytest.mark.parametrize("metric, group", [("net.amount", "store.region"), ("net`amount", "store`region")])
+def test_discovery_treats_schema_names_as_literal_identifiers(spark, metric, group):
+    schema = T.StructType([T.StructField(group, T.StringType()), T.StructField(metric, T.DoubleType())])
+    df = spark.createDataFrame([(name, float(i)) for name in ("North", "South") for i in range(150)], schema)
+    profile = auto_discover_columns(df)
+    assert profile.recommended_columns == [metric]
+    assert profile.recommended_segments == [group]
+    assert profile.segment_count == 2
+    assert profile.column_types == {metric: "numeric", group: "categorical"}
+
+
+def test_discovery_and_advice_reject_an_undersized_observed_group(spark):
+    df = spark.createDataFrame(
+        [("large", float(i)) for i in range(1000)] + [("small", 1.0)], "region string, amount double"
+    )
+    assert not auto_discover_columns(df).recommended_segments
+    assert suggest_baseline_columns(df, exclude=["amount"]) is None
+
+
+def test_discovery_counts_correlated_dimensions_as_observed_groups(spark):
+    df = spark.createDataFrame(
+        [
+            (region, channel, float(i))
+            for region, channel in (("North", "Online"), ("South", "Store"))
+            for i in range(150)
+        ],
+        "region string, channel string, amount double",
+    )
+    profile = auto_discover_columns(df)
+    suggestion = suggest_baseline_columns(df, exclude=["amount"])
+    assert profile.recommended_segments == ["region", "channel"]
+    assert profile.segment_count == 2
+    assert suggestion is not None and suggestion.group_count == 2
+    assert suggestion.rows_per_group == 150
+
+
+@pytest.mark.parametrize(
+    "params, expected",
+    [
+        (AnomalyParams(sample_fraction=1.0, train_ratio=0.8), ["region"]),
+        (AnomalyParams(sample_fraction=0.1, train_ratio=0.8), []),
+        (AnomalyParams(sample_fraction=1.0, train_ratio=0.2), []),
+        (AnomalyParams(sample_fraction=1.0, train_ratio=0.8, max_rows=50), []),
+    ],
+)
+def test_training_discovery_uses_resolved_sampling_settings(spark, make_schema, make_random, params, expected):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    df = spark.createDataFrame(
+        [(region, float(i)) for region in ("North", "South") for i in range(100)], "region string, amount double"
+    )
+    context = AnomalyTrainingService(spark).build_context(
+        df,
+        f"{TEST_CATALOG}.{schema.name}.sample_{suffix}",
+        f"{TEST_CATALOG}.{schema.name}.registry_{suffix}",
+        columns=None,
+        params=params,
+        exclude_columns=None,
+    )
+    assert (context.baseline_by or []) == expected
 
 
 @pytest.mark.parametrize("baseline_by", [None, [], ["region"]])

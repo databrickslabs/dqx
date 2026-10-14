@@ -206,7 +206,6 @@ class MahalanobisTrainingStrategy(AnomalyTrainingStrategy):
         calibration = compute_score_quantiles(model, train_df, columns, feature_metadata)
 
         self._registry.ensure_registry_configured()
-        train_pandas = prepare_engineered_pandas(train_df, feature_metadata)
         model_uri, run_id = self._registry.register_model_with_signature_inference(
             model, model_name, train_pandas, hyperparams, validation_metrics
         )

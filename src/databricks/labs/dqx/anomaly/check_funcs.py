@@ -6,6 +6,7 @@ Facade: public rule entry point. Orchestration and scoring live in sibling modul
 
 import dataclasses
 import logging
+import math
 import uuid
 from typing import Any
 
@@ -63,11 +64,18 @@ def _validate_required_names(model_name: str, registry_table: str) -> None:
     validate_fully_qualified_name(registry_table, label="registry_table")
 
 
-def _validate_thresholds(threshold: float, drift_threshold: float | None) -> None:
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+def _validate_thresholds(threshold: float, drift_threshold: float | None) -> float:
+    try:
+        numeric_threshold = float(threshold)
+    except (TypeError, ValueError) as error:
+        raise InvalidParameterError(
+            "threshold must be a finite number from 0.0 up to, but not including, 100.0."
+        ) from error
+    if not math.isfinite(numeric_threshold) or not 0.0 <= numeric_threshold < 100.0:
+        raise InvalidParameterError("threshold must be a finite number from 0.0 up to, but not including, 100.0.")
     if drift_threshold is not None and drift_threshold <= 0:
         raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+    return numeric_threshold
 
 
 def _validate_explanation_flags(enable_contributions: bool) -> None:
@@ -101,10 +109,10 @@ def _validate_anomaly_check_args(
     enable_contributions: bool,
     redact_columns: list[str] | None,
     max_groups: int,
-) -> None:
+) -> float:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
     _validate_required_names(model_name, registry_table)
-    _validate_thresholds(threshold, drift_threshold)
+    numeric_threshold = _validate_thresholds(threshold, drift_threshold)
     _validate_explanation_flags(enable_contributions)
 
     if redact_columns is not None:
@@ -113,6 +121,7 @@ def _validate_anomaly_check_args(
 
     if not isinstance(max_groups, int) or isinstance(max_groups, bool) or max_groups <= 0:
         raise InvalidParameterError("max_groups must be a positive integer.")
+    return numeric_threshold
 
 
 @register_rule("dataset")
@@ -247,7 +256,7 @@ def has_no_row_anomalies(
     # explicitly opts out of contributions.
     enable_ai_explanation = _resolve_ai_explanation_flag(enable_contributions, enable_ai_explanation)
 
-    _validate_anomaly_check_args(
+    threshold = _validate_anomaly_check_args(
         model_name=model_name,
         registry_table=registry_table,
         threshold=threshold,

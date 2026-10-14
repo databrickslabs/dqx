@@ -1,8 +1,8 @@
 """Thresholds governing baseline conditioning.
 
 Named in one place so the policy is reviewable. These bound a *statistical* requirement, not a cost
-one: baseline conditioning trains a single model however many groups exist, so breadth is affordable
-and the only question is whether each group has enough rows to yield a representative median.
+one: baseline conditioning trains a single model however many groups exist. Group-specific medians
+and score quantiles need sufficient usable observations; smaller groups use the pooled statistics.
 
 The segmented thresholds that used to live here went with the ``segment_by`` path they guarded. They
 were the opposite shape — few groups, hundreds of rows each — because a per-segment model had to
@@ -13,9 +13,9 @@ lowest-cardinality column, giving 3 groups, and conditioning barely engaged.
 See https://github.com/databrickslabs/dqx/issues/1484 for the measurements behind them.
 """
 
-# Rows per group needed for a representative median. A median is a far cheaper statistic than a
-# fitted model: percentile_approx over a few dozen rows is a usable centre, where a forest over the
-# same rows is not a usable model.
+# Minimum usable values for a group median, or usable scores for group calibration. Smaller known
+# groups use pooled statistics. This floor is a support safeguard, not an accuracy guarantee for
+# extreme percentiles such as p99. Discovery projects support; fitting verifies the actual counts.
 MIN_ROWS_PER_BASELINE_GROUP = 30
 
 # Ceiling on total baseline groups. Not a training cost — it bounds what gets persisted in the

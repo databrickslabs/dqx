@@ -17,6 +17,7 @@ from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.scoring_utils import mark_stale_baselines
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis
+from databricks.labs.dqx.anomaly.temporal_advisory import measure_trend_strength
 from databricks.labs.dqx.anomaly.transformers import (
     BASELINE_RELATIVE_SUFFIX,
     TEMPORAL_RELATIVE_SUFFIX,
@@ -53,6 +54,49 @@ def _trending_frame(spark: SparkSession, hours: int = 24 * 30, slope: float = 0.
     rng = np.random.default_rng(17)
     rows = [(START + datetime.timedelta(hours=i), float(100.0 + slope * i + rng.normal(0, 2.0))) for i in range(hours)]
     return spark.createDataFrame(rows, "event_ts timestamp, revenue double")
+
+
+def test_temporal_advice_preserves_sparse_observation_times_and_literal_names(spark: SparkSession) -> None:
+    positions = {0, 1, 2, 997, 998, 999}
+    rows = [(START + datetime.timedelta(seconds=i), 10.0 + 2.0 * i if i in positions else None) for i in range(1000)]
+    frame = spark.createDataFrame(
+        rows,
+        T.StructType([T.StructField("event.time", T.TimestampType()), T.StructField("metric`value", T.DoubleType())]),
+    )
+
+    strength = measure_trend_strength(frame, "event.time", ["metric`value"])
+
+    assert strength == pytest.approx(1.0, abs=1e-8)
+
+
+def test_temporal_advice_ignores_rows_without_a_timestamp(spark: SparkSession) -> None:
+    frame = spark.createDataFrame(
+        [(START + datetime.timedelta(seconds=i), float(i)) for i in range(20)] + [(None, 9999.0)],
+        "event_ts timestamp, revenue double",
+    )
+
+    assert measure_trend_strength(frame, "event_ts", ["revenue"]) == pytest.approx(1.0, abs=1e-8)
+
+
+@pytest.mark.parametrize("metric", ["__dqx_advisory_bucket", "__dqx_seconds", "__DQX_ADVISORY_BUCKET"])
+def test_temporal_advice_preserves_metrics_named_like_internal_columns(spark: SparkSession, metric: str) -> None:
+    # The alternating metric is stationary. Accidentally replacing it with the bucket
+    # or seconds axis produces a perfect trend and a misleading recommendation.
+    frame = spark.createDataFrame(
+        [(START + datetime.timedelta(seconds=i), float(i % 2), 999.0, 999.0) for i in range(100)],
+        T.StructType(
+            [
+                T.StructField("event_ts", T.TimestampType()),
+                T.StructField(metric, T.DoubleType()),
+                T.StructField("__dqx_advisory_bucket_", T.DoubleType()),
+                T.StructField("__dqx_seconds_", T.DoubleType()),
+            ]
+        ),
+    )
+
+    strength = measure_trend_strength(frame, "event_ts", [metric])
+
+    assert strength < 0.01
 
 
 # ============================================================================

@@ -16,6 +16,7 @@ from databricks.labs.dqx.anomaly.feature_prep import (
     prepare_feature_metadata,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
+from databricks.labs.dqx.utils import quote_column_name
 
 # Minimum sample size for reliable drift detection
 # Small batches have high variance and lead to false positives
@@ -53,7 +54,9 @@ def _build_aggregation_expressions(
 
         columns_to_check.append(col)
         col_type = col_types.get(col)
-        col_expr = F.col(col).cast("double") if col_type == "boolean" else F.col(col)
+        col_expr = F.col(quote_column_name(col))
+        if col_type == "boolean":
+            col_expr = col_expr.cast("double")
 
         agg_exprs.extend(
             [
@@ -202,16 +205,13 @@ def prepare_drift_df(
     """Prepare drift DataFrame and columns aligned to training baseline stats.
 
     Drift is measured over the *engineered* feature list, which for a grouped model includes the
-    ``_rel_baseline`` features. Those are each already a deviation from the group baseline, so a
-    shift in the baseline itself moves the raw metric and its baseline together and leaves the
-    relative feature unchanged. Consequence, by design: drift on a grouped metric reports a change
-    in how far rows sit *from their group norm*, not a change in the norm. A wholesale shift of a
-    group's level is absorbed into the baseline and is not flagged here — that is the point of
-    conditioning, not a gap in drift detection.
+    ``_rel_baseline`` features. Their group medians remain fixed at the values learned during
+    training. A later shift in a group's level can therefore change both the raw metric and its
+    deviation from that fitted baseline; scoring does not refit the group medians.
     """
     feature_metadata_json = record.features.feature_metadata
     if not feature_metadata_json:
-        return df.select(*columns), columns
+        return df.select(*[F.col(quote_column_name(name)) for name in columns]), columns
 
     column_infos, feature_metadata = prepare_feature_metadata(feature_metadata_json)
     engineered_df = apply_feature_engineering_for_scoring(

@@ -38,6 +38,12 @@ def _displayed(severity: float, threshold: float) -> float:
     return float(Decimal(repr(severity)).quantize(quantum, rounding=ROUND_FLOOR))
 
 
+def _published(severity: float, threshold: float) -> float:
+    """Mirror the final display rule, including high-precision verdict preservation."""
+    displayed = _displayed(severity, threshold)
+    return severity if (displayed >= threshold) != (severity >= threshold) else displayed
+
+
 def _scaled_then_floored(severity: float, threshold: float) -> float:
     """The rejected form, kept so its failure is executable rather than described."""
     scale = float(10 ** displayed_severity_decimals(threshold))
@@ -123,6 +129,17 @@ def test_a_whole_number_threshold_still_shows_a_decimal():
     """Readability: a severity of 95 should not print as an integer just because the threshold is one."""
     assert displayed_severity_decimals(95.0) == 1
     assert _displayed(95.04, 95.0) == 95.0
+
+
+def test_high_precision_threshold_keeps_the_deciding_severity_when_flooring_changes_the_verdict():
+    """The regular ten-place display grid cannot represent this threshold's deciding value."""
+    threshold = 95.123456789123
+    assert _displayed(threshold, threshold) < threshold
+    assert _published(threshold, threshold) == threshold
+
+
+def test_ordinary_thresholds_keep_the_existing_display() -> None:
+    assert _published(95.04, 95.0) == _displayed(95.04, 95.0) == 95.0
 
 
 def test_a_saturated_severity_is_published_unchanged():

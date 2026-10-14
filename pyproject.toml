@@ -551,6 +551,10 @@ valid-metaclass-classmethod-first-arg = ["mcs"]
 # List of builtins function names that should not be used, separated by a comma
 bad-functions = ["map", "input"]
 
+[tool.pylint.dunder]
+# Pydantic v2 calls this schema hook while adapting WorkspaceConfig. It is a required framework protocol.
+good-dunder-names = ["__get_pydantic_core_schema__"]
+
 [tool.pylint.design]
 # List of regular expressions of class ancestor names to ignore when counting
 # public methods (see R0903)

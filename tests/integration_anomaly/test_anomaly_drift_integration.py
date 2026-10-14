@@ -3,9 +3,12 @@
 
 import warnings
 from collections.abc import Callable
+from statistics import mean, stdev
 
+import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
+from pyspark.sql.types import DoubleType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.drift import compute_drift_score
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
@@ -21,6 +24,18 @@ from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
     train_simple_2d_model,
 )
+
+
+@pytest.mark.parametrize("name", ["net.amount", "net`amount"])
+def test_drift_resolves_literal_schema_names(spark: SparkSession, name: str) -> None:
+    values = [float(i % 11) for i in range(1000)]
+    frame = spark.createDataFrame([(value,) for value in values], StructType([StructField(name, DoubleType())]))
+
+    result = compute_drift_score(frame, [name], {name: {"mean": mean(values), "std": stdev(values)}})
+
+    assert result.sample_size == len(values)
+    assert result.column_scores[name] == pytest.approx(0.0, abs=1e-12)
+    assert result.drift_detected is False
 
 
 def test_drift_detection_warns_on_distribution_shift(

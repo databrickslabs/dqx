@@ -23,7 +23,7 @@ from databricks.labs.dqx.anomaly.scoring_config import (
 )
 from databricks.labs.dqx.anomaly.segment_utils import baseline_key_column
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.utils import safe_filter_expr
+from databricks.labs.dqx.utils import quote_column_name, safe_filter_expr
 from databricks.labs.dqx.schema.dq_info_schema import (
     build_dq_info_struct,
     register_dq_info_field,
@@ -77,7 +77,12 @@ def displayed_severity_expr(severity: Column, threshold: float) -> Column:
         The severity rounded down at the threshold's display precision.
     """
     precise_severity = severity.cast(DecimalType(38, 30))
-    return F.call_function("floor", precise_severity, F.lit(displayed_severity_decimals(threshold))).cast(DoubleType())
+    displayed = F.call_function("floor", precise_severity, F.lit(displayed_severity_decimals(threshold))).cast(
+        DoubleType()
+    )
+    actual_verdict = severity >= F.lit(threshold)
+    displayed_verdict = displayed >= F.lit(threshold)
+    return F.when(actual_verdict != displayed_verdict, severity.cast(DoubleType())).otherwise(displayed)
 
 
 def create_null_scored_dataframe(
@@ -404,6 +409,7 @@ def add_baseline_severity_percentile_column(
     baseline_by: list[str],
     group_quantile_points: dict[str, list[tuple[float, float]]],
     fallback_quantile_points: list[tuple[float, float]],
+    group_key_col: str | None = None,
 ) -> DataFrame:
     """Add a severity percentile calibrated against each row's own group.
 
@@ -416,8 +422,9 @@ def add_baseline_severity_percentile_column(
     ``when(group_key == lit(k), <interpolation>)`` chain, which at 90 groups and 11 points is
     around a thousand branches of generated code and blows up compilation.
 
-    Groups absent from *group_quantile_points* fall back to the global calibration, so a group
-    seen at scoring but not at training still gets a severity rather than a null.
+    Groups absent from *group_quantile_points* fall back to global calibration. The caller separately
+    nulls scores for genuinely unseen groups. When *group_key_col* is supplied, reuse and preserve
+    that already computed identity rather than evaluating the raw grouping columns again.
     """
     if not group_quantile_points:
         return add_severity_percentile_column(
@@ -428,8 +435,10 @@ def add_baseline_severity_percentile_column(
     fallback_by_percentile = dict(fallback_quantile_points)
     quantile_cols = {p: f"__dqx_group_q{int(p * 100):05d}" for p in percentiles}
 
-    group_key_col = "__dqx_severity_group_key"
-    df = df.withColumn(group_key_col, baseline_key_column(baseline_by))
+    owns_group_key = group_key_col is None
+    group_key_col = group_key_col or "__dqx_severity_group_key"
+    if owns_group_key:
+        df = df.withColumn(group_key_col, baseline_key_column(baseline_by))
 
     schema = StructType(
         [StructField(group_key_col, StringType(), False)]
@@ -446,7 +455,10 @@ def add_baseline_severity_percentile_column(
     bounds = [(p, F.coalesce(F.col(quantile_cols[p]), F.lit(float(fallback_by_percentile[p])))) for p in percentiles]
     df = df.withColumn(severity_col, _piecewise_severity_expr(F.col(score_col), bounds))
 
-    return df.drop(group_key_col, *quantile_cols.values())
+    temporary_columns = [*quantile_cols.values()]
+    if owns_group_key:
+        temporary_columns.append(group_key_col)
+    return df.drop(*temporary_columns)
 
 
 #: Above this many known group keys, membership is tested with a broadcast anti-join rather than
@@ -489,7 +501,9 @@ def mark_stale_baselines(
 
     span = max(float(t_max) - float(t_min), 1.0)
     horizon_epoch = float(t_max) + STALE_HORIZON_SPANS * span
-    row_seconds = F.unix_timestamp(F.col(baseline_over_time).cast(TimestampType())).cast(DoubleType())
+    row_seconds = F.unix_timestamp(F.col(quote_column_name(baseline_over_time)).cast(TimestampType())).cast(
+        DoubleType()
+    )
     return df.withColumn(
         # A null timestamp is not stale: it has no position to be past the horizon, and the temporal
         # feature already fell back to zero for it. Calling it stale would blame the wrong thing.

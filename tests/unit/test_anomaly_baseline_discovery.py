@@ -11,6 +11,8 @@ giving 3 groups, and conditioning barely engaged: PR-AUC 0.1302 against 0.1176 u
 this policy the same data yields all 90 groups. See databrickslabs/dqx#1484.
 """
 
+import pytest
+
 from databricks.labs.dqx.anomaly.group_config import (
     MAX_BASELINE_COLUMN_CARDINALITY,
     MAX_BASELINE_GROUPS,
@@ -117,3 +119,52 @@ def test_selection_is_deterministic_in_candidate_order():
     assert select_baseline_columns(candidates, total) == ["a", "b"]
     assert candidates == original
     assert select_baseline_columns(candidates, total) == ["a", "b"]
+
+
+@pytest.mark.parametrize("smallest, expected", [(29, []), (30, ["region"]), (31, ["region"])])
+def test_measured_support_controls_selection_at_the_floor(smallest, expected):
+    assert (
+        select_baseline_columns(
+            [_candidate("region", 2, 1000)],
+            1000,
+            sample_fraction=1.0,
+            train_ratio=1.0,
+            group_support=lambda names: (2, smallest),
+        )
+        == expected
+    )
+
+
+def test_joint_support_rejects_skew_hidden_by_the_average():
+    assert not select_baseline_columns(
+        [_candidate("region", 2, 1000)],
+        1000,
+        group_support=lambda names: (2, 1),
+    )
+
+
+def test_observed_joint_groups_do_not_assume_independent_dimensions():
+    # Two perfectly correlated dimensions have two groups, not their Cartesian product of four.
+    assert select_baseline_columns(
+        [_candidate("region", 2, 300), _candidate("channel", 2, 300)],
+        300,
+        group_support=lambda names: (2, 150),
+    ) == ["region", "channel"]
+
+
+@pytest.mark.parametrize(
+    "sample_fraction, train_ratio, max_rows, expected",
+    [(1.0, 0.5, None, ["region"]), (0.1, 0.5, None, []), (1.0, 0.5, 100, []), (1.0, 0.5, 120, ["region"])],
+)
+def test_resolved_sampling_and_cap_control_projected_support(sample_fraction, train_ratio, max_rows, expected):
+    assert (
+        select_baseline_columns(
+            [_candidate("region", 2, 400)],
+            400,
+            sample_fraction=sample_fraction,
+            train_ratio=train_ratio,
+            max_rows=max_rows,
+            group_support=lambda names: (2, 200),
+        )
+        == expected
+    )

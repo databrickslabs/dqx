@@ -22,6 +22,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis, candidate_periods, trend_strength
+from databricks.labs.dqx.utils import quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def measure_trend_strength(df: DataFrame, time_column: str, metrics: list[str]) 
     produces the advisory. That is the conservative direction for a warning: it speaks up rather than
     staying quiet when it does not know.
     """
-    seconds = F.unix_timestamp(F.col(time_column).cast(TimestampType())).cast(DoubleType())
+    seconds = F.unix_timestamp(F.col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())
     bounds = df.agg(F.min(seconds).alias("lo"), F.max(seconds).alias("hi")).first()
     if bounds is None or bounds["lo"] is None or bounds["hi"] is None:
         return 0.0
@@ -53,35 +54,41 @@ def measure_trend_strength(df: DataFrame, time_column: str, metrics: list[str]) 
     span = max(float(bounds["hi"]) - float(bounds["lo"]), 1.0)
     relative = seconds - F.lit(float(bounds["lo"]))
     width = span / ADVISORY_BUCKETS
+    bucket_name, seconds_name = "__dqx_advisory_bucket", "__dqx_seconds"
+    input_names = {name.casefold() for name in df.columns}
+    # Keep private working fields separate from literal user names, including
+    # case variants on Spark's default case-insensitive resolver.
+    while bucket_name.casefold() in input_names or seconds_name.casefold() in input_names:
+        bucket_name += "_"
+        seconds_name += "_"
     rows = (
-        df.withColumn("__dqx_advisory_bucket", F.floor(relative / F.lit(width)))
-        .groupBy("__dqx_advisory_bucket")
+        df.filter(seconds.isNotNull())
+        .withColumn(bucket_name, F.floor(relative / F.lit(width)))
+        .groupBy(bucket_name)
         .agg(
-            F.min(relative).alias("__dqx_seconds"),
-            *[F.percentile_approx(F.col(metric).cast(DoubleType()), 0.5).alias(metric) for metric in metrics],
+            F.min(relative).alias(seconds_name),
+            *[
+                F.percentile_approx(F.col(quote_column_name(metric)).cast(DoubleType()), 0.5).alias(metric)
+                for metric in metrics
+            ],
         )
-        .orderBy("__dqx_advisory_bucket")
+        .orderBy(bucket_name)
         .collect()
     )
     if len(rows) < 3:
         return 0.0
 
-    axis = np.array([float(row["__dqx_seconds"]) for row in rows], dtype=float)
+    axis = np.array([float(row[seconds_name]) for row in rows], dtype=float)
     columns = {
         metric: np.array([row[metric] for row in rows], dtype=float)
         for metric in metrics
         if any(row[metric] is not None for row in rows)
     }
-    usable = {name: values[~np.isnan(values)] for name, values in columns.items()}
-    usable = {name: values for name, values in usable.items() if values.size >= 3}
-    if not usable:
-        return 0.0
-
     # Measure against the basis the fit would actually use, so the advisory answers the question the
     # caller is about to ask rather than a different one. A window too short for a seasonal term reports
     # trend only, which is exactly what it would get.
     periods, _ = candidate_periods(axis)
     basis = TemporalBasis(trend=True, periods=periods, span=span)
-    trimmed_axis = axis[: min(len(axis), min(values.size for values in usable.values()))]
-    aligned = {name: values[: trimmed_axis.size] for name, values in usable.items()}
-    return trend_strength(trimmed_axis, aligned, basis)
+    # Each metric keeps its missing buckets so trend_strength can mask values and
+    # their original timestamps together, independently for each metric.
+    return trend_strength(axis, columns, basis)

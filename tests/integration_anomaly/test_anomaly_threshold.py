@@ -14,6 +14,7 @@ from databricks.labs.dqx.anomaly.explainability import severity_from_scores
 from databricks.labs.dqx.anomaly.scoring_utils import add_severity_percentile_column
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -200,7 +201,7 @@ def test_precision_recall_tradeoff(
 
 
 def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
-    """Test edge case thresholds (0.0 and 1.0)."""
+    """Test the inclusive zero cutoff and rejected upper endpoint."""
     model_name, registry_table, _columns = quick_model_factory(spark)
 
     test_df = test_df_factory(spark)
@@ -217,15 +218,9 @@ def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
     # Every known, finite row meets the inclusive zero-percentile threshold.
     assert zero_ids == {row.transaction_id for row in test_df.collect()}
 
-    # Threshold 100.0 - flags nothing (almost impossible to exceed) - use helper
     rule_one = create_anomaly_dataset_rule(model_name, registry_table, threshold=100.0)
-
-    result_one = dq_engine.apply_checks(test_df, [rule_one])
-    one = _scored_snapshot(test_df, result_one, F.col("_dq_info")[0].getField("anomaly"), 100.0)
-    one_ids = {row.transaction_id for row in one if row.observed_flag}
-
-    # Should flag few/no rows
-    assert one_ids <= zero_ids
+    with pytest.raises(InvalidParameterError, match="threshold"):
+        dq_engine.apply_checks(test_df, [rule_one])
 
 
 def test_threshold_consistency(spark, test_df_factory, quick_model_factory):

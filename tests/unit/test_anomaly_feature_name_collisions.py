@@ -25,6 +25,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     FREQUENCY_FEATURE_SUFFIX,
     NULL_INDICATOR_SUFFIX,
     TEMPORAL_RELATIVE_SUFFIX,
+    ColumnTypeInfo,
 )
 from databricks.labs.dqx.anomaly.validation import generated_feature_names, validate_generated_feature_names
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -36,6 +37,19 @@ def _fake_df(schema: dict[str, T.DataType]) -> DataFrame:
     df.schema = T.StructType([T.StructField(name, dtype, True) for name, dtype in schema.items()])
     df.columns = list(schema)
     return df
+
+
+def _infos(*infos: tuple[str, T.DataType, str, int | None, str | None]) -> list[ColumnTypeInfo]:
+    return [
+        ColumnTypeInfo(
+            name=name,
+            spark_type=spark_type,
+            category=category,
+            null_count=null_count,
+            encoding_strategy=encoding_strategy,
+        )
+        for name, spark_type, category, null_count, encoding_strategy in infos
+    ]
 
 
 def test_an_ordinary_schema_passes():
@@ -55,7 +69,16 @@ def test_a_column_named_after_the_group_relative_feature_is_refused():
     )
 
     with pytest.raises(InvalidParameterError) as raised:
-        validate_generated_feature_names(df, ["amount", f"amount{BASELINE_RELATIVE_SUFFIX}"], ["region"], None)
+        validate_generated_feature_names(
+            df,
+            ["amount", f"amount{BASELINE_RELATIVE_SUFFIX}"],
+            ["region"],
+            None,
+            column_infos=_infos(
+                ("amount", T.DoubleType(), "numeric", 0, "none"),
+                (f"amount{BASELINE_RELATIVE_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
     message = str(raised.value)
     assert f"amount{BASELINE_RELATIVE_SUFFIX}" in message
@@ -83,7 +106,16 @@ def test_a_column_named_after_the_time_relative_feature_is_refused():
     )
 
     with pytest.raises(InvalidParameterError):
-        validate_generated_feature_names(df, ["latency", f"latency{TEMPORAL_RELATIVE_SUFFIX}"], None, "reading_ts")
+        validate_generated_feature_names(
+            df,
+            ["latency", f"latency{TEMPORAL_RELATIVE_SUFFIX}"],
+            None,
+            "reading_ts",
+            column_infos=_infos(
+                ("latency", T.DoubleType(), "numeric", 0, "none"),
+                (f"latency{TEMPORAL_RELATIVE_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
 
 @pytest.mark.parametrize("suffix", CALENDAR_FEATURE_SUFFIXES)
@@ -91,7 +123,16 @@ def test_a_column_named_after_any_calendar_feature_is_refused(suffix: str):
     df = _fake_df({"created": T.TimestampType(), f"created{suffix}": T.DoubleType()})
 
     with pytest.raises(InvalidParameterError) as raised:
-        validate_generated_feature_names(df, ["created", f"created{suffix}"], None, None)
+        validate_generated_feature_names(
+            df,
+            ["created", f"created{suffix}"],
+            None,
+            None,
+            column_infos=_infos(
+                ("created", T.TimestampType(), "datetime", 0, "cyclical"),
+                (f"created{suffix}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
     assert f"created{suffix}" in str(raised.value)
 
@@ -100,28 +141,59 @@ def test_a_column_named_after_the_boolean_feature_is_refused():
     df = _fake_df({"is_vip": T.BooleanType(), f"is_vip{BOOLEAN_FEATURE_SUFFIX}": T.DoubleType()})
 
     with pytest.raises(InvalidParameterError):
-        validate_generated_feature_names(df, ["is_vip", f"is_vip{BOOLEAN_FEATURE_SUFFIX}"], None, None)
+        validate_generated_feature_names(
+            df,
+            ["is_vip", f"is_vip{BOOLEAN_FEATURE_SUFFIX}"],
+            None,
+            None,
+            column_infos=_infos(
+                ("is_vip", T.BooleanType(), "boolean", 0, "binary"),
+                (f"is_vip{BOOLEAN_FEATURE_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
 
 def test_a_column_named_after_the_frequency_feature_is_refused():
     df = _fake_df({"sku": T.StringType(), f"sku{FREQUENCY_FEATURE_SUFFIX}": T.DoubleType()})
 
     with pytest.raises(InvalidParameterError):
-        validate_generated_feature_names(df, ["sku", f"sku{FREQUENCY_FEATURE_SUFFIX}"], None, None)
+        validate_generated_feature_names(
+            df,
+            ["sku", f"sku{FREQUENCY_FEATURE_SUFFIX}"],
+            None,
+            None,
+            column_infos=_infos(
+                ("sku", T.StringType(), "categorical", 0, "frequency"),
+                (f"sku{FREQUENCY_FEATURE_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
 
-def test_a_null_indicator_collision_is_refused_even_with_no_nulls_present():
-    """Claimed unconditionally, and deliberately so.
-
-    Whether an indicator is built depends on the training frame having nulls, which is a property of
-    today's data rather than of the schema. A schema whose indicator name collides is a bug waiting for
-    the first null to arrive, and it would then appear as a silent overwrite on a later run rather than
-    as an error on this one.
-    """
+def test_a_null_indicator_collision_is_refused_only_when_the_indicator_is_enabled():
     df = _fake_df({"amount": T.DoubleType(), f"amount{NULL_INDICATOR_SUFFIX}": T.DoubleType()})
 
+    validate_generated_feature_names(
+        df,
+        ["amount", f"amount{NULL_INDICATOR_SUFFIX}"],
+        None,
+        None,
+        column_infos=_infos(
+            ("amount", T.DoubleType(), "numeric", 0, "none"),
+            (f"amount{NULL_INDICATOR_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+        ),
+    )
+
     with pytest.raises(InvalidParameterError):
-        validate_generated_feature_names(df, ["amount", f"amount{NULL_INDICATOR_SUFFIX}"], None, None)
+        validate_generated_feature_names(
+            df,
+            ["amount", f"amount{NULL_INDICATOR_SUFFIX}"],
+            None,
+            None,
+            column_infos=_infos(
+                ("amount", T.DoubleType(), "numeric", 1, "none"),
+                (f"amount{NULL_INDICATOR_SUFFIX}", T.DoubleType(), "numeric", 0, "none"),
+            ),
+        )
 
 
 def test_the_collector_keeps_every_source_rather_than_one_per_name():
@@ -132,7 +204,7 @@ def test_the_collector_keeps_every_source_rather_than_one_per_name():
     """
     generated = generated_feature_names({"x": T.DoubleType()}, ["x", "x"], None, None)
 
-    assert [name for name, _, _ in generated] == [f"x{NULL_INDICATOR_SUFFIX}", f"x{NULL_INDICATOR_SUFFIX}"]
+    assert [name for name, _, _ in generated] == ["x", "x"]
 
 
 def test_a_column_listed_twice_is_refused():
@@ -144,6 +216,24 @@ def test_a_column_listed_twice_is_refused():
         validate_generated_feature_names(df, ["x", "x"], None, None)
 
     assert "same feature name" in str(raised.value)
+
+
+def test_an_incidental_source_schema_column_does_not_block_the_effective_projection():
+    df = _fake_df(
+        {
+            "amount": T.DoubleType(),
+            f"amount{BASELINE_RELATIVE_SUFFIX}": T.DoubleType(),
+            "region": T.StringType(),
+        }
+    )
+
+    validate_generated_feature_names(
+        df,
+        ["amount"],
+        ["region"],
+        None,
+        column_infos=_infos(("amount", T.DoubleType(), "numeric", 0, "none")),
+    )
 
 
 def test_a_feature_column_missing_from_the_schema_is_left_to_the_column_validator():
