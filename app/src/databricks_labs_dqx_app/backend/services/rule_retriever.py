@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from databricks_labs_dqx_app.backend.services.model_services import ModelServiceUnavailableError
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 
 logger = logging.getLogger(__name__)
@@ -125,9 +126,13 @@ class CosineRuleRetriever:
         if not query_texts:
             return []
 
-        query_vectors = self._embeddings.embed_texts(list(query_texts))
+        try:
+            query_vectors = self._embeddings.embed_texts(list(query_texts))
+        except ModelServiceUnavailableError as e:
+            # Missing model, grant or ai-gateway scope: surface the fix, not "Rule retrieval failed."
+            raise RuleRetrievalUnavailableError(e.reason) from e
         if any(vector is None for vector in query_vectors):
-            raise RuleRetrievalUnavailableError("Embedding endpoint returned no vector for the query text.")
+            raise RuleRetrievalUnavailableError("The embedding model returned no vector for the query text.")
 
         corpus = self._embeddings.iter_embeddings()
         results: list[list[RetrievedRule]] = []

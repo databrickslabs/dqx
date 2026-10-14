@@ -1,10 +1,17 @@
-"""Check that Studio users can query the AI model endpoints, and turn AI off when they cannot.
+"""Check that Studio users can use the AI models, and turn AI off when they cannot.
 
-AI calls run as the signed-in user, so every audience group needs Can query on the
-configured serving endpoints. Setup grants it on a best-effort basis, then re-reads the
-endpoint permissions. The check never blocks readiness: when access is missing or cannot
-be confirmed it reports a warning and, unless an administrator chose the AI setting
-themselves, turns AI features off. It turns them back on once access is confirmed.
+AI calls go to Unity Gateway model services (for example ``system.ai.claude-sonnet-4-5``),
+which are Unity Catalog securables. AI features run as the signed-in user, so every audience
+group needs ``EXECUTE`` on each configured model service plus ``USE_CATALOG`` and
+``USE_SCHEMA`` on its catalog and schema. The app service principal needs the same on the
+embedding model, because it embeds rules when they are published. Databricks grants all of
+this on ``system.ai`` to account users by default, but a metastore admin can revoke it.
+
+Studio never grants these itself (only a metastore admin can grant on ``system.ai``); it reads
+the effective grants and lists the exact GRANT statements to run. The check never blocks
+readiness: when access is missing or cannot be confirmed it reports a warning and, unless an
+administrator chose the AI setting themselves, turns AI features off. It turns them back on
+once access is confirmed.
 """
 
 import logging
@@ -12,25 +19,27 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
-from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
-from databricks_labs_dqx_app.backend.setup.acl import group_levels, missing_principals
+from databricks_labs_dqx_app.backend.services.model_services import ModelServices
 from databricks_labs_dqx_app.backend.setup.checks import instruction_identifier
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, effective_privilege_names, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 
-_QUERY_LEVELS = frozenset({"CAN_QUERY", "CAN_MANAGE"})
-_ALL_WORKSPACE_USERS = "users"
-# Most severe first: a missing endpoint needs a settings change, missing access needs a
+# Most severe first: a missing model needs a settings change, missing access needs a
 # grant, and unverified access may already be fine.
 _PROBLEM_ORDER = ("ai_endpoint_missing", "ai_access_missing", "ai_access_unverified")
+_GRANT_GUIDANCE = (
+    "Some Studio users can't use the AI models. A metastore admin (or anyone with MANAGE on the "
+    "model services) needs to run these statements in a SQL editor, then click Verify again:"
+)
 logger = logging.getLogger(__name__)
+_GrantCache = dict[tuple[str, str, str], frozenset[str] | None]
 
 
 class AiSettings(Protocol):
-    """AI kill-switch and endpoint settings used by the AI access check."""
+    """AI kill-switch and model settings used by the AI access check."""
 
     def get_ai_enabled(self) -> bool: ...
 
@@ -46,33 +55,43 @@ class AiSettings(Protocol):
 
 
 class AiAccess:
-    """Verify Studio users can use the configured AI model endpoints.
+    """Verify Studio users can use the configured AI model services.
 
     Args:
         resources: Resolved Studio resources, including the audience.
         workspace: App service principal workspace client.
         settings: AI settings, including the kill-switch.
+        app_sp_id: Application ID of the app service principal; empty skips its check.
     """
 
-    def __init__(self, *, resources: ActiveResources, workspace: WorkspaceClient, settings: AiSettings) -> None:
+    def __init__(
+        self,
+        *,
+        resources: ActiveResources,
+        workspace: WorkspaceClient,
+        settings: AiSettings,
+        app_sp_id: str = "",
+    ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._settings = settings
+        self._app_sp = app_sp_id.strip()
 
     def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
-        """Grant, then verify, Can query on the AI endpoints for every audience group.
+        """Verify every audience group can use the AI models, and report the grants they lack.
 
         Args:
-            reader_ws: Setup administrator's client, used to read endpoint permissions
-                when the app service principal cannot.
+            reader_ws: Setup administrator's client, used to read grants when the app
+                service principal cannot.
 
         Returns:
-            A passed step, or a non-blocking warning describing what Studio users lack.
+            A passed step, or a non-blocking warning listing the GRANT statements to run.
         """
         try:
             enabled = self._settings.get_ai_enabled()
             setup_owned = self._settings.get_ai_enabled_source() != "admin"
-            endpoints = self.endpoint_names()
+            chat_model = self._settings.get_ai_endpoint_name().strip()
+            embedding_model = self._settings.get_embedding_endpoint_name().strip()
         except Exception:
             logger.warning("Could not read the AI settings during setup.")
             return SetupStep(
@@ -85,7 +104,22 @@ class AiAccess:
         if not enabled and not setup_owned:
             return _passed("AI features are turned off in Settings.")
 
-        problems = [problem for name in endpoints if (problem := self._endpoint_problem(name, reader_ws))]
+        # Effective privileges per (kind, securable, principal), shared by every model in this run:
+        # both default models live in system.ai, so catalog and schema grants are read once.
+        grant_cache: _GrantCache = {}
+        problems: list[tuple[str, tuple[str, ...]]] = []
+        statements: list[str] = []
+        for name in self.model_names():
+            problem, missing = self._model_problem(
+                name, self._principals_for(name, embedding_model), reader_ws, grant_cache
+            )
+            if problem:
+                problems.append(problem)
+            statements.extend(statement for statement in missing if statement not in statements)
+        if statements:
+            problems.append(("ai_access_missing", (f"{_GRANT_GUIDANCE}\n" + "\n".join(statements),)))
+        if not chat_model:
+            problems.append(("ai_endpoint_missing", ("No AI model is selected. Choose one in Settings > AI.",)))
         if not problems:
             if not enabled and self._save_enabled(True):
                 return _passed("Studio users can use the AI models again, so AI features are back on.")
@@ -97,11 +131,11 @@ class AiAccess:
             if enabled:
                 self._save_enabled(False)
             summary = (
-                "AI features are turned off because Studio users may not be able to use the AI model. "
+                "AI features are turned off because Studio users may not be able to use the AI models. "
                 "Fix the access below, then click Verify again, or turn AI back on in Settings."
             )
         else:
-            summary = "AI features are on, but Studio users may not be able to use the AI model."
+            summary = "AI features are on, but Studio users may not be able to use the AI models."
         return SetupStep(
             id=SetupStepId.AI,
             state=StepState.WARNING,
@@ -115,10 +149,16 @@ class AiAccess:
         """Turn AI features on as an administrator's choice, so setup leaves them on."""
         self._settings.save_ai_enabled(True, user_email=user_email, source="admin")
 
-    def endpoint_names(self) -> tuple[str, ...]:
-        """Return the configured AI and embedding endpoint names, sorted and de-duplicated."""
+    def model_names(self) -> tuple[str, ...]:
+        """Return the configured AI and embedding model service names, sorted and de-duplicated."""
         names = {self._settings.get_ai_endpoint_name(), self._settings.get_embedding_endpoint_name()}
         return tuple(sorted(name.strip() for name in names if name and name.strip()))
+
+    def _principals_for(self, name: str, embedding_model: str) -> tuple[str, ...]:
+        principals = list(self._resources.audience.uc_principals)
+        if self._app_sp and name == embedding_model and self._app_sp not in principals:
+            principals.append(self._app_sp)
+        return tuple(principals)
 
     def _save_enabled(self, enabled: bool) -> bool:
         try:
@@ -128,74 +168,128 @@ class AiAccess:
             return False
         return True
 
-    def _endpoint_problem(self, name: str, reader_ws: WorkspaceClient | None) -> tuple[str, tuple[str, ...]] | None:
-        """Return a problem code and instructions for endpoint *name*, or None when users can query it."""
-        endpoint_label = instruction_identifier(name)
-        try:
-            endpoint_id = self._workspace.serving_endpoints.get(name).id
-        except NotFound:
-            return "ai_endpoint_missing", (
-                f"AI model endpoint {endpoint_label} doesn't exist in this workspace. Choose another one in Settings.",
-            )
-        except Exception:
-            endpoint_id = None
-        if not endpoint_id:
-            return "ai_access_unverified", (
-                f"Studio couldn't look up AI model endpoint {endpoint_label}. Click Verify again in a minute.",
-            )
-        principals = self._resources.audience.workspace_principals
-        absent = self._absent_principals(endpoint_id, principals, reader_ws)
-        if absent:
-            try:
-                self._workspace.serving_endpoints.update_permissions(
-                    serving_endpoint_id=endpoint_id,
-                    access_control_list=[
-                        ServingEndpointAccessControlRequest(
-                            group_name=group, permission_level=ServingEndpointPermissionLevel.CAN_QUERY
-                        )
-                        for group in absent
-                    ],
-                )
-            except Exception:
-                logger.warning("Could not give Studio users access to an AI model endpoint; verifying instead.")
-            absent = self._absent_principals(endpoint_id, principals, reader_ws)
-        if absent == ():
-            return None
-        grants = tuple(
-            f"Give group {instruction_identifier(group)} Can query on AI model endpoint {endpoint_label} "
-            "(Serving > the endpoint > Permissions)."
-            for group in (absent or principals)
+    def _model_problem(
+        self, name: str, principals: Sequence[str], reader_ws: WorkspaceClient | None, grant_cache: _GrantCache
+    ) -> tuple[tuple[str, tuple[str, ...]] | None, list[str]]:
+        """Inspect model service *name* for *principals*.
+
+        Returns:
+            A problem code with instructions (None when nothing but grants is wrong), and the
+            GRANT statements the principals still need.
+        """
+        label = instruction_identifier(name)
+        parts = name.split(".")
+        if len(parts) != 3 or not all(parts):
+            return (
+                "ai_endpoint_missing",
+                (f"AI model {label} isn't a Unity Gateway model service. Choose a model in Settings > AI.",),
+            ), []
+        sp_sees = self._sp_sees(name)
+        exists = True if sp_sees else self._administrator_sees(name, reader_ws)
+        if exists is None:
+            return (
+                "ai_access_unverified",
+                (self._unconfirmed_model_instruction(name, label),),
+            ), []
+        if not exists:
+            return (
+                "ai_endpoint_missing",
+                (f"AI model {label} doesn't exist in this workspace. Choose another one in Settings > AI.",),
+            ), []
+
+        catalog, schema = parts[0], ".".join(parts[:2])
+        requirements = (
+            ("CATALOG", catalog, "USE_CATALOG", _quote_name(catalog)),
+            ("SCHEMA", schema, "USE_SCHEMA", _quote_name(schema)),
+            ("MODEL_SERVICE", name, "EXECUTE", _quote_name(name)),
         )
-        if absent is None:
-            return "ai_access_unverified", (
-                f"Studio couldn't read who can use AI model endpoint {endpoint_label}.",
-                *grants,
-            )
-        return "ai_access_missing", grants
+        statements: list[str] = []
+        unreadable: list[str] = []
+        for principal in principals:
+            for kind, full_name, privilege, quoted in requirements:
+                privileges = self._privileges(kind, full_name, principal, reader_ws, grant_cache)
+                if privileges is None:
+                    if principal not in unreadable:
+                        unreadable.append(principal)
+                    continue
+                if not has_privilege(privileges, privilege):
+                    statements.append(
+                        f"GRANT {privilege} ON {kind.replace('_', ' ')} {quoted} TO {instruction_identifier(principal)};"
+                    )
+        # Only owners and MANAGE holders can read grants on system.ai, so on most installs
+        # they are unreadable. The app SP only sees model services it can access, and it gets
+        # that access the same way users do (account users), so its visibility stands in.
+        if not unreadable or sp_sees:
+            return None, statements
+        who = ", ".join(instruction_identifier(principal) for principal in unreadable)
+        return (
+            "ai_access_unverified",
+            (
+                f"Studio couldn't read who can use AI model {label}. Check that {who} have EXECUTE on the "
+                f"model service and USE_CATALOG / USE_SCHEMA on {_quote_name(schema)} (Catalog Explorer > "
+                "the model service > Permissions).",
+            ),
+        ), statements
 
-    def _absent_principals(
-        self,
-        endpoint_id: str,
-        principals: Sequence[str],
-        reader_ws: WorkspaceClient | None,
-    ) -> tuple[str, ...] | None:
-        """Return the principals lacking Can query, or None when the permissions can't be read."""
-        entries = _read_acl(self._workspace, endpoint_id)
-        if entries is None and reader_ws is not None:
-            entries = _read_acl(reader_ws, endpoint_id)
-        if entries is None:
+    def _sp_sees(self, name: str) -> bool | None:
+        """Return whether the app service principal can see model service *name*, or None on error.
+
+        The app service principal only sees model services it can access, so a True here
+        both proves the model exists and that the SP has access to it.
+        """
+        try:
+            return ModelServices(self._workspace).exists(name)
+        except Exception:
             return None
-        levels = group_levels(entries)
-        if levels.get(_ALL_WORKSPACE_USERS, frozenset()) & _QUERY_LEVELS:
-            return ()
-        return missing_principals(levels, principals, _QUERY_LEVELS)
+
+    @staticmethod
+    def _administrator_sees(name: str, reader_ws: WorkspaceClient | None) -> bool | None:
+        """Return whether the setup administrator can see model service *name*, or None when unknown.
+
+        The app SP's miss is not proof the model is missing; only the administrator's client
+        can confirm that. At startup there is no administrator client, so a miss stays unknown.
+        """
+        if reader_ws is None:
+            return None
+        try:
+            return ModelServices(reader_ws).exists(name)
+        except Exception:
+            return None
+
+    def _unconfirmed_model_instruction(self, name: str, label: str) -> str:
+        """Explain an unconfirmed model lookup and how to make it visible to Studio."""
+        if not self._app_sp:
+            return f"Studio couldn't look up AI model {label}. Click Verify again in a minute."
+        return (
+            f"Studio's service principal can't see AI model {label}, so Studio can't confirm it exists. "
+            "Check the model in Settings > AI. If it's correct, a metastore admin can let Studio see it by "
+            f"running: GRANT READ_METADATA ON MODEL SERVICE {_quote_name(name)} TO "
+            f"{instruction_identifier(self._app_sp)}; then click Verify again."
+        )
+
+    def _privileges(
+        self, kind: str, full_name: str, principal: str, reader_ws: WorkspaceClient | None, grant_cache: _GrantCache
+    ) -> frozenset[str] | None:
+        """Return *principal*'s effective privileges on a securable, or None when unreadable.
+
+        Reads as the app service principal, then the setup administrator; cached for the run.
+        """
+        key = (kind, full_name, principal)
+        if key not in grant_cache:
+            privileges = None
+            for client in (self._workspace, reader_ws):
+                if client is None:
+                    continue
+                response = GrantInspector(client).effective_permissions(kind, full_name, principal)
+                if response is not None:
+                    privileges = effective_privilege_names(response)
+                    break
+            grant_cache[key] = privileges
+        return grant_cache[key]
 
 
-def _read_acl(client: WorkspaceClient, endpoint_id: str) -> list[object] | None:
-    try:
-        return list(client.serving_endpoints.get_permissions(endpoint_id).access_control_list or [])
-    except Exception:
-        return None
+def _quote_name(full_name: str) -> str:
+    return ".".join(instruction_identifier(part) for part in full_name.split("."))
 
 
 def _passed(summary: str) -> SetupStep:

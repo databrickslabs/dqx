@@ -2498,6 +2498,10 @@ export interface MetricsSummaryOut {
   latest_created_at?: MetricsSummaryOutLatestCreatedAt;
 }
 
+export interface ModelServicesOut {
+  names: string[];
+}
+
 /**
  * A monitored table plus its applied rules, for ``getMonitoredTable``.
  */
@@ -4478,10 +4482,6 @@ projection the score-cache reads use); *score* is the 0..1 fraction.
 export interface ScoreTrendPointOut {
   ts: string;
   score: number;
-}
-
-export interface ServingEndpointsOut {
-  names: string[];
 }
 
 /**
@@ -9727,85 +9727,85 @@ export const useSaveAiSettings = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Return the workspace's serving endpoint names, or ``[]`` on any SDK failure.
- * @summary List Serving Endpoints
+ * Return the chat model services in ``system.ai``, or ``[]`` on any SDK failure.
+ * @summary List Model Services
  */
-export const listServingEndpoints = (
+export const listModelServices = (
      options?: AxiosRequestConfig
- ): Promise<AxiosResponse<ServingEndpointsOut>> => {
+ ): Promise<AxiosResponse<ModelServicesOut>> => {
     
     
     return axios.default.get(
-      `/api/v1/config/serving-endpoints`,options
+      `/api/v1/config/model-services`,options
     );
   }
 
 
 
 
-export const getListServingEndpointsQueryKey = () => {
+export const getListModelServicesQueryKey = () => {
     return [
-    `/api/v1/config/serving-endpoints`
+    `/api/v1/config/model-services`
     ] as const;
     }
 
     
-export const getListServingEndpointsQueryOptions = <TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListModelServicesQueryOptions = <TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListServingEndpointsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListModelServicesQueryKey();
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServingEndpoints>>> = ({ signal }) => listServingEndpoints({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listModelServices>>> = ({ signal }) => listModelServices({ signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListServingEndpointsQueryResult = NonNullable<Awaited<ReturnType<typeof listServingEndpoints>>>
-export type ListServingEndpointsQueryError = AxiosError<HTTPValidationError>
+export type ListModelServicesQueryResult = NonNullable<Awaited<ReturnType<typeof listModelServices>>>
+export type ListModelServicesQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListServingEndpoints<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>> & Pick<
+export function useListModelServices<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listServingEndpoints>>,
+          Awaited<ReturnType<typeof listModelServices>>,
           TError,
-          Awaited<ReturnType<typeof listServingEndpoints>>
+          Awaited<ReturnType<typeof listModelServices>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServingEndpoints<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>> & Pick<
+export function useListModelServices<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listServingEndpoints>>,
+          Awaited<ReturnType<typeof listModelServices>>,
           TError,
-          Awaited<ReturnType<typeof listServingEndpoints>>
+          Awaited<ReturnType<typeof listModelServices>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServingEndpoints<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServices<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Serving Endpoints
+ * @summary List Model Services
  */
 
-export function useListServingEndpoints<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServices<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListServingEndpointsQueryOptions(options)
+  const queryOptions = getListModelServicesQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -9817,50 +9817,50 @@ export function useListServingEndpoints<TData = Awaited<ReturnType<typeof listSe
 
 
 
-export const getListServingEndpointsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListModelServicesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListServingEndpointsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListModelServicesQueryKey();
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServingEndpoints>>> = ({ signal }) => listServingEndpoints({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listModelServices>>> = ({ signal }) => listModelServices({ signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListServingEndpointsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listServingEndpoints>>>
-export type ListServingEndpointsSuspenseQueryError = AxiosError<HTTPValidationError>
+export type ListModelServicesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listModelServices>>>
+export type ListModelServicesSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServicesSuspense<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServicesSuspense<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServicesSuspense<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Serving Endpoints
+ * @summary List Model Services
  */
 
-export function useListServingEndpointsSuspense<TData = Awaited<ReturnType<typeof listServingEndpoints>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listServingEndpoints>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListModelServicesSuspense<TData = Awaited<ReturnType<typeof listModelServices>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listModelServices>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListServingEndpointsSuspenseQueryOptions(options)
+  const queryOptions = getListModelServicesSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

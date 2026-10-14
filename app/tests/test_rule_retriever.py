@@ -10,6 +10,7 @@ from unittest.mock import create_autospec
 
 import pytest
 
+from databricks_labs_dqx_app.backend.services.model_services import ModelServiceUnavailableError
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.rule_retriever import (
     CosineRuleRetriever,
@@ -55,6 +56,16 @@ class TestCosineRuleRetriever:
         available, reason = cosine_retriever.is_available()
         assert available is False
         assert "embedding endpoint" in reason
+
+    def test_model_service_error_surfaces_its_reason(self, cosine_retriever, cosine_embeddings):
+        """A missing model, grant or scope must reach the user as its fix, not "Rule retrieval failed"."""
+        reason = "Studio isn't allowed to call AI models for you yet. Sign in again."
+        cosine_embeddings.embed_texts.side_effect = ModelServiceUnavailableError(reason)
+
+        with pytest.raises(RuleRetrievalUnavailableError) as excinfo:
+            cosine_retriever.retrieve("query", top_k=3)
+
+        assert str(excinfo.value) == reason
 
     def test_ranks_by_cosine_and_truncates(self, cosine_retriever, cosine_embeddings):
         cosine_embeddings.embed_texts.return_value = [[1.0, 0.0]]
