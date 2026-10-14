@@ -121,3 +121,57 @@ def test_effective_permissions_count_grants_inherited_from_account_users() -> No
     privileges = GrantInspector(workspace).privileges("CATALOG", "main", "data-team")
 
     assert privileges is not None and has_privilege(privileges, "USE_CATALOG")
+
+
+def _effective(*assignments: EffectivePrivilegeAssignment) -> GrantInspector:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(privilege_assignments=list(assignments))
+    return GrantInspector(workspace)
+
+
+def test_direct_privileges_ignore_group_and_inherited_grants() -> None:
+    """Ownership-like checks only count what was granted to the principal on the securable itself."""
+    inspector = _effective(
+        EffectivePrivilegeAssignment(
+            principal="account users", privileges=[EffectivePrivilege(privilege=Privilege.MANAGE)]
+        ),
+        EffectivePrivilegeAssignment(
+            principal=_SP_APPLICATION_ID,
+            privileges=[
+                EffectivePrivilege(privilege=Privilege.USE_SCHEMA),
+                EffectivePrivilege(privilege=Privilege.MANAGE, inherited_from_name="main"),
+            ],
+        ),
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"USE_SCHEMA"})
+
+
+def test_direct_privileges_return_a_direct_manage_grant() -> None:
+    inspector = _effective(
+        EffectivePrivilegeAssignment(
+            principal=_SP_APPLICATION_ID, privileges=[EffectivePrivilege(privilege=Privilege.MANAGE)]
+        )
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"MANAGE"})
+
+
+def test_direct_privileges_fallback_ignores_account_users_and_catalog_rows() -> None:
+    inspector, workspace = _fallback_inspector(
+        [
+            {"Principal": "account users", "ActionType": "MANAGE", "ObjectType": "SCHEMA"},
+            {"Principal": _SP_APPLICATION_ID, "ActionType": "MANAGE", "ObjectType": "CATALOG"},
+            {"Principal": _SP_APPLICATION_ID, "ActionType": "USE SCHEMA", "ObjectType": "SCHEMA"},
+        ]
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"USE_SCHEMA"})
+    workspace.service_principals.list.assert_not_called()
+
+
+def test_direct_privileges_are_none_when_uninspectable() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+
+    assert GrantInspector(workspace).direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) is None

@@ -235,21 +235,21 @@ def test_status_hides_the_job_from_non_admins_but_names_them(
     assert response.json()["task_runner_job_id"] is None
 
 
-@pytest.mark.usefixtures("resolved_job_id")
-@pytest.mark.parametrize(
-    "report",
-    [
-        _report_with_task_runner(StepState.FAILED),
-        SetupReport(
-            state=SetupState.SETUP_REQUIRED, steps=(SetupStep(id=SetupStepId.IDENTITY, state=StepState.PASSED),)
-        ),
-    ],
-)
-def test_status_omits_a_job_this_run_did_not_resolve(client: TestClient, report: SetupReport) -> None:
-    """A deleted or not-yet-resolved job must not be linked; the UI falls back to the jobs list."""
-    setup_runtime.publish(report)
+def test_status_links_the_job_when_its_step_failed(client: TestClient, resolved_job_id: int) -> None:
+    """A failed run_as or permissions check is when the administrator most needs the job link."""
+    setup_runtime.publish(_report_with_task_runner(StepState.FAILED))
 
-    assert client.get("/api/v1/setup/status").json()["task_runner_job_id"] is None
+    assert client.get("/api/v1/setup/status").json()["task_runner_job_id"] == resolved_job_id
+
+
+def test_status_omits_a_job_setup_has_not_resolved(client: TestClient) -> None:
+    """Without a resolved (or after a deleted) job, the UI falls back to the jobs list."""
+    previous_job_id = setup_runtime.job_id
+    setup_runtime.job_id = None
+    try:
+        assert client.get("/api/v1/setup/status").json()["task_runner_job_id"] is None
+    finally:
+        setup_runtime.job_id = previous_job_id
 
 
 def test_status_never_shows_the_placeholder_for_an_unnamed_user(client: TestClient, obo_ws: MagicMock) -> None:

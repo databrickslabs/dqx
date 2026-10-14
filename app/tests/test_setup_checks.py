@@ -21,7 +21,6 @@ from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, ResourceCheckers
-from databricks_labs_dqx_app.backend.setup.grants import GrantInspector
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
@@ -1138,26 +1137,39 @@ def test_warehouse_unreadable_override_falls_back_to_bound(
     compute.reconcile_warehouse_audience.assert_called_once_with("warehouse-id", ("data-team",))
 
 
-def test_schema_privilege_inspection_requests_manage(
-    checkers: ResourceCheckers, workspace: MagicMock, monkeypatch: pytest.MonkeyPatch
+def test_storage_treats_a_schema_managed_only_through_account_users_as_a_collision(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
 ) -> None:
-    """Omitting MANAGE lets the SHOW GRANTS fallback skip group expansion for a group-held MANAGE."""
-    requested: list[frozenset[str]] = []
+    """MANAGE shared with everyone doesn't make an unrelated schema at Studio's name Studio's."""
+    workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.grants.get_effective.return_value = _effective_permissions(
+        Privilege.MANAGE, Privilege.USE_SCHEMA, Privilege.CREATE_TABLE, principal="account users"
+    )
 
-    def spy(
-        _self: GrantInspector, kind: str, full_name: str, principal: str, *, required: frozenset[str] = frozenset()
-    ) -> frozenset[str]:
-        if kind == "SCHEMA":
-            requested.append(required)
-        return frozenset({"MANAGE", "USE_SCHEMA", "CREATE_TABLE"})
+    step = checkers.ensure_storage(provision=True)
 
-    monkeypatch.setattr(GrantInspector, "privileges", spy)
-    workspace.schemas.get.return_value = SimpleNamespace(owner="deployer@example.com")
+    assert step.code == "storage_collision"
+    sql.execute_no_schema.assert_not_called()
 
-    checkers.ensure_storage(provision=False)
 
-    assert requested
-    assert all("MANAGE" in required for required in requested)
+def test_storage_treats_manage_inherited_from_the_catalog_as_a_collision(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.schemas.get.return_value = SimpleNamespace(owner="someone-else")
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(
+        privilege_assignments=[
+            EffectivePrivilegeAssignment(
+                principal="app-sp-id",
+                privileges=[
+                    EffectivePrivilege(privilege=Privilege.MANAGE, inherited_from_name="main"),
+                    EffectivePrivilege(privilege=Privilege.USE_SCHEMA),
+                    EffectivePrivilege(privilege=Privilege.CREATE_TABLE),
+                ],
+            )
+        ]
+    )
+
+    assert checkers.ensure_storage(provision=False).code == "storage_collision"
 
 
 @pytest.mark.parametrize("app_sp_id", ["app-sp\nGRANT ALL", "app-sp\u0085GRANT ALL"])

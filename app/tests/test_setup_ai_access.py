@@ -20,6 +20,7 @@ class FakeAiSettings:
     endpoint: str = "chat-endpoint"
     embedding: str = "embed-endpoint"
     saves: list[tuple[bool, AiEnabledSource, str | None]] = field(default_factory=list)
+    save_failure: Exception | None = None
 
     def get_ai_enabled(self) -> bool:
         return self.enabled
@@ -30,6 +31,8 @@ class FakeAiSettings:
     def save_ai_enabled(
         self, enabled: bool, *, user_email: str | None = None, source: AiEnabledSource = "admin"
     ) -> bool:
+        if self.save_failure is not None:
+            raise self.save_failure
         self.enabled, self.source = enabled, source
         self.saves.append((enabled, source, user_email))
         return enabled
@@ -97,6 +100,18 @@ def test_missing_endpoint_warns_and_turns_default_ai_off(workspace, admin) -> No
     assert settings.source == "setup"
     assert "turned off" in step.summary
     assert any("`chat-endpoint`" in instruction for instruction in step.instructions)
+
+
+def test_missing_endpoint_reports_ai_still_on_when_turning_it_off_fails(workspace, admin) -> None:
+    workspace.serving_endpoints.get.side_effect = NotFound("no such endpoint")
+    settings = FakeAiSettings(save_failure=RuntimeError("lakebase unavailable"))
+
+    step = _check(workspace, settings, admin)
+
+    assert step.state == StepState.WARNING
+    assert settings.enabled is True
+    assert "couldn't turn AI features off" in step.summary
+    assert "lakebase unavailable" not in str(step)
 
 
 def test_endpoint_lookup_failure_is_unverified_without_leaking_details(workspace) -> None:

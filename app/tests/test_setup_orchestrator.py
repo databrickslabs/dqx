@@ -209,10 +209,15 @@ class FakeJobs:
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
     grant_failure: Exception | None = None
     run_as_failure: Exception | None = None
+    job_exists: bool = True
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
         return self.resolved
+
+    def exists(self, job_id: int) -> bool:
+        self.events.append(f"job_exists:{job_id}")
+        return self.job_exists
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         self.events.append(f"grant_admin:{job_id}:{user_name}")
@@ -956,6 +961,7 @@ async def test_reconcile_forgets_a_deleted_task_runner_job() -> None:
     harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
     await harness.orchestrator.reconcile(setup_user="admin@example.com")
     harness.jobs.run_as_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
 
     report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
@@ -969,6 +975,33 @@ async def test_reconcile_forgets_a_deleted_task_runner_job() -> None:
 
     assert "resolve_job:discover" in harness.events
     assert harness.runtime.job_id == 81
+
+
+@pytest.mark.asyncio
+async def test_reconcile_points_to_a_redeploy_when_the_bundle_job_is_deleted() -> None:
+    """Verify again can't recover a bundle-defined job: it falls back to the same deleted ID."""
+    harness = _harness()
+    harness.jobs.grant_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    step = report.step(SetupStepId.TASK_RUNNER)
+    assert step.code == "task_runner_job_missing"
+    assert step.summary.startswith("Studio's task-runner job no longer exists. Redeploy the bundle")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_a_job_that_still_exists_after_an_unrelated_not_found() -> None:
+    """A NotFound from the permissions update (for example an unknown principal) isn't a deleted job."""
+    harness = _harness()
+    harness.jobs.grant_failure = NotFound("principal does not exist")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_reconciliation_failed"
+    assert harness.runtime.job_id == 27
+    assert "job_exists:27" in harness.events
 
 
 @pytest.mark.asyncio

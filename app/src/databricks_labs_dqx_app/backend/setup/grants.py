@@ -123,6 +123,74 @@ class GrantInspector:
         except Exception:
             return None
 
+    def direct_privileges(self, kind: str, full_name: str, principal: str) -> frozenset[str] | None:
+        """Return privileges granted to *principal* itself on the securable, or None when uninspectable.
+
+        Unlike *privileges*, this ignores grants through groups (including *account users*) and
+        grants inherited from parent securables, so it can decide ownership-like questions.
+
+        Args:
+            kind: Securable type.
+            full_name: Dotted securable name.
+            principal: Principal to inspect.
+        """
+        response = self.effective_permissions(kind, full_name, principal)
+        if response is not None:
+            return frozenset(
+                value
+                for assignment in response.privilege_assignments or []
+                if (assignment.principal or "").strip().casefold() == principal.casefold()
+                for effective_privilege in assignment.privileges or []
+                if not effective_privilege.inherited_from_name
+                for value in [getattr(effective_privilege.privilege, "value", effective_privilege.privilege)]
+                if isinstance(value, str)
+            )
+        if self._reader_sql is None:
+            return None
+        try:
+            for part in full_name.split("."):
+                validate_identifier(part)
+            rows = self._object_grant_rows(kind, full_name, self._reader_sql)
+        except Exception:
+            return None
+        if rows is None:
+            return None
+        return frozenset(
+            row["actiontype"].upper().replace(" ", "_")
+            for row in rows
+            if row["principal"].strip().casefold() == principal.casefold()
+            # SHOW GRANTS also lists privileges inherited from parent securables.
+            and row["objecttype"].strip().upper() in {"", kind.upper()}
+        )
+
+    def _object_grant_rows(self, object_kind: str, name: str, reader_sql: SqlExecutor) -> list[dict[str, str]] | None:
+        """Return the normalized SHOW GRANTS rows on one securable, or None when malformed."""
+        key = (object_kind, name)
+        if key not in self._grant_rows:
+            normalized: list[dict[str, str]] = []
+            for row in reader_sql.query_dicts(f"SHOW GRANTS ON {object_kind} {quote_fqn(name)}", require_complete=True):
+                values = {column.casefold(): value for column, value in row.items()}
+                granted_principal = values.get("principal")
+                action = values.get("actiontype")
+                if (
+                    len(values) != len(row)
+                    or not isinstance(granted_principal, str)
+                    or not granted_principal.strip()
+                    or not isinstance(action, str)
+                    or not action.strip()
+                ):
+                    return None
+                object_type = values.get("objecttype")
+                normalized.append(
+                    {
+                        "principal": granted_principal,
+                        "actiontype": action,
+                        "objecttype": object_type if isinstance(object_type, str) else "",
+                    }
+                )
+            self._grant_rows[key] = normalized
+        return self._grant_rows[key]
+
     def _show_grants_privileges(
         self,
         kind: str,
@@ -142,26 +210,10 @@ class GrantInspector:
             objects.append(("SCHEMA", ".".join(parts[:2])))
         rows: list[dict[str, str]] = []
         for object_kind, name in objects:
-            key = (object_kind, name)
-            if key not in self._grant_rows:
-                normalized: list[dict[str, str]] = []
-                for row in reader_sql.query_dicts(
-                    f"SHOW GRANTS ON {object_kind} {quote_fqn(name)}", require_complete=True
-                ):
-                    values = {column.casefold(): value for column, value in row.items()}
-                    granted_principal = values.get("principal")
-                    action = values.get("actiontype")
-                    if (
-                        len(values) != len(row)
-                        or not isinstance(granted_principal, str)
-                        or not granted_principal.strip()
-                        or not isinstance(action, str)
-                        or not action.strip()
-                    ):
-                        return None
-                    normalized.append({"principal": granted_principal, "actiontype": action})
-                self._grant_rows[key] = normalized
-            rows.extend(self._grant_rows[key])
+            object_rows = self._object_grant_rows(object_kind, name, reader_sql)
+            if object_rows is None:
+                return None
+            rows.extend(object_rows)
         # Grants to the built-in account users group apply to every principal.
         direct = frozenset(
             row["actiontype"].upper().replace(" ", "_")

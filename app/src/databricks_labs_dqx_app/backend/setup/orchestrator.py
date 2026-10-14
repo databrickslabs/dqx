@@ -124,6 +124,8 @@ class SetupJobs(Protocol):
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob: ...
 
+    def exists(self, job_id: int) -> bool: ...
+
     def grant_setup_admin(self, job_id: int, user_name: str) -> None: ...
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep: ...
@@ -658,13 +660,19 @@ class SetupOrchestrator:
                     await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
                 step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
             except NotFound:
-                # The job was deleted; forget it so the next run discovers or recreates one.
+                # NotFound can also mean an unknown principal; only forget a job that is really gone.
+                if await asyncio.to_thread(self.jobs.exists, resolved.job_id):
+                    raise
                 self.runtime.job_id = None
                 return _failed(
                     SetupStepId.TASK_RUNNER,
                     "task_runner_job_missing",
-                    "Studio's task-runner job no longer exists. Click Verify again to set up a new one, "
-                    "or redeploy the bundle if it defines the job.",
+                    (
+                        "Studio's task-runner job no longer exists. Redeploy the bundle to recreate it, "
+                        "then click Verify again."
+                        if self.bootstrap.job_id
+                        else "Studio's task-runner job no longer exists. Click Verify again to set up a new one."
+                    ),
                 )
             if step.state != StepState.PASSED:
                 return step

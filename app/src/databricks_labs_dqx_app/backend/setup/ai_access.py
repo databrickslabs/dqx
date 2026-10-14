@@ -88,9 +88,12 @@ class AiAccess:
 
         code = min((problem_code for problem_code, _ in problems), key=_PROBLEM_ORDER.index)
         instructions = tuple(instruction for _, instruction in problems)
-        if setup_owned and attended:
-            if enabled:
-                self._save_enabled(False)
+        if setup_owned and attended and enabled and not self._save_enabled(False):
+            summary = (
+                "Studio couldn't find the AI model and couldn't turn AI features off, so they're still on. "
+                "Fix it below, then click Verify again, or turn AI off in Settings."
+            )
+        elif setup_owned and attended:
             summary = (
                 "AI features are turned off because Studio couldn't find the AI model. "
                 "Fix it below, then click Verify again, or turn AI back on in Settings."
