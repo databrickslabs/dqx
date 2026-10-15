@@ -6,6 +6,9 @@
  *  so it has a dedicated Save button (PATCH `/monitored-tables/{id}/schedule`)
  *  instead of riding the header's Save-as-draft. Only approved tables with a
  *  schedule fire on the in-app scheduler — the footer note says so.
+ *
+ *  Removing a saved schedule takes effect straight away, after a confirmation,
+ *  the same as on the Schedules page; removing an unsaved draft just discards it.
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,6 +17,15 @@ import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { CalendarClock, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScheduleEditor, DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
 import { useScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
@@ -50,6 +62,7 @@ export function MonitoredTableSchedulingTab({
   // 0 = scan the whole table, which is what a schedule with no stored scope did.
   const [sampleSize, setSampleSize] = useState<number>(table.schedule_sample_size ?? 0);
   const [cronInvalid, setCronInvalid] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const serverCron = table.schedule_cron ?? null;
   const serverTz = table.schedule_tz ?? DEFAULT_TZ;
@@ -119,6 +132,45 @@ export function MonitoredTableSchedulingTab({
     );
   };
 
+  const handleRemove = () => {
+    // Nothing is saved yet, so there is nothing to remove on the server.
+    if (serverCron === null) {
+      setCron(null);
+      return true;
+    }
+    // Deferred until confirmed: the cron on screen keeps its validity, so
+    // cancelling cannot leave an invalid cron saveable.
+    setConfirmRemove(true);
+    return false;
+  };
+
+  const confirmRemoval = () => {
+    setConfirmRemove(false);
+    updateMut.mutate(
+      {
+        bindingId,
+        data: {
+          schedule_cron: null,
+          schedule_tz: null,
+          schedule_kind: serverKind,
+          schedule_sample_size: null,
+        },
+      },
+      {
+        onSuccess: () => {
+          setCron(null);
+          setTz(DEFAULT_TZ);
+          setCronInvalid(false);
+          toast.success(t("schedules.removed"));
+          invalidateAfterMonitoredTableChange(queryClient, bindingId);
+        },
+        onError: (err) => {
+          toast.error(extractApiError(err, t("monitoredTables.scheduleToastSaveFailed")), { duration: 6000 });
+        },
+      },
+    );
+  };
+
   return (
     <div className="pt-4 space-y-8">
       <ScheduleEditor
@@ -133,7 +185,7 @@ export function MonitoredTableSchedulingTab({
         }}
         onKindChange={setScheduleKind}
         onSampleSizeChange={setSampleSize}
-        onRemove={() => setCron(null)}
+        onRemove={handleRemove}
         onValidityChange={(valid) => setCronInvalid(!valid)}
         banner={
           // Gated on the same condition as the save block, not on cannotManage
@@ -185,6 +237,19 @@ export function MonitoredTableSchedulingTab({
           </ul>
         </section>
       )}
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent aria-describedby={undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("schedules.removeConfirm", { name: table.table_fqn })}</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={confirmRemoval}>
+              {t("dataProducts.scheduleRemoveButton")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
