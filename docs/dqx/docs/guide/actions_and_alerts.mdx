@@ -551,6 +551,11 @@ lineage collection is affected.
     *context.quarantine_location* are present and unioned. DQX writes failures to
     *quarantine_location* in split-run mode and to *output_location* in non-split mode, so
     column lineage works in either configuration without extra wiring.
+  - The seeds are the column names in the *columns* field of each failed check's result, which
+    DQX fills from the rule's *column* / *columns* argument. A check without one contributes no
+    column lineage, only table lineage. For *sql_expression*, set its optional *columns*
+    argument (e.g. `columns: [amount]`) to include it. *sql_query* has no *columns* argument,
+    so its failures never seed column lineage.
   - *errors_column* / *warnings_column* (defaults `"_errors"` / `"_warnings"`) name the two
     ARRAY&lt;STRUCT&gt; columns DQX appends to the output / quarantine tables. Override them
     when the engine's error / warning column renames have been applied so this action can

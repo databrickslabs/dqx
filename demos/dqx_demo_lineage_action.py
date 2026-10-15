@@ -226,6 +226,8 @@ bronze_checks = yaml.safe_load(
     function: sql_expression
     arguments:
       expression: invoice_timestamp <= current_timestamp()
+      columns:
+        - invoice_timestamp
       name: invoice_timestamp_not_in_future
       msg: invoice_timestamp is in the future
 
@@ -240,6 +242,8 @@ bronze_checks = yaml.safe_load(
     function: sql_expression
     arguments:
       expression: amount > 0
+      columns:
+        - amount
       name: amount_is_positive
       msg: amount must be strictly positive
 
