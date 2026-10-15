@@ -78,6 +78,7 @@ anomaly = [
     "scikit-learn>=1.0,<2.0",
     "cloudpickle>=3.0,<4.0",  # For serializing sklearn models in pandas UDFs
     "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
+    "protobuf < 7.0",  # NOTE: Newer versions are not supported by the pinned version of MLflow
 ]
 
 [project.entry-points.databricks]
