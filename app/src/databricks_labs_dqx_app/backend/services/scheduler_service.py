@@ -7,7 +7,9 @@ a schedule is due.
 
 Persistence of *last run / next run* timestamps lives in
 ``dq_schedule_runs`` so the scheduler survives app restarts without
-re-triggering runs that already completed.
+re-triggering runs that already completed. A due tick whose previous
+firing still has an active task-runner job is skipped until that job
+finishes, so overlapping scheduled runs cannot interleave results.
 
 **Data Products product ticks (design spec §4.3, Task 5):** each tick also
 polls ``dq_data_products`` for approved products with a non-null
@@ -22,6 +24,7 @@ import asyncio
 import calendar
 import json
 import re
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -68,6 +71,17 @@ def _normalize_schedule_kind(value: object) -> str:
     if value in _KINDS_WITH_PROFILING or value in _KINDS_WITH_DQ:
         return str(value)
     return _SCHEDULE_KIND_DEFAULT
+
+
+def _parse_tracker_run_ids(last_run_id: object) -> set[str]:
+    """Split a ``dq_schedule_runs.last_run_id`` value into app run ids.
+
+    Newer firings store a comma-separated list of the Jobs ``run_id`` values
+    they submitted. Legacy rows store a single scheduler-minted id.
+    """
+    if not isinstance(last_run_id, str) or not last_run_id.strip():
+        return set()
+    return {part.strip() for part in last_run_id.split(",") if part.strip()}
 
 
 # Fallback gap used to push ``next_run_at`` into the future when a schedule's
@@ -373,6 +387,10 @@ class SchedulerService:
         # next scheduled completion. Entries expire after
         # :data:`_SCORE_REFRESH_TTL`.
         self._pending_score_runs: dict[str, datetime] = {}
+        # App run ids submitted by the most recent firing of each schedule and
+        # not yet observed idle. Survives only this process; after restart the
+        # skip check falls back to ``last_run_id`` ∩ the Jobs API active set.
+        self._in_flight_by_schedule: dict[str, set[str]] = {}
         self._completed_view_fqns_buffer: list[str] = []
         self._runs_table = self._sql.fqn("dq_validation_runs")
         # Tracked runs the Jobs API has listed as active at least once, and
@@ -583,6 +601,14 @@ class SchedulerService:
                 if next_run_dt is None or next_run_dt > now:
                     continue
 
+                if self._previous_firing_in_flight(name, tracker):
+                    logger.info(
+                        "Schedule '%s' is due (next_run_at=%s) but a previous run is still in flight; skipping",
+                        name,
+                        next_run,
+                    )
+                    continue
+
                 run_id = uuid4().hex[:16]
                 logger.info("Schedule '%s' is due (next_run_at=%s), triggering run %s", name, next_run, run_id)
 
@@ -594,7 +620,14 @@ class SchedulerService:
                     if errors:
                         logger.warning("Schedule '%s' run %s had errors: %s", name, run_id, errors)
 
-                    await asyncio.to_thread(self._upsert_tracker, name, now, new_next, run_id, status)
+                    await asyncio.to_thread(
+                        self._upsert_tracker,
+                        name,
+                        now,
+                        new_next,
+                        self._stored_run_ids(name, run_id),
+                        status,
+                    )
                 except Exception:
                     # A hard failure inside ``_trigger_run`` (e.g. ``_resolve_scope``,
                     # ``_load_custom_metrics``, or DB access) — anything outside the
@@ -660,6 +693,62 @@ class SchedulerService:
         # configured), so a non-empty pending set keeps the tight cadence until
         # the run's terminal row is observed.
         return active_configs > 0 or product_active or table_active or bool(self._pending_score_runs)
+
+    def _remember_in_flight(self, schedule_name: str, run_ids: Iterable[str]) -> None:
+        """Record app run ids submitted by *schedule_name* so a later tick can skip."""
+        ids = {run_id for run_id in run_ids if run_id}
+        if not ids:
+            return
+        self._in_flight_by_schedule.setdefault(schedule_name, set()).update(ids)
+
+    def _stored_run_ids(self, schedule_name: str, fallback: str) -> str:
+        """Persist submitted app run ids, or *fallback* when none were submitted."""
+        ids = self._in_flight_by_schedule.get(schedule_name) or set()
+        return ",".join(sorted(ids)) if ids else fallback
+
+    def _active_task_runner_run_ids(self) -> set[str] | None:
+        """App run ids of task-runner jobs that have not finished, or *None* if unknown.
+
+        *None* means the Jobs API could not be queried (non-numeric job id, or
+        the list call failed). An empty set means we looked and nothing is
+        active. Callers treat unknown as "still in flight" only for run ids
+        this process itself submitted.
+        """
+        if not self._job_id:
+            return set()
+        try:
+            job_id = int(self._job_id)
+        except (TypeError, ValueError):
+            return None
+        try:
+            return list_active_app_run_ids(self._ws, job_id)
+        except Exception:
+            logger.warning("Could not list active task-runner runs; treating in-flight state as unknown", exc_info=True)
+            return None
+
+    def _previous_firing_in_flight(self, schedule_name: str, tracker: dict[str, Any] | None) -> bool:
+        """Whether this schedule still has a submitted job running.
+
+        Overlapping scheduled runs on the same table can interleave writes to
+        ``dq_validation_runs`` / quarantine / scores, so a due tick is skipped
+        (``next_run_at`` is left in the past) until the previous firing's jobs
+        finish. In-process memory covers the common 60s tick; after an app
+        restart, ``last_run_id`` is intersected with the Jobs API active set.
+        """
+        remembered = set(self._in_flight_by_schedule.get(schedule_name) or ())
+        stored = _parse_tracker_run_ids(tracker.get("last_run_id") if tracker else None)
+        if not remembered and not stored:
+            return False
+        active = self._active_task_runner_run_ids()
+        if active is None:
+            return bool(remembered)
+        still_remembered = remembered & active
+        if still_remembered:
+            self._in_flight_by_schedule[schedule_name] = still_remembered
+            return True
+        if remembered:
+            self._in_flight_by_schedule.pop(schedule_name, None)
+        return bool(stored & active)
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -859,6 +948,14 @@ class SchedulerService:
         if next_run_dt is None or next_run_dt > now:
             return
 
+        if self._previous_firing_in_flight(schedule_name, tracker):
+            logger.info(
+                "Product schedule '%s' is due (next_run_at=%s) but a previous run is still in flight; skipping",
+                schedule_name,
+                next_run,
+            )
+            return
+
         run_id = uuid4().hex[:16]
         kind = _normalize_schedule_kind(product.get("schedule_kind"))
         logger.info(
@@ -898,6 +995,7 @@ class SchedulerService:
                 )
                 for submission in result.submitted:
                     self._track_run_for_score_refresh(submission.run_id)
+                self._remember_in_flight(schedule_name, (submission.run_id for submission in result.submitted))
                 any_succeeded = True
                 if result.skipped:
                     any_failed = True  # some members skipped → partial
@@ -924,6 +1022,7 @@ class SchedulerService:
                     logger.info(
                         "Product schedule '%s': submitted profiling run %s for %s", schedule_name, prof_run_id, fqn
                     )
+                    self._remember_in_flight(schedule_name, (prof_run_id,))
                     any_succeeded = True
                 except Exception:
                     logger.exception("Product schedule '%s': profiling run failed for %s", schedule_name, fqn)
@@ -1079,6 +1178,14 @@ class SchedulerService:
         if next_run_dt is None or next_run_dt > now:
             return
 
+        if self._previous_firing_in_flight(schedule_name, tracker):
+            logger.info(
+                "Table schedule '%s' is due (next_run_at=%s) but a previous run is still in flight; skipping",
+                schedule_name,
+                next_run,
+            )
+            return
+
         run_id = uuid4().hex[:16]
         kind = _normalize_schedule_kind(table.get("schedule_kind"))
         table_fqn = table.get("table_fqn")
@@ -1119,6 +1226,7 @@ class SchedulerService:
                     result.run_set_id,
                 )
                 self._track_run_for_score_refresh(result.run_id)
+                self._remember_in_flight(schedule_name, (result.run_id,))
                 any_succeeded = True
             except BindingRunError as e:
                 # An expected, deterministic domain failure (never approved,
@@ -1144,6 +1252,7 @@ class SchedulerService:
                         profile_run_id,
                         table_fqn,
                     )
+                    self._remember_in_flight(schedule_name, (profile_run_id,))
                     any_succeeded = True
                 except Exception:
                     logger.exception(
@@ -1186,7 +1295,7 @@ class SchedulerService:
         else:
             status = "success"
         try:
-            self._upsert_tracker(schedule_name, now, new_next, run_id, status)
+            self._upsert_tracker(schedule_name, now, new_next, self._stored_run_ids(schedule_name, run_id), status)
         except Exception:
             logger.exception("Schedule '%s': failed to persist tracker after firing", schedule_name)
 
@@ -1976,6 +2085,7 @@ class SchedulerService:
                     },
                 )
                 logger.info("Schedule '%s': submitted run for %s (run_id=%s)", schedule_name, table_fqn, run_id)
+                self._remember_in_flight(schedule_name, (run_id,))
                 # Synthetic cross-table keys never carry a real table FQN,
                 # so there is no score-cache row to refresh for them.
                 if not is_synthetic:
