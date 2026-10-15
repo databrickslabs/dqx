@@ -1199,6 +1199,8 @@ class MonitoredTableSummaryOut(BaseModel):
             score=summary.score,
             failed_tests=summary.failed_tests,
             total_tests=summary.total_tests,
+            table_failed_tests=summary.table_failed_tests,
+            table_total_tests=summary.table_total_tests,
             score_computed_at=summary.score_computed_at,
             dimensions=list(summary.dimensions),
             severities=list(summary.severities),
@@ -1949,6 +1951,8 @@ class DataProductMemberOut(BaseModel):
             score=member.score,
             failed_tests=member.failed_tests,
             total_tests=member.total_tests,
+            table_failed_tests=member.table_failed_tests,
+            table_total_tests=member.table_total_tests,
             score_computed_at=member.score_computed_at,
         )
 
@@ -2025,6 +2029,8 @@ class DataProductOut(BaseModel):
             score=detail.score,
             failed_tests=detail.failed_tests,
             total_tests=detail.total_tests,
+            table_failed_tests=detail.table_failed_tests,
+            table_total_tests=detail.table_total_tests,
             score_computed_at=detail.score_computed_at,
             created_by=product.created_by,
             created_at=product.created_at.isoformat() if product.created_at else None,
@@ -2536,6 +2542,8 @@ class HomeStatsOut(BaseModel):
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
+    table_failed_tests: int | None = None
+    table_total_tests: int | None = None
     computed_at: str | None = None
     score_trend: list[ScoreTrendPointOut] = Field(default_factory=list)
     score_delta: float | None = None

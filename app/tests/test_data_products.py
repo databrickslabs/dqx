@@ -80,6 +80,8 @@ def _product_row(
     failed_tests: str | None = None,
     total_tests: str | None = None,
     score_computed_at: str | None = None,
+    table_failed_tests: str | None = None,
+    table_total_tests: str | None = None,
 ) -> list[str | None]:
     # ``schedule_kind`` (B2-52) at index 12;
     # ``owner_display_name`` at index 13;
@@ -111,6 +113,8 @@ def _product_row(
         failed_tests,  # 18
         total_tests,  # 19
         score_computed_at,  # 20
+        table_failed_tests,  # 21
+        table_total_tests,  # 22
     ]
 
 
@@ -360,6 +364,8 @@ class TestListAndGet:
                     failed_tests="12",
                     total_tests="1000",
                     score_computed_at="2026-07-10T00:00:00",
+                    table_failed_tests="1",
+                    table_total_tests="4",
                 )
             ],
             [],  # members
@@ -374,7 +380,10 @@ class TestListAndGet:
         assert detail.score == 0.9876
         assert detail.failed_tests == 12
         assert detail.total_tests == 1000
+        assert detail.table_failed_tests == 1
+        assert detail.table_total_tests == 4
         assert detail.score_computed_at == "2026-07-10T00:00:00"
+        assert "sc.table_failed_tests, sc.table_total_tests" in products_query
 
     def test_list_products_score_fields_none_when_never_scored(self, service, sql, monitored_tables):
         sql.query.side_effect = [

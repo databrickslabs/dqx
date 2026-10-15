@@ -93,6 +93,8 @@ class CachedScore:
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
+    table_failed_tests: int | None = None
+    table_total_tests: int | None = None
     latest_run_id: str | None = None
     run_time: str | None = None
     computed_at: str | None = None
@@ -105,6 +107,8 @@ def parse_cached_score(
     computed_at: str | None,
     latest_run_id: str | None = None,
     run_time: str | None = None,
+    table_failed_tests: str | None = None,
+    table_total_tests: str | None = None,
 ) -> CachedScore:
     """Build a :class:`CachedScore` from stringified SQL cells.
 
@@ -115,6 +119,8 @@ def parse_cached_score(
         score=safe_float(score),
         failed_tests=safe_int(failed_tests),
         total_tests=safe_int(total_tests),
+        table_failed_tests=safe_int(table_failed_tests),
+        table_total_tests=safe_int(table_total_tests),
         latest_run_id=latest_run_id or None,
         run_time=run_time or None,
         computed_at=computed_at or None,
@@ -182,6 +188,8 @@ class ScoreCacheService:
                 score=round(score, 4) if score is not None else None,
                 failed_tests=safe_int(row.get("failed_tests")) if row else None,
                 total_tests=safe_int(row.get("total_tests")) if row else None,
+                table_failed_tests=safe_int(row.get("table_failed_tests")) if row else None,
+                table_total_tests=safe_int(row.get("table_total_tests")) if row else None,
                 latest_run_id=(row.get("run_id") or None) if row else None,
                 run_time=(row.get("run_time") or None) if row else None,
             )
@@ -192,10 +200,13 @@ class ScoreCacheService:
         mv = metric_view_fqn(self._warehouse_sql.catalog, self._genie_schema)
         in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in table_fqns)
         stmt = (
-            f"SELECT input_location, run_id, run_time, score, failed_tests, total_tests FROM ("
+            f"SELECT input_location, run_id, run_time, score, failed_tests, total_tests, "
+            f"table_failed_tests, table_total_tests FROM ("
             f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_time, "
             f"MEASURE(score) AS score, MEASURE(failed_tests) AS failed_tests, "
-            f"MEASURE(total_tests) AS total_tests "
+            f"MEASURE(total_tests) AS total_tests, "
+            f"MEASURE(table_failed_tests) AS table_failed_tests, "
+            f"MEASURE(table_total_tests) AS table_total_tests "
             f"FROM {mv} "  # noqa: S608
             f"WHERE input_location IN ({in_list}) AND run_mode = '{RUN_MODE_PUBLISHED}' "
             f"GROUP BY input_location, run_id, run_time"
@@ -223,7 +234,9 @@ class ScoreCacheService:
         e = escape_sql_string(product_id)
         stmt = (
             f"SELECT AVG(sc.score) AS score, SUM(sc.failed_tests) AS failed_tests, "
-            f"SUM(sc.total_tests) AS total_tests "
+            f"SUM(sc.total_tests) AS total_tests, "
+            f"SUM(sc.table_failed_tests) AS table_failed_tests, "
+            f"SUM(sc.table_total_tests) AS table_total_tests "
             f"FROM {self._members_table} m "  # noqa: S608
             f"JOIN {self._monitored_table} mt ON mt.binding_id = m.binding_id "
             f"JOIN {self._cache_table} sc "
@@ -246,7 +259,9 @@ class ScoreCacheService:
         """
         stmt = (
             f"SELECT AVG(sc.score) AS score, SUM(sc.failed_tests) AS failed_tests, "
-            f"SUM(sc.total_tests) AS total_tests "
+            f"SUM(sc.total_tests) AS total_tests, "
+            f"SUM(sc.table_failed_tests) AS table_failed_tests, "
+            f"SUM(sc.table_total_tests) AS table_total_tests "
             f"FROM {self._cache_table} sc "  # noqa: S608
             f"JOIN {self._monitored_table} mt ON mt.table_fqn = sc.scope_key "
             f"WHERE sc.scope_type = '{SCOPE_TABLE}' AND sc.score IS NOT NULL "
@@ -263,6 +278,8 @@ class ScoreCacheService:
             score=round(score, 4) if score is not None else None,
             failed_tests=safe_int(row.get("failed_tests")),
             total_tests=safe_int(row.get("total_tests")),
+            table_failed_tests=safe_int(row.get("table_failed_tests")),
+            table_total_tests=safe_int(row.get("table_total_tests")),
             latest_run_id=None,
             run_time=None,
         )
@@ -338,7 +355,8 @@ class ScoreCacheService:
         run_time = self._oltp.ts_text("run_time")
         computed_at = self._oltp.ts_text("computed_at")
         stmt = (
-            f"SELECT scope_key, score, failed_tests, total_tests, latest_run_id, "
+            f"SELECT scope_key, score, failed_tests, total_tests, table_failed_tests, table_total_tests, "
+            f"latest_run_id, "
             f"{run_time} AS run_time, {computed_at} AS computed_at "
             f"FROM {self._cache_table} "  # noqa: S608
             f"WHERE scope_type = '{e_scope}' AND scope_key IN ({in_list})"
@@ -355,6 +373,8 @@ class ScoreCacheService:
                 row.get("computed_at"),
                 latest_run_id=row.get("latest_run_id"),
                 run_time=row.get("run_time"),
+                table_failed_tests=row.get("table_failed_tests"),
+                table_total_tests=row.get("table_total_tests"),
             )
         return out
 
@@ -372,7 +392,7 @@ class ScoreCacheService:
         run_time = self._oltp.ts_text("run_time")
         computed_at = self._oltp.ts_text("computed_at")
         stmt = (
-            f"SELECT score, failed_tests, total_tests, "
+            f"SELECT score, failed_tests, total_tests, table_failed_tests, table_total_tests, "
             f"{run_time} AS run_time, {computed_at} AS computed_at "
             f"FROM {self._history_table} "  # noqa: S608
             f"WHERE scope_type = '{e_type}' AND scope_key = '{e_key}' "
@@ -385,6 +405,8 @@ class ScoreCacheService:
                 row.get("total_tests"),
                 row.get("computed_at"),
                 run_time=row.get("run_time"),
+                table_failed_tests=row.get("table_failed_tests"),
+                table_total_tests=row.get("table_total_tests"),
             )
             for row in self._oltp.query_dicts(stmt)
         ]
@@ -403,6 +425,8 @@ class ScoreCacheService:
         score: float | None,
         failed_tests: int | None,
         total_tests: int | None,
+        table_failed_tests: int | None,
+        table_total_tests: int | None,
         latest_run_id: str | None,
         run_time: str | None,
     ) -> None:
@@ -413,6 +437,8 @@ class ScoreCacheService:
                 "score": score,
                 "failed_tests": failed_tests,
                 "total_tests": total_tests,
+                "table_failed_tests": table_failed_tests,
+                "table_total_tests": table_total_tests,
                 "latest_run_id": latest_run_id,
                 # CAST('...' AS TIMESTAMP) parses on both backends; the
                 # value is the warehouse's own stringified run_time.
@@ -427,6 +453,8 @@ class ScoreCacheService:
                 score=score,
                 failed_tests=failed_tests,
                 total_tests=total_tests,
+                table_failed_tests=table_failed_tests,
+                table_total_tests=table_total_tests,
                 run_time=run_time,
             )
 
@@ -438,6 +466,8 @@ class ScoreCacheService:
         score: float,
         failed_tests: int | None,
         total_tests: int | None,
+        table_failed_tests: int | None,
+        table_total_tests: int | None,
         run_time: str | None,
     ) -> None:
         """Append one ``dq_score_history`` trend point and count-trim the scope.
@@ -454,12 +484,15 @@ class ScoreCacheService:
         e_key = escape_sql_string(scope_key)
         failed_expr = str(int(failed_tests)) if failed_tests is not None else "NULL"
         total_expr = str(int(total_tests)) if total_tests is not None else "NULL"
+        table_failed_expr = str(int(table_failed_tests)) if table_failed_tests is not None else "NULL"
+        table_total_expr = str(int(table_total_tests)) if table_total_tests is not None else "NULL"
         run_time_expr = f"CAST('{escape_sql_string(run_time)}' AS TIMESTAMP)" if run_time else "NULL"
         self._oltp.execute(
             f"INSERT INTO {self._history_table} "  # noqa: S608
-            f"(scope_type, scope_key, score, failed_tests, total_tests, run_time, computed_at) "
+            f"(scope_type, scope_key, score, failed_tests, total_tests, "
+            f"table_failed_tests, table_total_tests, run_time, computed_at) "
             f"VALUES ('{e_type}', '{e_key}', {float(score)}, {failed_expr}, {total_expr}, "
-            f"{run_time_expr}, now())"
+            f"{table_failed_expr}, {table_total_expr}, {run_time_expr}, now())"
         )
         self._oltp.execute(
             f"DELETE FROM {self._history_table} "  # noqa: S608
