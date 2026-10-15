@@ -3214,6 +3214,7 @@
     "failing": "Requer atenção",
     "failed": "Falhou",
     "partial": "Falha parcial",
+    "skipped": "Ignorado",
     "name": "Agendamento",
     "type": "Tipo",
     "cadence": "Frequência",
