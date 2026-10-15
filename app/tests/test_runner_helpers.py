@@ -28,6 +28,13 @@ def runner_module():
     return r
 
 
+@pytest.fixture
+def evaluated_rows_module():
+    import dqx_task_runner.evaluated_rows as m  # type: ignore[import-not-found]
+
+    return m
+
+
 # ---------------------------------------------------------------------------
 # _observer_run_name — internal run_type → user-facing dq_metrics.run_name
 # ---------------------------------------------------------------------------
@@ -719,3 +726,77 @@ class TestParseManifestConfig:
     def test_non_object_json_raises(self, runner_module):
         with pytest.raises(RuntimeError, match="not a JSON object"):
             runner_module._parse_manifest_config("[1, 2, 3]", "run1")
+
+
+# ---------------------------------------------------------------------------
+# build_evaluated_rows_metric — per-check evaluated-row counts
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEvaluatedRowsMetric:
+    def _row_check(self, name: str, flt: str | None, column: str = "a") -> dict:
+        check = {
+            "name": name,
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": column}},
+        }
+        if flt is not None:
+            check["filter"] = flt
+        return check
+
+    def test_metric_name_constant(self, evaluated_rows_module):
+        assert evaluated_rows_module.EVALUATED_ROWS_METRIC == "check_evaluated_rows"
+
+    def test_no_filtered_checks_returns_none(self, evaluated_rows_module):
+        assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("a_not_null", None)]) is None
+
+    def test_filtered_row_check_counts_rows_where_filter_true(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("a_not_null", "region = 'EU'")])
+        assert expr is not None
+        assert expr.endswith(" as check_evaluated_rows")
+        assert "count(case when (region = 'EU') then 1 end)" in expr
+        assert "'\"a_not_null\"'" in expr
+
+    def test_expression_skeleton_joins_entries(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric(
+            [self._row_check("one", "a > 0"), self._row_check("two", "a < 5")]
+        )
+        assert expr is not None
+        assert expr.startswith("concat('[', concat_ws(',', ")
+        assert expr.count("count(case when") == 2
+        assert expr.index("one") < expr.index("two")
+
+    def test_dataset_check_with_filter_is_skipped(self, evaluated_rows_module):
+        check = {
+            "name": "uniq",
+            "criticality": "error",
+            "filter": "x > 1",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a"]}},
+        }
+        assert evaluated_rows_module.build_evaluated_rows_metric([check]) is None
+
+    def test_check_name_quotes_are_escaped(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("it's", "a > 0")])
+        assert expr is not None
+        assert "it\\'s" in expr
+
+    def test_unsafe_filter_is_skipped(self, evaluated_rows_module):
+        assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("bad", "1=1; DROP TABLE x")]) is None
+
+    def test_line_comment_in_filter_is_stripped(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "a > 0 -- note")])
+        assert expr is not None
+        assert "note" not in expr
+        assert "count(case when (a > 0 ) then 1 end)" in expr
+
+    def test_for_each_column_gets_entry_per_expanded_rule(self, evaluated_rows_module):
+        check = {
+            "criticality": "error",
+            "filter": "region = 'EU'",
+            "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
+        }
+        expr = evaluated_rows_module.build_evaluated_rows_metric([check])
+        assert expr is not None
+        assert expr.count("count(case when (region = 'EU') then 1 end)") == 2
+        assert "'\"a_is_null\"'" in expr
+        assert "'\"b_is_null\"'" in expr

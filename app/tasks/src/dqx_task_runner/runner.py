@@ -553,12 +553,17 @@ def _run_dryrun(
 
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from dqx_task_runner.evaluated_rows import build_evaluated_rows_metric
 
     fingerprint = _compute_fingerprint(checks)
 
+    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
+    evaluated_rows_metric = build_evaluated_rows_metric(checks)
+    observer_metrics = [*custom_metrics, evaluated_rows_metric] if evaluated_rows_metric else custom_metrics
+
     observer = DQMetricsObserver(
         name=_observer_run_name(run_type),
-        custom_metrics=custom_metrics or None,
+        custom_metrics=observer_metrics or None,
         id_overwrite=run_id,
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
