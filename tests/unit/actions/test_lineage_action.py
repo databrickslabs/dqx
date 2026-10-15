@@ -81,13 +81,12 @@ def test_execute_returns_config_error_when_all_enabled_branches_fail(monkeypatch
 
     Writing an empty frame in overwrite mode would clobber prior lineage, so the action must
     abort the write (and not report HEALTHY) when every direction it tried failed to read.
-    *save_dataframe_as_table* and the Delta-history lookup are patched at their boundaries
+    *save_dataframe_as_table* and the table-documentation step are patched at their boundaries
     because they need a real Spark backend; the behaviour we assert is independent of them.
     """
     writes: list = []
     monkeypatch.setattr(lineage_mod, "save_dataframe_as_table", lambda df, cfg: writes.append((df, cfg)))
     monkeypatch.setattr(lineage_mod, "_document_table", lambda **_: None)
-    monkeypatch.setattr(lineage_mod, "_resolve_target_delta_versions", lambda _spark, df: df)
 
     spark = create_autospec(SparkSession, instance=True)
     spark.createDataFrame.return_value = _mock_empty_dataframe()
@@ -103,3 +102,31 @@ def test_execute_returns_config_error_when_all_enabled_branches_fail(monkeypatch
     assert result.status == ActionStatus.CONFIG_ERROR
     assert result.extras is None
     assert not writes
+
+
+def test_execute_warns_and_still_writes_when_no_lineage_edges_found(monkeypatch, caplog) -> None:
+    """Every enabled read succeeding with zero edges → HEALTHY, the write still happens, and a
+    best-effort warning names the source table (system.access lineage can lag new writes)."""
+    writes: list = []
+    monkeypatch.setattr(lineage_mod, "save_dataframe_as_table", lambda df, cfg: writes.append((df, cfg)))
+    monkeypatch.setattr(lineage_mod, "_document_table", lambda **_: None)
+
+    spark = create_autospec(SparkSession, instance=True)
+    spark.createDataFrame.return_value = _mock_empty_dataframe()
+    spark.sql.return_value = _mock_empty_dataframe()
+
+    action = CollectLineageAction(
+        output_config=OutputConfig(location="cat.sch.lineage"),
+        config=LineageActionConfig(column_upstream=None, column_downstream=None),
+    )
+
+    with caplog.at_level("WARNING", logger=lineage_mod.__name__):
+        result = action.execute(_make_context(input_location="cat.sch.src"), _make_services(spark=spark))
+
+    assert result.status == ActionStatus.HEALTHY
+    assert result.extras == {"lineage_location": "cat.sch.lineage"}
+    assert len(writes) == 1
+    assert any(
+        "found no lineage edges for 'cat.sch.src'" in record.getMessage() and "best-effort" in record.getMessage()
+        for record in caplog.records
+    )

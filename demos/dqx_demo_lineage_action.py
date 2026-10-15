@@ -305,6 +305,57 @@ actions = [
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Wait for lineage to propagate
+# MAGIC
+# MAGIC `system.access.table_lineage` is populated asynchronously, so edges for the tables created
+# MAGIC above can take a few minutes to appear. `CollectLineageAction` collects lineage on a
+# MAGIC best-effort basis within the run: it reads the system tables once, when the run's actions
+# MAGIC fire. If an edge has not propagated by then, it is not recorded for that run. This cell
+# MAGIC waits until the edges the demo relies on are visible, so the runs below record them.
+
+# COMMAND ----------
+
+import time
+
+expected_edges = [
+    (bronze_table.lower(), silver_table.lower()),
+    (silver_table.lower(), fact_invoice_table.lower()),
+]
+lineage_wait_timeout_seconds = 15 * 60
+lineage_poll_interval_seconds = 30
+
+
+def missing_lineage_edges() -> list[tuple[str, str]]:
+    missing = []
+    for source, target in expected_edges:
+        edge_count = spark.sql(
+            "SELECT 1 FROM system.access.table_lineage "
+            "WHERE source_table_full_name = :source AND target_table_full_name = :target LIMIT 1",
+            args={"source": source, "target": target},
+        ).count()
+        if edge_count == 0:
+            missing.append((source, target))
+    return missing
+
+
+deadline = time.monotonic() + lineage_wait_timeout_seconds
+missing = missing_lineage_edges()
+while missing and time.monotonic() < deadline:
+    print(f"Waiting for lineage edges to propagate: {missing}")
+    time.sleep(lineage_poll_interval_seconds)
+    missing = missing_lineage_edges()
+
+if missing:
+    print(
+        f"Lineage edges still missing after {lineage_wait_timeout_seconds // 60} minutes: {missing}. "
+        "The runs below will still apply checks, but the lineage sink may be incomplete."
+    )
+else:
+    print("Lineage edges are available.")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Run bronze and gold layers
 # MAGIC
 # MAGIC The bronze run flags the injected defects (future timestamps, null client IDs, negative
@@ -348,9 +399,10 @@ engine.apply_checks_by_metadata_and_save_in_table(
 # MAGIC * **Upstream from gold** — `fact_invoice ← silver ← bronze`.
 # MAGIC * **Downstream from bronze** — `bronze → silver → {fact, dim_customer, dim_service}`.
 # MAGIC
-# MAGIC Depending on `system.access.table_lineage` propagation lag, edges may take a few minutes to
-# MAGIC surface on a fresh workspace — re-run this cell if the output looks empty. The `is_unique`
-# MAGIC failure and the log alert should already be visible in the driver log above.
+# MAGIC Lineage is collected when each run's actions fire, so re-running this cell alone does not
+# MAGIC add edges. If the output is empty, the edges had not propagated when the runs executed (the
+# MAGIC action logs a warning in that case). The `is_unique` failure and the log alert should
+# MAGIC already be visible in the driver log above.
 
 # COMMAND ----------
 

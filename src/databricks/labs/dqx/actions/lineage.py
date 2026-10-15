@@ -36,7 +36,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
-from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, Row, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
 
@@ -637,6 +637,7 @@ def _collect_lineage_rows(
     result = _empty_lineage_df(spark)
     for branch_df, _succeeded in branches:
         result = result.unionByName(branch_df)
+    lineage_rows = result.collect()
     enabled_count = len(branches)
     failed_count = sum(1 for _branch_df, succeeded in branches if not succeeded)
     collect_success = not (enabled_count > 0 and failed_count == enabled_count)
@@ -645,7 +646,13 @@ def _collect_lineage_rows(
             f"CollectLineageAction '{safe_name}' aborted write: all {enabled_count} enabled "
             f"lineage directions failed to read."
         )
-    return _resolve_target_delta_versions(spark, result), collect_success
+    elif enabled_count > 0 and not lineage_rows:
+        logger.warning(
+            f"CollectLineageAction '{safe_name}' found no lineage edges for '{_sanitize(source_table)}'. "
+            "Lineage collection is best-effort within the run: system.access lineage can lag behind "
+            "recent writes, so edges for newly created or updated tables may not be available yet."
+        )
+    return _resolve_target_delta_versions(spark, lineage_rows), collect_success
 
 
 def _lookup_target_delta_version(spark: SparkSession, table: str) -> tuple[str, int] | None:
@@ -661,9 +668,8 @@ def _lookup_target_delta_version(spark: SparkSession, table: str) -> tuple[str, 
     return table, int(rows[0]["version"])
 
 
-def _resolve_target_delta_versions(spark: SparkSession, lineage_df: DataFrame) -> DataFrame:
+def _resolve_target_delta_versions(spark: SparkSession, lineage_rows: list[Row]) -> DataFrame:
     """Populate *target_delta_version* with the latest Delta version of each *target_table*."""
-    lineage_rows = lineage_df.collect()
     if not lineage_rows:
         return _empty_lineage_df(spark)
 
@@ -831,7 +837,7 @@ def _walk_lineage(
         # Force the recursive CTE to execute inside this try/except — spark.sql(..) only
         # builds the lazy plan, so without this materialisation a runtime read error (denied
         # system.access.table_lineage, cteRecursionLevelLimit, etc.) would surface later at
-        # _resolve_target_delta_versions' .collect() and escape to the outer execute() handler,
+        # _collect_lineage_rows' .collect() and escape to the outer execute() handler,
         # sinking the whole action instead of just this branch. The result is bounded by
         # search.max_nodes (default 100), so driver-side .collect() is safe.
         materialized_rows = projected.collect()
