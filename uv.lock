@@ -994,6 +994,7 @@ source = { editable = "." }
 dependencies = [
     { name = "databricks-labs-blueprint" },
     { name = "databricks-sdk" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
@@ -1112,6 +1113,7 @@ requires-dist = [
     { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.64.0,<1.97" },
     { name = "mlflow", extras = ["databricks"], marker = "extra == 'anomaly'", specifier = ">=3.13.0,<4.0" },
     { name = "numpy", marker = "extra == 'pii'", specifier = ">=1.20,<2.0" },
+    { name = "packaging", specifier = ">=24.2" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = "~=2.2.359" },
     { name = "pydantic", specifier = ">=2.8.2,<3" },
     { name = "pyyaml", specifier = "~=6.0.3" },

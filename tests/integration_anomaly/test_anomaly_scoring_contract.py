@@ -262,6 +262,14 @@ def test_public_driver_scoring_contract(
         _assert_original_rows(source, originals, result, rows)
         _assert_public_info(rows, columns, context, profile, contributions)
         snapshots[contributions] = rows
+        # Round-robin repartitioning must not change which source row receives
+        # a score when the driver collects features and returns Spark results.
+        result = engine.apply_checks_by_metadata(source.repartition(2), checks)
+        rows = result.collect()
+        _assert_original_rows(source, originals, result, rows)
+        _assert_public_info(rows, columns, context, profile, contributions)
+        _assert_parity(snapshots[contributions], rows)
+        _assert_contribution_parity(snapshots[contributions], rows)
     for rows in snapshots.values():
         _assert_parity(snapshots[False], rows)
 

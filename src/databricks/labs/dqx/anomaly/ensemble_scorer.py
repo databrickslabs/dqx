@@ -16,17 +16,14 @@ from pyspark.sql.types import (
 )
 
 from databricks.labs.dqx.anomaly.feature_prep import (
-    apply_feature_engineering_for_scoring,
     apply_feature_engineering_with_row_passthrough,
     prepare_feature_metadata,
-    collect_feature_matrix,
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.explainability import AttributionGate, compute_gated_shap_contributions
 from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
-from databricks.labs.dqx.check_funcs import join_results_on_null_safe_columns
 from databricks.labs.dqx.utils import quote_column_name
 
 
@@ -198,42 +195,49 @@ def score_ensemble_models_local(
     """Score ensemble models locally on the driver."""
     models = [load_and_validate_model(uri, model_record) for uri in model_uris]
     column_infos, feature_metadata = prepare_feature_metadata(feature_metadata_json)
-    engineered_df = apply_feature_engineering_for_scoring(
+    engineered_df, original_row_col = apply_feature_engineering_with_row_passthrough(
         df_filtered, columns, merge_columns, column_infos, feature_metadata
     )
     engineered_feature_cols = feature_metadata.engineered_feature_names
-    local_pdf = collect_feature_matrix(engineered_df, [*merge_columns, *engineered_feature_cols])
-
-    feature_matrix = local_pdf[engineered_feature_cols]
+    # Restore rows from the same collection used to score them, without
+    # recomputing partition-dependent row IDs in a join back to the input.
+    local_rows = engineered_df.select(
+        *[col(quote_column_name(name)) for name in (original_row_col, *engineered_feature_cols)]
+    ).collect()
+    # Preserve original values in Spark's Python representation; pandas handles
+    # only the numeric model features.
+    feature_matrix = pd.DataFrame.from_records([row[1:] for row in local_rows], columns=engineered_feature_cols)
     scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
     mean_scores = scores_matrix.mean(axis=0)
 
-    result = {col_name: local_pdf[col_name] for col_name in merge_columns}
-    result["anomaly_score"] = mean_scores
-    result["anomaly_score_std"] = scores_matrix.std(axis=0, ddof=1)
+    result = {
+        original_row_col: [row[0] for row in local_rows],
+        "anomaly_score": mean_scores.tolist(),
+        "anomaly_score_std": scores_matrix.std(axis=0, ddof=1).tolist(),
+    }
 
     if enable_contributions:
-        contributions = compute_gated_shap_contributions(
-            models,
-            feature_matrix,
-            engineered_feature_cols,
-            mean_scores,
-            quantile_points,
-            threshold,
-            AttributionKeys.from_metadata(feature_metadata),
-            gate,
+        result.update(
+            compute_gated_shap_contributions(
+                models,
+                feature_matrix,
+                engineered_feature_cols,
+                mean_scores,
+                quantile_points,
+                threshold,
+                AttributionKeys.from_metadata(feature_metadata),
+                gate,
+            ).as_columns()
         )
-        result.update(contributions.as_columns())
 
     scored_df = df_filtered.sparkSession.createDataFrame(
-        pd.DataFrame(result),
+        list(zip(*result.values(), strict=True)),
         schema=StructType(
             [
-                *[df_filtered.schema[c] for c in merge_columns],
+                engineered_df.schema[original_row_col],
                 *prepare_ensemble_scoring_schema(enable_contributions).fields,
             ]
         ),
     )
     aliases = (output_columns or ScoringOutputColumns()).result_aliases(enable_contributions, include_std=True)
-    scored_df = scored_df.select(*merge_columns, *[col(name).alias(alias) for name, alias in aliases.items()])
-    return join_results_on_null_safe_columns(df_filtered, scored_df, merge_columns, list(aliases.values()))
+    return scored_df.select(f"{original_row_col}.*", *[col(name).alias(alias) for name, alias in aliases.items()])

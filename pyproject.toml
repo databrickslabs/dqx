@@ -41,6 +41,7 @@ dependencies = [
     "sqlalchemy>=2.0,<3.0",
     "PyYAML~=6.0.3",
     "pydantic>=2.8.2,<3",
+    "packaging>=24.2",
 ]
 
 [project.optional-dependencies]

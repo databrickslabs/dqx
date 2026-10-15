@@ -9,10 +9,8 @@ from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import StructType
 
 from databricks.labs.dqx.anomaly.feature_prep import (
-    apply_feature_engineering_for_scoring,
     apply_feature_engineering_with_row_passthrough,
     prepare_feature_metadata,
-    collect_feature_matrix,
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
@@ -20,7 +18,6 @@ from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
 from databricks.labs.dqx.anomaly.scoring_config import ScoringOutputColumns
 from databricks.labs.dqx.anomaly.explainability import AttributionGate, compute_gated_shap_contributions
 from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
-from databricks.labs.dqx.check_funcs import join_results_on_null_safe_columns
 from databricks.labs.dqx.utils import quote_column_name
 
 
@@ -153,18 +150,23 @@ def score_with_sklearn_model_local(
     """Score DataFrame using scikit-learn model locally on the driver."""
     sklearn_model = load_and_validate_model(model_uri, model_record)
     column_infos, feature_metadata = prepare_feature_metadata(feature_metadata_json)
-    engineered_df = apply_feature_engineering_for_scoring(
+    engineered_df, original_row_col = apply_feature_engineering_with_row_passthrough(
         df, feature_cols, merge_columns, column_infos, feature_metadata
     )
 
     engineered_feature_cols = feature_metadata.engineered_feature_names
-    local_pdf = collect_feature_matrix(engineered_df, [*merge_columns, *engineered_feature_cols])
-
-    feature_matrix = local_pdf[engineered_feature_cols]
+    # Keep each original row beside its features through the driver collection.
+    # Joining back by a generated row ID would evaluate the input a second time,
+    # where repartitioning can assign the same ID to a different row.
+    local_rows = engineered_df.select(
+        *[col(quote_column_name(name)) for name in (original_row_col, *engineered_feature_cols)]
+    ).collect()
+    # Only features cross the pandas boundary: original nested values, nulls and
+    # timestamps keep Spark's Python representation for an exact schema round trip.
+    feature_matrix = pd.DataFrame.from_records([row[1:] for row in local_rows], columns=engineered_feature_cols)
     scores = -sklearn_model.score_samples(feature_matrix)
 
-    result = {col_name: local_pdf[col_name] for col_name in merge_columns}
-    result["anomaly_score"] = scores
+    result = {original_row_col: [row[0] for row in local_rows], "anomaly_score": scores.tolist()}
 
     if enable_contributions:
         contributions = compute_gated_shap_contributions(
@@ -180,9 +182,8 @@ def score_with_sklearn_model_local(
         result.update(contributions.as_columns())
 
     scored_df = df.sparkSession.createDataFrame(
-        pd.DataFrame(result),
-        schema=StructType([*[df.schema[c] for c in merge_columns], *create_udf_schema(enable_contributions).fields]),
+        list(zip(*result.values(), strict=True)),
+        schema=StructType([engineered_df.schema[original_row_col], *create_udf_schema(enable_contributions).fields]),
     )
     aliases = (output_columns or ScoringOutputColumns()).result_aliases(enable_contributions)
-    scored_df = scored_df.select(*merge_columns, *[col(name).alias(alias) for name, alias in aliases.items()])
-    return join_results_on_null_safe_columns(df, scored_df, merge_columns, list(aliases.values()))
+    return scored_df.select(f"{original_row_col}.*", *[col(name).alias(alias) for name, alias in aliases.items()])

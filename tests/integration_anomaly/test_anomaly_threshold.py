@@ -218,9 +218,8 @@ def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
     # Every known, finite row meets the inclusive zero-percentile threshold.
     assert zero_ids == {row.transaction_id for row in test_df.collect()}
 
-    rule_one = create_anomaly_dataset_rule(model_name, registry_table, threshold=100.0)
     with pytest.raises(InvalidParameterError, match="threshold"):
-        dq_engine.apply_checks(test_df, [rule_one])
+        create_anomaly_dataset_rule(model_name, registry_table, threshold=100.0)
 
 
 def test_threshold_consistency(spark, test_df_factory, quick_model_factory):

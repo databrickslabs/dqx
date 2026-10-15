@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from collections.abc import Callable
 from unittest.mock import MagicMock, Mock, create_autospec
 
 import pytest
@@ -8,6 +9,10 @@ from pyspark.sql import types as T
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.catalog import RegisteredModelsAPI, ModelVersionsAPI
+from databricks.sdk.service.jobs import CreateResponse
+from databricks.labs.blueprint.installation import MockInstallation
+from databricks.labs.blueprint.installer import InstallState
+from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.anomaly.model_config import (
@@ -18,7 +23,9 @@ from databricks.labs.dqx.anomaly.model_config import (
     TrainingMetadata,
     compute_config_hash,
 )
-from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
+from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig, WorkspaceConfig
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
+from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
@@ -26,6 +33,31 @@ from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
+
+
+@pytest.fixture
+def workflow_deployment_factory() -> Callable[[WorkspaceConfig, list[Task]], tuple[WorkflowDeployment, Mock, Mock]]:
+    """Build an installer with isolated upload and workspace boundaries."""
+
+    def create(config: WorkspaceConfig, tasks: list[Task]) -> tuple[WorkflowDeployment, Mock, Mock]:
+        ws = create_autospec(WorkspaceClient, instance=True)
+        ws.config.is_gcp = False
+        ws.jobs.create.return_value = CreateResponse(job_id=123)
+        ws.clusters.select_spark_version.return_value = "17.3.x-scala2.13"
+        ws.clusters.select_node_type.return_value = "test-node"
+        wheels = create_autospec(WheelsV2, instance=True)
+        wheels.upload_to_wsfs.return_value = "/test/wheels/databricks_labs_dqx-0.16.0-py3-none-any.whl"
+        wheels.upload_wheel_dependencies.return_value = ["/test/wheels/packaging-24.2-py3-none-any.whl"]
+        product_info = create_autospec(ProductInfo, instance=True)
+        product_info.product_name.return_value = "dqx-test"
+        product_info.version.return_value = "0.16.0"
+        installation = MockInstallation()
+        deployment = WorkflowDeployment(
+            config, installation, InstallState.from_installation(installation), ws, wheels, product_info, tasks
+        )
+        return deployment, ws, wheels
+
+    return create
 
 
 @pytest.fixture
