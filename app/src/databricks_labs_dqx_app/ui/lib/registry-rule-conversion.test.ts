@@ -218,6 +218,29 @@ describe("buildDqxCheckJson — materializes a full check for a frozen version s
     const check = buildDqxCheckJson(legacy, undefined, "dqx_native").check as Record<string, unknown>;
     expect(check.function).toBe("is_not_null");
   });
+
+  test("renders bare slot-name merge columns as {{slot}}, like the backend export", () => {
+    const rule = {
+      mode: "sql" as const,
+      polarity: "fail" as const,
+      definition: {
+        body: {
+          sql_query: "SELECT {{lead_id}} FROM {{input_view}}",
+          merge_columns: ["lead_id", "{{lead_id}}", " lead_id ", "pacode"],
+        },
+        slots: [{ name: "lead_id", family: "any", position: 0, cardinality: "one", arg_key: null }],
+        parameters: [],
+      } as unknown as RuleDefinition,
+      user_metadata: {},
+    };
+    const check = buildDqxCheckJson(rule).check as Record<string, unknown>;
+    expect((check.arguments as Record<string, unknown>).merge_columns).toEqual([
+      "{{lead_id}}",
+      "{{lead_id}}",
+      " lead_id ",
+      "pacode",
+    ]);
+  });
 });
 
 // ── parseDqxCheckJson: slot-name round-trip (item 32) + severity import (56) ──

@@ -220,15 +220,17 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
 def _substitute_merge_column(column: str, group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
     """The real column(s) a ``sql_query`` merge column names.
 
-    ``{{lead_id}}`` and a bare ``lead_id`` both resolve to the slot's mapped
-    column(s); a ``many`` slot yields one entry per column. The bare-name match
-    is a legacy fallback for rules the editor saved with bare slot names, so a
-    literal column that shares a slot's name maps to the slot. Anything else
-    is a literal column or expression, with any ``{{slot}}`` inside substituted.
+    New rules save ``{{lead_id}}``, which resolves to the slot's mapped
+    column(s); a ``many`` slot yields one entry per column. A bare ``lead_id``
+    resolves the same way as a legacy fallback for rules saved with bare slot
+    names, so a literal column that shares a slot's name maps to the slot.
+    Like :func:`_substitute_text`, only an exact ``{{name}}`` is a slot
+    (``{{ lead_id }}`` is not). Anything else is a literal column or
+    expression, with any ``{{slot}}`` inside substituted.
     """
     name = column.strip()
     if name.startswith("{{") and name.endswith("}}"):
-        name = name[2:-2].strip()
+        name = name[2:-2]
     slot = next((s for s in slots if s.name == name), None)
     if slot is None:
         return [_substitute_text(column, group, slots).strip()]
@@ -372,11 +374,17 @@ def render_check(
             # name, or a literal column (see _substitute_merge_column).
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
-                arguments["merge_columns"] = [
-                    resolved
-                    for col in merge_columns
-                    for resolved in _substitute_merge_column(str(col), group, definition.slots)
-                ]
+                resolved_columns = list(
+                    dict.fromkeys(
+                        resolved
+                        for col in merge_columns
+                        for resolved in _substitute_merge_column(str(col), group, definition.slots)
+                        if resolved
+                    )
+                )
+                if not resolved_columns:
+                    raise ValueError("The rule's merge columns resolved to no columns")
+                arguments["merge_columns"] = resolved_columns
             for param in definition.parameters:
                 if param.value is not None:
                     arguments[param.name] = param.value

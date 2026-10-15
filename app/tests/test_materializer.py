@@ -660,7 +660,7 @@ class TestRenderCheckSqlMode:
         return check["check"]["arguments"]["merge_columns"]
 
     def test_a_merge_column_saved_as_the_bare_slot_name_maps_to_the_column(self):
-        """The editor saves merge keys as bare slot names; they must reach DQX as
+        """Older rules saved merge keys as bare slot names; they must reach DQX as
         the table's column, or the run fails on an unresolved column."""
         assert self._render_query_merge(["lead_id"]) == ["leadId"]
 
@@ -672,6 +672,33 @@ class TestRenderCheckSqlMode:
             assert self._render_query_merge(
                 merge_columns, slot_name="cols", cardinality="many", group={"cols": "a, b"}
             ) == ["a", "b"]
+
+    def test_a_many_slot_merge_column_drops_empty_items(self):
+        assert self._render_query_merge(
+            ["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": "a, ,b,"}
+        ) == ["a", "b"]
+
+    def test_merge_columns_that_resolve_to_nothing_raise(self):
+        """An empty ``many`` mapping must not quietly drop merge_columns, which
+        would turn a row-level check into a dataset-level one."""
+        with pytest.raises(ValueError, match="resolved to no columns"):
+            self._render_query_merge(["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": " , "})
+
+    def test_a_slot_mapped_to_an_empty_column_raises(self):
+        with pytest.raises(ValueError, match="resolved to no columns"):
+            self._render_query_merge(["{{lead_id}}"], group={"lead_id": ""})
+
+    def test_whitespace_only_literal_merge_columns_are_dropped(self):
+        assert self._render_query_merge(["  ", "pacode"]) == ["pacode"]
+        with pytest.raises(ValueError, match="resolved to no columns"):
+            self._render_query_merge(["  "])
+
+    def test_duplicate_merge_columns_are_deduplicated_in_order(self):
+        assert self._render_query_merge(["lead_id", "{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
+
+    def test_a_placeholder_with_inner_spaces_is_not_a_slot(self):
+        """Matches _substitute_text, which only replaces an exact ``{{name}}``."""
+        assert self._render_query_merge(["{{ lead_id }}"]) == ["{{ lead_id }}"]
 
     def test_a_merge_column_for_an_unmapped_slot_raises(self):
         definition = self._sql_definition({"sql_query": "SELECT 1", "merge_columns": ["lead_id"]}, slot_name="lead_id")

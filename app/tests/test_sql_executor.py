@@ -13,6 +13,7 @@ the Delta-flavoured renderer :func:`_render_value` and Delta's backtick
 default value-encoding contract that both dialects inherit.
 """
 
+import json
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -754,3 +755,9 @@ class TestSqlExecutorCrudDelegation:
         self._capture_execute(executor)
         with pytest.raises(ValueError, match="insert requires at least one column"):
             executor.insert("dq.t", values={})
+
+
+def test_json_literal_expr_backslash_escapes_quotes_and_backslashes() -> None:
+    """Quotes must survive the Delta literal (a doubled quote would be dropped)."""
+    json_str = json.dumps({"q": "it's a\\b"})  # JSON text: {"q": "it's a\\b"}
+    assert _make_sql_executor().json_literal_expr(json_str) == r"""parse_json('{"q": "it\'s a\\\\b"}')"""

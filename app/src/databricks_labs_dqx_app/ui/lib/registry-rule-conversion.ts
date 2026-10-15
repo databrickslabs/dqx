@@ -513,9 +513,14 @@ export function buildDqxCheckJson(
       args.query = body.sql_query;
       // A low-code advanced (group-by) rule carries the group-by columns as
       // `merge_columns` so violating groups flag their source rows row-level;
-      // surface them so the JSON mirrors exactly what materializes.
+      // surface them so the JSON mirrors exactly what materializes. An entry
+      // that is exactly a slot name (older rules saved bare names) becomes
+      // `{{slot}}`, matching the backend export.
       if (Array.isArray(body.merge_columns) && body.merge_columns.length > 0) {
-        args.merge_columns = body.merge_columns;
+        const slotNames = new Set((definition.slots ?? []).map((s) => s.name));
+        args.merge_columns = body.merge_columns.map((col) =>
+          typeof col === "string" && slotNames.has(col) ? `{{${col}}}` : col,
+        );
       }
     } else {
       functionName = "sql_expression";
