@@ -1056,9 +1056,13 @@ def _process_baseline_relative_features(
     # positional), and each feature's value is unchanged: the same per-group baseline, the same
     # coalesce to the global baseline on a group miss, the same signed-log-ratio.
     metrics_with_baselines = [metric for metric in metrics if baseline_medians.get(metric)]
-    baseline_cols = {metric: f"__dqx_{metric}_baseline" for metric in metrics_with_baselines}
+    occupied_names = {name.casefold() for name in transformed_df.columns}
+    occupied_names.update(f"{metric}{BASELINE_RELATIVE_SUFFIX}".casefold() for metric in metrics)
+    baseline_cols = {
+        metric: _reserve_temporary_column("__dqx_baseline_", occupied_names) for metric in metrics_with_baselines
+    }
     if metrics_with_baselines:
-        lookup_df = _baseline_lookup_df(transformed_df, baseline_medians, metrics_with_baselines, group_key_col)
+        lookup_df = _baseline_lookup_df(transformed_df, baseline_medians, baseline_cols, group_key_col)
         transformed_df = transformed_df.join(broadcast(lookup_df), on=group_key_col, how="left")
 
     for metric in metrics:
@@ -1087,6 +1091,21 @@ def _process_baseline_relative_features(
     # runs on the scored frame, downstream of here. It is not a feature — see the explicit
     # projection in ``prepare_training_features``, which is what keeps it out of the model.
     return transformed_df
+
+
+def _reserve_temporary_column(prefix: str, occupied_names: set[str]) -> str:
+    """Reserve a working name against case-folded input and generated column names.
+
+    At most one more candidate than occupied names is needed to find a free name.
+    These aliases exist only during transformation and are never persisted.
+    """
+    name = next(
+        candidate
+        for index in range(len(occupied_names) + 1)
+        if (candidate := f"{prefix}{index}").casefold() not in occupied_names
+    )
+    occupied_names.add(name.casefold())
+    return name
 
 
 def _compute_baseline_medians(
@@ -1137,7 +1156,7 @@ def _compute_baseline_medians(
 def _baseline_lookup_df(
     df: DataFrame,
     baseline_medians: dict[str, dict[str, float]],
-    metrics: list[str],
+    baseline_cols: dict[str, str],
     group_key_col: str,
 ) -> DataFrame:
     """Build one broadcastable lookup: ``(group key, <metric>_baseline per metric)``.
@@ -1146,8 +1165,8 @@ def _baseline_lookup_df(
     null where that metric never saw the group — which the caller coalesces to the global baseline,
     exactly as a per-metric left join would. Replaces N single-metric lookups with one.
     """
+    metrics = list(baseline_cols)
     all_keys = sorted({key for metric in metrics for key in baseline_medians[metric]})
-    baseline_cols = {metric: f"__dqx_{metric}_baseline" for metric in metrics}
     rows = [(key, *(baseline_medians[metric].get(key) for metric in metrics)) for key in all_keys]
     schema = T.StructType(
         [T.StructField(group_key_col, T.StringType(), False)]
@@ -1204,26 +1223,28 @@ def _fit_temporal_from_buckets(
     span = max(t_max - t_min, 1.0)
 
     seconds = _epoch_seconds(time_column, t_min)
-    bucket_width = span / TEMPORAL_FIT_BUCKETS
+    occupied_names = {name.casefold() for name in (*df.columns, *source_columns)}
+    bucket_name = _reserve_temporary_column("__dqx_time_bucket_", occupied_names)
+    seconds_name = _reserve_temporary_column("__dqx_bucket_seconds_", occupied_names)
     # Rows with no timestamp are dropped from the fit rather than bucketed. A null timestamp yields a null
     # bucket whose min(seconds) is also null, and that null reached float() below as a TypeError -- one
     # unparseable row was enough to fail training outright. Dropping them removes the bucket rather than
     # guarding its symptom; the all-null case is already refused above, with an explanation.
     # Scoring has always tolerated a null timestamp by emitting a zero residual, so this aligns the two.
     bucketed = df.filter(col(quote_column_name(time_column)).cast(TimestampType()).isNotNull()).withColumn(
-        "__dqx_time_bucket", F.floor(seconds / lit(bucket_width))
+        bucket_name, F.floor(seconds / lit(span / TEMPORAL_FIT_BUCKETS))
     )
     aggregations = [
         F.percentile_approx(col(quote_column_name(source)), 0.5).alias(name) for name, source in source_columns.items()
     ]
     rows = (
-        bucketed.groupBy("__dqx_time_bucket")
-        .agg(F.min(seconds).alias("__dqx_bucket_seconds"), *aggregations)
-        .orderBy("__dqx_time_bucket")
+        bucketed.groupBy(bucket_name)
+        .agg(F.min(seconds).alias(seconds_name), *aggregations)
+        .orderBy(bucket_name)
         .collect()
     )
 
-    bucket_seconds = np.array([float(row["__dqx_bucket_seconds"]) for row in rows], dtype=float)
+    bucket_seconds = np.array([float(row[seconds_name]) for row in rows], dtype=float)
     metrics = {
         name: np.array([float(row[name]) if row[name] is not None else np.nan for row in rows], dtype=float)
         for name in source_columns
