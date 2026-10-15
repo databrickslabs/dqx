@@ -323,6 +323,7 @@ def inject_anomalies_and_dq_issues(
         transaction_id, date, amount, quantity, category, region = row
         transaction_id = f"NEW{idx:06d}"
         is_synthetic_anomaly = False
+        negative_amount_injected = False
 
         dq_roll = random.random()
         if dq_roll < dq_null_amount_rate:
@@ -331,6 +332,7 @@ def inject_anomalies_and_dq_issues(
             quantity = None
         elif dq_roll < dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate:
             amount = -abs(amount)
+            negative_amount_injected = True
         elif random.random() < anomaly_rate:
             is_synthetic_anomaly = True
             anomaly_type = random.choices(
@@ -355,7 +357,7 @@ def inject_anomalies_and_dq_issues(
                 quantity = int(quantity * random.uniform(10, 18))
                 date = date.replace(hour=random.choice([2, 3, 4, 22, 23]))
 
-        if amount is not None:
+        if amount is not None and not negative_amount_injected:
             amount = max(10, min(10000, amount))
         if quantity is not None:
             quantity = max(1, min(150, quantity))
@@ -497,6 +499,20 @@ print("ℹ️  Each record receives a severity percentile.")
 print("   The percentile threshold decides whether a record is flagged as anomalous.")
 print("   Even records that are not flagged still get severity for analysis.")
 print("   Higher percentile = more severe relative to training data.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Read model metrics separately from data quality failures
+# MAGIC
+# MAGIC The `is_synthetic_anomaly` label marks only the planted **model** anomalies. Rows with a null
+# MAGIC amount, null quantity, or negative amount are deliberate DQ faults, so they keep that label set to
+# MAGIC `false`. The explicit rule-only quarantine count above reports DQ-fault rows that are not also model
+# MAGIC flagged. The confusion matrix is relative to planted model anomalies: its `FP` count includes
+# MAGIC injected null/negative fault rows that the model also flags, so it is not proof that every model flag
+# MAGIC is wrong.
+
+# COMMAND ----------
 
 # Sanity check: did we catch the injected anomalies? These are row counts, so duplicate transaction IDs
 # remain in the evaluation rather than being silently deduplicated.
