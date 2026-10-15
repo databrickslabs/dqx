@@ -102,6 +102,37 @@ class TestParseCheckMetrics:
         out = metrics_utils_module.parse_check_metrics(json.dumps([{"error_count": 4}]))
         assert out[0].check_name == "unknown"
 
+    def test_evaluated_counts_attach_to_their_checks(self, metrics_utils_module):
+        raw = json.dumps(
+            [
+                {"check_name": "filtered", "error_count": 5, "warning_count": 0},
+                {"check_name": "unfiltered", "error_count": 1, "warning_count": 0},
+            ]
+        )
+        evaluated = json.dumps([{"check_name": "filtered", "evaluated_count": 100}])
+        out = metrics_utils_module.parse_check_metrics(raw, evaluated)
+        by_name = {m.check_name: m for m in out}
+        assert by_name["filtered"].evaluated_count == 100
+        assert by_name["unfiltered"].evaluated_count is None
+
+    def test_evaluated_count_absent_by_default(self, metrics_utils_module):
+        out = metrics_utils_module.parse_check_metrics(json.dumps([{"check_name": "x", "error_count": 1}]))
+        assert out[0].evaluated_count is None
+
+    @pytest.mark.parametrize(
+        "evaluated",
+        [
+            "{not json}",
+            json.dumps({"check_name": "x", "evaluated_count": 3}),
+            json.dumps(["oops", {"evaluated_count": 3}, {"check_name": "x", "evaluated_count": "abc"}]),
+        ],
+    )
+    def test_corrupt_evaluated_payload_is_ignored(self, metrics_utils_module, evaluated):
+        out = metrics_utils_module.parse_check_metrics(json.dumps([{"check_name": "x", "error_count": 1}]), evaluated)
+        assert len(out) == 1
+        assert out[0].error_count == 1
+        assert out[0].evaluated_count is None
+
 
 class TestCheckMetricsToErrorBreakdown:
     """The legacy ``error_breakdown`` shape is recovered from per-check rows."""

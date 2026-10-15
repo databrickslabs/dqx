@@ -108,6 +108,52 @@ class TestComputeTableScore:
         assert 0.0 <= score <= 1.0
 
 
+class TestEvaluatedRowDenominator:
+    """Filtered row checks score against the rows their filter selected."""
+
+    def test_filtered_check_scores_against_its_evaluated_rows(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="rule_a", error_count=5, warning_count=0, evaluated_count=100),
+            CheckMetricBreakdown(check_name="rule_b", error_count=1000, warning_count=0),
+        ]
+        score = ScoreService.compute_table_score(
+            check_metrics,
+            input_row_count=1000,
+            dataset_check_names={"rule_b"},
+        )
+        # rule_a: 1 - 5/100 = 0.95 (not 1 - 5/1000); rule_b: failed dataset check = 0.0.
+        assert score == pytest.approx(0.475)
+
+    def test_rule_whose_only_check_evaluated_no_rows_is_excluded(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="rule_a", error_count=0, warning_count=0, evaluated_count=0),
+            CheckMetricBreakdown(check_name="rule_b", error_count=20, warning_count=0),
+        ]
+        score = ScoreService.compute_table_score(check_metrics, input_row_count=100)
+        assert score == pytest.approx(0.8)
+
+    def test_check_with_no_evaluated_rows_leaves_its_rules_average(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="a_col_1", error_count=10, warning_count=0),
+            CheckMetricBreakdown(check_name="a_col_2", error_count=0, warning_count=0, evaluated_count=0),
+        ]
+        score = ScoreService.compute_table_score(
+            check_metrics, input_row_count=100, check_rule_ids={"a_col_1": "a", "a_col_2": "a"}
+        )
+        assert score == pytest.approx(0.9)
+
+    def test_no_scorable_check_yields_none(self):
+        check_metrics = [CheckMetricBreakdown(check_name="rule_a", error_count=0, warning_count=0, evaluated_count=0)]
+        assert ScoreService.compute_table_score(check_metrics, input_row_count=100) is None
+
+    def test_missing_evaluated_count_falls_back_to_input_rows(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="rule_a", error_count=5, warning_count=0, evaluated_count=None)
+        ]
+        score = ScoreService.compute_table_score(check_metrics, input_row_count=1000)
+        assert score == pytest.approx(0.995)
+
+
 class TestComputeProductScore:
     def test_unweighted_mean_of_member_scores(self):
         assert ScoreService.compute_product_score([1.0, 0.5]) == pytest.approx(0.75)

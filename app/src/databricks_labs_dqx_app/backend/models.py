@@ -1169,8 +1169,10 @@ class MonitoredTableSummaryOut(BaseModel):
     applied_rule_count: int = 0
     check_count: int = 0
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     dimensions: list[str] = Field(
         default_factory=list,
@@ -1926,8 +1928,10 @@ class DataProductMemberOut(BaseModel):
     checks_count: int
     runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
@@ -1986,8 +1990,10 @@ class DataProductOut(BaseModel):
     # (P3.4): the cached unweighted mean of member tables' latest published
     # scores. All None when the product has never been scored.
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     created_by: str | None = None
     created_at: str | None = None
@@ -2184,11 +2190,18 @@ class FailingRecordOut(BaseModel):
 
 
 class CheckMetricBreakdown(BaseModel):
-    """Per-check error/warning breakdown produced by ``DQMetricsObserver``."""
+    """Per-check error/warning breakdown produced by ``DQMetricsObserver``.
+
+    *evaluated_count* is the number of rows a filtered row-level check
+    evaluated (the rows its filter selected), from the run's
+    *check_evaluated_rows* metric. None for unfiltered and dataset checks
+    and for runs that predate the metric: those use the table's input rows.
+    """
 
     check_name: str
     error_count: int = 0
     warning_count: int = 0
+    evaluated_count: int | None = None
 
 
 class MetricSnapshotOut(BaseModel):
@@ -2238,8 +2251,10 @@ class TableScoreOut(BaseModel):
     source_table_fqn: str
     score: float | None = None
     latest_run_id: str | None = None
-    total_tests: int = 0
-    failed_tests: int = 0
+    total_tests: int = Field(default=0, description="Row-level tests (evaluated rows x row checks)")
+    failed_tests: int = Field(default=0, description="Failed row-level tests")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
 
 
 class RuleScoreOut(BaseModel):
@@ -2294,10 +2309,12 @@ class GroupRowOut(BaseModel):
     binding_id: str | None = None
     rule_id: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
     rule_count: int | None = None
     check_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     breached: bool = False
     breach_criticality: str | None = None
     pass_threshold: int | None = None
@@ -2325,7 +2342,9 @@ class TrendPointOut(BaseModel):
     series: str | None = None
     pass_rate: float | None = None
     rule_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
     version: int | None = None
     is_draft: bool = False
     breached: bool = False
@@ -2391,8 +2410,10 @@ class RunRowOut(BaseModel):
     run_id: str | None = None
     run_ts: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     run_mode: str | None = None
     breached: bool = False
     breach_criticality: str | None = None

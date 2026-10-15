@@ -658,19 +658,31 @@ class TestMeasureFormulaMatchesScoreService:
 class TestEvaluatedRowsMeasureSemantics:
     """Filtered checks on the SQL path: evaluated-row denominator,
     scorable-only rule averaging, and row tests that exclude dataset checks.
-    Parity of these cases with ScoreService lands with its evaluated-count
-    support."""
+    Each score is also pinned to ScoreService, fed the same evaluated
+    counts on its *CheckMetricBreakdown.evaluated_count*."""
+
+    @staticmethod
+    def _with_evaluated(
+        check_metrics: list[CheckMetricBreakdown], evaluated_counts: dict[str, int]
+    ) -> list[CheckMetricBreakdown]:
+        return [
+            metric.model_copy(update={"evaluated_count": evaluated_counts.get(metric.check_name)})
+            for metric in check_metrics
+        ]
 
     def test_filtered_check_scores_against_its_evaluated_rows(self):
         check_metrics = [
             CheckMetricBreakdown(check_name="filtered", error_count=5, warning_count=0),
             CheckMetricBreakdown(check_name="unfiltered", error_count=10, warning_count=0),
         ]
-        score, failed, total = _simulate_measure_path(check_metrics, 100, evaluated_counts={"filtered": 10})
+        evaluated = {"filtered": 10}
+        score, failed, total = _simulate_measure_path(check_metrics, 100, evaluated_counts=evaluated)
         # filtered: 1 - 5/10 = 0.5; unfiltered: 1 - 10/100 = 0.9.
         assert score == pytest.approx(0.7)
         assert failed == 15
         assert total == 110
+        expected = ScoreService.compute_table_score(self._with_evaluated(check_metrics, evaluated), 100)
+        assert score == pytest.approx(expected)
 
     def test_check_with_no_evaluated_rows_leaves_its_rule_and_the_score(self):
         check_metrics = [
@@ -680,13 +692,25 @@ class TestEvaluatedRowsMeasureSemantics:
             CheckMetricBreakdown(check_name="c", error_count=0, warning_count=0),
         ]
         rule_ids = {"a_col_1": "a", "a_col_2": "a", "b": "b", "c": "c"}
+        evaluated = {"a_col_2": 0, "c": 0}
         score, _, total = _simulate_measure_path(
-            check_metrics, 100, check_rule_ids=rule_ids, evaluated_counts={"a_col_2": 0, "c": 0}
+            check_metrics, 100, check_rule_ids=rule_ids, evaluated_counts=evaluated
         )
         # Rule a averages only a_col_1 (1.0); rule c has no scorable check and
         # drops out; b = 0.5. Mean of (1.0, 0.5).
         assert score == pytest.approx(0.75)
         assert total == 200
+        expected = ScoreService.compute_table_score(
+            self._with_evaluated(check_metrics, evaluated), 100, check_rule_ids=rule_ids
+        )
+        assert score == pytest.approx(expected)
+
+    def test_run_with_no_scorable_check_is_none_on_both_paths(self):
+        check_metrics = [CheckMetricBreakdown(check_name="a", error_count=0, warning_count=0)]
+        evaluated = {"a": 0}
+        score, _, _ = _simulate_measure_path(check_metrics, 100, evaluated_counts=evaluated)
+        assert score is None
+        assert ScoreService.compute_table_score(self._with_evaluated(check_metrics, evaluated), 100) is None
 
     def test_dataset_checks_never_add_to_row_tests(self):
         check_metrics = [
