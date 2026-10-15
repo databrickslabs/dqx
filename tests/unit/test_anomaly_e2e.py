@@ -69,12 +69,13 @@ def test_wheel_manifest_allows_only_build_version_difference(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("serverless", [False, True])
-def test_packaged_tasks_share_artifact_and_reload_in_new_task(serverless: bool) -> None:
+def test_packaged_tasks_share_artifact_and_reload_in_new_tasks(serverless: bool) -> None:
     parameters = {"wheel_sha256": "a" * 64}
     tasks = packaged_anomaly_tasks("/test/notebook", parameters, serverless=serverless, cluster_id="cluster")
-    assert [task.task_key for task in tasks] == ["train", "score"]
+    assert [task.task_key for task in tasks] == ["train", "score", "score_without_shap"]
     assert tasks[1].depends_on and tasks[1].depends_on[0].task_key == "train"
-    assert [task.timeout_seconds for task in tasks] == [1800, 2700]
+    assert tasks[2].depends_on and tasks[2].depends_on[0].task_key == "score"
+    assert [task.timeout_seconds for task in tasks] == [1800, 2700, 1200]
     for task in tasks:
         assert task.notebook_task and task.notebook_task.base_parameters
         assert task.notebook_task.base_parameters["wheel_sha256"] == parameters["wheel_sha256"]
@@ -128,6 +129,31 @@ def test_remote_provenance_is_verified_and_payload_free() -> None:
     result["wheel_sha256"] = "c" * 64
     with pytest.raises(ValueError, match="artifact"):
         safe_packaged_result(json.dumps(result), case, "score")
+
+
+def test_remote_no_shap_provenance_requires_distribution_rejections() -> None:
+    case = PackagedAnomalyCase(1, "a" * 64, "b" * 40, False)
+    result = {
+        "status": "passed",
+        "phase": "score_without_shap",
+        "completed_cases": sorted(
+            f"{name}:{mode}:{'rejected' if profile == 'distribution' and flag == 'on' else flag}"
+            for name, profile, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for flag in ("off", "on")
+        ),
+        "wheel_sha256": case.wheel_sha256,
+        "revision": case.revision,
+        "environments": [
+            {"source": source, "sources_verified": True, "python": "3.12.3", "packages": {"shap": "0.49.1"}}
+            for source in ("installed", "worker")
+        ],
+    }
+
+    safe_packaged_result(json.dumps(result), case, "score_without_shap")
+    result["completed_cases"] = result["completed_cases"][:-1]
+    with pytest.raises(ValueError, match="scoring matrix"):
+        safe_packaged_result(json.dumps(result), case, "score_without_shap")
 
 
 @pytest.mark.parametrize("payload", ["not json", "[]", "null", "{}"])
@@ -224,7 +250,7 @@ def test_train(make_anomaly_model_intent):
 
 
 @pytest.mark.parametrize("reverse_order,unreadable", [(False, False), (True, False), (True, True)])
-def test_packaged_failures_report_both_tasks_and_message_fallback(
+def test_packaged_failures_report_all_tasks_and_message_fallback(
     caplog: pytest.LogCaptureFixture, reverse_order: bool, unreadable: bool
 ) -> None:
     workspace = create_autospec(WorkspaceClient, instance=True)
@@ -248,11 +274,20 @@ def test_packaged_failures_report_both_tasks_and_message_fallback(
                 result_state=RunResultState.UPSTREAM_FAILED,
             ),
         ),
+        RunTask(
+            task_key="score_without_shap",
+            run_id=103,
+            state=RunState(
+                life_cycle_state=RunLifeCycleState.SKIPPED,
+                result_state=RunResultState.UPSTREAM_FAILED,
+            ),
+        ),
     ]
     workspace.jobs.get_run.return_value = Run(tasks=list(reversed(tasks)) if reverse_order else tasks)
     outputs = {
         101: RunOutput(error="ModuleNotFoundError: No module named 'SENSITIVE_MODULE'"),
         102: RunOutput(),
+        103: RunOutput(),
     }
 
     def read_output(run_id: int) -> RunOutput:
@@ -268,10 +303,11 @@ def test_packaged_failures_report_both_tasks_and_message_fallback(
         for record in caplog.records
         if "Packaged anomaly task failed: " in record.message
     ]
-    assert len(records) == 2
+    assert len(records) == 3
     failures = {record["phase"]: record for record in records}
     assert failures["train"]["result_state"] == "FAILED"
     assert failures["score"]["result_state"] == "UPSTREAM_FAILED"
+    assert failures["score_without_shap"]["result_state"] == "UPSTREAM_FAILED"
     assert failures["train"]["diagnostics"]["error_types"] == ["ModuleNotFoundError"]
     assert failures["train"]["diagnostics"]["hints"] == ["missing_python_dependency"]
     assert failures["train"]["output_error_type"] == ("PermissionDenied" if unreadable else None)

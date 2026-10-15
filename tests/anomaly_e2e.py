@@ -81,21 +81,46 @@ def wheel_manifest(wheel: Path, repository: Path, revision: str) -> dict[str, ob
 def packaged_anomaly_tasks(
     notebook_path: str, parameters: dict[str, str], *, serverless: bool, cluster_id: str | None
 ) -> list[Task]:
-    """Train and reload in separate tasks on the suite's selected compute mode."""
+    """Train, score, then exercise a fresh client process without SHAP."""
     if not serverless and not cluster_id:
         raise ValueError("Classic packaged anomaly tests require the configured cluster")
-    timeout_seconds = {"train": 1800, "score": 2700}
+    timeout_seconds = {"train": 1800, "score": 2700, "score_without_shap": 1200}
     return [
         Task(
             task_key=phase,
             notebook_task=NotebookTask(notebook_path=notebook_path, base_parameters={**parameters, "phase": phase}),
             existing_cluster_id=None if serverless else cluster_id,
-            depends_on=[TaskDependency(task_key="train")] if phase == "score" else [],
+            depends_on=(
+                [TaskDependency(task_key="train")]
+                if phase == "score"
+                else [TaskDependency(task_key="score")] if phase == "score_without_shap" else []
+            ),
             max_retries=0,
             timeout_seconds=timeout_seconds[phase],
         )
-        for phase in ("train", "score")
+        for phase in ("train", "score", "score_without_shap")
     ]
+
+
+def _expected_completed_cases(phase: str) -> list[str]:
+    """Return the exact completed-case manifest each packaged phase must emit."""
+    if phase == "train":
+        return sorted(name for name, _, _ in PACKAGED_MODEL_CONFIGS)
+    if phase == "score":
+        return sorted(
+            f"{name}:{mode}:{contributions}"
+            for name, _, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for contributions in ("off", "on")
+        )
+    if phase == "score_without_shap":
+        return sorted(
+            f"{name}:{mode}:{'rejected' if profile == 'distribution' and contributions == 'on' else contributions}"
+            for name, profile, _ in PACKAGED_MODEL_CONFIGS
+            for mode in ("driver", "distributed")
+            for contributions in ("off", "on")
+        )
+    raise ValueError("Packaged anomaly task has an unknown phase")
 
 
 def safe_packaged_result(result: str, case: PackagedAnomalyCase, phase: str) -> dict[str, object]:
@@ -113,16 +138,7 @@ def safe_packaged_result(result: str, case: PackagedAnomalyCase, phase: str) -> 
         or parsed.get("status") != "passed"
     ):
         raise ValueError("Packaged anomaly task provenance does not match the submitted artifact")
-    expected_cases = (
-        sorted(name for name, _, _ in PACKAGED_MODEL_CONFIGS)
-        if phase == "train"
-        else sorted(
-            f"{name}:{mode}:{contributions}"
-            for name, _, _ in PACKAGED_MODEL_CONFIGS
-            for mode in ("driver", "distributed")
-            for contributions in ("off", "on")
-        )
-    )
+    expected_cases = _expected_completed_cases(phase)
     if parsed.get("completed_cases") != expected_cases:
         raise ValueError("Packaged anomaly task did not complete the scoring matrix")
     clients = parsed.get("environments")
@@ -178,7 +194,7 @@ def safe_packaged_task_failure(task: RunTask, output: RunOutput | None) -> dict[
         "error_trace": output.error_trace if output else None,
     }
     return {
-        "phase": task.task_key if task.task_key in {"train", "score"} else "unknown",
+        "phase": task.task_key if task.task_key in {"train", "score", "score_without_shap"} else "unknown",
         "life_cycle_state": state.life_cycle_state.value if state and state.life_cycle_state else None,
         "result_state": state.result_state.value if state and state.result_state else None,
         "termination_code": details.code.value if details and details.code else None,

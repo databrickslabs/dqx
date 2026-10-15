@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def test_run_anomaly_distributed_scoring_notebook(
     ws: WorkspaceClient, packaged_anomaly_case: PackagedAnomalyCase
 ) -> None:
-    """Reload a persisted model and score with contributions on the suite's compute."""
+    """Run normal scoring and the fresh-client missing-SHAP regression on persisted models."""
     waiter = ws.jobs.run_now(job_id=packaged_anomaly_case.job_id)
     assert waiter.run_id is not None
     polling_completed = False
@@ -39,7 +39,7 @@ def test_run_anomaly_distributed_scoring_notebook(
                 logger.error("Packaged anomaly run cancellation did not confirm termination before cleanup")
     if packaged_anomaly_case.serverless:
         assert run.effective_performance_target == PerformanceTarget.STANDARD
-    assert run.tasks and len(run.tasks) == 2, "Both packaged anomaly tasks must be present"
+    assert run.tasks and len(run.tasks) == 3, "All packaged anomaly tasks must be present"
     failed_tasks = [task for task in run.tasks if not task.state or task.state.result_state != RunResultState.SUCCESS]
     for task in failed_tasks:
         _report_anomaly_task_failure(ws, task)
@@ -51,7 +51,7 @@ def test_run_anomaly_distributed_scoring_notebook(
         output = ws.jobs.get_run_output(task.run_id)
         if not packaged_anomaly_case.serverless and task.cluster_instance and task.cluster_instance.cluster_id:
             assert task.cluster_instance.cluster_id == packaged_anomaly_case.cluster_id
-        assert task.task_key in {"train", "score"}
+        assert task.task_key in {"train", "score", "score_without_shap"}
         assert output.notebook_output and output.notebook_output.result and not output.notebook_output.truncated
         evidence = safe_packaged_result(output.notebook_output.result, packaged_anomaly_case, task.task_key)
         evidence["actual_compute"] = (
@@ -61,7 +61,7 @@ def test_run_anomaly_distributed_scoring_notebook(
         )
         logger.info(f"Packaged anomaly provenance: {json.dumps(evidence, sort_keys=True)}")
         completed.add(task.task_key)
-    assert completed == {"train", "score"}
+    assert completed == {"train", "score", "score_without_shap"}
 
 
 def _report_anomaly_task_failure(ws: WorkspaceClient, task: RunTask) -> None:
