@@ -11,6 +11,7 @@ from databricks_labs_dqx_app.backend.services.task_runner_runs import (
     RECENT_RUNS_LIMIT,
     cached_recent_completed_runs,
     list_active_app_run_ids,
+    list_active_task_runner_runs,
     list_recent_completed_runs,
     parse_task_runner_run,
 )
@@ -132,6 +133,16 @@ class TestListRuns:
 
         assert list_active_app_run_ids(ws, 7) == {"a"}
         ws.jobs.list_runs.assert_called_once_with(job_id=7, active_only=True, limit=25)
+
+    def test_active_task_runner_runs_include_source_table(self, ws):
+        ws.jobs.list_runs.return_value = [
+            make_run(app_run_id="a", life_cycle=RunLifeCycleState.RUNNING, result=None),
+        ]
+
+        runs = list_active_task_runner_runs(ws, 7)
+
+        assert [run.app_run_id for run in runs] == ["a"]
+        assert runs[0].source_table_fqn == "main.sales.orders"
 
     async def test_cached_runs_share_one_jobs_api_call(self, ws):
         ws.jobs.list_runs.side_effect = lambda **_: iter([make_run()])

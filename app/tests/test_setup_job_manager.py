@@ -116,6 +116,7 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
 
     created = manager.workspace.jobs.create.call_args.kwargs
+    assert created["timeout_seconds"] == 4 * 60 * 60
     assert created["tags"] == {
         "app": "dqx-studio",
         "dqx_studio_managed": "true",
@@ -189,6 +190,7 @@ def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) ->
     manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
 
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.timeout_seconds == 4 * 60 * 60
     assert settings.tags == {
         "owner": "data-platform",
         "cost_center": "finance",
