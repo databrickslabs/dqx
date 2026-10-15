@@ -214,6 +214,7 @@ class DemoSeedService:
         schedule_config: ScheduleConfigService | None = None,
         schedule_grants: ScheduleGrantService | None = None,
         catalog: str = "dqx",
+        schema: str,
     ) -> None:
         self._demo_sql = demo_sql
         self._app_sql = app_sql
@@ -255,7 +256,7 @@ class DemoSeedService:
         self._schedule_config = schedule_config
         self._schedule_grants = schedule_grants
         self._catalog = catalog
-        self._schema = manifest.SOURCE_SCHEMA
+        self._schema = schema
         self._started_at = ""
         # (binding_id, version) freeze events in creation order — populated by
         # :meth:`_approve_binding`, drained by :meth:`_redate_version_freezes`.

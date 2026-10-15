@@ -110,7 +110,7 @@ function DeltaIndicator({ delta }: { delta: number }) {
   }
   const label = t("home.delta.flat");
   return (
-    <span className="inline-flex items-center text-neutral-500" title={label}>
+    <span className="inline-flex items-center text-muted-foreground" title={label}>
       <Minus className="h-5 w-5" aria-label={label} />
     </span>
   );

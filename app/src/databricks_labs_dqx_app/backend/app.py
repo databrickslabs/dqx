@@ -11,7 +11,7 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.routes import api_router
 from databricks_labs_dqx_app.backend.setup.gate import SetupGateMiddleware
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
-from databricks_labs_dqx_app.backend.startup import StartupContext, start_studio, stop_studio
+from databricks_labs_dqx_app.backend.startup import StudioLifecycle, start_studio, stop_studio
 from databricks_labs_dqx_app.backend.utils import add_not_found_handler
 
 _SCHEDULER_LOCK_PATH = Path("/tmp/.dqx_scheduler.lock")  # noqa: S108
@@ -35,12 +35,12 @@ def _try_acquire_scheduler_lease() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Reconcile setup without aborting the restricted FastAPI surface."""
-    context: StartupContext | None = None
+    lifecycle: StudioLifecycle | None = None
     try:
-        context = await start_studio(app)
+        lifecycle = await start_studio(app)
         yield
     finally:
-        await stop_studio(context)
+        await stop_studio(lifecycle)
 
 
 app = FastAPI(title=conf.app_name, lifespan=lifespan)
