@@ -32,7 +32,6 @@ from typing import Literal
 from databricks_labs_dqx_app.backend.registry_models import ScheduleKind
 
 SOURCE_CATALOG_ENV_DEFAULT = "dqx"
-SOURCE_SCHEMA = "dqx_studio_demo"
 WEEKS_DEFAULT = 9
 TIGHTEN_WEEK = 6
 # Description applied to the card-validation rule mid-history (at TIGHTEN_WEEK)

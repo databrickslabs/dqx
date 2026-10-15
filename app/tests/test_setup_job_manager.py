@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.jobs import (
     Job,
     JobAccessControlResponse,
@@ -46,6 +47,21 @@ def job_with_run_as(
             )
         )
     )
+
+
+def test_exists_reports_a_deleted_job_as_missing(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = managed_job(42)
+    assert manager.exists(42) is True
+
+    manager.workspace.jobs.get.side_effect = NotFound("job deleted")
+    assert manager.exists(42) is False
+
+
+def test_exists_does_not_hide_other_lookup_errors(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.side_effect = PermissionDenied("no access")
+
+    with pytest.raises(PermissionDenied):
+        manager.exists(42)
 
 
 def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
