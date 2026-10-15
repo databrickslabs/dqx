@@ -1440,8 +1440,7 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             "sql": [f"MEASURE({mv}.`table_total_tests`)"],
             "synonyms": ["table-level tests", "dataset checks run"],
             "instruction": [
-                "Count of table-level (dataset) checks, one test each. Report beside total_tests, "
-                "never added to it."
+                "Count of table-level (dataset) checks, one test each. Report beside total_tests, never added to it."
             ],
         },
         {
