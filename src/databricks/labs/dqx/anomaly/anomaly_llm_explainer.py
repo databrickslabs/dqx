@@ -69,7 +69,8 @@ _PROMPT_INSTRUCTIONS = (
     "call it unusual outright.\n"
     "basis_contributions says WHICH modeled comparison received attribution, when it is present. Use it: "
     "it refines 'units contributed' to 'the model assigned most of units' evidence to its time-based "
-    "comparison'. Its shares are within each metric and total 100 per metric, so they do not compete with "
+    "comparison'. Its shares are within each metric; this displayed shortlist may omit lower-ranked "
+    "comparisons, so the listed shares need not total 100 per metric. They do not compete with "
     "feature_contributions shares. This is still model attribution, not proof that the underlying value "
     "departed from that comparison. When it says 'not measured', the evidence for which comparison received "
     "attribution genuinely does not exist, so name the comparisons that were in use and do not assign the "
@@ -149,8 +150,9 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
         "basis_contributions",
         "Which modeled comparison received attribution for each column, e.g. 'units (8%), units vs its group baseline (21%), "
-        "units vs its expected level at that time (71%)'. Shares are within each column and total 100 per "
-        "column, so they refine a feature_contributions entry rather than competing with it. A bare column "
+        "units vs its expected level at that time (71%)'. Shares are within each column; this displayed "
+        "shortlist may omit lower-ranked comparisons, so the listed shares need not total 100 per "
+        "column. They refine a feature_contributions entry rather than competing with it. A bare column "
         "name means the column's own value against the whole table. 'not measured' means the split could "
         "not be computed for this detector, which is not the same as no comparison having received attribution — say "
         "nothing about which one in that case. These shares do not prove an actual departure. Columns compared only one way are absent, because there is "
@@ -858,9 +860,10 @@ def _aggregate_groups_spark(
     """Aggregate anomalous rows into per-pattern group metadata, kept inside Spark.
 
     Returns the per-pattern aggregate as a DataFrame so the LLM call can run on executors via
-    ``ai_query``, with no driver collect of LLM payloads. ``max_groups`` is honoured as a cost
-    cap (top-N by ``group_size * group_avg_severity``); rows beyond the cap fall through with
-    null explanations via the left-join in *_attach_explanation_struct*.
+    ``ai_query``, with no driver collect of LLM payloads. ``max_groups`` limits eligible groups
+    (top-N by ``group_size * group_avg_severity``); rows beyond the cap fall through with null
+    explanations via the left-join in *_attach_explanation_struct*. Spark execution and retries
+    determine the actual serving request count.
     """
     primary = anomalous.groupBy(pattern_col).agg(
         F.count(F.lit(1)).alias("group_size"),

@@ -266,6 +266,40 @@ def test_explanation_budget_keeps_largest_group_and_preserves_dropped_rows(spark
     assert len(explanation_serving_boundary) == 1
 
 
+@pytest.mark.parametrize("explanation_serving_boundary", ["basis_echo"], indirect=True)
+def test_basis_prompt_labels_shortlist_as_partial_per_column(spark, explanation_serving_boundary):
+    """The real prompt preserves stored basis shares when a global shortlist omits entries."""
+    basis = {f"metric_{index}": 45.0 for index in range(1, 6)}
+    basis.update({f"metric_{index} baseline": 35.0 for index in range(1, 6)})
+    basis.update({f"metric_{index} time": 20.0 for index in range(1, 6)})
+    source = spark.createDataFrame(
+        [(1, 99.0, {"metric_1": 100.0}, basis, 0.0)],
+        "row_id int, severity double, contributions map<string,double>, basis map<string,double>, score_std double",
+    )
+    context = ExplanationContext(
+        severity_col="severity",
+        contributions_col="contributions",
+        basis_contributions_col="basis",
+        score_std_col="score_std",
+        ai_explanation_col="explanation",
+        pattern_col="pattern_owned",
+        threshold=95.0,
+        model_name="catalog.schema.model",
+    )
+
+    rows = add_explanation_column(source, context, is_ensemble=False, endpoint_reachable=True).collect()
+
+    assert len(rows) == 1
+    assert rows[0].explanation.business_impact == "prompt contract ok"
+    assert rows[0].explanation.action == "metric and column qualifications ok"
+    assert rows[0].explanation.narrative == (
+        "metric_1 (45%), metric_2 (45%), metric_3 (45%), metric_4 (45%), metric_5 (45%), "
+        "metric_1 baseline (35%), metric_2 baseline (35%), metric_3 baseline (35%), "
+        "metric_4 baseline (35%), metric_5 baseline (35%), metric_1 time (20%), metric_2 time (20%)"
+    )
+    assert len(explanation_serving_boundary) == 1
+
+
 @pytest.mark.parametrize(
     "withheld,visible,expected_scope",
     [

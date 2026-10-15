@@ -28,8 +28,32 @@ def _adversarial_response(response_kind: str) -> Column | None:
 
 
 def _prompt_echo_response(response_kind: str) -> Column:
-    assert response_kind in {"prompt_echo", "basis_redaction"}
+    assert response_kind in {"prompt_echo", "basis_redaction", "basis_echo"}
     prompt = F.col("__prompt")
+    if response_kind == "basis_echo":
+        basis = F.substring_index(F.substring_index(prompt, "\nbasis_contributions: ", -1), "\ngroup_size: ", 1)
+        metric_qualification = prompt.contains(
+            "Its shares are within each metric; this displayed shortlist may omit lower-ranked comparisons, "
+            "so the listed shares need not total 100 per metric."
+        )
+        column_qualification = prompt.contains(
+            "Shares are within each column; this displayed shortlist may omit lower-ranked comparisons, "
+            "so the listed shares need not total 100 per column."
+        )
+        return F.to_json(
+            F.struct(
+                basis.alias("narrative"),
+                F.when(metric_qualification & column_qualification, F.lit("prompt contract ok"))
+                .otherwise(F.lit("prompt contract missing"))
+                .alias("business_impact"),
+                F.when(
+                    metric_qualification & column_qualification,
+                    F.lit("metric and column qualifications ok"),
+                )
+                .otherwise(F.lit("metric or column qualification missing"))
+                .alias("action"),
+            )
+        )
     leaked = prompt.rlike("secret_value|PRIVATE_CATEGORY|secret_alias|private_group|private_time")
     if response_kind == "basis_redaction":
         leaked = (

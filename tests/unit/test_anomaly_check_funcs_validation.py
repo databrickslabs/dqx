@@ -2,7 +2,7 @@ import inspect
 import logging
 from decimal import Decimal
 from typing import cast
-from unittest.mock import create_autospec, patch
+from unittest.mock import create_autospec
 
 import pytest
 from pyspark.sql import DataFrame
@@ -96,20 +96,19 @@ def test_has_no_row_anomalies_rejects_non_positive_drift_threshold():
     assert "drift_threshold must be greater than 0" in str(exc_info.value)
 
 
-def test_has_no_row_anomalies_enable_contributions_requires_shap():
-    """enable_contributions=True requires SHAP; raises when SHAP is not available."""
-    with patch.object(check_funcs, "SHAP_AVAILABLE", False):
-        with pytest.raises(InvalidParameterError) as exc_info:
-            has_no_row_anomalies(
-                model_name="catalog.schema.model",
-                registry_table="catalog.schema.table",
-                enable_contributions=True,
-            )
-    assert "enable_contributions=True requires the 'shap' dependency" in str(exc_info.value)
+def test_has_no_row_anomalies_defers_contribution_dependency_to_the_persisted_model():
+    """The public check cannot know which stored detector will score until registry lookup."""
+    check, apply_fn, _info = has_no_row_anomalies(
+        model_name="catalog.schema.model",
+        registry_table="catalog.schema.table",
+        enable_contributions=True,
+        enable_ai_explanation=False,
+    )
+    assert check is not None and apply_fn is not None
 
 
 def test_default_flags_enable_contributions_and_ai_explanation():
-    """Both SHAP contributions and AI explanations are on by default."""
+    """Both contributions and AI explanations are on by default."""
     sig = inspect.signature(has_no_row_anomalies)
     assert sig.parameters["enable_contributions"].default is True
     assert sig.parameters["enable_ai_explanation"].default is True
@@ -154,13 +153,13 @@ def test_has_no_row_anomalies_no_raise_when_contributions_off():
     assert check is not None and apply_fn is not None
 
 
-def test_validate_explanation_flags_ai_query_needs_no_extra_dependency():
-    """AI explanations run in Spark SQL via ``ai_query`` — no DSPy/driver dependency. The only
-    hard requirement is SHAP (for the contributions that feed the prompt)."""
-    with patch.object(check_funcs, "SHAP_AVAILABLE", True):
-        has_no_row_anomalies(
-            model_name="catalog.schema.model", registry_table="catalog.schema.registry", enable_contributions=True
-        )
+def test_ai_query_needs_no_resolver_time_dependency():
+    """AI explanations run in Spark SQL; estimator-specific attribution is checked while scoring."""
+    has_no_row_anomalies(
+        model_name="catalog.schema.model",
+        registry_table="catalog.schema.registry",
+        enable_contributions=True,
+    )
 
 
 def test_has_no_row_anomalies_redact_columns_must_be_list():

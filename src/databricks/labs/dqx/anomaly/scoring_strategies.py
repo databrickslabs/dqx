@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 from pyspark.sql import DataFrame
 
+from databricks.labs.dqx.anomaly.explainability import SHAP_AVAILABLE
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
 from databricks.labs.dqx.anomaly.scoring_run import score_global_model
@@ -46,6 +47,17 @@ class GlobalModelScoringStrategy(AnomalyScoringStrategy):
         return algorithm.startswith(_GLOBAL_ALGORITHM_PREFIXES)
 
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
+        # The stored detector determines the dependency. Rule construction does
+        # not know it yet, and correlation attribution does not use TreeSHAP.
+        if (
+            config.enable_contributions
+            and record.identity.algorithm.startswith("IsolationForest")
+            and not SHAP_AVAILABLE
+        ):
+            raise InvalidParameterError(
+                "enable_contributions=True requires the 'shap' dependency for the distribution "
+                "detector. Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+            )
         return score_global_model(df, record, config)
 
 

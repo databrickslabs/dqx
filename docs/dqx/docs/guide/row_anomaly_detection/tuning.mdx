@@ -245,7 +245,9 @@ Detection quality on DQX's own synthetic fixtures is published separately in
 
 Both profiles report contributions the same way: one entry per column you passed, and on an ensemble the mean
 across members — the same members, in the same proportions, that produced the score. Only the method differs
-(SHAP for `"distribution"`, an exact decomposition for `"correlation"`).
+(SHAP for `"distribution"`, an exact decomposition for `"correlation"`). Correlation contributions do not
+require SHAP. Distribution contributions require the `shap` dependency included in the anomaly extra;
+with contributions disabled, neither profile needs SHAP for scoring.
 
 Read the result as a **ranking of columns**, not as a breakdown of the score's magnitude. Averaging
 decomposes the members' mean isolation depth exactly, while the score is the mean of a strictly monotone but

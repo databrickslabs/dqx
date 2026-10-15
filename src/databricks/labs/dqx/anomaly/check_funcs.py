@@ -17,7 +17,6 @@ from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.anomaly.scoring_utils import check_reserved_row_id_columns
 from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
-from databricks.labs.dqx.anomaly.explainability import SHAP_AVAILABLE
 from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.config import LLMModelConfig
@@ -78,14 +77,6 @@ def _validate_thresholds(threshold: float, drift_threshold: float | None) -> flo
     return numeric_threshold
 
 
-def _validate_explanation_flags(enable_contributions: bool) -> None:
-    if enable_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "enable_contributions=True requires the 'shap' dependency for the default distribution "
-            "detector. Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
-
-
 def _resolve_ai_explanation_flag(enable_contributions: bool, enable_ai_explanation: bool) -> bool:
     """AI explanations use the feature contributions as their input, so they require
     *enable_contributions*. Both default to True; if a caller turns contributions off (e.g. to
@@ -106,14 +97,12 @@ def _validate_anomaly_check_args(
     registry_table: str,
     threshold: float,
     drift_threshold: float | None,
-    enable_contributions: bool,
     redact_columns: list[str] | None,
     max_groups: int,
 ) -> float:
     """Validate has_no_row_anomalies arguments. Raises InvalidParameterError on failure."""
     _validate_required_names(model_name, registry_table)
     numeric_threshold = _validate_thresholds(threshold, drift_threshold)
-    _validate_explanation_flags(enable_contributions)
 
     if redact_columns is not None:
         if not isinstance(redact_columns, list) or not all(isinstance(c, str) and c for c in redact_columns):
@@ -232,13 +221,11 @@ def has_no_row_anomalies(
             at 100% can be a small part of what the model measured. This governs what reaches the
             serving endpoint: *_dq_info[].anomaly.contributions* is unchanged and still lists every
             column, so this is not an access control over the scored table.
-        max_groups: Maximum number of distinct contribution-pattern groups the LLM is called for per
-            scoring run (default 500). Anomalous rows are bucketed by their top-2 contributing
-            columns and the model is called once per bucket, so this is a direct cap on cost.
-            Groups beyond it — ranked by group_size * group_avg_severity — get a null
-            ai_explanation; a warning is logged. The per-segment budget split that used to apply
-            here went with the ``segment_by`` path: one model is trained now, so the cap is simply
-            the number of calls.
+        max_groups: Maximum number of eligible contribution-pattern groups considered for explanation
+            per scoring run (default 500). Anomalous rows are bucketed by their top-2 contributing
+            columns and ranked by group_size * group_avg_severity. Groups beyond this cap get a null
+            ai_explanation and a warning is logged. Spark execution and retries determine the actual
+            serving request count; this parameter is not a request-count guarantee.
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
 
@@ -261,7 +248,6 @@ def has_no_row_anomalies(
         registry_table=registry_table,
         threshold=threshold,
         drift_threshold=drift_threshold,
-        enable_contributions=enable_contributions,
         redact_columns=redact_columns,
         max_groups=max_groups,
     )
