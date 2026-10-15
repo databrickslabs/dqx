@@ -35,7 +35,6 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _ACTIVE_POLL_SECONDS,
-    _ACTIVE_RUNS_UNLOADED,
     _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
@@ -710,17 +709,21 @@ def _active_task_runner_run(
     *,
     source_table_fqn: str | None = None,
     started: datetime | None = None,
+    task_type: str = "scheduled",
+    preview: bool = False,
 ) -> SimpleNamespace:
     """A Jobs API active-run stub ``parse_task_runner_run`` accepts."""
-    params = [SimpleNamespace(name="run_id", value=app_run_id, default=None)]
+    params = [
+        SimpleNamespace(name="run_id", value=app_run_id, default=None),
+        SimpleNamespace(name="task_type", value=task_type, default=None),
+    ]
+    config: dict[str, object] = {}
     if source_table_fqn is not None:
-        params.append(
-            SimpleNamespace(
-                name="config_json",
-                value=json.dumps({"source_table_fqn": source_table_fqn}),
-                default=None,
-            )
-        )
+        config["source_table_fqn"] = source_table_fqn
+    if preview:
+        config["skip_history"] = True
+    if config:
+        params.append(SimpleNamespace(name="config_json", value=json.dumps(config), default=None))
     start = started or datetime(2026, 5, 1, 8, 55, tzinfo=timezone.utc)
     return SimpleNamespace(
         run_id=99,
@@ -1127,21 +1130,52 @@ class TestTickOneTable:
         mocks.ws.jobs.list_runs.return_value = [
             _active_task_runner_run("other-run", source_table_fqn="main.sales.orders")
         ]
+        table = {
+            "binding_id": "b1",
+            "schedule_cron": "0 9 * * *",
+            "schedule_tz": "UTC",
+            "schedule_kind": "dq_only",
+            "table_fqn": "main.sales.orders",
+        }
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
-        svc._tick_one_table(
-            {
-                "binding_id": "b1",
-                "schedule_cron": "0 9 * * *",
-                "schedule_tz": "UTC",
-                "schedule_kind": "dq_only",
-                "table_fqn": "main.sales.orders",
-            },
-            now,
-        )
+        svc._tick_one_table(table, now)
+        br_service.run_binding.assert_not_called()
+        mocks.oltp.upsert.assert_not_called()
 
+        svc._tick_one_table(table, now + timedelta(minutes=3))
         br_service.run_binding.assert_not_called()
         assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "skipped"
+
+    def test_preview_or_profile_on_the_table_does_not_skip(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        svc._job_id = "7"
+        br_service.run_binding.return_value = _binding_run_result()
+        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+        table = {
+            "binding_id": "b1",
+            "schedule_cron": "0 9 * * *",
+            "schedule_tz": "UTC",
+            "schedule_kind": "dq_only",
+            "table_fqn": "main.sales.orders",
+        }
+
+        mocks.ws.jobs.list_runs.return_value = [
+            _active_task_runner_run(
+                "preview-run", source_table_fqn="main.sales.orders", task_type="dryrun", preview=True
+            )
+        ]
+        svc._tick_one_table(table, now)
+        br_service.run_binding.assert_called_once()
+
+        br_service.run_binding.reset_mock()
+        svc._tick_active_runs_loaded = False
+        mocks.ws.jobs.list_runs.return_value = [
+            _active_task_runner_run("profile-run", source_table_fqn="main.sales.orders", task_type="profile")
+        ]
+        svc._tick_one_table(table, now)
+        br_service.run_binding.assert_called_once()
 
     def test_does_not_skip_stale_in_flight_runs(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
@@ -2061,7 +2095,7 @@ class TestScoreRefreshUsesJobsApiForRunState:
 
         mocks.ws.jobs.list_runs.return_value = []  # job finished
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
-        svc._tick_active_runs = _ACTIVE_RUNS_UNLOADED
+        svc._tick_active_runs_loaded = False
         svc._refresh_scores_for_completed_runs(self.NOW)
 
         mocks.sql.query.assert_called_once()
