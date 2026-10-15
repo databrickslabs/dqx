@@ -183,13 +183,15 @@ TEXT_INSTRUCTIONS = [
         "and number of tests).\n"
     ),
     (
-        "A test is one record-level evaluation of one check. Read every metric-view measure with "
-        "MEASURE(); the quality score is the equal-weight mean of rule scores. A rule first averages "
-        "its row-check pass rates and binary dataset-check verdicts. failed_tests "
-        "and total_tests remain row-test diagnostics and do not reconstruct the score. State every score or "
-        'rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
-        'report failures as a share of tests with the denominator ("1,250 of 50,000 tests, 2.5%"), '
-        "not a bare count.\n"
+        "A row-level test is one record evaluation of one check; a table-level test is one "
+        "whole-table (dataset) check verdict. Report row-level tests and table-level tests separately "
+        "(failed_tests / total_tests versus table_failed_tests / table_total_tests) and never add them "
+        "together. A filtered check's tests are the rows its filter selected. Read every metric-view "
+        "measure with MEASURE(); the quality score is the equal-weight mean of rule scores (a rule "
+        "averages its checks' pass rates and binary dataset verdicts), not a ratio of tests. State every "
+        'score or rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
+        'report row-level failures as a share of tests with the denominator ("1,250 of 50,000 tests, '
+        '2.5%"), not a bare count.\n'
     ),
     (
         "Use human names — the fully-qualified table name (backtick-quoted, like identifiers with "
@@ -230,7 +232,7 @@ TEXT_INSTRUCTIONS = [
     ),
     (
         "A check breaches when its run pass rate (1 - (error_count + warning_count) / "
-        "input_row_count) falls below the pass_threshold frozen into that run — a 0-100 percent on "
+        "evaluated_row_count) falls below the pass_threshold frozen into that run — a 0-100 percent on "
         "v_dq_check_results (NULL = not judged, excluded). List breaches worst-first with pass rate "
         "and threshold. There is otherwise no target or SLA: report rates without judging them "
         "against an invented goal, attribute what you can see, and say plainly when a cause (such as "
@@ -241,7 +243,8 @@ TEXT_INSTRUCTIONS = [
         "before concluding and name each material one unprompted with its category and magnitude — "
         "never settle for reporting that something happened. Compare the latest run with the most "
         "recent prior run whose value differs, pair rules by registry_rule_id where present "
-        "(check_name otherwise), rank by the change in failed tests, and cite the run date and time "
+        "(check_name otherwise), rank by the change in row-level failed tests (report table-level "
+        "test changes beside them, never summed), and cite the run date and time "
         "of both runs (curr_run_ts / prev_run_ts). The contributor categories: rules added (a check "
         "evaluated for the first time — not one that passed before), rules removed, rules renamed "
         "(same registry_rule_id, new check_name — a rename, not an add), rule definitions changed "
@@ -314,7 +317,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     current_score = (
         "SELECT MEASURE(`score`) AS pass_rate,\n"
         "       MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -323,7 +328,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
 
     failed_in_latest = (
         "SELECT MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -333,14 +340,16 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     rules_failing = (
         "SELECT `check_name`, `dimension`, `severity`,\n"
         "       MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
         f"{latest_published}\n"
         "GROUP BY `check_name`, `dimension`, `severity`\n"
-        "HAVING MEASURE(`failed_tests`) > 0\n"
-        "ORDER BY failed_tests DESC"
+        "HAVING MEASURE(`failed_tests`) > 0 OR MEASURE(`table_failed_tests`) > 0\n"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # Column attribution: each check row carries the AS-OF-RUN mapped
@@ -400,13 +409,14 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
 
     most_severe = (
         "SELECT `severity`, `check_name`, `dimension`,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
         f"{latest_published}\n"
         "GROUP BY `severity`, `check_name`, `dimension`\n"
-        "HAVING MEASURE(`failed_tests`) > 0\n"
+        "HAVING MEASURE(`failed_tests`) > 0 OR MEASURE(`table_failed_tests`) > 0\n"
         "ORDER BY CASE `severity` WHEN 'Critical' THEN 0 WHEN 'High' THEN 1\n"
         "              WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END,\n"
         "         failed_tests DESC"
@@ -420,12 +430,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WITH per_run AS (\n"
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
         ")\n"
-        "SELECT `input_location`, pass_rate, failed_tests\n"
+        "SELECT `input_location`, pass_rate, failed_tests, table_failed_tests\n"
         "FROM per_run\n"
         "QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         "ORDER BY pass_rate ASC\n"
@@ -435,7 +446,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     weakest_dims = (
         "SELECT `dimension`,\n"
         "       MEASURE(`score`) AS pass_rate,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -504,7 +516,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # prior self instead of reading as one removal plus one addition. That
     # identity lives only on v_dq_check_results (the metric view carries no
     # registry_rule_id), so this reads the shaping view: failed tests per
-    # check = error_count + warning_count, tests = input_row_count.
+    # check = error_count + warning_count, tests = evaluated_row_count (the
+    # rows the check's filter selected). Row-level tests sum over non-dataset
+    # checks only; table-level tests count dataset checks, one test each, and
+    # ride in their own columns — the two are never added together.
     #
     # The reason column carries the COMPLETE change-contributor taxonomy so
     # Genie narrates categories the SQL hands it instead of inferring them:
@@ -519,7 +534,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # the rollup framing. Ranked by |delta| (polarity-neutral).
     diagnose = (
         "WITH run_totals AS (\n"
-        "  SELECT `run_time` AS run_ts, SUM(`error_count` + `warning_count`) AS failed_tests\n"
+        "  SELECT `run_time` AS run_ts,\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
@@ -549,8 +566,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         # rule contributed, which tracks the column fan-out.
         "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
         "         COUNT(DISTINCT `check_name`) AS check_count,\n"
-        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
-        "         SUM(`input_row_count`) AS total_tests\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM cur_ts)\n"
         "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
@@ -561,8 +583,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
         "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
         "         COUNT(DISTINCT `check_name`) AS check_count,\n"
-        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
-        "         SUM(`input_row_count`) AS total_tests\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM prev_ts)\n"
         "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
@@ -582,6 +609,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "       TRY_DIVIDE(c.failed_tests, c.total_tests) AS curr_fail_rate,\n"
         "       COALESCE(p.total_tests, 0) AS prev_total_tests,\n"
         "       COALESCE(c.total_tests, 0) AS curr_total_tests,\n"
+        "       COALESCE(p.table_failed_tests, 0) AS prev_table_failed_tests,\n"
+        "       COALESCE(c.table_failed_tests, 0) AS curr_table_failed_tests,\n"
+        "       COALESCE(p.table_total_tests, 0) AS prev_table_total_tests,\n"
+        "       COALESCE(c.table_total_tests, 0) AS curr_table_total_tests,\n"
         # Structural composition of the rule across the two runs, so Genie
         # can explain a 'rule definition changed' contributor concretely —
         # naming the columns added/removed and how the mapped-column count
@@ -617,10 +648,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "            WHEN COALESCE(c.total_tests, 0) <> COALESCE(p.total_tests, 0)\n"
         "                 THEN CASE WHEN COALESCE(c.total_tests, 0) > COALESCE(p.total_tests, 0)\n"
         "                           THEN 'more data' ELSE 'less data' END\n"
+        "            WHEN COALESCE(c.table_failed_tests, 0) <> COALESCE(p.table_failed_tests, 0)\n"
+        "                 THEN 'table test result changed'\n"
         "            WHEN NOT (c.rule_name <=> p.rule_name) THEN 'rule renamed'\n"
         "            ELSE 'unchanged' END AS reason\n"
         "FROM cur c FULL OUTER JOIN prev p ON c.rule_key = p.rule_key\n"
-        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC"
+        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC,\n"
+        "         ABS(COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)) DESC"
     )
 
     dim_diagnose = (
@@ -644,14 +678,16 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "),\n"
         "cur AS (\n"
         "  SELECT `dimension` AS dim, MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM cur_ts)\n"
         "  GROUP BY `dimension`\n"
         "),\n"
         "prev AS (\n"
         "  SELECT `dimension` AS dim, MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM prev_ts)\n"
         "  GROUP BY `dimension`\n"
@@ -660,9 +696,12 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "       (SELECT run_ts FROM cur_ts) AS curr_run_ts,\n"
         "       (SELECT run_ts FROM prev_ts) AS prev_run_ts,\n"
         "       p.pass_rate AS prev_pass_rate, c.pass_rate AS curr_pass_rate,\n"
-        "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests\n"
+        "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests,\n"
+        "       COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)\n"
+        "         AS delta_table_failed_tests\n"
         "FROM cur c FULL OUTER JOIN prev p ON c.dim <=> p.dim\n"
-        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC"
+        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC,\n"
+        "         ABS(COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)) DESC"
     )
 
     # The one deliberately draft-scoped question — the exception to the
@@ -705,7 +744,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
@@ -715,7 +756,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         ")\n"
         "SELECT AVG(pass_rate) AS pass_rate,\n"
-        "       SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests\n"
+        "       SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests,\n"
+        "       SUM(table_failed_tests) AS table_failed_tests, SUM(table_total_tests) AS table_total_tests\n"
         "FROM latest"
     )
 
@@ -729,7 +771,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WITH per_table AS (\n"
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
@@ -738,7 +782,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT * FROM per_table\n"
         "  QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         ")\n"
-        "SELECT SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests\n"
+        "SELECT SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests,\n"
+        "       SUM(table_failed_tests) AS table_failed_tests, SUM(table_total_tests) AS table_total_tests\n"
         "FROM latest"
     )
 
@@ -749,12 +794,15 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
         ")\n"
-        "SELECT `input_location`, pass_rate, failed_tests, total_tests\n"
+        "SELECT `input_location`, pass_rate, failed_tests, total_tests,\n"
+        "       table_failed_tests, table_total_tests\n"
         "FROM per_table\n"
         "QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         "ORDER BY failed_tests DESC"
@@ -788,7 +836,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # Pooled pass-rate trend for the rule across all its tables per run instant.
     rule_pass_rate_trend = (
         "SELECT `run_time`, MEASURE(`score`) AS pass_rate,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "GROUP BY `run_time`\n"
@@ -809,13 +858,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         ")\n"
         "SELECT r.`input_location`, r.`check_name`, r.`severity`, r.`dimension`,\n"
         "       r.`pass_threshold`,\n"
-        "       1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`input_row_count`) AS pass_rate\n"
+        "       1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`evaluated_row_count`) AS pass_rate\n"
         f"FROM {v} r\n"
         "JOIN latest_runs lr\n"
         "  ON lr.`input_location` = r.`input_location` AND lr.`run_time` = r.`run_time`\n"
         "WHERE r.`run_mode` = 'published'\n"
         "  AND r.`pass_threshold` IS NOT NULL\n"
-        "  AND 1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`input_row_count`)\n"
+        "  AND 1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`evaluated_row_count`)\n"
         "        < r.`pass_threshold` / 100.0\n"
         "ORDER BY pass_rate ASC"
     )
@@ -872,7 +921,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "Latest published-run pass rate for one table from mv_dq_scores. "
-                "Report the score (pass rate) as the headline; failed/total tests as context."
+                "Report the score (pass rate) as the headline; row-level and table-level tests as "
+                "separate context, never summed."
             ],
         },
         {
@@ -881,7 +931,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "failed_tests at the table's latest published run from mv_dq_scores, "
-                "with total_tests as the denominator."
+                "with total_tests as the denominator (row-level tests); table_failed_tests / "
+                "table_total_tests report the table-level tests separately."
             ],
         },
         {
@@ -1146,7 +1197,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "usage_guidance": [
                 "Checks whose pass rate at their table's latest published run fell below the "
                 "pass_threshold frozen into that run (a 0-100 percentage on v_dq_check_results). "
-                "pass_rate = 1 - (error_count + warning_count) / input_row_count; a breach is "
+                "pass_rate = 1 - (error_count + warning_count) / evaluated_row_count; a breach is "
                 "pass_rate < pass_threshold / 100. Checks with a NULL pass_threshold (legacy runs "
                 "predating the stamp) cannot be judged and are excluded. Worst pass rate first."
             ],
@@ -1368,8 +1419,29 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             "sql": [f"MEASURE({mv}.`failed_tests`)"],
             "synonyms": ["failures", "failed test count", "number of failures"],
             "instruction": [
-                "Count of record-level tests that failed (errors + warnings). Rank "
-                "period-over-period changes by the change in this."
+                "Count of row-level tests that failed (errors + warnings) over the rows each check "
+                "evaluated. Rank period-over-period changes by the change in this. Table-level "
+                "tests are separate: see table_failed_tests."
+            ],
+        },
+        {
+            "alias": "table_failed_tests",
+            "display_name": "Failed Table Tests",
+            "sql": [f"MEASURE({mv}.`table_failed_tests`)"],
+            "synonyms": ["failed table-level tests", "failed dataset checks"],
+            "instruction": [
+                "Count of table-level (dataset) checks that failed, one test each. Report beside "
+                "failed_tests, never added to it."
+            ],
+        },
+        {
+            "alias": "table_total_tests",
+            "display_name": "Total Table Tests",
+            "sql": [f"MEASURE({mv}.`table_total_tests`)"],
+            "synonyms": ["table-level tests", "dataset checks run"],
+            "instruction": [
+                "Count of table-level (dataset) checks, one test each. Report beside total_tests, "
+                "never added to it."
             ],
         },
         {
@@ -1478,7 +1550,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "Per-check DQ results — one row per (run_id, input_location, check_name) "
                     "across all runs. Columns: run_id, input_location (the monitored table's "
                     "fully-qualified name), run_time, is_latest_run, check_name, error_count, "
-                    "warning_count, input_row_count (tests evaluated for the check), check_score "
+                    "warning_count, input_row_count (table rows in the run), evaluated_row_count (rows the "
+                    "check evaluated, after its filter), check_score "
                     "(the check's 0-1 contribution to quality score), check_granularity "
                     "('row' | 'dataset'), rule_instance_key, rule_check_count, run_mode "
                     "('published' | 'draft' — default to published), binding_version, and the "
@@ -1503,7 +1576,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "them), as_of_time (the consolidated instant — group by it for trends), "
                     "then the same shape as v_dq_check_results: run_id, input_location, "
                     "run_time (the carried run's own time), is_latest_run, check_name, "
-                    "error_count, warning_count, input_row_count, check_score, check_granularity, "
+                    "error_count, warning_count, input_row_count, evaluated_row_count, check_score, "
+                    "check_granularity, "
                     "rule_instance_key, rule_check_count, "
                     "run_mode, binding_version, "
                     "criticality, severity, dimension, registry_rule_id, columns. Use ONLY for "
@@ -1594,8 +1668,10 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                 {
                     "identifier": mv,
                     "description": [
-                        "DQ score metric view: measures score (pass rate, 0-1), failed_tests, "
-                        "error_tests, warning_tests (active warnings), total_tests, failed_checks, "
+                        "DQ score metric view: measures score (pass rate, 0-1), failed_tests and total_tests "
+                        "(row-level tests only), table_failed_tests and table_total_tests (table-level "
+                        "dataset checks, one test each; never add to row-level tests), "
+                        "error_tests, warning_tests (active warnings), failed_checks, "
                         "total_checks, rule_count (distinct rules that ran — the answer to 'how many "
                         "rules'), and failed_rule_count (distinct rules with a failing test) over "
                         "dimensions input_location, run_id, run_time, is_latest_run, run_mode, "

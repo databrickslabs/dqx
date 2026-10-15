@@ -106,6 +106,64 @@ def do_calls(ws: MagicMock) -> list[tuple]:
 
 
 # ---------------------------------------------------------------------------
+# Row-level vs table-level tests
+# ---------------------------------------------------------------------------
+
+
+def test_text_instructions_separate_row_and_table_tests() -> None:
+    joined = " ".join(" ".join(gs.TEXT_INSTRUCTIONS).split())
+    assert "row-level tests and table-level tests" in joined
+    assert "never add them" in joined
+    assert "table_failed_tests" in joined and "table_total_tests" in joined
+    assert "not a ratio of tests" in joined
+    assert "rows its filter selected" in joined
+
+
+def test_breach_pass_rate_uses_evaluated_rows() -> None:
+    joined = " ".join(" ".join(gs.TEXT_INSTRUCTIONS).split())
+    assert "(error_count + warning_count) / evaluated_row_count" in joined
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q["Which checks breached their pass threshold?"]["sql"])
+    assert "`evaluated_row_count`" in sql
+    assert "`input_row_count`" not in sql
+
+
+def test_curated_sqls_report_table_tests_beside_row_tests() -> None:
+    for entry in gs._curated_sqls(CATALOG, SCHEMA):
+        sql = "".join(entry["sql"])
+        if "MEASURE(`total_tests`)" in sql:
+            assert "MEASURE(`table_total_tests`)" in sql, entry["question"]
+        if "MEASURE(`failed_tests`)" in sql:
+            assert "MEASURE(`table_failed_tests`)" in sql, entry["question"]
+        # Test denominators are the rows each check evaluated, never the table rows.
+        assert "SUM(`input_row_count`)" not in sql, entry["question"]
+
+
+def test_diagnose_splits_row_and_table_tests_over_evaluated_rows() -> None:
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = " ".join("".join(by_q["Why did my DQ score change since the last run?"]["sql"]).split())
+    row_only = "FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset')"
+    assert f"SUM(`evaluated_row_count`) {row_only} AS total_tests" in sql
+    assert f"SUM(`error_count` + `warning_count`) {row_only} AS failed_tests" in sql
+    assert "FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests" in sql
+    assert "AS table_failed_tests" in sql
+    assert "AS curr_table_failed_tests" in sql and "AS prev_table_failed_tests" in sql
+
+
+def test_score_objects_describe_evaluated_rows() -> None:
+    space = build()
+    results = next(t for t in space["data_sources"]["tables"] if t["identifier"] == RESULTS_FQN)
+    description = " ".join(results["description"])
+    assert "evaluated_row_count (rows the check evaluated, after its filter)" in description
+    assert "input_row_count (table rows in the run)" in description
+    (metric_view,) = space["data_sources"]["metric_views"]
+    mv_description = " ".join(metric_view["description"])
+    assert "table_failed_tests" in mv_description and "table_total_tests" in mv_description
+    measures = {m["alias"] for m in space["instructions"]["sql_snippets"]["measures"]}
+    assert {"table_failed_tests", "table_total_tests"} <= measures
+
+
+# ---------------------------------------------------------------------------
 # _lines
 # ---------------------------------------------------------------------------
 
