@@ -202,7 +202,8 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "business_impact",
         "One sentence, max 25 words. State a conditional downstream-review hypothesis, not observed impact: "
         "start with 'If', condition it on source values being incorrect and used downstream, and tie it to "
-        "available domain evidence. Do not claim harm occurred or will occur.",
+        "available domain evidence. When no domain evidence is provided, use generic downstream review and "
+        "do not invent a system or use. Do not claim harm occurred or will occur.",
     ),
     (
         "action",
@@ -246,7 +247,7 @@ _PROMPT_EXAMPLES = (
     'Response: {"narrative":"Across 312 rows, amount has the largest displayed model-attribution share '
     '(61%), followed by quantity (22%); a region comparison was available.","business_impact":"If source '
     'amount values are incorrect and used downstream, review calculations that use amount.",'
-    '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
+    '"action":"Reconcile amount against source records for the affected regions."}\n\n'
     "Example (value basis, judged against time, with drift):\n"
     "attribution_basis: a value-oriented model-score attribution for each metric\n"
     "evidence_disclosure: MOST of the contributing evidence cannot be disclosed and is absent from the "

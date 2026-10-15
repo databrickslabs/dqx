@@ -355,7 +355,7 @@ def _exemplar_responses() -> list[str]:
     """The JSON responses from the few-shot exemplars, which is the part a model imitates."""
     return [
         line.partition("Response: ")[2]
-        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
+        for line in llm_explainer.AI_QUERY_PROMPT_HEADER.splitlines()
         if line.startswith("Response: ")
     ]
 
@@ -519,11 +519,16 @@ def test_the_exemplars_state_business_impact_conditionally():
     model copies into every explanation it writes.
     """
     for response in _exemplar_responses():
-        impact = json.loads(response)["business_impact"]
+        explanation = json.loads(response)
+        impact = explanation["business_impact"]
         assert impact.lower().startswith("if source "), f"impact should be conditional, got {impact!r}"
         assert "incorrect" in impact
         assert "review" in impact
         assert "would" not in impact.lower()
+
+    first_action = json.loads(_exemplar_responses()[0])["action"].lower()
+    assert "source records" in first_action
+    assert "source orders" not in first_action
 
 
 def test_rendered_prompt_separates_attribution_from_deviation_and_dq_diagnosis():
@@ -555,6 +560,8 @@ def test_rendered_prompt_makes_downstream_impact_a_conditional_review_hypothesis
     assert "conditional downstream-review hypothesis, not observed impact" in header
     assert "condition it on source values being incorrect and used downstream" in header
     assert "Do not claim harm occurred or will occur" in header
+    assert "When no domain evidence is provided, use generic downstream review" in header
+    assert "do not invent a system or use" in header
 
 
 @pytest.mark.parametrize("algorithm", ["Mahalanobis", "IsolationForest"])
