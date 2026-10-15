@@ -280,7 +280,9 @@ class _LegacySegmentBy:
         return core_schema.no_info_plain_validator_function(
             cls._validate,
             json_schema_input_schema=core_schema.none_schema(),
-            serialization=core_schema.plain_serializer_function_ser_schema(cls._serialize),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize, return_schema=core_schema.none_schema()
+            ),
         )
 
     @classmethod

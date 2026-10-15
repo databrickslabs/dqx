@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from pydantic import TypeAdapter, ValidationError
+from pydantic.json_schema import JsonSchemaMode
 import pytest
 from databricks.labs.blueprint.installation import JsonValue, MockInstallation
 
@@ -526,7 +527,8 @@ def test_workspace_config_type_adapter_rejects_legacy_marker_with_migration_mess
         adapter.validate_python({"run_configs": [{"anomaly_config": {"segment_by": ["region"]}}]})
 
 
-def test_workspace_config_type_adapter_exposes_legacy_marker_as_null_in_json_schema() -> None:
-    schema = TypeAdapter(WorkspaceConfig).json_schema()
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+def test_workspace_config_type_adapter_exposes_legacy_marker_as_null_in_json_schema(mode: JsonSchemaMode) -> None:
+    schema = TypeAdapter(WorkspaceConfig).json_schema(mode=mode)
     segment_by = schema["$defs"]["AnomalyConfig"]["properties"]["segment_by"]
     assert segment_by["type"] == "null"

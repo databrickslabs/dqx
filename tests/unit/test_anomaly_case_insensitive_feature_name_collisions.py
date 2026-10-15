@@ -21,7 +21,9 @@ def _fake_df(*, case_sensitive: bool, schema: dict[str, T.DataType] | None = Non
     }
     df.schema = T.StructType([T.StructField(name, data_type, True) for name, data_type in schema.items()])
     df.columns = [field.name for field in df.schema.fields]
-    df.sparkSession.conf.get.return_value = str(case_sensitive).lower()
+    df.sparkSession.conf.get.side_effect = AssertionError("case-resolution configuration must not be read")
+    probe = df.sparkSession.range.return_value.select.return_value.withColumn.return_value
+    probe.columns = ["dqx_case_probe", "DQX_CASE_PROBE"] if case_sensitive else ["DQX_CASE_PROBE"]
     return df
 
 
@@ -33,9 +35,11 @@ def _column_infos() -> list[ColumnTypeInfo]:
 
 
 def test_case_insensitive_resolver_refuses_a_case_only_generated_feature_collision() -> None:
+    df = _fake_df(case_sensitive=False)
+
     with pytest.raises(InvalidParameterError, match="overwrite existing columns"):
         validate_generated_feature_names(
-            _fake_df(case_sensitive=False),
+            df,
             ["amount", "AMOUNT_REL_BASELINE"],
             ["region"],
             None,
@@ -44,8 +48,10 @@ def test_case_insensitive_resolver_refuses_a_case_only_generated_feature_collisi
 
 
 def test_case_sensitive_resolver_keeps_case_distinct_generated_features_supported() -> None:
+    df = _fake_df(case_sensitive=True)
+
     validate_generated_feature_names(
-        _fake_df(case_sensitive=True),
+        df,
         ["amount", "AMOUNT_REL_BASELINE"],
         ["region"],
         None,

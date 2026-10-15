@@ -1,7 +1,8 @@
 """Fast contract tests for the pure-Python generator embedded in the demo notebook."""
 
 import ast
-import operator
+from collections.abc import Callable
+from functools import partial
 import random
 from datetime import datetime
 from pathlib import Path
@@ -10,8 +11,11 @@ from types import CodeType, FunctionType
 import pytest
 
 
-def _load_generator(rng: random.Random) -> FunctionType:
-    """Load the notebook function without executing Databricks setup or Spark cells."""
+def _load_generator(rng: random.Random) -> Callable[..., list[tuple]]:
+    """Load the notebook function without executing Databricks setup or Spark cells.
+
+    An empty partial gives the dynamic function a Python 3.10-compatible callable boundary.
+    """
     source_path = Path(__file__).parents[2] / "demos" / "dqx_row_anomaly_detection_demo.py"
     source_lines = []
     for line in source_path.read_text().splitlines():
@@ -32,11 +36,11 @@ def _load_generator(rng: random.Random) -> FunctionType:
         for constant in module_code.co_consts
         if isinstance(constant, CodeType) and constant.co_name == function.name
     )
-    return FunctionType(function_code, namespace)
+    return partial(FunctionType(function_code, namespace))
 
 
 @pytest.fixture(name="inject")
-def fixture_inject() -> FunctionType:
+def fixture_inject() -> Callable[..., list[tuple]]:
     return _load_generator(random.Random(42))
 
 
@@ -86,8 +90,7 @@ def test_negative_fault_changes_only_amount_across_a_fixed_seed_batch(inject, ma
         dq_negative_amount_rate=0.0,
     )
     injected_generator = _load_generator(random.Random(42))
-    injected_rows = operator.call(
-        injected_generator,
+    injected_rows = injected_generator(
         many_base_rows,
         anomaly_rate=0.0,
         dq_null_amount_rate=0.0,

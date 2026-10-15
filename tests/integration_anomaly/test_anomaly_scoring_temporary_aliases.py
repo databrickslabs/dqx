@@ -5,6 +5,7 @@ from collections.abc import Iterator
 import math
 
 import pytest
+from pyspark.errors import AnalysisException
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
@@ -15,7 +16,15 @@ from databricks.labs.dqx.errors import InvalidParameterError
 @pytest.fixture
 def restored_case_sensitive_spark(spark: SparkSession) -> Iterator[SparkSession]:
     """Restore Spark's session-wide case resolver after the collision regression."""
-    original = spark.conf.get("spark.sql.caseSensitive", "false") or "false"
+    try:
+        original = spark.conf.get("spark.sql.caseSensitive", "false") or "false"
+    except AnalysisException as exc:
+        if exc.getErrorClass() == "CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION":
+            pytest.skip(
+                "Serverless Spark does not permit reading spark.sql.caseSensitive; "
+                "this regression must change and restore that session setting."
+            )
+        raise
     try:
         yield spark
     finally:

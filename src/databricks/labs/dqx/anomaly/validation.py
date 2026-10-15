@@ -12,6 +12,7 @@ import warnings
 from typing import Literal, overload
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
@@ -345,9 +346,14 @@ def validate_generated_feature_names(
 
 
 def _uses_case_sensitive_column_resolution(df: DataFrame) -> bool:
-    """Whether Spark resolves column names by their exact case for this DataFrame's session."""
-    configured = df.sparkSession.conf.get("spark.sql.caseSensitive", "false")
-    return isinstance(configured, str) and configured.lower() == "true"
+    """Whether Spark resolves column names by their exact case for this DataFrame's session.
+
+    Spark's resolver decides whether ``withColumn`` replaces a case-only name. Its configuration
+    is not readable on every serverless runtime, so an empty isolated projection observes the
+    resolver directly without inspecting or collecting the caller's rows.
+    """
+    probe = df.sparkSession.range(0).select(F.lit(0).alias("dqx_case_probe")).withColumn("DQX_CASE_PROBE", F.lit(0))
+    return len(probe.columns) == 2
 
 
 def _generated_name_clashes(

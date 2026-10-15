@@ -36,6 +36,7 @@ def _fake_df(schema: dict[str, T.DataType]) -> DataFrame:
     df = create_autospec(DataFrame, instance=True)
     df.schema = T.StructType([T.StructField(name, dtype, True) for name, dtype in schema.items()])
     df.columns = list(schema)
+    df.sparkSession.range.return_value.select.return_value.withColumn.return_value.columns = ["DQX_CASE_PROBE"]
     return df
 
 
