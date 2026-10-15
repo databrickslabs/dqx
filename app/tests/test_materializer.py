@@ -30,7 +30,12 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleVersion,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer, render_check
+from databricks_labs_dqx_app.backend.services.materializer import (
+    MaterializationError,
+    Materializer,
+    _substitute_merge_column,
+    render_check,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     MonitoredTableDetail,
@@ -578,11 +583,11 @@ class TestRenderCheckNativeNegate:
 
 
 class TestRenderCheckSqlMode:
-    def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
+    def _sql_definition(self, body: dict, slot_name: str = "column", cardinality: str = "one") -> RuleDefinition:
         return RuleDefinition.model_validate(
             {
                 "body": body,
-                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
+                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": cardinality}],
                 "parameters": [],
             }
         )
@@ -625,19 +630,26 @@ class TestRenderCheckSqlMode:
         )
         assert check["check"]["arguments"]["negate"] is True
 
-    def _render_query_merge(self, merge_columns: list[str]) -> list[str]:
+    def _render_query_merge(
+        self,
+        merge_columns: list[str],
+        slot_name: str = "lead_id",
+        cardinality: str = "one",
+        group: dict[str, str] | None = None,
+    ) -> list[str]:
         definition = self._sql_definition(
             {
-                "sql_query": "SELECT {{lead_id}}, TRUE AS condition FROM {{input_view}}",
+                "sql_query": f"SELECT {{{{{slot_name}}}}}, TRUE AS condition FROM {{{{input_view}}}}",
                 "merge_columns": merge_columns,
             },
-            slot_name="lead_id",
+            slot_name=slot_name,
+            cardinality=cardinality,
         )
         version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
         check, _ = render_check(
             mode="sql",
             version=version,
-            group={"lead_id": "leadId"},
+            group={"lead_id": "leadId"} if group is None else group,
             effective_severity="High",
             per_application_tags={},
             registry_rule_id="r1",
@@ -654,6 +666,21 @@ class TestRenderCheckSqlMode:
 
     def test_merge_columns_as_placeholders_or_real_columns_are_unchanged(self):
         assert self._render_query_merge(["{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
+
+    def test_a_many_slot_merge_column_splits_into_columns_bare_or_braced(self):
+        for merge_columns in (["cols"], ["{{cols}}"]):
+            assert self._render_query_merge(
+                merge_columns, slot_name="cols", cardinality="many", group={"cols": "a, b"}
+            ) == ["a", "b"]
+
+    def test_a_merge_column_for_an_unmapped_slot_raises(self):
+        definition = self._sql_definition({"sql_query": "SELECT 1", "merge_columns": ["lead_id"]}, slot_name="lead_id")
+        with pytest.raises(ValueError, match="missing slot 'lead_id'"):
+            _substitute_merge_column("lead_id", {}, definition.slots)
+
+    def test_a_literal_merge_column_named_like_a_slot_maps_to_the_slot(self):
+        """Documented legacy fallback: bare slot names win over same-named columns."""
+        assert self._render_query_merge(["lead_id"], group={"lead_id": "other_col"}) == ["other_col"]
 
     def test_joined_table_is_named_in_the_query_and_binds_nothing(self):
         """A cross-table rule names the table it joins in its own SQL.

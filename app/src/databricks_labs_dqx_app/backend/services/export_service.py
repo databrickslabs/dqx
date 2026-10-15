@@ -95,7 +95,8 @@ def registry_rule_to_check_dict(rule: RegistryRule, app_settings: AppSettingsSer
             arguments["query"] = sql_query
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
-                arguments["merge_columns"] = merge_columns
+                slot_names = {slot.name for slot in definition.slots}
+                arguments["merge_columns"] = [f"{{{{{col}}}}}" if col in slot_names else col for col in merge_columns]
         else:
             function_name = "sql_expression"
             predicate = body.get("predicate")

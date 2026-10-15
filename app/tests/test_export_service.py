@@ -96,6 +96,29 @@ class TestRegistryRuleToCheckDict:
         # polarity "fail" -> negate True
         assert check["check"]["arguments"]["negate"] is True
 
+    def test_sql_query_bare_slot_merge_columns_export_as_placeholders(self):
+        """Bare slot names (as the editor saves them) must match ``{{slot}}`` in the query."""
+        rule = RegistryRule(
+            rule_id="r3",
+            mode="sql",
+            status="approved",
+            version=1,
+            polarity="pass",
+            definition=RuleDefinition.model_validate(
+                {
+                    "body": {
+                        "sql_query": "SELECT {{lead_id}}, TRUE AS condition FROM {{input_view}}",
+                        "merge_columns": ["lead_id", "{{lead_id}}", "pacode"],
+                    },
+                    "slots": [{"name": "lead_id", "family": "any", "position": 0, "cardinality": "one"}],
+                    "parameters": [],
+                }
+            ),
+            user_metadata={},
+        )
+        check = registry_rule_to_check_dict(rule, _app_settings_stub())
+        assert check["check"]["arguments"]["merge_columns"] == ["{{lead_id}}", "{{lead_id}}", "pacode"]
+
     def test_message_expr_included_when_set(self):
         rule = _native_rule()
         rule.definition.error_message = "must not be null"

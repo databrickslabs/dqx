@@ -6,6 +6,7 @@ import pytest
 
 from databricks.labs.dqx.utils import is_sql_query_safe
 
+from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_json_for_sql_string_literal,
     escape_sql_string,
@@ -140,7 +141,7 @@ class TestSqlStringInList:
 
 
 class TestEscapeJsonForSqlStringLiteral:
-    def test_doubles_json_backslash_escapes_before_quoting(self):
+    def test_doubles_json_backslash_escapes(self):
         payload = json.dumps({"body": {"sql_query": "SELECT a\nFROM b"}})
         escaped = escape_json_for_sql_string_literal(payload)
         assert "\\n" in payload
@@ -152,6 +153,11 @@ class TestEscapeJsonForSqlStringLiteral:
         payload = json.dumps({"expression": "col != 'x'"})
         assert escape_json_for_sql_string_literal(payload) == '{"expression": "col != \\\'x\\\'"}'
         assert "''" not in escape_json_for_sql_string_literal(payload)
+
+    def test_postgres_json_literal_still_doubles_single_quotes(self):
+        """Postgres keeps ``''`` as one quote, so its JSON path is unchanged."""
+        executor = object.__new__(PgExecutor)
+        assert executor.json_literal_expr('{"e": "it\'s"}') == "'{\"e\": \"it''s\"}'::jsonb"
 
 
 # ---------------------------------------------------------------------------

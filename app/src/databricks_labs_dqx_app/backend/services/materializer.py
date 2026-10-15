@@ -220,20 +220,24 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
 def _substitute_merge_column(column: str, group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
     """The real column(s) a ``sql_query`` merge column names.
 
-    The editor saves a merge key as the bare slot name (``lead_id``), while
-    hand-written and low-code bodies use ``{{lead_id}}``; both resolve to the
-    slot's mapped column(s). Anything else is a literal column name.
+    ``{{lead_id}}`` and a bare ``lead_id`` both resolve to the slot's mapped
+    column(s); a ``many`` slot yields one entry per column. The bare-name match
+    is a legacy fallback for rules the editor saved with bare slot names, so a
+    literal column that shares a slot's name maps to the slot. Anything else
+    is a literal column or expression, with any ``{{slot}}`` inside substituted.
     """
     name = column.strip()
+    if name.startswith("{{") and name.endswith("}}"):
+        name = name[2:-2].strip()
     slot = next((s for s in slots if s.name == name), None)
     if slot is None:
-        return [_substitute_text(column, group, slots)]
+        return [_substitute_text(column, group, slots).strip()]
     if slot.name not in group:
         raise ValueError(f"Mapping group is missing slot '{slot.name}'")
     value = group[slot.name]
     if slot.cardinality == "many":
         return [c.strip() for c in value.split(",") if c.strip()]
-    return [value]
+    return [value.strip()]
 
 
 def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
@@ -364,8 +368,8 @@ def render_check(
             # A low-code advanced (group-by) rule folds its group-by columns
             # into ``body.merge_columns`` so the ``sql_query`` check joins the
             # per-group violation result back onto the source rows (row-level
-            # semantics). Each entry is a ``{{slot}}`` reference substituted
-            # against the mapping group exactly like the query itself.
+            # semantics). Each entry is a ``{{slot}}`` reference, a bare slot
+            # name, or a literal column (see _substitute_merge_column).
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
                 arguments["merge_columns"] = [
