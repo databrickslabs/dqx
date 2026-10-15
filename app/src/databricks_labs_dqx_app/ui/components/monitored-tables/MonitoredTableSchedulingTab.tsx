@@ -136,9 +136,12 @@ export function MonitoredTableSchedulingTab({
     // Nothing is saved yet, so there is nothing to remove on the server.
     if (serverCron === null) {
       setCron(null);
-      return;
+      return true;
     }
+    // Deferred until confirmed: the cron on screen keeps its validity, so
+    // cancelling cannot leave an invalid cron saveable.
     setConfirmRemove(true);
+    return false;
   };
 
   const confirmRemoval = () => {
@@ -157,6 +160,7 @@ export function MonitoredTableSchedulingTab({
         onSuccess: () => {
           setCron(null);
           setTz(DEFAULT_TZ);
+          setCronInvalid(false);
           toast.success(t("schedules.removed"));
           invalidateAfterMonitoredTableChange(queryClient, bindingId);
         },
