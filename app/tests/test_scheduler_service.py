@@ -771,9 +771,7 @@ class TestTickOneProduct:
     def test_skips_when_previous_product_run_is_still_active(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
         svc._job_id = "7"
-        mocks.oltp.query.return_value = [
-            _tracker_row("product:prod1", "2026-05-01T09:00:00+00:00", last_run_id="r1")
-        ]
+        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00", last_run_id="r1")]
         mocks.ws.jobs.list_runs.return_value = [_active_task_runner_run("r1")]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
