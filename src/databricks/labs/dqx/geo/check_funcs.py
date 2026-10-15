@@ -1269,7 +1269,7 @@ def _has_topological_relationship_approximate(
             raise InvalidParameterError(f"Unsupported approximate relationship: {topological_relationship!r}")
 
     # A non-null value or reference that fails to parse is reported, and so is a reference that parses
-    # but has no H3 cells (e.g. a linestring or an empty polygon): there is nothing to compare against,
+    # but has no H3 cells (e.g. an empty geometry): there is nothing to compare against,
     # so every row would otherwise pass or fail silently. Reference problems are reported on every
     # non-null row. A column value that parses but has no H3 cells (NULL or empty, e.g. an empty
     # geometry) is skipped, since flagging it would be a false positive.

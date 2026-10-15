@@ -1100,7 +1100,7 @@ def test_geo_approximate_reference_without_h3_cells_is_flagged(skip_if_runtime_n
     actual = test_df.select(
         "geom",
         is_geo_covers("geom", "POLYGON EMPTY", resolution=7),
-        is_geo_intersects("geom", "LINESTRING(0 0, 1 1)", resolution=7),
+        is_geo_intersects("geom", "GEOMETRYCOLLECTION EMPTY", resolution=7),
     )
     message = "reference geometry for column `geom` cannot be represented in H3"
     expected = spark.createDataFrame(
