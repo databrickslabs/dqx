@@ -47,7 +47,10 @@
       "missingGrantsInstructions": "Pide al propietario del catálogo y del esquema, o a alguien con MANAGE sobre ellos, que ejecute estas instrucciones en un editor SQL y luego haz clic en Reintentar:",
       "unverifiedPermissionsTitle": "No se pudieron comprobar los permisos",
       "unverifiedPermissionsDescriptionTable": "Studio no pudo leer los permisos de esta tabla, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide al propietario de la tabla que la configure.",
-      "unverifiedPermissionsDescriptionCollection": "Studio no pudo leer los permisos de estas tablas, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide a los propietarios de las tablas que la configuren."
+      "unverifiedPermissionsDescriptionCollection": "Studio no pudo leer los permisos de estas tablas, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide a los propietarios de las tablas que la configuren.",
+      "missingGrantsForTable": "Para {{fqn}}:",
+      "unverifiedConfigurationTitle": "No se pudo comprobar el acceso de la programación",
+      "unverifiedConfigurationDescription": "La configuración de Studio está incompleta (por ejemplo, no encuentra la entidad de servicio del trabajo de ejecución de tareas), así que no puede comprobar si se puede configurar esta programación. Pide a un administrador de Studio que revise la página de configuración."
     }
   },
   "lifecycle": {

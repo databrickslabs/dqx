@@ -47,7 +47,10 @@
       "missingGrantsInstructions": "Ask the owner of the catalog and schema, or anyone with MANAGE on them, to run these statements in a SQL editor, then click Try again:",
       "unverifiedPermissionsTitle": "Couldn't check permissions",
       "unverifiedPermissionsDescriptionTable": "Studio couldn't read the permissions on this table, so it can't tell whether you can set up a schedule. Try again, or ask the table's owner to set it up.",
-      "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up."
+      "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up.",
+      "missingGrantsForTable": "For {{fqn}}:",
+      "unverifiedConfigurationTitle": "Couldn't check schedule access",
+      "unverifiedConfigurationDescription": "Studio's setup is incomplete (for example, it can't find the task-runner job's service principal), so it can't check whether this schedule can be set up. Ask a Studio administrator to check the setup page."
     }
   },
   "lifecycle": {

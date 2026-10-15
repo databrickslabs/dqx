@@ -46,6 +46,7 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.services.schedule_config_service import ScheduleConfigService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
+    PrivilegeInspectionError,
     ScheduleGrantService,
     TablePreflight,
     WarehouseUnavailableError,
@@ -107,6 +108,26 @@ class TestMonitoredTableScheduleGate:
         assert exc.value.status_code == 503
         assert "Try again" in exc.value.detail
         svc.update_schedule.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "error,expected",
+        [
+            (PrivilegeInspectionError("unreadable"), "ask the table's owner"),
+            (PrivilegeInspectionError("no runner", reason="configuration"), "Studio administrator"),
+        ],
+    )
+    def test_save_reports_the_same_cause_as_the_preflight(self, obo_ws, perms, grant_svc, error, expected):
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.get.return_value = self._detail()
+        grant_svc.grant_select_to_schedulers.side_effect = error
+        body = UpdateMonitoredTableScheduleIn(schedule_cron="0 0 * * *", schedule_tz="UTC")
+
+        with pytest.raises(HTTPException) as exc:
+            update_monitored_table_schedule("b1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+
+        assert exc.value.status_code == 503
+        assert expected in exc.value.detail
+        assert "starting up" not in exc.value.detail
 
     def test_grant_failure_returns_a_fixed_message(self, obo_ws, perms, grant_svc):
         svc = create_autospec(MonitoredTableService, instance=True)

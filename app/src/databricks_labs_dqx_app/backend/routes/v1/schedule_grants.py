@@ -25,9 +25,9 @@ from databricks_labs_dqx_app.backend.models import (
     SchedulePreflightTableOut,
 )
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
-    WAREHOUSE_UNAVAILABLE_DETAIL,
     ScheduleGrantService,
     WarehouseUnavailableError,
+    inspection_failure_detail,
 )
 
 router = APIRouter()
@@ -52,7 +52,7 @@ async def preflight_schedule_grants(
         results = await grant_svc.preflight_async(body.table_fqns)
     except WarehouseUnavailableError as e:
         logger.warning("Schedule-grant preflight inconclusive: %s", e)
-        raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
+        raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
     except Exception as e:
         logger.error("Schedule-grant preflight failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to check schedule permissions.")

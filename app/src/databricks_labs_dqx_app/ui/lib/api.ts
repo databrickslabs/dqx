@@ -4470,7 +4470,7 @@ export interface SchedulePreflightOut {
   tables?: SchedulePreflightTableOut[];
 }
 
-export type SchedulePreflightTableOutUnverifiedReason = 'warehouse' | 'permissions' | null;
+export type SchedulePreflightTableOutUnverifiedReason = 'warehouse' | 'permissions' | 'configuration' | null;
 
 /**
  * Per-table grantability for the schedule editor.
@@ -4486,8 +4486,9 @@ schedule whoever saves it, so ``manage_holders`` is then empty.
 
 ``access_unverified`` is ``True`` when grantability is unknown rather than
 denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
-no answer (e.g. still starting) and ``"permissions"`` when the permissions
-couldn't be read. ``can_manage`` is ``False`` and the UI asks the user to retry.
+no answer (e.g. still starting), ``"permissions"`` when the permissions
+couldn't be read, and ``"configuration"`` when Studio's setup is incomplete
+(e.g. the scheduler service principals can't be resolved). ``can_manage`` is ``False`` and the UI asks the user to retry.
  */
 export interface SchedulePreflightTableOut {
   fqn: string;

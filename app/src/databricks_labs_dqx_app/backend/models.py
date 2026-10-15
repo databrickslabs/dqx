@@ -2747,8 +2747,9 @@ class SchedulePreflightTableOut(BaseModel):
 
     ``access_unverified`` is ``True`` when grantability is unknown rather than
     denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
-    no answer (e.g. still starting) and ``"permissions"`` when the permissions
-    couldn't be read. ``can_manage`` is ``False`` and the UI asks the user to retry.
+    no answer (e.g. still starting), ``"permissions"`` when the permissions
+    couldn't be read, and ``"configuration"`` when Studio's setup is incomplete
+    (e.g. the scheduler service principals can't be resolved). ``can_manage`` is ``False`` and the UI asks the user to retry.
     """
 
     fqn: str
@@ -2756,7 +2757,7 @@ class SchedulePreflightTableOut(BaseModel):
     manage_holders: list[ManageHolderOut] = Field(default_factory=list)
     missing_grants: list[ScheduleMissingGrantOut] = Field(default_factory=list)
     access_unverified: bool = False
-    unverified_reason: Literal["warehouse", "permissions"] | None = None
+    unverified_reason: Literal["warehouse", "permissions", "configuration"] | None = None
 
 
 class SchedulePreflightOut(BaseModel):

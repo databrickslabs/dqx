@@ -47,7 +47,10 @@
       "missingGrantsInstructions": "Chiedi al proprietario del catalogo e dello schema, o a chiunque abbia MANAGE su di essi, di eseguire queste istruzioni in un editor SQL, poi fai clic su Riprova:",
       "unverifiedPermissionsTitle": "Impossibile verificare le autorizzazioni",
       "unverifiedPermissionsDescriptionTable": "Studio non è riuscito a leggere le autorizzazioni di questa tabella, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi al proprietario della tabella di configurarla.",
-      "unverifiedPermissionsDescriptionCollection": "Studio non è riuscito a leggere le autorizzazioni di queste tabelle, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi ai proprietari delle tabelle di configurarla."
+      "unverifiedPermissionsDescriptionCollection": "Studio non è riuscito a leggere le autorizzazioni di queste tabelle, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi ai proprietari delle tabelle di configurarla.",
+      "missingGrantsForTable": "Per {{fqn}}:",
+      "unverifiedConfigurationTitle": "Impossibile verificare l'accesso della pianificazione",
+      "unverifiedConfigurationDescription": "La configurazione di Studio è incompleta (ad esempio, non trova l'entità servizio del job di esecuzione delle attività), quindi non può verificare se questa pianificazione può essere configurata. Chiedi a un amministratore di Studio di controllare la pagina di configurazione."
     }
   },
   "lifecycle": {

@@ -42,9 +42,7 @@ describe("splitPreflightTables", () => {
         ],
       },
     ]);
-    expect(result.missingGrantTables.map((t) => t.fqn)).toEqual([
-      "c.s.parents",
-    ]);
+    expect(result.missingGrantTables.map((t) => t.fqn)).toEqual(["c.s.parents"]);
     expect(result.blockedTables).toEqual([]);
     expect(result.hasGrantIssue).toBe(true);
   });
