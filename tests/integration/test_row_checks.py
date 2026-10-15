@@ -11,6 +11,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_range,
     is_not_empty,
     is_not_in_range,
+    has_num_decimal_places,
     is_not_null,
     is_not_null_and_not_empty,
     is_older_than_col2_for_n_days,
@@ -1496,6 +1497,144 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
             [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places(spark):
+    schema = "val: string, i: int"
+    test_df = spark.createDataFrame(
+        [
+            ["-1.25", 7],
+            ["1.250", 7],
+            ["+1.25", 7],
+            [".5", 7],
+            ["1.", 7],
+            ["1.5e3", 7],
+            ["100e-2", 7],
+            ["0e-999", 7],
+            ["1.234", 7],
+            ["abc", 7],
+            [" 1.25", 7],
+            ["1.25\n", 7],
+            [None, None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("val", 2).alias("val_max2"),
+        has_num_decimal_places("i", 0).alias("i_max0"),
+        has_num_decimal_places("i", 0, allow_nulls=False).alias("i_max0_nonull"),
+    )
+
+    expected_schema = "val_max2: string, i_max0: string, i_max0_nonull: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            ["Value '1.234' in Column 'val' has more than 2 decimal places", None, None],
+            ["Value 'abc' in Column 'val' is not numeric", None, None],
+            ["Value ' 1.25' in Column 'val' is not numeric", None, None],
+            ["Value '1.25\n' in Column 'val' is not numeric", None, None],
+            [None, None, "Column 'i' value is null"],
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_exponent_trailing_zeros(spark):
+    test_df = spark.createDataFrame([["100e-2"], ["0e-999"], ["0.000"], ["150e-2"]], "val: string")
+
+    actual = test_df.select(has_num_decimal_places("val", 0).alias("val_max0"))
+
+    expected = spark.createDataFrame(
+        [[None], [None], [None], ["Value '150e-2' in Column 'val' has more than 0 decimal places"]],
+        "val_max0: string",
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_numeric_types(spark):
+    schema = "d0: double, f0: float, d2: double, dec2: decimal(10,4)"
+    test_df = spark.createDataFrame(
+        [
+            [5.0, 5.0, 1e7, Decimal("1.5")],
+            [0.0, 2.0, 0.0001, Decimal("2")],
+            [-3.0, -3.0, 1.23, Decimal("1.23")],
+            [1.5, 1.5, 1.234, Decimal("1.2345")],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("d0", 0).alias("d0"),
+        has_num_decimal_places("f0", 0).alias("f0"),
+        has_num_decimal_places("d2", 2).alias("d2"),
+        has_num_decimal_places("dec2", 2).alias("dec2"),
+    )
+
+    expected_schema = "d0: string, f0: string, d2: string, dec2: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None],
+            [None, None, "Value '1.0E-4' in Column 'd2' has more than 2 decimal places", None],
+            [None, None, None, None],
+            [
+                "Value '1.5' in Column 'd0' has more than 0 decimal places",
+                "Value '1.5' in Column 'f0' has more than 0 decimal places",
+                "Value '1.234' in Column 'd2' has more than 2 decimal places",
+                "Value '1.2345' in Column 'dec2' has more than 2 decimal places",
+            ],
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_null_limit(spark):
+    schema = "val: string, max_scale: int"
+    test_df = spark.createDataFrame(
+        [
+            ["1.23456", None],
+            ["1.23", 2],
+            ["1.234", 2],
+            [None, None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("val", "max_scale").alias("allow_nulls"),
+        has_num_decimal_places("val", F.col("max_scale"), allow_nulls=False).alias("no_nulls"),
+    )
+
+    expected_schema = "allow_nulls: string, no_nulls: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '1.23456' in Column 'val' has a null limit",
+                "Value '1.23456' in Column 'val' has a null limit",
+            ],
+            [None, None],
+            [
+                "Value '1.234' in Column 'val' has more than 2 decimal places",
+                "Value '1.234' in Column 'val' has more than 2 decimal places",
+            ],
+            [None, "Column 'val' value is null"],
+        ],
+        expected_schema,
     )
 
     assertDataFrameEqual(actual, expected)

@@ -7,6 +7,7 @@ from pyspark.sql import Column
 
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
+    DQPattern,
     get_normalized_column_and_expr,
     is_equal_to,
     is_not_equal_to,
@@ -14,6 +15,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_in_range,
     is_not_greater_than,
     is_not_less_than,
+    has_num_decimal_places,
     is_in_list,
     is_not_in_list,
     is_not_null_and_is_in_list,
@@ -73,6 +75,11 @@ def test_col_not_greater_than_missing_limit():
 def test_col_not_less_than_missing_limit():
     with pytest.raises(MissingParameterError, match=LIMIT_VALUE_ERROR):
         is_not_less_than("a", limit=None)
+
+
+def test_has_num_decimal_places_missing_limit():
+    with pytest.raises(MissingParameterError, match=LIMIT_VALUE_ERROR):
+        has_num_decimal_places("a", limit=None)
 
 
 def test_col_is_not_null_and_is_in_list_missing_allowed_list():
@@ -143,6 +150,34 @@ def test_col_is_ipv4_address_in_cidr_trailing_line_terminator_cidr_block(termina
         is_ipv4_address_in_cidr("a", cidr_block="192.168.1.0/24" + terminator)
 
 
+@pytest.mark.parametrize(
+    "value, matches",
+    [
+        ("1", True),
+        ("-1.25", True),
+        ("+1.25", True),
+        (".5", True),
+        ("1.", True),
+        ("1.5e3", True),
+        ("1.0E-4", True),
+        ("100e-2", True),
+        ("0e-999", True),
+        ("abc", False),
+        ("", False),
+        (".", False),
+        ("1.2.3", False),
+        (" 1.25", False),
+        ("1e", False),
+        ("NaN", False),
+        *[("1.25" + terminator, False) for terminator in _TRAILING_LINE_TERMINATORS],
+    ],
+)
+def test_decimal_number_pattern(value, matches):
+    # Python's re spells Java's absolute end anchor \z as \Z.
+    pattern = DQPattern.DECIMAL_NUMBER.value.replace(r"\z", r"\Z")
+    assert bool(re.match(pattern, value)) == matches
+
+
 def test_col_is_ipv6_address_in_cidr_missing_cidr_block():
     with pytest.raises(MissingParameterError, match="'cidr_block' is not provided."):
         is_ipv6_address_in_cidr("a", cidr_block=None)
@@ -205,6 +240,12 @@ def test_is_not_equal_to_missing_value():
         (is_not_greater_than, {"limit": 1}, "a_greater_than_limit", "a_is_null_or_greater_than_limit"),
         (is_in_range, {"min_limit": 1, "max_limit": 2}, "a_not_in_range", "a_is_null_or_not_in_range"),
         (is_not_in_range, {"min_limit": 1, "max_limit": 2}, "a_in_range", "a_is_null_or_in_range"),
+        (
+            has_num_decimal_places,
+            {"limit": 2},
+            "a_num_decimal_places_greater_than_limit",
+            "a_is_null_or_num_decimal_places_greater_than_limit",
+        ),
     ],
 )
 def test_comparison_checks_allow_nulls_auto_name(check_func, kwargs, default_name, name_with_nulls_failing):

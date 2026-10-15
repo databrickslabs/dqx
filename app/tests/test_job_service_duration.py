@@ -21,7 +21,7 @@ def job_service(sql_executor_mock: MagicMock) -> JobService:
     from databricks.sdk import WorkspaceClient
 
     ws = create_autospec(WorkspaceClient, instance=True)
-    return JobService(ws=ws, job_id="123", sql=sql_executor_mock, oltp_sql=MagicMock(name="oltp_sql"))
+    return JobService(ws=ws, job_id="123", sql=sql_executor_mock)
 
 
 def _dryrun_sql(job_service: JobService, sql_executor_mock: MagicMock) -> str:

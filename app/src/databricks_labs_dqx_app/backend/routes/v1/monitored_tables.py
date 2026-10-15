@@ -47,9 +47,9 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
-    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
     WarehouseUnavailableError,
+    inspection_failure_detail,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -620,7 +620,7 @@ def update_monitored_table_schedule(
             raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
         except WarehouseUnavailableError as e:
             logger.warning("Schedule gate inconclusive for %s: %s", binding_id, e)
-            raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
+            raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
         except Exception as e:
             logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
             raise HTTPException(
@@ -834,13 +834,13 @@ def run_monitored_table(
         raise HTTPException(status_code=400, detail=str(e))
     except RunConfigStagingError as e:
         # Staging the oversized config failed for an infrastructure reason
-        # (Lakebase unreachable, or dq_run_configs missing) — a server-side
+        # (SQL warehouse unreachable, or dq_run_configs missing) — a server-side
         # fault, not a bad request. Subclass check must precede RunConfigError.
         logger.error(f"Failed to stage run config for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=str(e))
     except RunConfigError as e:
-        # Caller/config-level: config too large to submit, or Lakebase disabled
-        # for an oversized config. These are genuinely 400-class.
+        # Caller/config-level: config too large to submit even as a manifest
+        # stub. This is genuinely 400-class.
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to run monitored table {binding_id}: {e}", exc_info=True)

@@ -19,14 +19,15 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     ManageHolderOut,
+    ScheduleMissingGrantOut,
     SchedulePreflightIn,
     SchedulePreflightOut,
     SchedulePreflightTableOut,
 )
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
-    WAREHOUSE_UNAVAILABLE_DETAIL,
     ScheduleGrantService,
     WarehouseUnavailableError,
+    inspection_failure_detail,
 )
 
 router = APIRouter()
@@ -51,7 +52,7 @@ async def preflight_schedule_grants(
         results = await grant_svc.preflight_async(body.table_fqns)
     except WarehouseUnavailableError as e:
         logger.warning("Schedule-grant preflight inconclusive: %s", e)
-        raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
+        raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
     except Exception as e:
         logger.error("Schedule-grant preflight failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to check schedule permissions.")
@@ -60,8 +61,23 @@ async def preflight_schedule_grants(
             SchedulePreflightTableOut(
                 fqn=r.fqn,
                 can_manage=r.can_manage,
-                manage_holders=[ManageHolderOut(principal=h["principal"], type=h["type"]) for h in r.manage_holders],
+                manage_holders=[
+                    ManageHolderOut(principal=h["principal"], type=h["type"], display_name=h.get("display_name"))
+                    for h in r.manage_holders
+                ],
+                missing_grants=[
+                    ScheduleMissingGrantOut(
+                        principal=g["principal"],
+                        display_name=g["display_name"],
+                        privilege=g["privilege"],
+                        securable_type=g["securable_type"],
+                        securable=g["securable"],
+                        statement=g["remediation"],
+                    )
+                    for g in r.missing_grants
+                ],
                 access_unverified=r.access_unverified,
+                unverified_reason=r.unverified_reason or None,
             )
             for r in results
         ]

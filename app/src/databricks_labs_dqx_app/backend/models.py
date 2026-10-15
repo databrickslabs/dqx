@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
+from .common.branding import MAX_LOGO_BASE64_LENGTH
 from .config import AI_SAMPLE_ROW_LIMIT
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
@@ -1710,6 +1711,26 @@ class ValidationRunSummaryOut(BaseModel):
     review_status_updated_at: str | None = None
 
 
+class ValidationStatusOut(BaseModel):
+    """Pass/fail status for a single validation run, for external uptime monitors.
+
+    Deliberately minimal — an uptime monitor (e.g. Site24x7) only needs the
+    status and enough context to identify the run, not the full
+    ``ValidationRunSummaryOut`` shape.
+    """
+
+    status: str = Field(description="Validation run status: SUCCESS | FAILED | CANCELED")
+    source_table_fqn: str
+    run_id: str
+    error_rows: int | None = None
+    warning_rows: int | None = None
+    updated_at: str | None = None
+    stale: bool = Field(
+        default=False,
+        description="True when the run completed longer ago than the caller's max_age_minutes",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lightweight recent-failures shape used by the app-wide toast watcher.
 # Only carries the fields the hook needs: no counts, no error_message.
@@ -2661,8 +2682,22 @@ class ScheduleConfigHistoryOut(BaseModel):
 class ManageHolderOut(BaseModel):
     """A user or group that can grant on a table (holds MANAGE or is an owner)."""
 
-    principal: str = Field(description="User name / email or group name that can grant on the table")
-    type: str = Field(description="Best-effort classification: 'user' or 'group'")
+    principal: str = Field(description="User name / email, group name or service principal application id")
+    type: str = Field(description="Best-effort classification: 'user', 'group' or 'service_principal'")
+    display_name: str | None = Field(
+        default=None, description="Name to show: a service principal's display name, otherwise the principal"
+    )
+
+
+class ScheduleMissingGrantOut(BaseModel):
+    """A catalog or schema usage grant a scheduler service principal still needs."""
+
+    principal: str = Field(description="Service principal application id (the grantee in the statement)")
+    display_name: str = Field(description="Service principal display name, or its application id")
+    privilege: str = Field(description="Missing privilege, e.g. USE_CATALOG")
+    securable_type: str = Field(description="CATALOG or SCHEMA")
+    securable: str = Field(description="Catalog or schema name")
+    statement: str = Field(description="GRANT statement that adds the privilege")
 
 
 class ScheduleOverviewOut(BaseModel):
@@ -2706,16 +2741,23 @@ class SchedulePreflightTableOut(BaseModel):
     directly or via a group). When ``False`` the schedule save is hard-blocked
     and ``manage_holders`` names who to ask instead.
 
-    ``access_unverified`` is ``True`` when the SQL warehouse gave no answer
-    (e.g. still starting) and the caller lacks MANAGE, so grantability is
-    unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
-    the user to retry.
+    ``missing_grants`` is non-empty when the scheduler service principals lack
+    ``USE CATALOG`` / ``USE SCHEMA`` on the table's parents. That blocks the
+    schedule whoever saves it, so ``manage_holders`` is then empty.
+
+    ``access_unverified`` is ``True`` when grantability is unknown rather than
+    denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
+    no answer (e.g. still starting), ``"permissions"`` when the permissions
+    couldn't be read, and ``"configuration"`` when Studio's setup is incomplete
+    (e.g. the scheduler service principals can't be resolved). ``can_manage`` is ``False`` and the UI asks the user to retry.
     """
 
     fqn: str
     can_manage: bool
     manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+    missing_grants: list[ScheduleMissingGrantOut] = Field(default_factory=list)
     access_unverified: bool = False
+    unverified_reason: Literal["warehouse", "permissions", "configuration"] | None = None
 
 
 class SchedulePreflightOut(BaseModel):
@@ -3059,3 +3101,93 @@ class DemoContentStatusOut(BaseModel):
     message: str
     started_at: str
     updated_at: str
+
+
+class BrandingModeColorsIn(BaseModel):
+    """Colour groups for one mode."""
+
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingDarkIn(BaseModel):
+    """Dark-mode colours set on top of those generated from light; ignored unless *customised*."""
+
+    customised: bool = False
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingThemeIn(BaseModel):
+    """Theme update."""
+
+    preset: str | None = None
+    light: BrandingModeColorsIn = Field(default_factory=BrandingModeColorsIn)
+    dark: BrandingDarkIn = Field(default_factory=BrandingDarkIn)
+
+
+class BrandingCustomPresetRenameIn(BaseModel):
+    """Custom preset rename (empty or null shows it as "Custom N")."""
+
+    name: str | None = None
+
+
+class BrandingCompanyNameIn(BaseModel):
+    """Company name update (empty or null clears it)."""
+
+    company_name: str | None = None
+
+
+class BrandingLogoIn(BaseModel):
+    """Logo upload as base64."""
+
+    content_type: str
+    data_base64: str = Field(max_length=MAX_LOGO_BASE64_LENGTH)
+
+
+class BrandingModeColorsOut(BaseModel):
+    """Stored colour groups for one mode."""
+
+    colors: dict[str, str]
+
+
+class BrandingDarkOut(BaseModel):
+    """Stored dark-mode colours."""
+
+    customised: bool
+    colors: dict[str, str]
+
+
+class BrandingLogosOut(BaseModel):
+    """Logo content hashes per slot (None when unset)."""
+
+    light: str | None = None
+    dark: str | None = None
+
+
+class BrandingCustomPresetOut(BaseModel):
+    """A theme an admin saved after editing a preset, shown as "Custom N"."""
+
+    id: str
+    name: str | None = None
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingEditedPresetOut(BaseModel):
+    """Saved colours of a built-in preset an admin has edited."""
+
+    id: str
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingOut(BaseModel):
+    """Full branding as seen by the UI."""
+
+    company_name: str | None = None
+    preset: str | None = None
+    logo_mode: str = "shared"
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+    logos: BrandingLogosOut
+    custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
+    edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)

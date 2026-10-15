@@ -169,7 +169,6 @@ def main() -> int:
     # if present; an ImportError is surfaced with a clear message.
     try:
         from databricks_labs_dqx_app.backend.config import AppConfig
-        from databricks_labs_dqx_app.backend.demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
         from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
         from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
         from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -210,13 +209,15 @@ def main() -> int:
         schema=conf.schema_name,
     )
 
+    demo_schema = conf.demo_schema_name or f"{conf.schema_name}_demo"
+
     # Demo source executor — bound to the demo source schema
     # (dqx_studio_demo), same as the demo_sql in get_demo_seed_service.
     demo_sql = SqlExecutor(
         ws=ws,
         warehouse_id=warehouse_id,
         catalog=catalog,
-        schema=DEMO_SOURCE_SCHEMA,
+        schema=demo_schema,
     )
 
     # OLTP executor — prefer Lakebase when configured, else Delta fallback.
@@ -272,22 +273,11 @@ def main() -> int:
     # slots (same as get_demo_seed_service) — no OBO token available.
     sp_view = ViewService(sql=sp_sql, sp_sql=sp_sql)
 
-    # Thread the Lakebase connection coordinates the runner needs to read back an
-    # oversized staged config, mirroring get_job_service. Resolved from the live
-    # OLTP executor (populated only when it is a PgExecutor); with the Delta
-    # fallback these stay empty and oversized configs fail fast in prepare_config_json.
     job_service = JobService(
         ws=ws,
         job_id=conf.job_id,
         sql=sp_sql,
-        oltp_sql=oltp,
         warehouse_id=warehouse_id,
-        lakebase_endpoint=getattr(oltp, "endpoint", None) or "",
-        lakebase_database=getattr(oltp, "database", "") or "",
-        lakebase_schema=getattr(oltp, "schema", "") or "",
-        lakebase_host=getattr(oltp, "host", None) or "",
-        lakebase_port=getattr(oltp, "port", None) or 5432,
-        lakebase_username=conf.task_runner_postgres_role.strip() or getattr(oltp, "username", None) or "",
     )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
@@ -334,6 +324,7 @@ def main() -> int:
         job_service=job_service,
         profiler_view=sp_view,
         catalog=catalog,
+        schema=demo_schema,
     )
 
     # ------------------------------------------------------------------

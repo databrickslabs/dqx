@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.jobs import (
     Job,
     JobAccessControlResponse,
@@ -46,6 +47,21 @@ def job_with_run_as(
             )
         )
     )
+
+
+def test_exists_reports_a_deleted_job_as_missing(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = managed_job(42)
+    assert manager.exists(42) is True
+
+    manager.workspace.jobs.get.side_effect = NotFound("job deleted")
+    assert manager.exists(42) is False
+
+
+def test_exists_does_not_hide_other_lookup_errors(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.side_effect = PermissionDenied("no access")
+
+    with pytest.raises(PermissionDenied):
+        manager.exists(42)
 
 
 def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
@@ -142,6 +158,19 @@ def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> N
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
     assert settings.run_as is None
     assert settings.environments[0].spec.dependencies == ["/Volumes/c/s/v/runner.whl", "/Volumes/c/s/v/dqx.whl"]
+
+
+def test_configure_forwards_every_declared_parameter_to_the_runner(manager: TaskRunnerJobManager) -> None:
+    """Each declared job parameter reaches the runner as a *--name* argument."""
+    manager.workspace.jobs.get.return_value = managed_job(42)
+
+    manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
+
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    task_args = settings.tasks[0].python_wheel_task.parameters
+    for name in (p.name for p in settings.parameters):
+        assert f"--{name}" in task_args
+        assert f"{{{{job.parameters.{name}}}}}" in task_args
 
 
 def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) -> None:

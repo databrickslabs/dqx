@@ -59,8 +59,10 @@ interface Props {
   onKindChange: (kind: ScheduleKind) => void;
   /** Called with the new sample size; 0 means the whole table. */
   onSampleSizeChange: (sampleSize: number) => void;
-  /** Called when the schedule is removed (cron cleared to null). */
-  onRemove: () => void;
+  /** Called when the schedule is removed (cron cleared to null). Return false
+   *  when the removal is deferred (e.g. behind a confirmation), so the cron
+   *  being shown keeps its validity until it is actually cleared. */
+  onRemove: () => boolean | void;
   /** Shows the "Remove schedule" button. Off for the New schedule page, where
    *  there is nothing to remove yet. Defaults to true. */
   removable?: boolean;
@@ -184,8 +186,7 @@ export function ScheduleEditor({
             variant="outline"
             size="sm"
             onClick={() => {
-              onRemove();
-              onValidityChange(true);
+              if (onRemove() !== false) onValidityChange(true);
               setEditing(false);
             }}
           >
