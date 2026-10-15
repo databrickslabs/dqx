@@ -1138,6 +1138,12 @@ def _geo_value_message(value: Column, col_expr_str: str, suffix: str | Column) -
 # "is not a valid geometry (in the OGC sense)") so filters on one failure class never match the other.
 _PARSE_FAILURE = "cannot be parsed as a geometry"
 
+# Suffix for an operand whose SRID is neither 0 nor WGS 84, which the geodesic and H3 checks would misread.
+_SRID_NOTE = f"; only WGS 84 (SRID {DEFAULT_SRID}) coordinates are supported"
+
+# Message for an approximate-mode operand that parses but has no H3 cells to compare.
+_NO_H3_CELLS = "cannot be represented in H3"
+
 
 def _operand_parse_failure_message(
     col_invalid: Column, ref_invalid: Column, raw_value: Column, col_expr_str: str
@@ -1249,18 +1255,21 @@ def _has_topological_relationship_approximate(
     ref_geom = F.call_function("try_to_geometry", ref_col)
 
     def _h3_cells(geom: Column) -> Column:
-        # The H3 functions take WKB/WKT but not EWKT, so feed them the parsed geometry as WKB. WKB carries
-        # no SRID, so only geometries in WGS84 (or with no SRID) are converted; any other SRID yields NULL.
-        # `h3_try_coverash3` returns NULL for point geometries (no areal coverage). For points we fall back
-        # to `h3_pointash3`, but that is the non-`try` variant and raises on non-point input, so gate it on
-        # the value actually parsing to a point. `coalesce` and `when` both short-circuit, so
-        # `h3_pointash3` only runs on a confirmed point; invalid geometries yield NULL instead of failing
-        # the job.
+        # The H3 functions take WKT but not EWKT, so feed them the parsed geometry as WKT. WKB is no
+        # alternative: `h3_try_coverash3` only accepts it for polygons, while WKT also covers linestrings.
+        # WKT carries no SRID, so only geometries in WGS84 (or with no SRID) are converted; any other SRID
+        # yields NULL. `h3_try_coverash3` returns NULL for point geometries (no areal coverage). For points
+        # we fall back to `h3_pointash3`, but that is the non-`try` variant and raises on non-point input,
+        # so gate it on the value actually parsing to a non-empty point. `coalesce` and `when` both
+        # short-circuit, so `h3_pointash3` only runs on a confirmed point; invalid geometries yield NULL
+        # instead of failing the job.
         is_wgs84 = F.call_function("st_srid", geom).isin(0, DEFAULT_SRID)
-        wkb = F.when(is_wgs84, F.call_function("st_asbinary", geom))
-        cover = F.call_function("h3_try_coverash3", wkb, resolution_col)
-        is_point_geom = F.call_function("st_geometrytype", geom) == F.lit(POINT_TYPE)
-        point_cell = F.when(is_wgs84 & is_point_geom, F.array(F.call_function("h3_pointash3", wkb, resolution_col)))
+        wkt = F.when(is_wgs84, F.call_function("st_astext", geom))
+        cover = F.call_function("h3_try_coverash3", wkt, resolution_col)
+        is_point_geom = (F.call_function("st_geometrytype", geom) == F.lit(POINT_TYPE)) & ~F.call_function(
+            "st_isempty", geom
+        )
+        point_cell = F.when(is_wgs84 & is_point_geom, F.array(F.call_function("h3_pointash3", wkt, resolution_col)))
         return F.array_distinct(F.coalesce(cover, point_cell))
 
     col_h3_array = _h3_cells(col_geom)
@@ -1280,26 +1289,50 @@ def _has_topological_relationship_approximate(
     # mode). A non-null value or reference that fails to parse is reported, and so is a reference that
     # parses but has no H3 cells (e.g. an empty geometry or an SRID other than WGS84): there is nothing to
     # compare against, so every row would otherwise pass or fail silently. Reference problems are reported
-    # on every non-null row. A column value that parses but has no H3 cells is skipped, since flagging it
-    # would be a false positive.
+    # on every non-null row. A column value with an SRID other than WGS84 is reported too, and so is any
+    # other non-empty column value with no H3 cells (e.g. a multipoint): it cannot be compared, so it would
+    # otherwise pass silently. Only an empty column geometry is skipped, since it has no location to check.
+    # Messages report a parse failure first, then a bad column SRID, then a reference with no H3 cells,
+    # then a column value with none.
     col_invalid = col_expr.isNotNull() & col_geom.isNull()
     ref_invalid = ref_col.isNotNull() & ref_geom.isNull()
+    col_srid = F.call_function("st_srid", col_geom)
+    col_bad_srid = col_geom.isNotNull() & ~col_srid.isin(0, DEFAULT_SRID)
     col_no_cells = col_h3_array.isNull() | (F.size(col_h3_array) == 0)
     ref_no_cells = ref_col.isNotNull() & (ref_h3_array.isNull() | (F.size(ref_h3_array) == 0))
     condition = (
         F.when(col_expr.isNull(), F.lit(None))
-        .when(col_invalid | ref_invalid | ref_no_cells, F.lit(True))
+        .when(
+            col_invalid
+            | ref_invalid
+            | col_bad_srid
+            | ref_no_cells
+            | (col_no_cells & ~F.call_function("st_isempty", col_geom)),
+            F.lit(True),
+        )
         .when(ref_col.isNull() | col_no_cells, F.lit(None))
         .otherwise(~is_inside)
     )
 
-    relationship_message = _geo_value_message(
-        F.call_function("st_astext", col_geom), col_expr_str, _APPROXIMATE_MESSAGE_SUFFIX[topological_relationship]
-    )
     message = (
         _operand_parse_failure_message(col_invalid, ref_invalid, _raw_geo_value_as_text(col_expr), col_expr_str)
-        .when(ref_no_cells, F.lit(f"reference geometry for column `{col_expr_str}` cannot be represented in H3"))
-        .otherwise(relationship_message)
+        .when(
+            col_bad_srid,
+            _geo_value_message(
+                F.call_function("st_astext", col_geom),
+                col_expr_str,
+                F.concat(F.lit("has SRID "), col_srid.cast("string"), F.lit(_SRID_NOTE)),
+            ),
+        )
+        .when(ref_no_cells, F.lit(f"reference geometry for column `{col_expr_str}` {_NO_H3_CELLS}"))
+        .when(col_no_cells, _geo_value_message(F.call_function("st_astext", col_geom), col_expr_str, _NO_H3_CELLS))
+        .otherwise(
+            _geo_value_message(
+                F.call_function("st_astext", col_geom),
+                col_expr_str,
+                _APPROXIMATE_MESSAGE_SUFFIX[topological_relationship],
+            )
+        )
     )
 
     return make_condition(
@@ -1377,8 +1410,11 @@ def is_geo_covers(
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
     *try_to_geometry* is applied. These flags are ignored in approximate mode. In both modes a null value
     is skipped and a non-null value or reference that fails to parse is reported as unparseable. In
-    approximate mode a column value that parses but has no H3 representation is skipped, while a
-    reference with no H3 representation (e.g. a linestring or an empty polygon) is reported on every row.
+    approximate mode an empty column geometry is skipped, while a column value with an SRID other than
+    0 or 4326 (WGS 84) or any other column value with no H3 representation (e.g. a multipoint) is
+    reported, and a reference with no H3 representation (e.g. an empty polygon, a multipoint or a
+    non-WGS 84 SRID) is reported on every row. Points, linestrings, polygons, multilinestrings and
+    multipolygons have H3 cells.
 
     Args:
         column: Column to check. Null values are skipped for validation.
@@ -1440,8 +1476,11 @@ def is_geo_intersects(
     When conversion is requested (*convert_column* or *convert_reference_geometry* set to True),
     *try_to_geometry* is applied. These flags are ignored in approximate mode. In both modes a null value
     is skipped and a non-null value or reference that fails to parse is reported as unparseable. In
-    approximate mode a column value that parses but has no H3 representation is skipped, while a
-    reference with no H3 representation (e.g. a linestring or an empty polygon) is reported on every row.
+    approximate mode an empty column geometry is skipped, while a column value with an SRID other than
+    0 or 4326 (WGS 84) or any other column value with no H3 representation (e.g. a multipoint) is
+    reported, and a reference with no H3 representation (e.g. an empty polygon, a multipoint or a
+    non-WGS 84 SRID) is reported on every row. Points, linestrings, polygons, multilinestrings and
+    multipolygons have H3 cells.
 
     Args:
         column: Column to check. Null values are skipped for validation.
@@ -1658,7 +1697,6 @@ def is_geo_within_distance(
     parsed_value = F.call_function("st_astext", col_geom)
     raw_value = _raw_geo_value_as_text(col_expr) if convert_column else parsed_value
     reference = f"reference geometry for column `{col_expr_str}`"
-    srid_note = f"; only WGS 84 (SRID {DEFAULT_SRID}) coordinates are supported"
 
     message = (
         _operand_parse_failure_message(col.invalid, ref.invalid, raw_value, col_expr_str)
@@ -1667,10 +1705,10 @@ def is_geo_within_distance(
         .when(
             col.bad_srid,
             _geo_value_message(
-                parsed_value, col_expr_str, F.concat(F.lit("has SRID "), col.srid.cast("string"), F.lit(srid_note))
+                parsed_value, col_expr_str, F.concat(F.lit("has SRID "), col.srid.cast("string"), F.lit(_SRID_NOTE))
             ),
         )
-        .when(ref.bad_srid, F.concat(F.lit(f"{reference} has SRID "), ref.srid.cast("string"), F.lit(srid_note)))
+        .when(ref.bad_srid, F.concat(F.lit(f"{reference} has SRID "), ref.srid.cast("string"), F.lit(_SRID_NOTE)))
         .when(col.empty, _geo_value_message(parsed_value, col_expr_str, "is an empty geometry"))
         .when(ref.empty, F.lit(f"{reference} is an empty geometry"))
         .otherwise(

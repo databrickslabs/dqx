@@ -1119,7 +1119,7 @@ def test_geo_approximate_reference_without_h3_cells_is_flagged(skip_if_runtime_n
 
 
 def test_geo_approximate_empty_column_geometry_is_skipped(skip_if_runtime_not_geo_compatible, spark):
-    """A column value that parses but has no H3 cells (an empty geometry) is skipped, not reported."""
+    """An empty column geometry has no H3 cells and no location to check, so it is skipped, not reported."""
     test_df = spark.createDataFrame([["POLYGON EMPTY"], ["GEOMETRYCOLLECTION EMPTY"], [None]], _GEO_SCHEMA)
     actual = test_df.select(
         "geom",
@@ -1134,8 +1134,99 @@ def test_geo_approximate_empty_column_geometry_is_skipped(skip_if_runtime_not_ge
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_geo_approximate_ewkt_operands(skip_if_runtime_not_geo_compatible, spark):
-    """EWKT values and references in WGS 84 are indexed in H3 like their WKT equivalents."""
+def test_geo_approximate_column_without_h3_cells_is_flagged(skip_if_runtime_not_geo_compatible, spark):
+    """A non-empty column value with no H3 cells is reported rather than passing silently; an empty one is skipped.
+
+    The H3 cover function has no cells for a multipoint, and the point fallback only handles a single
+    point, so the multipoint has no cells even though both of its points lie inside the reference.
+    """
+    multipoint = "MULTIPOINT((4.9 52.37),(4.95 52.38))"
+    test_df = spark.createDataFrame([[multipoint], ["POLYGON EMPTY"], [None]], _GEO_SCHEMA)
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", _REF_POLYGON, resolution=7),
+        is_geo_intersects("geom", _REF_POLYGON, resolution=7),
+    )
+    rendered = spark.sql(f"SELECT st_astext(try_to_geometry('{multipoint}'))").first()[0]
+    message = f"value `{rendered}` in column `geom` cannot be represented in H3"
+    expected = spark.createDataFrame(
+        [[multipoint, message, message], ["POLYGON EMPTY", None, None], [None, None, None]],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_linestring_column(skip_if_runtime_not_geo_compatible, spark):
+    """Linestrings and multilinestrings are indexed in H3, so they are compared with the reference cells.
+
+    A line inside the reference polygon only touches cells that also contain part of the polygon, so it is
+    covered and intersects. A line with a part far outside the polygon is not covered but still intersects,
+    and a line entirely far outside does neither.
+    """
+    line_inside = "LINESTRING(4.85 52.33,4.95 52.38)"
+    line_crossing = "LINESTRING(4.9 52.37,4.4 51.9)"
+    line_outside = "LINESTRING(4.4 51.9,4.5 51.95)"
+    multiline_inside = "MULTILINESTRING((4.85 52.33,4.95 52.38),(4.8 52.35,4.9 52.4))"
+    multiline_crossing = "MULTILINESTRING((4.85 52.33,4.95 52.38),(4.4 51.9,4.5 51.95))"
+    test_df = spark.createDataFrame(
+        [[line_inside], [line_crossing], [line_outside], [multiline_inside], [multiline_crossing]], _GEO_SCHEMA
+    )
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", _REF_POLYGON, resolution=7),
+        is_geo_intersects("geom", _REF_POLYGON, resolution=7),
+    )
+    expected = spark.createDataFrame(
+        [
+            [line_inside, None, None],
+            [line_crossing, _covers_approximate_violation(line_crossing), None],
+            [
+                line_outside,
+                _covers_approximate_violation(line_outside),
+                _intersects_approximate_violation(line_outside),
+            ],
+            [multiline_inside, None, None],
+            [multiline_crossing, _covers_approximate_violation(multiline_crossing), None],
+        ],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_linestring_reference(skip_if_runtime_not_geo_compatible, spark):
+    """A linestring reference is indexed in H3: a point on the line shares its cell, a far point does not."""
+    point_on_line = "POINT(4.9 52.355)"
+    test_df = spark.createDataFrame([[point_on_line], [_POINT_OUTSIDE], [None]], _GEO_SCHEMA)
+    reference_line = "LINESTRING(4.85 52.33,4.95 52.38)"
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", reference_line, resolution=7),
+        is_geo_intersects("geom", reference_line, resolution=7),
+    )
+    expected = spark.createDataFrame(
+        [
+            [point_on_line, None, None],
+            [
+                _POINT_OUTSIDE,
+                _covers_approximate_violation(_POINT_OUTSIDE),
+                _intersects_approximate_violation(_POINT_OUTSIDE),
+            ],
+            [None, None, None],
+        ],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_ewkt_operands(skip_if_runtime_not_geo_compatible, skip_if_classic_compute, spark):
+    """EWKT values and references in WGS 84 are indexed in H3 like their WKT equivalents.
+
+    Runs on serverless only: standard clusters at 17.1 return NULL when try_to_geometry parses an EWKT
+    ``SRID=...;`` prefix.
+    """
     point_inside, point_outside = f"SRID=4326;{_POINT_INSIDE}", f"SRID=4326;{_POINT_OUTSIDE}"
     overlapping_polygon = f"SRID=4326;{_OVERLAPPING_POLYGON}"
     test_df = spark.createDataFrame([[point_inside], [point_outside], [overlapping_polygon]], _GEO_SCHEMA)
@@ -1151,12 +1242,42 @@ def test_geo_approximate_ewkt_operands(skip_if_runtime_not_geo_compatible, spark
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
-def test_geo_approximate_reference_outside_wgs84_is_flagged(skip_if_runtime_not_geo_compatible, spark):
-    """A reference with an SRID other than WGS 84 cannot be indexed in H3, so it is reported."""
+def test_geo_approximate_reference_outside_wgs84_is_flagged(
+    skip_if_runtime_not_geo_compatible, skip_if_classic_compute, spark
+):
+    """A reference with an SRID other than WGS 84 cannot be indexed in H3, so it is reported.
+
+    Approximate mode always parses its operands with try_to_geometry, which takes text or binary but not a
+    native GEOMETRY, so the SRID cannot be stamped with st_setsrid and is carried in EWKT instead. That
+    prefix is not parsed on standard 17.1 clusters, hence serverless only.
+    """
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     actual = test_df.select("geom", is_geo_intersects("geom", f"SRID=3857;{_REF_POLYGON}", resolution=7))
     message = "reference geometry for column `geom` cannot be represented in H3"
     expected = spark.createDataFrame([[_POINT_INSIDE, message], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_column_outside_wgs84_is_flagged(
+    skip_if_runtime_not_geo_compatible, skip_if_classic_compute, spark
+):
+    """A column value with an SRID other than WGS 84 cannot be indexed in H3, so it is reported, not skipped.
+
+    As above, the SRID is carried in EWKT, so this runs on serverless only.
+    """
+    projected = f"SRID=3857;{_POINT_INSIDE}"
+    test_df = spark.createDataFrame([[projected], [_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", _REF_POLYGON, resolution=7),
+        is_geo_intersects("geom", _REF_POLYGON, resolution=7),
+    )
+    message = _within_distance_bad_srid(_POINT_INSIDE, 3857)
+    expected = spark.createDataFrame(
+        [[projected, message, message], [_POINT_INSIDE, None, None], [None, None, None]],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
