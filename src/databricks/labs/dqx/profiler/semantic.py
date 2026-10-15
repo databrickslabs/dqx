@@ -419,9 +419,10 @@ class SemanticRegistry(BaseModel):
     def of(cls, *detectors: DQSemanticTypeDetector) -> "SemanticRegistry":
         """Return a registry whose chain is exactly *detectors*, in argument order.
 
-        Ergonomic alternative to the ``SemanticRegistry(detectors=(...))`` constructor for
+        Ergonomic alternative to the *SemanticRegistry(detectors=(...))* constructor for
         whole-chain construction from scratch. Reads well when composing with the built-in
-        defaults, e.g. ``SemanticRegistry.of(uuid_detector, *default_semantic_detectors())``.
+        defaults, e.g. *SemanticRegistry.of* with a custom detector followed by the unpacked
+        *default_semantic_detectors()*.
 
         Args:
             *detectors: Detectors in first-match-wins order.
@@ -476,7 +477,7 @@ class SemanticRegistry(BaseModel):
         """Return a new registry with the entry named *name* swapped for *detector*.
 
         Position is preserved; the rest of the chain is unchanged. To construct a whole
-        new chain, use ``SemanticRegistry.of(...)`` or the ``SemanticRegistry(detectors=(...))``
+        new chain, use *SemanticRegistry.of(...)* or the *SemanticRegistry(detectors=(...))*
         constructor instead.
 
         Args:
