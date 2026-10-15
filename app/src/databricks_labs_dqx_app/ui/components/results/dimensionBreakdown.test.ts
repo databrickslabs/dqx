@@ -44,11 +44,12 @@ describe("sumTestCounts (ScoreBox subtitle counts)", () => {
         { label: "c.s.a", failed_tests: 3, total_tests: 100 },
         { label: "c.s.b", failed_tests: 7, total_tests: 900 },
       ]),
-    ).toEqual({ failedTests: 10, totalTests: 1000 });
+    ).toEqual({ failedTests: 10, totalTests: 1000, tableFailedTests: 0, tableTotalTests: 0 });
   });
 
   it("treats missing counts as 0 and empty/undefined input as zeros", () => {
-    expect(sumTestCounts([{ label: "c.s.a" }])).toEqual({ failedTests: 0, totalTests: 0 });
-    expect(sumTestCounts(undefined)).toEqual({ failedTests: 0, totalTests: 0 });
+    const zeros = { failedTests: 0, totalTests: 0, tableFailedTests: 0, tableTotalTests: 0 };
+    expect(sumTestCounts([{ label: "c.s.a" }])).toEqual(zeros);
+    expect(sumTestCounts(undefined)).toEqual(zeros);
   });
 });

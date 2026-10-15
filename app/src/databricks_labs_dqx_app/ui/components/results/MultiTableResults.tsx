@@ -208,9 +208,10 @@ export function computeOverallPoints(
 }
 
 /**
- * Failed/total test counts for the ScoreBox subtitle: BOTH sums come from
- * the same (filtered) by_table rows so "X failed of Y tests" is internally
- * consistent. DELIBERATE dqlake deviation — the original hardcodes
+ * Failed/total test counts for the ScoreBox subtitle: every sum comes from
+ * the same (filtered) by_table rows so "X / Y row tests passed · A / B table
+ * tests passed" is internally consistent. Row and table tests are summed
+ * separately, never together. DELIBERATE dqlake deviation — the original hardcodes
  * totalTests={0}, which suppresses the subtitle on the product ScoreBox
  * entirely (its ScoreBox only renders the subtitle when totalTests > 0).
  *
@@ -226,6 +227,8 @@ export function sumTestCounts(
 ): {
   failedTests: number;
   totalTests: number;
+  tableFailedTests: number;
+  tableTotalTests: number;
 } {
   const rows = (byTable ?? []).filter(
     (g) => tableFacet.length === 0 || (g.label != null && tableFacet.includes(g.label)),
@@ -233,6 +236,8 @@ export function sumTestCounts(
   return {
     failedTests: rows.reduce((a, g) => a + (g.failed_tests ?? 0), 0),
     totalTests: rows.reduce((a, g) => a + (g.total_tests ?? 0), 0),
+    tableFailedTests: rows.reduce((a, g) => a + (g.table_failed_tests ?? 0), 0),
+    tableTotalTests: rows.reduce((a, g) => a + (g.table_total_tests ?? 0), 0),
   };
 }
 
@@ -543,6 +548,8 @@ export function MultiTableResultsSection({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      table_failed_tests: g.table_failed_tests ?? null,
+      table_total_tests: g.table_total_tests ?? null,
       breached: g.breached ?? false,
       breach_criticality: g.breach_criticality ?? null,
       pass_threshold: g.pass_threshold ?? null,
@@ -768,7 +775,10 @@ export function MultiTableResultsSection({
   // The table facet is re-applied client-side here: the server self-excludes
   // it from by_table (the box keeps its rows), but the subtitle must match
   // the (table-filtered) headline trend — see sumTestCounts.
-  const { failedTests, totalTests } = sumTestCounts(results?.by_table, filters.table);
+  const { failedTests, totalTests, tableFailedTests, tableTotalTests } = sumTestCounts(
+    results?.by_table,
+    filters.table,
+  );
 
   // Over-time chart: a prominent foreground "Average" trendline drawn on top
   // of dull, thin per-table lines. The Average is the SERVER's as-of
@@ -840,6 +850,8 @@ export function MultiTableResultsSection({
       passRate={passRate}
       failedTests={failedTests}
       totalTests={totalTests}
+      tableFailedTests={tableFailedTests}
+      tableTotalTests={tableTotalTests}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
       breachCriticality={thresholdEnabled ? lastTrend?.breach_criticality : null}

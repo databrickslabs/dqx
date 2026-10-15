@@ -605,6 +605,8 @@ function ResultsBody({
   const passRate = selectedRun?.pass_rate ?? null;
   const failedTests = selectedRun?.failed_tests ?? 0;
   const totalTests = selectedRun?.total_tests ?? 0;
+  const tableFailedTests = selectedRun?.table_failed_tests ?? null;
+  const tableTotalTests = selectedRun?.table_total_tests ?? null;
   // Score direction vs the next-older run (runs are newest-first). null when
   // equal or there's no previous run.
   const prevPassRate =
@@ -627,6 +629,8 @@ function ResultsBody({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      table_failed_tests: g.table_failed_tests ?? null,
+      table_total_tests: g.table_total_tests ?? null,
       // Carry the per-row breach flag + criticality through so DimensionBreakdown
       // can render the BreachIcon on each breached facet row (by dimension /
       // severity / rule / column). Omitting these — as this mapper previously
@@ -885,6 +889,8 @@ function ResultsBody({
               passRate={passRate}
               failedTests={failedTests}
               totalTests={totalTests}
+              tableFailedTests={tableFailedTests}
+              tableTotalTests={tableTotalTests}
               trend={scoreTrend}
               info={COUNT_INFO}
               breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}

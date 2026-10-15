@@ -909,13 +909,21 @@ export interface CheckFunctionsOut {
   functions?: CheckFunctionDef[];
 }
 
+export type CheckMetricBreakdownEvaluatedCount = number | null;
+
 /**
  * Per-check error/warning breakdown produced by ``DQMetricsObserver``.
+
+*evaluated_count* is the number of rows a filtered row-level check
+evaluated (the rows its filter selected), from the run's
+*check_evaluated_rows* metric. None for unfiltered and dataset checks
+and for runs that predate the metric: those use the table's input rows.
  */
 export interface CheckMetricBreakdown {
   check_name: string;
   error_count?: number;
   warning_count?: number;
+  evaluated_count?: CheckMetricBreakdownEvaluatedCount;
 }
 
 export interface ClusterOut {
@@ -1189,9 +1197,25 @@ export type DataProductMemberOutPinnedVersion = number | null;
  */
 export type DataProductMemberOutScore = number | null;
 
+/**
+ * Failed row-level tests
+ */
 export type DataProductMemberOutFailedTests = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type DataProductMemberOutTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type DataProductMemberOutTableFailedTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type DataProductMemberOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -1220,8 +1244,14 @@ export interface DataProductMemberOut {
   runnable: boolean;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: DataProductMemberOutScore;
+  /** Failed row-level tests */
   failed_tests?: DataProductMemberOutFailedTests;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: DataProductMemberOutTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: DataProductMemberOutTableFailedTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: DataProductMemberOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: DataProductMemberOutScoreComputedAt;
 }
@@ -1282,9 +1312,25 @@ export type DataProductOutLastRunAt = string | null;
  */
 export type DataProductOutScore = number | null;
 
+/**
+ * Failed row-level tests
+ */
 export type DataProductOutFailedTests = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type DataProductOutTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type DataProductOutTableFailedTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type DataProductOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -1328,8 +1374,14 @@ export interface DataProductOut {
   last_run_at?: DataProductOutLastRunAt;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: DataProductOutScore;
+  /** Failed row-level tests */
   failed_tests?: DataProductOutFailedTests;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: DataProductOutTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: DataProductOutTableFailedTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: DataProductOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: DataProductOutScoreComputedAt;
   created_by?: DataProductOutCreatedBy;
@@ -2026,13 +2078,29 @@ export type GroupRowOutRuleId = string | null;
 
 export type GroupRowOutPassRate = number | null;
 
+/**
+ * Failed row-level tests
+ */
 export type GroupRowOutFailedTests = number | null;
 
 export type GroupRowOutRuleCount = number | null;
 
 export type GroupRowOutCheckCount = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type GroupRowOutTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type GroupRowOutTableFailedTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type GroupRowOutTableTotalTests = number | null;
 
 export type GroupRowOutBreachCriticality = string | null;
 
@@ -2064,10 +2132,16 @@ export interface GroupRowOut {
   binding_id?: GroupRowOutBindingId;
   rule_id?: GroupRowOutRuleId;
   pass_rate?: GroupRowOutPassRate;
+  /** Failed row-level tests */
   failed_tests?: GroupRowOutFailedTests;
   rule_count?: GroupRowOutRuleCount;
   check_count?: GroupRowOutCheckCount;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: GroupRowOutTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: GroupRowOutTableFailedTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: GroupRowOutTableTotalTests;
   breached?: boolean;
   breach_criticality?: GroupRowOutBreachCriticality;
   pass_threshold?: GroupRowOutPassThreshold;
@@ -2082,6 +2156,10 @@ export type HomeStatsOutScore = number | null;
 export type HomeStatsOutFailedTests = number | null;
 
 export type HomeStatsOutTotalTests = number | null;
+
+export type HomeStatsOutTableFailedTests = number | null;
+
+export type HomeStatsOutTableTotalTests = number | null;
 
 export type HomeStatsOutComputedAt = string | null;
 
@@ -2110,6 +2188,8 @@ export interface HomeStatsOut {
   score?: HomeStatsOutScore;
   failed_tests?: HomeStatsOutFailedTests;
   total_tests?: HomeStatsOutTotalTests;
+  table_failed_tests?: HomeStatsOutTableFailedTests;
+  table_total_tests?: HomeStatsOutTableTotalTests;
   computed_at?: HomeStatsOutComputedAt;
   score_trend?: ScoreTrendPointOut[];
   score_delta?: HomeStatsOutScoreDelta;
@@ -2674,9 +2754,25 @@ export interface MonitoredTableReviewOut {
  */
 export type MonitoredTableSummaryOutScore = number | null;
 
+/**
+ * Failed row-level tests
+ */
 export type MonitoredTableSummaryOutFailedTests = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type MonitoredTableSummaryOutTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type MonitoredTableSummaryOutTableFailedTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type MonitoredTableSummaryOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -2697,8 +2793,14 @@ export interface MonitoredTableSummaryOut {
   check_count?: number;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: MonitoredTableSummaryOutScore;
+  /** Failed row-level tests */
   failed_tests?: MonitoredTableSummaryOutFailedTests;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: MonitoredTableSummaryOutTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: MonitoredTableSummaryOutTableFailedTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: MonitoredTableSummaryOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: MonitoredTableSummaryOutScoreComputedAt;
   /** Distinct quality-dimension tags across applied rules. */
@@ -4128,9 +4230,25 @@ export type RunRowOutRunTs = string | null;
 
 export type RunRowOutPassRate = number | null;
 
+/**
+ * Failed row-level tests
+ */
 export type RunRowOutFailedTests = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type RunRowOutTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type RunRowOutTableFailedTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type RunRowOutTableTotalTests = number | null;
 
 export type RunRowOutRunMode = string | null;
 
@@ -4149,8 +4267,14 @@ export interface RunRowOut {
   run_id?: RunRowOutRunId;
   run_ts?: RunRowOutRunTs;
   pass_rate?: RunRowOutPassRate;
+  /** Failed row-level tests */
   failed_tests?: RunRowOutFailedTests;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: RunRowOutTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: RunRowOutTableFailedTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: RunRowOutTableTotalTests;
   run_mode?: RunRowOutRunMode;
   breached?: boolean;
   breach_criticality?: RunRowOutBreachCriticality;
@@ -4881,6 +5005,16 @@ export type TableScoreOutScore = number | null;
 export type TableScoreOutLatestRunId = string | null;
 
 /**
+ * Table-level checks, one test each
+ */
+export type TableScoreOutTableTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type TableScoreOutTableFailedTests = number | null;
+
+/**
  * Row-weighted DQ score for one table, computed from its latest run.
 
 *score* is None when the latest run has no rows or no per-check
@@ -4891,8 +5025,14 @@ export interface TableScoreOut {
   source_table_fqn: string;
   score?: TableScoreOutScore;
   latest_run_id?: TableScoreOutLatestRunId;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: number;
+  /** Failed row-level tests */
   failed_tests?: number;
+  /** Table-level checks, one test each */
+  table_total_tests?: TableScoreOutTableTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: TableScoreOutTableFailedTests;
 }
 
 /**
@@ -5021,7 +5161,20 @@ export type TrendPointOutPassRate = number | null;
 
 export type TrendPointOutRuleCount = number | null;
 
+/**
+ * Row-level tests (evaluated rows x row checks)
+ */
 export type TrendPointOutTotalTests = number | null;
+
+/**
+ * Table-level checks, one test each
+ */
+export type TrendPointOutTableTotalTests = number | null;
+
+/**
+ * Failed table-level checks
+ */
+export type TrendPointOutTableFailedTests = number | null;
 
 export type TrendPointOutVersion = number | null;
 
@@ -5049,7 +5202,12 @@ export interface TrendPointOut {
   series?: TrendPointOutSeries;
   pass_rate?: TrendPointOutPassRate;
   rule_count?: TrendPointOutRuleCount;
+  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: TrendPointOutTotalTests;
+  /** Table-level checks, one test each */
+  table_total_tests?: TrendPointOutTableTotalTests;
+  /** Failed table-level checks */
+  table_failed_tests?: TrendPointOutTableFailedTests;
   version?: TrendPointOutVersion;
   is_draft?: boolean;
   breached?: boolean;
