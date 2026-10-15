@@ -9,35 +9,11 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import quote_column_name
 
 
-# Separator between group column values in a composite group key. ASCII unit separator: a
-# control character, so ordinary categorical data (names, codes, countries) cannot contain it and
-# two different group tuples cannot collide onto one key.
-#
-# Known limitation: this is a separator, not an escaping scheme. Data that genuinely contains
-# \x1f inside a group value can still collide — ("x\x1fy", "z") and ("x", "y\x1fz") produce the
-# same key. Deliberately not solved by length-prefixing: the Python and Spark halves of this key
-# must agree exactly, and adding length arithmetic to that contract buys protection against
-# pathological data at the cost of widening the one invariant most expensive to get wrong.
-BASELINE_KEY_SEPARATOR = "\x1f"
-
-# Stand-in for a NULL group value. NULLs must map to a real key rather than propagating,
-# or every row in a group with a missing dimension silently loses its baseline.
-#
-# A control character rather than a word, for the same reason the separator above is one: this was
-# "MISSING", which a group column can genuinely contain, and then a NULL region and a region literally
-# named MISSING shared one persisted key and one baseline without any complaint. \x00 is not a value a
-# categorical dimension carries in practice, so the two are now distinguishable.
-#
-# This changes the persisted key format. It is done in the same release as the configuration-hash change
-# that already forces every model to be retrained, so it costs no additional retrain -- deferring it would
-# have made it a second forced retrain later.
-BASELINE_KEY_NULL = "\x00"
-
 # The single column every stage reads the group key from. See *with_baseline_key*.
 BASELINE_KEY_COLUMN = "__dqx_baseline_key"
 
 
-def _as_spark_string(value: Any) -> str:
+def _as_spark_string(value: Any) -> str | None:
     """Render *value* the way Spark's ``cast("string")`` does.
 
     Python's ``str()`` is not a drop-in for Spark's cast, and the differences are silent:
@@ -52,29 +28,28 @@ def _as_spark_string(value: Any) -> str:
       shim can reconcile.
     """
     if value is None:
-        return BASELINE_KEY_NULL
+        return None
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
 
 
 def build_baseline_key(group_values: Mapping[str, Any] | None) -> str:
-    """Build the group key for a row, in Python.
+    """Build a deterministic group identifier for the supported baseline-column types.
 
-    Must agree exactly with *baseline_key_column*, which computes the same key in Spark.
-    Training persists baselines under keys produced by one and scoring looks them up with the
-    other, so a disagreement does not fail — it silently misses every lookup and falls back to
-    the global baseline, producing a model that appears to work and conditions on nothing.
-    Their agreement is pinned by an integration test, which is how the boolean rendering
-    difference handled in *_as_spark_string* was found.
+    The Python and Spark implementations must agree exactly so persisted baselines, calibration,
+    and known-group membership refer to the same population at training and scoring.
 
-    Values are ordered by column name so the key does not depend on the order the caller
-    happened to list the group columns in.
+    Values are ordered by column name. Each non-null value is prefixed by its UTF-8 byte
+    length and a colon; null is encoded as -1:. Framing by length preserves tuple boundaries
+    even when values contain control characters, colons, or text resembling another frame.
+    A literal empty string is 0:, distinct from null and from an empty grouping.
     """
     if not group_values:
         return ""
     ordered = sorted(group_values.items(), key=lambda item: str(item[0]))
-    return BASELINE_KEY_SEPARATOR.join(_as_spark_string(value) for _key, value in ordered)
+    parts = [_as_spark_string(value) for _key, value in ordered]
+    return "".join("-1:" if part is None else f"{len(part.encode('utf-8'))}:{part}" for part in parts)
 
 
 def baseline_key_column(baseline_by: list[str]) -> Column:
@@ -84,11 +59,14 @@ def baseline_key_column(baseline_by: list[str]) -> Column:
     truth — it is what runs at scoring time — so *_as_spark_string* is written to match
     ``cast("string")`` rather than the other way round.
     """
+    values = [F.col(quote_column_name(name)).cast("string") for name in sorted(baseline_by, key=str)]
     parts = [
-        F.coalesce(F.col(quote_column_name(name)).cast("string"), F.lit(BASELINE_KEY_NULL))
-        for name in sorted(baseline_by, key=str)
+        F.when(value.isNull(), F.lit("-1:")).otherwise(
+            F.concat(F.octet_length(value).cast("string"), F.lit(":"), value)
+        )
+        for value in values
     ]
-    return F.concat_ws(BASELINE_KEY_SEPARATOR, *parts)
+    return F.concat(*parts) if parts else F.lit("")
 
 
 def with_baseline_key(df: DataFrame, baseline_by: list[str]) -> DataFrame:

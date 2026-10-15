@@ -14,9 +14,8 @@ from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly.scoring_utils import join_filtered_results_back
+from databricks.labs.dqx.anomaly.scoring_utils import join_filtered_results_back, mark_unseen_baselines
 from databricks.labs.dqx.anomaly.segment_utils import (
-    BASELINE_KEY_NULL,
     build_baseline_key,
     baseline_key_column,
 )
@@ -47,22 +46,74 @@ def _first(df) -> Row:
         [("with space", "x"), ("with-dash", "y"), ("with_underscore", "z")],
         [("Ünïcödé", "a"), ("日本", "b")],
         [("", "empty-left"), ("empty-right", "")],
+        [("x\x1fy", "z"), ("x", "y\x1fz"), ("\x00", "z"), (None, "z")],
+        [("🌍", "0:"), ("-1:", "\\\""), ("\n", "\t"), ("é", "e\u0301")],
     ],
 )
 def test_python_and_spark_group_keys_agree(spark: SparkSession, rows):
     """The two halves of the key must produce byte-identical strings."""
     df = spark.createDataFrame(rows, "country string, product string")
 
-    actual = [
-        row["key"]
-        for row in df.withColumn("key", baseline_key_column(["country", "product"]))
-        .orderBy("country", "product")
-        .select("key")
-        .collect()
-    ]
-    expected = sorted(build_baseline_key({"country": c, "product": p}) for c, p in rows)
+    result = df.withColumn("key", baseline_key_column(["country", "product"])).collect()
+    assert len(result) == len(rows)
+    assert len({row["key"] for row in result}) == len(rows)
+    for row in result:
+        assert row["key"] == build_baseline_key({"country": row["country"], "product": row["product"]})
 
-    assert actual == expected
+
+def test_empty_grouping_matches_python_without_a_null_key(spark: SparkSession) -> None:
+    rows = spark.range(2).withColumn("key", baseline_key_column([])).collect()
+    assert [row["key"] for row in rows] == [build_baseline_key({})] * 2
+
+
+def test_distinct_group_baselines_survive_metadata_roundtrip(spark: SparkSession) -> None:
+    groups = [("x\x1fy", "z"), ("x", "y\x1fz"), (None, "z"), ("\x00", "z"), ("", "z"), ("-1:", "z")]
+    training = [(*group, float(100 * (index + 1))) for index, group in enumerate(groups) for _ in range(30)]
+    frame = spark.createDataFrame(training, "country string, product string, amount double")
+    _, metadata = apply_feature_engineering(frame, [_numeric_info("amount")], baseline_by=["product", "country"])
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    assert len(restored.baseline_medians["amount"]) == len(groups)
+    for index, (country, product) in enumerate(groups):
+        key = build_baseline_key({"country": country, "product": product})
+        assert restored.baseline_medians["amount"][key] == 100 * (index + 1)
+    # The same probe must be compared with its own population after persistence, including duplicates.
+    probes = spark.createDataFrame(training[:1] * 2 + training[30::30], frame.schema).repartition(2)
+    transformed, _ = apply_feature_engineering_from_metadata(probes, restored)
+    rows = transformed.collect()
+    assert len(rows) == len(groups) + 1
+    assert sorted(row["amount"] for row in rows) == [100.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
+    assert all(row["amount_rel_baseline"] == pytest.approx(0.0, abs=1e-10) for row in rows)
+
+
+@pytest.mark.parametrize(
+    "known, unseen",
+    [
+        (("x\x1fy", "z"), ("x", "y\x1fz")),
+        ((None, "z"), ("\x00", "z")),
+        (("", "z"), (None, "z")),
+    ],
+)
+def test_former_key_collision_cannot_make_an_unseen_group_look_known(
+    spark: SparkSession, known: tuple[str | None, str], unseen: tuple[str | None, str]
+) -> None:
+    metadata = SparkFeatureMetadata(
+        column_infos=[],
+        categorical_frequency_maps={},
+        onehot_categories={},
+        engineered_feature_names=[],
+        baseline_by=["country", "product"],
+        baseline_group_keys=[build_baseline_key(dict(zip(("country", "product"), known, strict=True)))],
+    )
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    frame = spark.createDataFrame([(0, *known), (1, *unseen)], "row_id int, country string, product string")
+    marked = mark_unseen_baselines(
+        frame,
+        restored.baseline_by,
+        restored.baseline_group_keys,
+        unseen_col="is_unseen",
+        group_key_col="computed_key",
+    )
+    assert {row.row_id: row.is_unseen for row in marked.collect()} == {0: False, 1: True}
 
 
 def test_python_and_spark_agree_on_null_group_values(spark: SparkSession):
@@ -72,7 +123,7 @@ def test_python_and_spark_agree_on_null_group_values(spark: SparkSession):
     spark_key = _first(df.withColumn("key", baseline_key_column(["country", "product"])))["key"]
 
     assert spark_key == build_baseline_key({"country": None, "product": "casino"})
-    assert BASELINE_KEY_NULL in spark_key
+    assert spark_key == "-1:6:casino"
 
 
 def test_python_and_spark_agree_on_integral_group_values(spark: SparkSession):

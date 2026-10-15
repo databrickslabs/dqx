@@ -100,6 +100,52 @@ def test_small_known_groups_remain_scored_after_registry_reload(ws, spark, quick
             assert math.isfinite(info["score"]) and math.isfinite(info["severity_percentile"])
 
 
+def test_distinct_group_keys_survive_registry_reload(ws, spark, quick_model_factory):
+    groups = [("x\x1fy", "z"), ("x", "y\x1fz"), (None, "z"), ("\x00", "z"), ("", "z"), ("-1:", "z")]
+    model, registry, _ = quick_model_factory(
+        spark,
+        columns=["amount"],
+        baseline_by=["country", "product"],
+        train_data=[
+            (*group, float(100 * (index + 1) + offset % 3))
+            for index, group in enumerate(groups)
+            for offset in range(40)
+        ],
+        train_schema="country string, product string, amount double",
+        params=AnomalyParams(
+            sample_fraction=1.0,
+            train_ratio=1.0,
+            algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42),
+        ),
+    )
+    record = AnomalyModelRegistry(spark).get_active_model(registry, model)
+    assert record is not None and record.features.feature_metadata is not None
+    metadata = SparkFeatureMetadata.from_json(record.features.feature_metadata)
+    keys = [build_baseline_key({"country": country, "product": product}) for country, product in groups]
+    assert len(keys) == len(set(keys)) == len(groups)
+    assert set(metadata.baseline_group_keys) == set(keys)
+    assert set(metadata.baseline_score_quantiles) == set(keys)
+    for index, key in enumerate(keys):
+        assert metadata.baseline_medians["amount"][key] == 100 * (index + 1) + 1
+
+    values = [(*group, float(100 * (index + 1) + 1)) for index, group in enumerate(groups)]
+    values += [values[0], ("unseen", "z", 101.0)]
+    source = spark.createDataFrame(values, "country string, product string, amount double")
+    result = DQEngine(ws, spark).apply_checks(source, [create_anomaly_check_rule(model, registry)])
+    assert [result.schema[name] for name in source.columns] == list(source.schema)
+    assert set(result.columns) == {*source.columns, "_errors", "_warnings", "_dq_info"}
+    rows = result.collect()
+    assert Counter((row.country, row.product, row.amount) for row in rows) == Counter(values)
+    for row in rows:
+        info = row["_dq_info"][0]["anomaly"]
+        unseen = row.country == "unseen"
+        assert info["is_new_baseline"] is unseen
+        if unseen:
+            assert info["score"] is None and info["severity_percentile"] is None
+        else:
+            assert math.isfinite(info["score"]) and math.isfinite(info["severity_percentile"])
+
+
 @pytest.mark.parametrize("ensemble", [False, True])
 def test_calibration_accepts_features_named_like_scoring_outputs(spark, ensemble: bool):
     """Calibration must read its computed scores, not collide with a same-named training feature."""
