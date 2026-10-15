@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "Non puoi configurare questa pianificazione",
-      "descriptionTable": "Le esecuzioni pianificate leggono questa tabella tramite un account di servizio, quindi configurare una pianificazione concede a quell'account l'accesso in lettura, che richiede il privilegio MANAGE di cui non disponi su questa tabella.",
-      "descriptionCollection": "Le esecuzioni pianificate leggono ogni tabella tramite un account di servizio, quindi configurare una pianificazione concede a quell'account l'accesso in lettura, che richiede il privilegio MANAGE di cui non disponi su una o più tabelle di questa raccolta.",
-      "holdersLabel": "Chiedi a uno di questi di configurarla al tuo posto:",
-      "holdersLabelForTable": "Chi può concedere l'accesso a {{fqn}}:",
+      "descriptionTable": "Le pianificazioni richiedono il privilegio MANAGE su questa tabella, che non hai.",
+      "descriptionCollection": "Le pianificazioni richiedono il privilegio MANAGE su ogni tabella che leggono, e non lo hai su una o più di queste tabelle.",
+      "holdersLabel": "Chiedi a chi lo ha di configurare la pianificazione:",
+      "holdersLabelForTable": "Chi ha MANAGE su {{fqn}}:",
       "noHolders": "Nessun utente o gruppo con l'autorizzazione necessaria è stato trovato. Contatta l'amministratore dell'area di lavoro o il proprietario della tabella.",
       "typeUser": "utente",
       "typeGroup": "gruppo",
@@ -40,7 +40,17 @@
       "unverifiedTitle": "Impossibile verificare l'accesso alla tabella",
       "unverifiedDescriptionTable": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere questa tabella. Potrebbe essere ancora in fase di avvio.",
       "unverifiedDescriptionCollection": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere queste tabelle. Potrebbe essere ancora in fase di avvio.",
-      "retry": "Riprova"
+      "retry": "Riprova",
+      "missingGrantsDescriptionTable": "Le esecuzioni pianificate leggono questa tabella come entità servizio di Studio, che non possono ancora usare il suo catalogo o schema.",
+      "missingGrantsDescriptionCollection": "Le esecuzioni pianificate leggono queste tabelle come entità servizio di Studio, che non possono ancora usare alcuni dei loro cataloghi o schemi.",
+      "missingGrant": "{{name}} ha bisogno di {{privilege}} su {{securable}}",
+      "missingGrantsInstructions": "Chiedi al proprietario del catalogo e dello schema, o a chiunque abbia MANAGE su di essi, di eseguire queste istruzioni in un editor SQL, poi fai clic su Riprova:",
+      "unverifiedPermissionsTitle": "Impossibile verificare le autorizzazioni",
+      "unverifiedPermissionsDescriptionTable": "Studio non è riuscito a leggere le autorizzazioni di questa tabella, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi al proprietario della tabella di configurarla.",
+      "unverifiedPermissionsDescriptionCollection": "Studio non è riuscito a leggere le autorizzazioni di queste tabelle, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi ai proprietari delle tabelle di configurarla.",
+      "missingGrantsForTable": "Per {{fqn}}:",
+      "unverifiedConfigurationTitle": "Impossibile verificare l'accesso della pianificazione",
+      "unverifiedConfigurationDescription": "La configurazione di Studio è incompleta (ad esempio, non trova l'entità servizio del job di esecuzione delle attività), quindi non può verificare se questa pianificazione può essere configurata. Chiedi a un amministratore di Studio di controllare la pagina di configurazione."
     }
   },
   "lifecycle": {
@@ -217,7 +227,6 @@
     "kwTheme": "stile tema colori preimpostazione modalità scura chiara intestazione barra laterale",
     "styling": {
       "companyNameLabel": "Nome dell'azienda",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Mostrato nella barra superiore",
       "logoRequirements": "PNG, JPEG o WebP, fino a 256 KB",
       "logoErrorType": "SVG e altri tipi di file non sono supportati. Usa un'immagine PNG, JPEG o WebP.",
