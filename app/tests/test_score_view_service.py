@@ -250,6 +250,54 @@ class TestShapingViewDdl:
         ddl = svc.shaping_view_ddl()
         assert "TRY_CAST(e.binding_version_tag AS INT) AS binding_version" in ddl
 
+    def test_reads_the_runners_evaluated_rows_metric(self, svc):
+        # The runner persists one check_evaluated_rows metric per run for
+        # filtered row-level checks; the view pivots it like check_metrics.
+        ddl = svc.shaping_view_ddl()
+        assert (
+            "MAX(CASE WHEN metric_name = 'check_evaluated_rows' THEN metric_value END) AS check_evaluated_json" in ddl
+        )
+        assert "from_json(r.check_evaluated_json, 'ARRAY<STRUCT<check_name: STRING, evaluated_count: BIGINT>>')" in ddl
+
+    def test_evaluated_counts_are_deduped_per_check_before_the_join(self, svc):
+        # A duplicated entry in the payload must not fan out the check rows:
+        # one evaluated count per (run, table, check) before the LEFT JOIN.
+        ddl = svc.shaping_view_ddl()
+        assert "MAX(ev.evaluated_count) AS evaluated_count" in ddl
+        assert "GROUP BY r.run_id, r.input_location, ev.check_name" in ddl
+        assert "LEFT JOIN evaluated v" in ddl
+        assert "ON v.run_id = e.run_id AND v.input_location = e.input_location AND v.check_name = e.check_name" in ddl
+
+    def test_evaluated_row_count_falls_back_to_table_rows(self, svc):
+        # Unfiltered checks, dataset checks and legacy runs have no evaluated
+        # count — they keep today's denominator (the table input_row_count).
+        ddl = svc.shaping_view_ddl()
+        assert "ELSE COALESCE(v.evaluated_count, TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT))" in ddl
+        assert "END AS evaluated_row_count" in ddl
+
+    def test_row_check_score_divides_by_evaluated_rows(self, svc):
+        ddl = svc.shaping_view_ddl()
+        # A filter that matched nothing leaves the check unscorable.
+        assert "WHEN s.evaluated_row_count IS NULL OR s.evaluated_row_count <= 0 THEN CAST(NULL AS DOUBLE)" in ddl
+        assert (
+            "1.0 - TRY_DIVIDE(\n        s.error_count + s.warning_count,\n        s.evaluated_row_count\n      )" in ddl
+        )
+
+    def test_dataset_check_score_keeps_the_table_row_guard(self, svc):
+        # Dataset verdicts stay binary; only an empty table makes them NULL.
+        ddl = svc.shaping_view_ddl()
+        assert "WHEN s.check_granularity = 'dataset' AND s.input_row_count <= 0 THEN CAST(NULL AS DOUBLE)" in ddl
+        assert ddl.index("WHEN s.check_granularity = 'dataset'") < ddl.index("s.evaluated_row_count <= 0")
+
+    def test_unscorable_checks_leave_the_rule_average(self, svc):
+        # rule_instance_key is NULL for an unscorable check (so a rule with no
+        # scorable checks drops out of COUNT(DISTINCT ...)), and the per-rule
+        # divisor counts scorable checks only.
+        ddl = svc.shaping_view_ddl()
+        assert "CASE WHEN check_name IS NULL OR check_score IS NULL THEN CAST(NULL AS STRING) ELSE concat(" in ddl
+        assert "COUNT(check_score) OVER (" in ddl
+        assert "COUNT(e.check_name) OVER (" not in ddl
+
 
 class TestAsofViewDdl:
     """``v_dq_check_results_asof`` — the table-agnostic AS-OF expansion that
@@ -326,6 +374,9 @@ class TestAsofViewDdl:
         # Trend/as-of breach eval must read the same frozen threshold.
         assert "c.pass_threshold" in svc.asof_view_ddl()
 
+    def test_asof_view_carries_evaluated_row_count(self, svc):
+        assert "c.evaluated_row_count" in svc.asof_view_ddl()
+
     def test_null_run_times_never_enter_the_expansion(self, svc):
         assert "WHERE run_time IS NOT NULL" in svc.asof_view_ddl()
 
@@ -396,8 +447,15 @@ class TestMetricViewDdl:
     def test_yaml_measures_match_the_score_formula(self, svc):
         body = _yaml_body(svc.metric_view_ddl())
         measures = {m["name"]: m["expr"] for m in body["measures"]}
-        assert measures["failed_tests"] == "SUM(error_count + warning_count)"
-        assert measures["total_tests"] == "SUM(input_row_count)"
+        # Row-level tests only, over each check's evaluated rows.
+        assert (
+            measures["failed_tests"]
+            == "SUM(error_count + warning_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')"
+        )
+        assert (
+            measures["total_tests"]
+            == "SUM(evaluated_row_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')"
+        )
         assert (
             measures["score"]
             == "TRY_DIVIDE(SUM(TRY_DIVIDE(check_score, rule_check_count)), COUNT(DISTINCT rule_instance_key))"
@@ -421,6 +479,20 @@ class TestMetricViewDdl:
             measures["failed_rule_count"]
             == "COUNT(DISTINCT registry_rule_id) FILTER (WHERE (error_count + warning_count) > 0)"
         )
+
+    def test_yaml_carries_table_level_test_measures(self, svc):
+        # Dataset checks are one test each and never add to the row tests.
+        body = _yaml_body(svc.metric_view_ddl())
+        measures = {m["name"]: m for m in body["measures"]}
+        assert (
+            measures["table_failed_tests"]["expr"]
+            == "COUNT(1) FILTER (WHERE check_granularity = 'dataset' AND (error_count + warning_count) > 0)"
+        )
+        assert measures["table_total_tests"]["expr"] == "COUNT(check_name) FILTER (WHERE check_granularity = 'dataset')"
+        assert "row-level tests (rows evaluated × row checks)" in measures["failed_tests"]["comment"]
+        assert "row-level tests (rows evaluated × row checks)" in measures["total_tests"]["comment"]
+        for name in ("table_failed_tests", "table_total_tests"):
+            assert "table-level (dataset) checks — one test each. Never add to row tests" in measures[name]["comment"]
 
 
 class TestEnsureViews:
@@ -477,31 +549,42 @@ def _simulate_measure_path(
     input_row_count: int,
     dataset_check_names: set[str] | None = None,
     check_rule_ids: dict[str, str] | None = None,
+    evaluated_counts: dict[str, int] | None = None,
 ) -> tuple[float | None, int, int]:
     """Evaluate the metric-view measures over the shaping-view row shape.
 
     Mirrors exactly what the warehouse computes: the shaping view emits
     one row per check carrying (error_count, warning_count,
-    input_row_count); the measures are ``SUM(error_count +
-    warning_count)``, ``SUM(input_row_count)``, and the equal-rule-weight
-    score measure. Dataset checks have a binary check_score; row checks use
-    their row pass rate. A run
-    with no checks emits a single all-NULL placeholder row, so every
-    SUM is NULL (-> None/0 here).
+    input_row_count, evaluated_row_count — the check's evaluated count
+    when the run recorded one, else input_row_count); the row-test
+    measures are ``SUM(error_count + warning_count)`` and
+    ``SUM(evaluated_row_count)`` over non-dataset checks, and the score is
+    the equal-rule-weight mean over SCORABLE checks only. Dataset checks
+    have a binary check_score guarded by the table row count; row checks
+    score 1 - failed / evaluated rows and are unscorable at 0 evaluated
+    rows. A run with no checks emits a single all-NULL placeholder row, so
+    every SUM is NULL (-> None/0 here).
     """
-    rows = [(m.error_count, m.warning_count, input_row_count) for m in check_metrics]
-    failed = sum(e + w for e, w, _ in rows) if rows else 0
-    total = sum(irc for _, _, irc in rows) if rows else 0
     dataset_names = dataset_check_names or set()
+    evaluated = evaluated_counts or {}
+    failed = 0
+    total = 0
     rules: dict[str, list[float]] = {}
-    for metric, (error_count, warning_count, row_count) in zip(check_metrics, rows, strict=True):
-        if row_count <= 0:
+    for metric in check_metrics:
+        failures = metric.error_count + metric.warning_count
+        is_dataset = metric.check_name in dataset_names
+        evaluated_rows = evaluated.get(metric.check_name, input_row_count)
+        if not is_dataset:
+            failed += failures
+            total += evaluated_rows
+        if is_dataset:
+            if input_row_count <= 0:
+                continue
+            check_score = 0.0 if failures > 0 else 1.0
+        elif evaluated_rows <= 0:
             continue
-        check_score = (
-            (0.0 if error_count + warning_count > 0 else 1.0)
-            if metric.check_name in dataset_names
-            else 1.0 - (error_count + warning_count) / row_count
-        )
+        else:
+            check_score = 1.0 - failures / evaluated_rows
         rule_key = (check_rule_ids or {}).get(metric.check_name, metric.check_name)
         rules.setdefault(rule_key, []).append(check_score)
     per_rule = [sum(check_scores) / len(check_scores) for check_scores in rules.values()]
@@ -514,9 +597,9 @@ class TestMeasureFormulaMatchesScoreService:
 
     ScoreService stays the formula's unit-tested specification (see
     test_score_service.py); this pins the metric-view translation to it
-    on shared fixture data, including the approved filter approximation
-    (total_tests = input_row_count per check, not filter-scoped) and
-    the None-when-no-rows semantics.
+    on shared fixture data, including the None-when-no-rows semantics.
+    These cases carry no evaluated counts (unfiltered checks and legacy
+    runs), where the evaluated denominator falls back to input_row_count.
     """
 
     @pytest.mark.parametrize(
@@ -570,6 +653,50 @@ class TestMeasureFormulaMatchesScoreService:
         simulated_score, _, _ = _simulate_measure_path(check_metrics, 100, check_rule_ids=rule_ids)
         assert simulated_score == pytest.approx(expected)
         assert simulated_score == pytest.approx(0.5)
+
+
+class TestEvaluatedRowsMeasureSemantics:
+    """Filtered checks on the SQL path: evaluated-row denominator,
+    scorable-only rule averaging, and row tests that exclude dataset checks.
+    Parity of these cases with ScoreService lands with its evaluated-count
+    support."""
+
+    def test_filtered_check_scores_against_its_evaluated_rows(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="filtered", error_count=5, warning_count=0),
+            CheckMetricBreakdown(check_name="unfiltered", error_count=10, warning_count=0),
+        ]
+        score, failed, total = _simulate_measure_path(check_metrics, 100, evaluated_counts={"filtered": 10})
+        # filtered: 1 - 5/10 = 0.5; unfiltered: 1 - 10/100 = 0.9.
+        assert score == pytest.approx(0.7)
+        assert failed == 15
+        assert total == 110
+
+    def test_check_with_no_evaluated_rows_leaves_its_rule_and_the_score(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="a_col_1", error_count=0, warning_count=0),
+            CheckMetricBreakdown(check_name="a_col_2", error_count=0, warning_count=0),
+            CheckMetricBreakdown(check_name="b", error_count=50, warning_count=0),
+            CheckMetricBreakdown(check_name="c", error_count=0, warning_count=0),
+        ]
+        rule_ids = {"a_col_1": "a", "a_col_2": "a", "b": "b", "c": "c"}
+        score, _, total = _simulate_measure_path(
+            check_metrics, 100, check_rule_ids=rule_ids, evaluated_counts={"a_col_2": 0, "c": 0}
+        )
+        # Rule a averages only a_col_1 (1.0); rule c has no scorable check and
+        # drops out; b = 0.5. Mean of (1.0, 0.5).
+        assert score == pytest.approx(0.75)
+        assert total == 200
+
+    def test_dataset_checks_never_add_to_row_tests(self):
+        check_metrics = [
+            CheckMetricBreakdown(check_name="row", error_count=10, warning_count=0),
+            CheckMetricBreakdown(check_name="dataset", error_count=100, warning_count=0),
+        ]
+        score, failed, total = _simulate_measure_path(check_metrics, 100, {"dataset"})
+        assert score == pytest.approx(0.45)
+        assert failed == 10
+        assert total == 100
 
 
 # ---------------------------------------------------------------------------

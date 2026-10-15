@@ -18,10 +18,12 @@ architecture):
   RUNNING lifecycle row) simply contribute no attribution rows.
 - *v_dq_check_results* — a plain UC shaping view over the long-format
   *dq_metrics* table. It pivots each run's *input_row_count* /
-  *check_metrics* metric rows and explodes the per-rule JSON array into
-  one row per (run_id, input_location, check_name), carrying
-  *error_count*, *warning_count*, the table-wide *input_row_count*,
-  *run_time*, and an *is_latest_run* flag (window function per
+  *check_metrics* / *check_evaluated_rows* metric rows and explodes the
+  per-rule JSON array into one row per (run_id, input_location,
+  check_name), carrying *error_count*, *warning_count*, the table-wide
+  *input_row_count*, the check's *evaluated_row_count* (rows its filter
+  selected; the table rows when it has no filter, for dataset checks
+  and for legacy runs), *run_time*, and an *is_latest_run* flag (window function per
   input_location), LEFT JOINed to *v_dq_check_attribution* so every
   check row also carries the metadata it RAN with (NULL — the untagged
   bucket — when the run has no frozen rule set or the check carries no
@@ -42,9 +44,15 @@ architecture):
   pass_threshold, binding_version, check_name, registry_rule_id,
   rule_name, severity, dimension, criticality) and measures
   *failed_tests* / *error_tests* / *warning_tests* / *total_tests* /
-  *score* / *failed_checks* / *total_checks* / *rule_count* /
-  *failed_rule_count*. The score measure first averages each reusable rule's
-  checks, then gives every rule equal weight. Empty
+  *table_failed_tests* / *table_total_tests* / *score* /
+  *failed_checks* / *total_checks* / *rule_count* /
+  *failed_rule_count*. *failed_tests* / *total_tests* count row-level
+  tests only (rows evaluated x row checks); *table_failed_tests* /
+  *table_total_tests* count dataset checks, one test each, and are
+  never added to the row tests. The score measure first averages each
+  reusable rule's scorable checks, then gives every rule with at least
+  one scorable check equal weight (a row check whose filter matched no
+  rows is unscorable). Empty
   runs yield SQL NULL, matching ScoreService.compute_table_score. The count measures
   answer authoring/coverage questions ("how many rules", "how many
   rules are failing") directly at the run x table grain. The
@@ -52,9 +60,13 @@ architecture):
   MEASURE(total_tests), so those three names are load-bearing.
 
 The score formula is numerically identical to
-*ScoreService.compute_table_score* (including the approved filter
-approximation for row-level checks). ScoreService remains the formula's unit-tested specification;
-see tests/test_score_view_service.py for the parity test.
+*ScoreService.compute_table_score*: a row check scores
+1 - failed / evaluated_row_count, so a filtered check is judged against
+the rows its filter selected rather than the whole table (runs without
+the *check_evaluated_rows* metric fall back to *input_row_count*, so
+their numbers are unchanged). ScoreService remains the formula's
+unit-tested specification; see tests/test_score_view_service.py for the
+parity test.
 
 Permission model: both views are created by the app's service
 principal and execute with definer's rights. They are NOT a permission
@@ -101,6 +113,15 @@ RUN_MODE_PUBLISHED = "published"
 # [{"check_name": ..., "error_count": ..., "warning_count": ...}, ...].
 # Mirrors metrics_utils.parse_check_metrics / CheckMetricBreakdown.
 _CHECK_METRICS_JSON_SCHEMA = "ARRAY<STRUCT<check_name: STRING, error_count: BIGINT, warning_count: BIGINT>>"
+
+# dq_metrics metric_name of the runner's per-run evaluated-rows payload:
+# [{"check_name": ..., "evaluated_count": ...}, ...] — the rows each FILTERED
+# row-level check evaluated (its filter selected). Must equal
+# dqx_task_runner.evaluated_rows.EVALUATED_ROWS_METRIC (the backend cannot
+# import the tasks package). Absent for unfiltered and dataset checks and for
+# every legacy run, which fall back to the table input_row_count.
+EVALUATED_ROWS_METRIC = "check_evaluated_rows"
+_CHECK_EVALUATED_JSON_SCHEMA = "ARRAY<STRUCT<check_name: STRING, evaluated_count: BIGINT>>"
 
 # from_json schema for dq_validation_runs.checks_json — the rendered rule
 # set the frozen runner json-dumps per run. Addresses exactly the paths
@@ -288,6 +309,15 @@ class ScoreViewService:
           never contribute to any SUM.
         - error_count/warning_count are COALESCE'd to 0 on real check
           rows, mirroring parse_check_metrics.
+        - *evaluated_row_count* is the check's entry in the runner's
+          *check_evaluated_rows* payload (filtered row-level checks only),
+          deduped to one count per check before the LEFT JOIN, else the
+          table *input_row_count*. Row checks score against it; a row
+          check with no evaluated rows is unscorable (NULL check_score),
+          has no *rule_instance_key*, and is not counted in
+          *rule_check_count*, so it leaves its rule's average (and a rule
+          with no scorable checks leaves the table score). Dataset checks
+          stay binary, guarded only by the table *input_row_count*.
         - the LEFT JOIN to *v_dq_check_attribution* stamps every check
           row with the AS-OF-RUN severity/dimension/criticality/columns
           it executed with; rows without a frozen rule set keep NULLs
@@ -321,6 +351,7 @@ class ScoreViewService:
             "    MAX(run_time) AS run_time,\n"
             "    MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) AS input_row_count_str,\n"
             "    MAX(CASE WHEN metric_name = 'check_metrics' THEN metric_value END) AS check_metrics_json,\n"
+            f"    MAX(CASE WHEN metric_name = '{EVALUATED_ROWS_METRIC}' THEN metric_value END) AS check_evaluated_json,\n"
             f"    MAX(user_metadata['{RUN_MODE_TAG}']) AS run_mode_tag,\n"
             f"    MAX(user_metadata['{BINDING_VERSION_TAG}']) AS binding_version_tag\n"
             f"  FROM {metrics_table}\n"
@@ -350,54 +381,108 @@ class ScoreViewService:
             "  LATERAL VIEW OUTER inline(\n"
             f"    from_json(r.check_metrics_json, '{_CHECK_METRICS_JSON_SCHEMA}')\n"
             "  ) c AS check_name, error_count, warning_count\n"
-            ")\n"
-            "SELECT\n"
-            "  e.run_id,\n"
-            "  e.input_location,\n"
-            "  e.run_time,\n"
-            "  e.is_latest_run,\n"
-            "  e.check_name,\n"
-            "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
-            "       ELSE COALESCE(e.error_count, 0) END AS error_count,\n"
-            "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
-            "       ELSE COALESCE(e.warning_count, 0) END AS warning_count,\n"
-            "  CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
-            "       ELSE TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) END AS input_row_count,\n"
-            "  CASE\n"
-            "    WHEN e.is_placeholder THEN CAST(NULL AS DOUBLE)\n"
-            "    WHEN TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) <= 0 THEN CAST(NULL AS DOUBLE)\n"
-            "    WHEN a.check_granularity = 'dataset'\n"
-            "      THEN CASE WHEN COALESCE(e.error_count, 0) + COALESCE(e.warning_count, 0) > 0 THEN 0.0 ELSE 1.0 END\n"
-            "    ELSE 1.0 - TRY_DIVIDE(\n"
-            "      COALESCE(e.error_count, 0) + COALESCE(e.warning_count, 0),\n"
-            "      TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT)\n"
-            "    )\n"
-            "  END AS check_score,\n"
+            "),\n"
+            # One evaluated count per (run, table, check): MAX dedupes a
+            # repeated entry so the LEFT JOIN below can never fan out rows.
+            "evaluated AS (\n"
+            "  SELECT r.run_id, r.input_location, ev.check_name, MAX(ev.evaluated_count) AS evaluated_count\n"
+            "  FROM ranked r\n"
+            "  LATERAL VIEW inline(\n"
+            f"    from_json(r.check_evaluated_json, '{_CHECK_EVALUATED_JSON_SCHEMA}')\n"
+            "  ) ev AS check_name, evaluated_count\n"
+            "  GROUP BY r.run_id, r.input_location, ev.check_name\n"
+            "),\n"
+            "shaped AS (\n"
+            "  SELECT\n"
+            "    e.run_id,\n"
+            "    e.input_location,\n"
+            "    e.run_time,\n"
+            "    e.is_latest_run,\n"
+            "    e.check_name,\n"
+            "    e.is_placeholder,\n"
+            "    CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
+            "         ELSE COALESCE(e.error_count, 0) END AS error_count,\n"
+            "    CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
+            "         ELSE COALESCE(e.warning_count, 0) END AS warning_count,\n"
+            "    CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
+            "         ELSE TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT) END AS input_row_count,\n"
+            # Rows the check's filter selected; checks without an evaluated
+            # count (unfiltered, dataset, legacy runs) use the table rows.
+            "    CASE WHEN e.is_placeholder THEN CAST(NULL AS BIGINT)\n"
+            "         ELSE COALESCE(v.evaluated_count, TRY_CAST(TRY_CAST(e.input_row_count_str AS DOUBLE) AS BIGINT))\n"
+            "    END AS evaluated_row_count,\n"
             # Run-mode resolution: the run-level tag wins; untagged
             # (legacy) runs classify as published — see the docstring
             # for why no run_type heuristic is applied here.
-            f"  COALESCE(e.run_mode_tag, '{RUN_MODE_PUBLISHED}') AS run_mode,\n"
-            "  TRY_CAST(e.binding_version_tag AS INT) AS binding_version,\n"
-            "  a.criticality,\n"
-            "  a.severity,\n"
-            "  a.dimension,\n"
-            "  a.registry_rule_id,\n"
-            "  a.rule_name,\n"
-            "  a.check_granularity,\n"
-            "  CASE WHEN e.check_name IS NULL THEN CAST(NULL AS STRING) ELSE concat(\n"
-            "    COALESCE(e.run_id, ''), '\\u001f', e.input_location, '\\u001f',\n"
-            "    COALESCE(a.registry_rule_id, e.check_name)\n"
+            f"    COALESCE(e.run_mode_tag, '{RUN_MODE_PUBLISHED}') AS run_mode,\n"
+            "    TRY_CAST(e.binding_version_tag AS INT) AS binding_version,\n"
+            "    a.criticality,\n"
+            "    a.severity,\n"
+            "    a.dimension,\n"
+            "    a.registry_rule_id,\n"
+            "    a.rule_name,\n"
+            "    a.check_granularity,\n"
+            "    a.pass_threshold,\n"
+            "    a.columns\n"
+            "  FROM exploded e\n"
+            "  LEFT JOIN evaluated v\n"
+            "    ON v.run_id = e.run_id AND v.input_location = e.input_location AND v.check_name = e.check_name\n"
+            f"  LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
+            "    ON a.run_id = e.run_id\n"
+            "    AND a.source_table_fqn = e.input_location\n"
+            "    AND a.check_name = e.check_name\n"
+            "),\n"
+            "scored AS (\n"
+            "  SELECT\n"
+            "    s.*,\n"
+            "    CASE\n"
+            "      WHEN s.is_placeholder THEN CAST(NULL AS DOUBLE)\n"
+            # Dataset verdicts are binary and ignore evaluated rows; only an
+            # empty table leaves them unscored.
+            "      WHEN s.check_granularity = 'dataset' AND s.input_row_count <= 0 THEN CAST(NULL AS DOUBLE)\n"
+            "      WHEN s.check_granularity = 'dataset'\n"
+            "        THEN CASE WHEN s.error_count + s.warning_count > 0 THEN 0.0 ELSE 1.0 END\n"
+            # A row check whose filter matched nothing is unscorable.
+            "      WHEN s.evaluated_row_count IS NULL OR s.evaluated_row_count <= 0 THEN CAST(NULL AS DOUBLE)\n"
+            "      ELSE 1.0 - TRY_DIVIDE(\n"
+            "        s.error_count + s.warning_count,\n"
+            "        s.evaluated_row_count\n"
+            "      )\n"
+            "    END AS check_score\n"
+            "  FROM shaped s\n"
+            ")\n"
+            "SELECT\n"
+            "  run_id,\n"
+            "  input_location,\n"
+            "  run_time,\n"
+            "  is_latest_run,\n"
+            "  check_name,\n"
+            "  error_count,\n"
+            "  warning_count,\n"
+            "  input_row_count,\n"
+            "  evaluated_row_count,\n"
+            "  check_score,\n"
+            "  run_mode,\n"
+            "  binding_version,\n"
+            "  criticality,\n"
+            "  severity,\n"
+            "  dimension,\n"
+            "  registry_rule_id,\n"
+            "  rule_name,\n"
+            "  check_granularity,\n"
+            # Unscorable checks carry no rule key and are not counted, so a
+            # rule averages its scorable checks and a rule with none drops
+            # out of the table score.
+            "  CASE WHEN check_name IS NULL OR check_score IS NULL THEN CAST(NULL AS STRING) ELSE concat(\n"
+            "    COALESCE(run_id, ''), '\\u001f', input_location, '\\u001f',\n"
+            "    COALESCE(registry_rule_id, check_name)\n"
             "  ) END AS rule_instance_key,\n"
-            "  COUNT(e.check_name) OVER (\n"
-            "    PARTITION BY e.run_id, e.input_location, COALESCE(a.registry_rule_id, e.check_name)\n"
+            "  COUNT(check_score) OVER (\n"
+            "    PARTITION BY run_id, input_location, COALESCE(registry_rule_id, check_name)\n"
             "  ) AS rule_check_count,\n"
-            "  a.pass_threshold,\n"
-            "  a.columns\n"
-            "FROM exploded e\n"
-            f"LEFT JOIN {self.attribution_view_fqn_quoted} a\n"
-            "  ON a.run_id = e.run_id\n"
-            "  AND a.source_table_fqn = e.input_location\n"
-            "  AND a.check_name = e.check_name"
+            "  pass_threshold,\n"
+            "  columns\n"
+            "FROM scored"
         )
 
     def asof_view_ddl(self) -> str:
@@ -475,6 +560,7 @@ class ScoreViewService:
             "  c.error_count,\n"
             "  c.warning_count,\n"
             "  c.input_row_count,\n"
+            "  c.evaluated_row_count,\n"
             "  c.check_score,\n"
             "  c.run_mode,\n"
             "  c.binding_version,\n"
@@ -576,9 +662,9 @@ class ScoreViewService:
             "    comment: DQX criticality the check ran with ('error' | 'warn') — internal framing, prefer severity\n"
             "measures:\n"
             "  - name: failed_tests\n"
-            "    expr: SUM(error_count + warning_count)\n"
-            "    comment: Total failed tests (errors + warnings) across the grouped check rows. "
-            "Report as a share of total_tests, never a bare count\n"
+            "    expr: SUM(error_count + warning_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')\n"
+            "    comment: Failed row-level tests (rows evaluated × row checks) — errors + warnings across the "
+            "grouped row checks. Report as a share of total_tests, never a bare count\n"
             "  - name: error_tests\n"
             "    expr: SUM(error_count)\n"
             "    comment: Failed tests from ERROR-criticality checks across the grouped rows\n"
@@ -586,13 +672,21 @@ class ScoreViewService:
             "    expr: SUM(warning_count)\n"
             "    comment: Failed tests from WARNING-criticality (active-warning) checks across the grouped rows\n"
             "  - name: total_tests\n"
-            "    expr: SUM(input_row_count)\n"
-            "    comment: Total evaluated tests (input rows x checks) across the grouped check rows\n"
+            "    expr: SUM(evaluated_row_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')\n"
+            "    comment: Total row-level tests (rows evaluated × row checks) — each row check counts the rows "
+            "its filter selected (all table rows when unfiltered)\n"
+            "  - name: table_failed_tests\n"
+            "    expr: COUNT(1) FILTER (WHERE check_granularity = 'dataset' AND (error_count + warning_count) > 0)\n"
+            "    comment: Failed table-level (dataset) checks — one test each. Never add to row tests\n"
+            "  - name: table_total_tests\n"
+            "    expr: COUNT(check_name) FILTER (WHERE check_granularity = 'dataset')\n"
+            "    comment: Total table-level (dataset) checks — one test each. Never add to row tests\n"
             "  - name: score\n"
             "    expr: TRY_DIVIDE(SUM(TRY_DIVIDE(check_score, rule_check_count)), "
             "COUNT(DISTINCT rule_instance_key))\n"
             "    comment: Equal-weight mean of rule scores between 0 and 1. A rule score averages its row-check "
-            "pass rates and binary dataset verdicts. NULL when no rows or rules\n"
+            "pass rates (over the rows each check evaluated) and binary dataset verdicts. A check whose filter "
+            "matched no rows is left out. NULL when no rows or rules\n"
             "  - name: failed_checks\n"
             "    expr: COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)\n"
             "    comment: Number of checks with at least one failing test across the grouped rows\n"
