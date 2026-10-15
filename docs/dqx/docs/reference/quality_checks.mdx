@@ -116,7 +116,11 @@ Previously, string values were always treated as literals. To compare against a 
 </Admonition>
 
 <Admonition type="warning" title="Unparseable values in geospatial checks">
-Starting with version 0.17.0, geospatial checks report non-null values that cannot be parsed as failures. Previously most of these checks skipped unparseable values. Null values are still skipped. Binary values are shown as hex in the failure message.
+Starting with version 0.17.0, row-level geospatial checks report non-null values that cannot be parsed as failures, with a message ending in "cannot be parsed as a geometry" (or "geography"). Previously most of these checks skipped unparseable values, and the area and number-of-points checks reported them as "is not a valid geometry". Null values are still skipped. The dataset-level `are_polygons_mutually_disjoint` check still excludes unparseable values.
+
+The two-operand checks (`is_geo_contains`, `is_geo_covers`, `is_geo_intersects`, `is_geo_touches`, `is_geo_within`, `is_geo_within_distance`) also report a reference geometry that cannot be parsed. In approximate mode (`precise=False`), they report a reference that has no H3 cells (for example, an empty geometry or a geometry whose SRID is not WGS 84) as "cannot be represented in H3".
+
+Binary (WKB/EWKB) values are shown as WKT in failure messages, or as hex when they cannot be parsed.
 </Admonition>
 
 ### Usage examples

@@ -129,7 +129,7 @@ def is_geometry(column: str | Column) -> Column:
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        F.concat_ws("", F.lit("value `"), _raw_geo_value_as_text(col_expr), F.lit(condition_str)),
         f"{col_str_norm}_is_not_geometry",
     )
 
@@ -157,7 +157,7 @@ def is_geography(column: str | Column) -> Column:
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        F.concat_ws("", F.lit("value `"), _raw_geo_value_as_text(col_expr), F.lit(condition_str)),
         f"{col_str_norm}_is_not_geography",
     )
 
@@ -1115,13 +1115,17 @@ def _diagnose_point_operand(raw: Column, geom: Column) -> _PointDiagnostics:
 
 
 def _raw_geo_value_as_text(col_expr: Column) -> Column:
-    """Render an unparsed WKT/WKB input value for an error message.
+    """Render a raw WKT/WKB input value for an error message.
 
-    Binary (WKB/EWKB) values are rendered as hex: casting raw bytes to string is not valid UTF-8 and
-    breaks result collection.
+    String values are rendered as-is. Binary (WKB/EWKB) values are rendered as WKT when they parse as a
+    geometry, and as hex otherwise: casting raw bytes to string is not valid UTF-8 and breaks result
+    collection.
     """
     is_binary = F.call_function("typeof", col_expr) == F.lit("binary")
-    return F.when(is_binary, F.hex(col_expr)).otherwise(col_expr.cast("string"))
+    binary_as_text = F.coalesce(
+        F.call_function("st_astext", F.call_function("try_to_geometry", col_expr)), F.hex(col_expr)
+    )
+    return F.when(is_binary, binary_as_text).otherwise(col_expr.cast("string"))
 
 
 def _geo_value_message(value: Column, col_expr_str: str, suffix: str | Column) -> Column:
@@ -1244,19 +1248,23 @@ def _has_topological_relationship_approximate(
     col_geom = F.call_function("try_to_geometry", col_expr)
     ref_geom = F.call_function("try_to_geometry", ref_col)
 
-    def _h3_cells(raw: Column, geom: Column) -> Column:
-        # `h3_try_coverash3` returns NULL for point geometries (no areal coverage) and for
-        # invalid/unsupported input. For points we fall back to `h3_pointash3`, but that is the
-        # non-`try` variant and raises on non-point/invalid input, so gate it on the value actually
-        # parsing to a point. `coalesce` and `when` both short-circuit, so `h3_pointash3` only runs on
-        # a confirmed point; invalid geometries yield NULL instead of failing the job.
-        cover = F.call_function("h3_try_coverash3", raw, resolution_col)
+    def _h3_cells(geom: Column) -> Column:
+        # The H3 functions take WKB/WKT but not EWKT, so feed them the parsed geometry as WKB. WKB carries
+        # no SRID, so only geometries in WGS84 (or with no SRID) are converted; any other SRID yields NULL.
+        # `h3_try_coverash3` returns NULL for point geometries (no areal coverage). For points we fall back
+        # to `h3_pointash3`, but that is the non-`try` variant and raises on non-point input, so gate it on
+        # the value actually parsing to a point. `coalesce` and `when` both short-circuit, so
+        # `h3_pointash3` only runs on a confirmed point; invalid geometries yield NULL instead of failing
+        # the job.
+        is_wgs84 = F.call_function("st_srid", geom).isin(0, DEFAULT_SRID)
+        wkb = F.when(is_wgs84, F.call_function("st_asbinary", geom))
+        cover = F.call_function("h3_try_coverash3", wkb, resolution_col)
         is_point_geom = F.call_function("st_geometrytype", geom) == F.lit(POINT_TYPE)
-        point_cell = F.when(is_point_geom, F.array(F.call_function("h3_pointash3", raw, resolution_col)))
+        point_cell = F.when(is_wgs84 & is_point_geom, F.array(F.call_function("h3_pointash3", wkb, resolution_col)))
         return F.array_distinct(F.coalesce(cover, point_cell))
 
-    col_h3_array = _h3_cells(col_expr, col_geom)
-    ref_h3_array = _h3_cells(ref_col, ref_geom)
+    col_h3_array = _h3_cells(col_geom)
+    ref_h3_array = _h3_cells(ref_geom)
     intersection_size = F.size(F.array_intersect(col_h3_array, ref_h3_array))
 
     is_inside = None
@@ -1268,11 +1276,12 @@ def _has_topological_relationship_approximate(
         case _:
             raise InvalidParameterError(f"Unsupported approximate relationship: {topological_relationship!r}")
 
-    # A non-null value or reference that fails to parse is reported, and so is a reference that parses
-    # but has no H3 cells (e.g. an empty geometry): there is nothing to compare against,
-    # so every row would otherwise pass or fail silently. Reference problems are reported on every
-    # non-null row. A column value that parses but has no H3 cells (NULL or empty, e.g. an empty
-    # geometry) is skipped, since flagging it would be a false positive.
+    # A null value is skipped, and so is a null reference unless the value fails to parse (as in precise
+    # mode). A non-null value or reference that fails to parse is reported, and so is a reference that
+    # parses but has no H3 cells (e.g. an empty geometry or an SRID other than WGS84): there is nothing to
+    # compare against, so every row would otherwise pass or fail silently. Reference problems are reported
+    # on every non-null row. A column value that parses but has no H3 cells is skipped, since flagging it
+    # would be a false positive.
     col_invalid = col_expr.isNotNull() & col_geom.isNull()
     ref_invalid = ref_col.isNotNull() & ref_geom.isNull()
     col_no_cells = col_h3_array.isNull() | (F.size(col_h3_array) == 0)
@@ -1280,7 +1289,7 @@ def _has_topological_relationship_approximate(
     condition = (
         F.when(col_expr.isNull(), F.lit(None))
         .when(col_invalid | ref_invalid | ref_no_cells, F.lit(True))
-        .when(col_no_cells, F.lit(None))
+        .when(ref_col.isNull() | col_no_cells, F.lit(None))
         .otherwise(~is_inside)
     )
 
@@ -1709,7 +1718,7 @@ def _geometry_value_sql(col_str_norm: str, col_expr: Column, *, convert_column: 
 
     A native GEOMETRY/GEOGRAPHY value (*convert_column* False) cannot be cast to STRING, so it is
     rendered as WKT with *st_astext*. Otherwise the raw input is rendered with *_raw_geo_value_as_text*,
-    which shows binary (WKB/EWKB) input as hex.
+    which shows binary (WKB/EWKB) input as WKT, or as hex when it cannot be parsed.
 
     Args:
         col_str_norm: Normalized column reference produced by *get_normalized_column_and_expr*.

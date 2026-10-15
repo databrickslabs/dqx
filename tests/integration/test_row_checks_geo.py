@@ -116,6 +116,7 @@ def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
             ["POINT(1 1)", None, None],  # valid WKT
             ["not-a-geometry", None, None],  # invalid (not valid WKT)
             [None, bytes.fromhex("01E9030000000000000000F03F00000000000000400000000000005940"), None],  # valid WKB
+            [None, bytes.fromhex("01FF02"), None],  # invalid (malformed WKB, not valid UTF-8)
             [None, None, 42],  # invalid (wrong data type)
         ],
         input_schema,
@@ -131,6 +132,7 @@ def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
             [None, None, None],
             ["value `not-a-geometry` in column `geom_string` is not a geometry", None, None],
             [None, None, None],
+            [None, "value `01FF02` in column `geom_binary` is not a geometry", None],
             [None, None, "value `42` in column `geom_int` is not a geometry"],
         ],
         checked_schema,
@@ -147,6 +149,8 @@ def test_is_geography(skip_if_runtime_not_geo_compatible, spark):
             ["POINT(181 91)", None, None],  # invalid (lat/lon out of range)
             ["not-a-geography", None, None],  # invalid (not valid WKT)
             [None, bytes.fromhex("0101000000000000000000f03f0000000000000040"), None],  # valid WKB
+            [None, bytes.fromhex("01010000000000000000a066400000000000c05640"), None],  # invalid (lat/lon out of range)
+            [None, bytes.fromhex("01FF02"), None],  # invalid (malformed WKB, not valid UTF-8)
             [None, None, 42],  # invalid (wrong data type)
         ],
         input_schema,
@@ -163,6 +167,8 @@ def test_is_geography(skip_if_runtime_not_geo_compatible, spark):
             ["value `POINT(181 91)` in column `geography_string` is not a geography", None, None],
             ["value `not-a-geography` in column `geography_string` is not a geography", None, None],
             [None, None, None],
+            [None, "value `POINT(181 91)` in column `geography_binary` is not a geography", None],
+            [None, "value `01FF02` in column `geography_binary` is not a geography", None],
             [None, None, "value `42` in column `geography_int` is not a geography"],
         ],
         checked_schema,
@@ -462,13 +468,14 @@ def test_is_not_null_island(skip_if_runtime_not_geo_compatible, spark):
     assertDataFrameEqual(actual, expected)
 
 
-def test_single_column_geo_checks_render_binary_input_as_hex(skip_if_runtime_not_geo_compatible, spark):
-    """WKB input is shown as hex, so a malformed (non-UTF-8) blob does not break the error column."""
+def test_single_column_geo_checks_render_binary_input(skip_if_runtime_not_geo_compatible, spark):
+    """WKB input is shown as WKT when it parses, and a malformed (non-UTF-8) blob as hex so it does not
+    break the error column."""
     test_df = spark.createDataFrame([[_POINT_FAR_WKB], [bytes.fromhex("01FF02")], [None]], "geom: binary")
     actual = test_df.select(is_polygon("geom"), is_not_null_island("geom"))
     expected = spark.createDataFrame(
         [
-            [f"value `{_POINT_FAR_WKB.hex().upper()}` in column `geom` is not a polygon geometry", None],
+            [f"value `{_POINT_FAR}` in column `geom` is not a polygon geometry", None],
             [
                 "value `01FF02` in column `geom` cannot be parsed as a geometry",
                 "value `01FF02` in column `geom` cannot be parsed as a geometry",
@@ -1121,6 +1128,59 @@ def test_geo_approximate_empty_column_geometry_is_skipped(skip_if_runtime_not_ge
     )
     expected = spark.createDataFrame(
         [["POLYGON EMPTY", None, None], ["GEOMETRYCOLLECTION EMPTY", None, None], [None, None, None]],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_ewkt_operands(skip_if_runtime_not_geo_compatible, spark):
+    """EWKT values and references in WGS 84 are indexed in H3 like their WKT equivalents."""
+    point_inside, point_outside = f"SRID=4326;{_POINT_INSIDE}", f"SRID=4326;{_POINT_OUTSIDE}"
+    overlapping_polygon = f"SRID=4326;{_OVERLAPPING_POLYGON}"
+    test_df = spark.createDataFrame([[point_inside], [point_outside], [overlapping_polygon]], _GEO_SCHEMA)
+    actual = test_df.select("geom", is_geo_covers("geom", f"SRID=4326;{_REF_POLYGON}", resolution=7))
+    expected = spark.createDataFrame(
+        [
+            [point_inside, None],
+            [point_outside, _covers_approximate_violation(_POINT_OUTSIDE)],
+            [overlapping_polygon, _covers_approximate_violation(_OVERLAPPING_POLYGON)],
+        ],
+        _COVERS_APPROXIMATE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_reference_outside_wgs84_is_flagged(skip_if_runtime_not_geo_compatible, spark):
+    """A reference with an SRID other than WGS 84 cannot be indexed in H3, so it is reported."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    actual = test_df.select("geom", is_geo_intersects("geom", f"SRID=3857;{_REF_POLYGON}", resolution=7))
+    message = "reference geometry for column `geom` cannot be represented in H3"
+    expected = spark.createDataFrame([[_POINT_INSIDE, message], [None, None]], _INTERSECTS_APPROXIMATE_SCHEMA)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_null_reference_column_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """A null reference is skipped like in precise mode; an unparseable value is still reported."""
+    test_df = spark.createDataFrame(
+        [[_POINT_INSIDE, None], [_NOT_A_GEOMETRY, None], [_POINT_OUTSIDE, _REF_POLYGON]], "geom: string, ref: string"
+    )
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", F.col("ref"), resolution=7),
+        is_geo_intersects("geom", F.col("ref"), resolution=7),
+    )
+    parse_failure = f"value `{_NOT_A_GEOMETRY}` in column `geom` cannot be parsed as a geometry"
+    expected = spark.createDataFrame(
+        [
+            [_POINT_INSIDE, None, None],
+            [_NOT_A_GEOMETRY, parse_failure, parse_failure],
+            [
+                _POINT_OUTSIDE,
+                _covers_approximate_violation(_POINT_OUTSIDE),
+                _intersects_approximate_violation(_POINT_OUTSIDE),
+            ],
+        ],
         "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
         "geom_does_not_intersect_reference_geometry_approximately: string",
     )
