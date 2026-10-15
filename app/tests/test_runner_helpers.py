@@ -754,7 +754,7 @@ class TestBuildEvaluatedRowsMetric:
         expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("a_not_null", "region = 'EU'")])
         assert expr is not None
         assert expr.endswith(" as check_evaluated_rows")
-        assert "count(case when (region = 'EU') then 1 end)" in expr
+        assert "count(case when (region = 'EU'\n) then 1 end)" in expr
         assert "'\"a_not_null\"'" in expr
 
     def test_expression_skeleton_joins_entries(self, evaluated_rows_module):
@@ -764,7 +764,7 @@ class TestBuildEvaluatedRowsMetric:
         assert expr is not None
         assert expr.startswith("concat('[', concat_ws(',', ")
         assert expr.count("count(case when") == 2
-        assert expr.index("one") < expr.index("two")
+        assert expr.index("'\"one\"'") < expr.index("'\"two\"'")
 
     def test_dataset_check_with_filter_is_skipped(self, evaluated_rows_module):
         check = {
@@ -783,11 +783,15 @@ class TestBuildEvaluatedRowsMetric:
     def test_unsafe_filter_is_skipped(self, evaluated_rows_module):
         assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("bad", "1=1; DROP TABLE x")]) is None
 
-    def test_line_comment_in_filter_is_stripped(self, evaluated_rows_module):
-        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "a > 0 -- note")])
+    def test_double_dash_inside_string_literal_is_kept_verbatim(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "note = 'a--b'")])
         assert expr is not None
-        assert "note" not in expr
-        assert "count(case when (a > 0 ) then 1 end)" in expr
+        assert "note = 'a--b'" in expr
+
+    def test_trailing_line_comment_cannot_swallow_closing_paren(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "a > 0 -- only positives")])
+        assert expr is not None
+        assert "count(case when (a > 0 -- only positives\n) then 1 end)" in expr
 
     def test_for_each_column_gets_entry_per_expanded_rule(self, evaluated_rows_module):
         check = {
@@ -797,6 +801,6 @@ class TestBuildEvaluatedRowsMetric:
         }
         expr = evaluated_rows_module.build_evaluated_rows_metric([check])
         assert expr is not None
-        assert expr.count("count(case when (region = 'EU') then 1 end)") == 2
+        assert expr.count("count(case when (region = 'EU'\n) then 1 end)") == 2
         assert "'\"a_is_null\"'" in expr
         assert "'\"b_is_null\"'" in expr

@@ -21,10 +21,6 @@ def _sql_string_literal(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _strip_line_comments(sql: str) -> str:
-    return "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
-
-
 def build_evaluated_rows_metric(checks: list[dict[str, object]]) -> str | None:
     """Build the *check_evaluated_rows* observer metric, or None.
 
@@ -38,17 +34,21 @@ def build_evaluated_rows_metric(checks: list[dict[str, object]]) -> str | None:
     """
     entries: list[str] = []
     for rule in deserialize_checks(checks):
-        if not isinstance(rule, DQRowRule) or not rule.filter or not rule.filter.strip():
+        if not isinstance(rule, DQRowRule) or not rule.filter:
             continue
-        row_filter = _strip_line_comments(rule.filter)
-        if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({row_filter})"):
+        row_filter = rule.filter
+        if not row_filter.strip():
+            continue
+        # The raw filter is embedded as-is (DQX evaluates it unmodified); the trailing newline
+        # terminates a final line comment so it cannot swallow the closing parenthesis.
+        if not is_sql_query_safe(f"SELECT * FROM _t WHERE ({row_filter}\n)"):
             logger.warning("Skipping evaluated-row count for a check whose filter failed the SQL safety check")
             continue
         # JSON-encode the name (quotes, backslashes, control chars), then escape as a SQL literal.
         json_name_literal = _sql_string_literal(json.dumps(rule.name))
         entries.append(
             f"concat('{{\"check_name\":', {json_name_literal}, ',\"evaluated_count\":', "
-            f"cast(count(case when ({row_filter}) then 1 end) as string), '}}')"
+            f"cast(count(case when ({row_filter}\n) then 1 end) as string), '}}')"
         )
     if not entries:
         return None
