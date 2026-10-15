@@ -19,7 +19,9 @@ import logging
 import numpy as np
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, TimestampType
+from pyspark.sql.types import DoubleType
+
+from databricks.labs.dqx.anomaly.temporal_axis import temporal_axis_seconds
 
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis, candidate_periods, trend_strength
 from databricks.labs.dqx.utils import quote_column_name
@@ -46,7 +48,7 @@ def measure_trend_strength(df: DataFrame, time_column: str, metrics: list[str]) 
     produces the advisory. That is the conservative direction for a warning: it speaks up rather than
     staying quiet when it does not know.
     """
-    seconds = F.unix_timestamp(F.col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())
+    seconds = temporal_axis_seconds(df, time_column)
     bounds = df.agg(F.min(seconds).alias("lo"), F.max(seconds).alias("hi")).first()
     if bounds is None or bounds["lo"] is None or bounds["hi"] is None:
         return 0.0

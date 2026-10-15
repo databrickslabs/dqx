@@ -24,7 +24,11 @@ from pyspark.sql.types import DoubleType, IntegerType, StructField, StructType
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 
-from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
+from databricks.labs.dqx.anomaly.segment_utils import (
+    BASELINE_KEY_COLUMN,
+    allocate_baseline_key_column,
+    with_baseline_key,
+)
 from databricks.labs.dqx.anomaly.feature_prep import collect_feature_matrix
 from databricks.labs.dqx.anomaly.group_config import MIN_ROWS_PER_BASELINE_GROUP
 from databricks.labs.dqx.anomaly.transformers import (
@@ -215,6 +219,7 @@ def score_with_model(
     Feature engineering is applied in Spark before the pandas UDF.
     This enables distributed inference across the Spark cluster.
     """
+    key_column = allocate_baseline_key_column([*df.columns, *feature_metadata.engineered_feature_names])
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
         df.select(
             *[
@@ -225,6 +230,7 @@ def score_with_model(
             ]
         ),
         feature_metadata,
+        baseline_key_col=key_column,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -255,7 +261,7 @@ def score_with_model(
     )
     # Calibration needs scores and group identity, not another copy of the features. Selecting
     # only these outputs also permits a real training feature named anomaly_score or prediction.
-    grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
+    grouping = [F.col(quote_column_name(key_column)).alias(BASELINE_KEY_COLUMN)] if feature_metadata.baseline_by else []
     result = result.select(*grouping, "_scores.anomaly_score", "_scores.prediction")
 
     return result
@@ -265,6 +271,7 @@ def score_with_ensemble_models(
     models: list[Pipeline], df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
 ) -> DataFrame:
     """Score DataFrame using an ensemble of models and return mean scores."""
+    key_column = allocate_baseline_key_column([*df.columns, *feature_metadata.engineered_feature_names])
     engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
         df.select(
             *[
@@ -275,6 +282,7 @@ def score_with_ensemble_models(
             ]
         ),
         feature_metadata,
+        baseline_key_col=key_column,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -299,7 +307,7 @@ def score_with_ensemble_models(
     result = engineered_df.withColumn(
         "_scores", predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
     )
-    grouping = [BASELINE_KEY_COLUMN] if feature_metadata.baseline_by else []
+    grouping = [F.col(quote_column_name(key_column)).alias(BASELINE_KEY_COLUMN)] if feature_metadata.baseline_by else []
     result = result.select(*grouping, "_scores.anomaly_score")
 
     return result
@@ -380,7 +388,7 @@ def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMeta
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
     quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, SEVERITY_QUANTILE_RELATIVE_ERROR)
 
-    grouped = compute_baseline_score_quantiles(scored, feature_metadata.baseline_by)
+    grouped = compute_baseline_score_quantiles(scored, feature_metadata.baseline_by, key_column=BASELINE_KEY_COLUMN)
     return ScoreCalibration(
         global_quantiles=dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False)),
         group_quantiles=grouped.group_quantiles,
@@ -388,7 +396,9 @@ def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMeta
     )
 
 
-def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str]) -> ScoreCalibration:
+def compute_baseline_score_quantiles(
+    scored_df: DataFrame, baseline_by: list[str], *, key_column: str | None = None
+) -> ScoreCalibration:
     """Compute the score quantiles of each group from an already-scored DataFrame.
 
     Takes scores rather than a model so the training set is scored once and reused for both the
@@ -397,6 +407,12 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
     ``percentile_approx`` in one ``groupBy`` rather than ``approxQuantile`` per group: the latter
     is a driver-side call and would mean one Spark job per group, which is the cost pattern this
     whole change exists to avoid.
+
+    Args:
+        scored_df: Raw grouping columns with scores, or the output of a DQX scoring function.
+        baseline_by: Source columns defining the comparison groups.
+        key_column: Explicitly owned key supplied by a scoring function after it removed the raw
+            grouping columns. When omitted, compute a new key from the source grouping columns.
     """
     if not baseline_by:
         return ScoreCalibration({}, {}, ())
@@ -410,24 +426,22 @@ def compute_baseline_score_quantiles(scored_df: DataFrame, baseline_by: list[str
         F.percentile_approx(usable_score, prob, accuracy).alias(key)
         for prob, key in zip(SCORE_QUANTILE_PROBS, SCORE_QUANTILE_KEYS, strict=True)
     ]
-    # Read the key feature engineering already computed rather than rebuilding it from the raw
-    # group columns, which this frame no longer has: it is the scored *engineered* frame, and
-    # feature engineering drops the group columns before the model sees them.
-    grouped = (
-        with_baseline_key(scored_df, baseline_by)
-        .groupBy(BASELINE_KEY_COLUMN)
-        .agg(*quantile_exprs, F.count(usable_score).alias("__dqx_usable_scores"))
+    if key_column is None:
+        key_column = allocate_baseline_key_column(scored_df.columns)
+        scored_df = with_baseline_key(scored_df, baseline_by, key_column=key_column)
+    grouped = scored_df.groupBy(F.col(quote_column_name(key_column))).agg(
+        *quantile_exprs, F.count(usable_score).alias("__dqx_usable_scores")
     )
 
     result: dict[str, dict[str, float]] = {}
     known_group_keys: list[str] = []
     for row in grouped.collect():
-        known_group_keys.append(row[BASELINE_KEY_COLUMN])
+        known_group_keys.append(row[key_column])
         quantiles = {key: float(row[key]) for key in SCORE_QUANTILE_KEYS if row[key] is not None}
         # A group missing any quantile cannot be interpolated over, so it is left out entirely
         # and falls back to the global calibration rather than being half-calibrated.
         if row["__dqx_usable_scores"] >= MIN_ROWS_PER_BASELINE_GROUP and len(quantiles) == len(SCORE_QUANTILE_KEYS):
-            result[row[BASELINE_KEY_COLUMN]] = quantiles
+            result[row[key_column]] = quantiles
     return ScoreCalibration({}, result, tuple(sorted(known_group_keys)))
 
 

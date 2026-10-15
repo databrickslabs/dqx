@@ -99,6 +99,12 @@ DQX fits each metric's expected level as a function of time, persists it with th
 detector the *difference* between the observed value and that expectation. Because the expectation is a
 function rather than a lookup table, it extends to timestamps the training window never contained.
 
+The time column may be a `DATE`, `TIMESTAMP_NTZ`, or `TIMESTAMP`. Dates and timestamps without a time
+zone use their calendar values; timestamps with a time zone use absolute instants. Changing the Spark
+session time zone between training and scoring therefore does not move the fitted time axis. Keep the
+column's data type and time meaning consistent when scoring. Rebuild time-conditioned models trained
+from earlier unreleased revisions with `DATE` or `TIMESTAMP_NTZ` in a non-UTC session.
+
 It is the third of three independent questions, and they compose. The column you name here is treated as an
 **axis**, never as a feature, which is the distinction most worth holding on to: listing a timestamp in
 `columns` instead expands it into seven calendar features and answers a completely different question.

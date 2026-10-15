@@ -31,8 +31,8 @@ def fixture_alias_collision_frame(spark: SparkSession) -> DataFrame:
         for index in range(120)
     ]
     rows.append(rows[10])
-    # Occupy both first-choice and case-variant aliases to require real allocation,
-    # rather than moving the collision to a different fixed working name.
+    # Occupy indexed aliases too: when a test's selected metric or time axis uses
+    # the preferred name, allocation must also avoid these case-variant fields.
     occupied = [
         "__dqx_time_bucket_0",
         "__DQX_TIME_BUCKET_1",

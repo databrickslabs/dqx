@@ -37,9 +37,11 @@ from pyspark.sql.functions import (
 )
 from pyspark.sql.types import DoubleType, TimestampType
 
-from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN, with_baseline_key
+from databricks.labs.dqx.anomaly.segment_utils import allocate_baseline_key_column, with_baseline_key
+from databricks.labs.dqx.anomaly.column_names import reserve_temporary_column
 from databricks.labs.dqx.anomaly.group_config import MIN_ROWS_PER_BASELINE_GROUP
 from databricks.labs.dqx.anomaly.temporal import TemporalBasis, fit_temporal, select_basis
+from databricks.labs.dqx.anomaly.temporal_axis import temporal_axis_seconds
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.utils import get_table_primary_keys, quote_column_name, sanitize_for_logging
@@ -738,8 +740,9 @@ def _apply_frequency_encoding(
 ) -> DataFrame:
     """Apply Frequency encoding to a categorical column."""
     feature_name = f"{col_name}{FREQUENCY_FEATURE_SUFFIX}"
-    lookup_key_col = f"__dqx_{col_name}_category"
-    lookup_val_col = f"__dqx_{col_name}_frequency"
+    occupied_names = {*transformed_df.columns, feature_name}
+    lookup_key_col = reserve_temporary_column("__dqx_category", occupied_names)
+    lookup_val_col = reserve_temporary_column("__dqx_frequency", occupied_names)
 
     if is_training:
         total_count = transformed_df.count()
@@ -963,15 +966,6 @@ CALENDAR_FEATURE_SUFFIXES = (
 TEMPORAL_FIT_BUCKETS = 4000
 
 
-def _epoch_seconds(time_column: str, t_min: float) -> Column:
-    """The time axis the temporal basis was fitted against: seconds since the window start.
-
-    Kept in one place because training and scoring must agree on it exactly. A different origin or a
-    different unit produces an expectation for a design the coefficients were never fitted to.
-    """
-    return F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType()) - lit(t_min)
-
-
 def _temporal_expected_column(basis: TemporalBasis, coefficients: list[float], seconds: Column) -> Column:
     """The fitted expected level, as a Spark expression.
 
@@ -1007,6 +1001,7 @@ def _process_baseline_relative_features(
     baseline_medians: dict[str, dict[str, float]],
     global_medians: dict[str, float],
     engineered_features: list[str],
+    group_key_col: str,
 ) -> DataFrame:
     """Append each numeric metric's deviation from its own group's baseline.
 
@@ -1039,12 +1034,11 @@ def _process_baseline_relative_features(
     if not baseline_by:
         return transformed_df
 
-    transformed_df = with_baseline_key(transformed_df, baseline_by)
+    transformed_df = with_baseline_key(transformed_df, baseline_by, key_column=group_key_col)
     if not numeric_cols:
         return transformed_df
 
     metrics = [c.name for c in numeric_cols]
-    group_key_col = BASELINE_KEY_COLUMN
 
     if is_training:
         computed_group, computed_global = _compute_baseline_medians(transformed_df, metrics, group_key_col)
@@ -1056,10 +1050,10 @@ def _process_baseline_relative_features(
     # positional), and each feature's value is unchanged: the same per-group baseline, the same
     # coalesce to the global baseline on a group miss, the same signed-log-ratio.
     metrics_with_baselines = [metric for metric in metrics if baseline_medians.get(metric)]
-    occupied_names = {name.casefold() for name in transformed_df.columns}
-    occupied_names.update(f"{metric}{BASELINE_RELATIVE_SUFFIX}".casefold() for metric in metrics)
+    occupied_names = set(transformed_df.columns)
+    occupied_names.update(f"{metric}{BASELINE_RELATIVE_SUFFIX}" for metric in metrics)
     baseline_cols = {
-        metric: _reserve_temporary_column("__dqx_baseline_", occupied_names) for metric in metrics_with_baselines
+        metric: reserve_temporary_column("__dqx_baseline", occupied_names) for metric in metrics_with_baselines
     }
     if metrics_with_baselines:
         lookup_df = _baseline_lookup_df(transformed_df, baseline_medians, baseline_cols, group_key_col)
@@ -1091,21 +1085,6 @@ def _process_baseline_relative_features(
     # runs on the scored frame, downstream of here. It is not a feature — see the explicit
     # projection in ``prepare_training_features``, which is what keeps it out of the model.
     return transformed_df
-
-
-def _reserve_temporary_column(prefix: str, occupied_names: set[str]) -> str:
-    """Reserve a working name against case-folded input and generated column names.
-
-    At most one more candidate than occupied names is needed to find a free name.
-    These aliases exist only during transformation and are never persisted.
-    """
-    name = next(
-        candidate
-        for index in range(len(occupied_names) + 1)
-        if (candidate := f"{prefix}{index}").casefold() not in occupied_names
-    )
-    occupied_names.add(name.casefold())
-    return name
 
 
 def _compute_baseline_medians(
@@ -1206,14 +1185,8 @@ def _fit_temporal_from_buckets(
     Returns:
         ``(basis, coefficients, rejected_periods, window)``.
     """
-    bounds = df.agg(
-        F.min(F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())).alias(
-            "t_min"
-        ),
-        F.max(F.unix_timestamp(col(quote_column_name(time_column)).cast(TimestampType())).cast(DoubleType())).alias(
-            "t_max"
-        ),
-    ).first()
+    axis = temporal_axis_seconds(df, time_column)
+    bounds = df.agg(F.min(axis).alias("t_min"), F.max(axis).alias("t_max")).first()
     if bounds is None or bounds["t_min"] is None or bounds["t_max"] is None:
         raise ComputationError(
             f"Could not read a time range from column '{time_column}'. Every value is null or unparseable "
@@ -1222,18 +1195,16 @@ def _fit_temporal_from_buckets(
     t_min, t_max = float(bounds["t_min"]), float(bounds["t_max"])
     span = max(t_max - t_min, 1.0)
 
-    seconds = _epoch_seconds(time_column, t_min)
-    occupied_names = {name.casefold() for name in (*df.columns, *source_columns)}
-    bucket_name = _reserve_temporary_column("__dqx_time_bucket_", occupied_names)
-    seconds_name = _reserve_temporary_column("__dqx_bucket_seconds_", occupied_names)
+    seconds = axis - lit(t_min)
+    occupied_names = {*df.columns, *source_columns}
+    bucket_name = reserve_temporary_column("__dqx_time_bucket", occupied_names)
+    seconds_name = reserve_temporary_column("__dqx_bucket_seconds", occupied_names)
     # Rows with no timestamp are dropped from the fit rather than bucketed. A null timestamp yields a null
     # bucket whose min(seconds) is also null, and that null reached float() below as a TypeError -- one
     # unparseable row was enough to fail training outright. Dropping them removes the bucket rather than
     # guarding its symptom; the all-null case is already refused above, with an explanation.
     # Scoring has always tolerated a null timestamp by emitting a zero residual, so this aligns the two.
-    bucketed = df.filter(col(quote_column_name(time_column)).cast(TimestampType()).isNotNull()).withColumn(
-        bucket_name, F.floor(seconds / lit(span / TEMPORAL_FIT_BUCKETS))
-    )
+    bucketed = df.filter(axis.isNotNull()).withColumn(bucket_name, F.floor(seconds / lit(span / TEMPORAL_FIT_BUCKETS)))
     aggregations = [
         F.percentile_approx(col(quote_column_name(source)), 0.5).alias(name) for name, source in source_columns.items()
     ]
@@ -1249,10 +1220,6 @@ def _fit_temporal_from_buckets(
         name: np.array([float(row[name]) if row[name] is not None else np.nan for row in rows], dtype=float)
         for name in source_columns
     }
-    # A bucket where a metric had no non-null value carries NaN, which would poison the fit. Drop those
-    # buckets per metric rather than dropping the metric, so one sparse column does not cost the rest.
-    usable = {name: ~np.isnan(values) for name, values in metrics.items()}
-
     # Every metric, not the first usable one. select_basis masks each on its own NaNs and reads the full
     # bucket axis for the period search, so neither the periods nor the changepoint count depends on
     # schema order any more.
@@ -1260,7 +1227,8 @@ def _fit_temporal_from_buckets(
 
     coefficients: dict[str, list[float]] = {}
     for name, values in metrics.items():
-        mask = usable[name]
+        # Drop empty buckets per metric so one sparse column does not cost the rest.
+        mask = ~np.isnan(values)
         fitted = fit_temporal(bucket_seconds[mask], {name: values[mask]}, basis)
         coefficients.update(fitted)
 
@@ -1321,7 +1289,7 @@ def _process_temporal_baseline_features(
     else:
         basis = TemporalBasis.from_dict(temporal.basis)
 
-    seconds = _epoch_seconds(baseline_over_time, temporal.window.get("t_min", 0.0))
+    seconds = temporal_axis_seconds(transformed_df, baseline_over_time) - lit(temporal.window.get("t_min", 0.0))
     for metric in metrics:
         feature_name = f"{metric}{TEMPORAL_RELATIVE_SUFFIX}"
         coefficient_vector = temporal.coefficients.get(metric)
@@ -1408,6 +1376,8 @@ def apply_feature_engineering(
     global_medians: dict[str, float] | None = None,
     baseline_over_time: str | None = None,
     temporal: TemporalState | None = None,
+    *,
+    baseline_key_col: str | None = None,
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """
     Apply feature engineering transformations in Spark (distributed).
@@ -1444,6 +1414,8 @@ def apply_feature_engineering(
             time-relative features entirely, which is what makes a pre-temporal model's feature list
             byte-identical.
         temporal: Pre-fitted temporal artefacts (for scoring); filled in place when training.
+        baseline_key_col: Unoccupied transient column for the computed group key. A caller that needs
+            the key after raw grouping columns are removed supplies its owned name explicitly.
     """
     is_training = frequency_maps is None
     if frequency_maps is None:
@@ -1495,6 +1467,7 @@ def apply_feature_engineering(
         baseline_medians,
         global_medians,
         engineered_features,
+        baseline_key_col or allocate_baseline_key_column(transformed_df.columns),
     )
 
     # Must stay last, and must stay after the group-relative block above: it reads the columns that one
@@ -1594,6 +1567,8 @@ def apply_feature_engineering_from_metadata(
     df: DataFrame,
     feature_metadata: SparkFeatureMetadata,
     column_infos: list[ColumnTypeInfo] | None = None,
+    *,
+    baseline_key_col: str | None = None,
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """Re-apply the transformations recorded in *feature_metadata* to a new DataFrame.
 
@@ -1607,6 +1582,7 @@ def apply_feature_engineering_from_metadata(
         df: DataFrame to transform.
         feature_metadata: Metadata persisted at training time.
         column_infos: Column infos, reconstructed from *feature_metadata* when omitted.
+        baseline_key_col: Unoccupied transient name that the caller owns for the computed group key.
 
     Returns:
         The engineered DataFrame and the metadata describing it. The returned metadata's
@@ -1628,4 +1604,5 @@ def apply_feature_engineering_from_metadata(
             coefficients=feature_metadata.temporal_coefficients,
             window=feature_metadata.temporal_window,
         ),
+        baseline_key_col=baseline_key_col,
     )

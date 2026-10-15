@@ -1,15 +1,17 @@
 """The baseline key: one group identifier, computed identically in Python and in Spark."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.utils import quote_column_name
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.anomaly.column_names import names_resolve_same, reserve_temporary_column
 
 
-# The single column every stage reads the group key from. See *with_baseline_key*.
+# The preferred name, used only when it does not conflict with source fields.
 BASELINE_KEY_COLUMN = "__dqx_baseline_key"
 
 
@@ -69,19 +71,21 @@ def baseline_key_column(baseline_by: list[str]) -> Column:
     return F.concat(*parts) if parts else F.lit("")
 
 
-def with_baseline_key(df: DataFrame, baseline_by: list[str]) -> DataFrame:
-    """Ensure *df* carries *BASELINE_KEY_COLUMN*, computing it only when absent.
+def allocate_baseline_key_column(columns: Iterable[str]) -> str:
+    """Choose a transient key name without replacing a source field, regardless of case."""
+    occupied = set(columns)
+    return reserve_temporary_column(BASELINE_KEY_COLUMN, occupied)
 
-    Idempotent on purpose, and the point is *availability*, not agreement: every stage calls
-    *baseline_key_column*, so two Spark-side computations cannot disagree with each other.
-    What they can do is run on a frame that no longer has the columns to compute from.
 
-    Feature engineering drops the raw group columns so they cannot reach the sklearn pipeline or
-    the inferred MLflow signature. Stages downstream of it therefore have the grouping only if
-    something carried it forward. Training-time severity calibration is downstream — it runs on the
-    scored engineered frame — and rebuilding the key there raised
-    ``UNRESOLVED_COLUMN`` on the first grouped model ever trained against real Spark.
+def with_baseline_key(df: DataFrame, baseline_by: list[str], *, key_column: str) -> DataFrame:
+    """Compute the group key into an explicitly owned, unoccupied transient column.
+
+    A source field can have any name, including the preferred internal key name. Callers allocate
+    a free target and carry that name explicitly through feature engineering and calibration;
+    an existing source field is never accepted as evidence that DQX already computed its key.
     """
-    if not baseline_by or BASELINE_KEY_COLUMN in df.columns:
+    if not baseline_by:
         return df
-    return df.withColumn(BASELINE_KEY_COLUMN, baseline_key_column(baseline_by))
+    if any(names_resolve_same(key_column, name) for name in df.columns):
+        raise InvalidParameterError("The transient baseline key conflicts with an input column.")
+    return df.withColumn(key_column, baseline_key_column(baseline_by))

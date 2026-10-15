@@ -15,6 +15,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
+from databricks.labs.dqx.anomaly.column_names import names_resolve_same
 from databricks.labs.dqx.anomaly.transformers import (
     BASELINE_RELATIVE_SUFFIX,
     BOOLEAN_FEATURE_SUFFIX,
@@ -312,10 +313,16 @@ def validate_generated_feature_names(
     # Feature engineering projects only supported requested features. Incidental input columns are neither
     # features nor comparison bases, so their names cannot change the model projection and must not block
     # training. Bases stay here because the transforms still read them after derived columns are added.
-    existing = set(feature_columns) | set(baseline_by or [])
+    case_sensitive = _uses_case_sensitive_column_resolution(df)
+    existing = [*feature_columns, *(baseline_by or [])]
     if baseline_over_time:
-        existing.add(baseline_over_time)
-    overwrites = sorted(entry for entry in generated if entry[0] != entry[1] and entry[0] in existing)
+        existing.append(baseline_over_time)
+    overwrites = sorted(
+        entry
+        for entry in generated
+        if entry[0] != entry[1]
+        and any(names_resolve_same(entry[0], name, case_sensitive=case_sensitive) for name in existing)
+    )
     if overwrites:
         details = "; ".join(
             f"'{name}' already exists and would be overwritten by {transform} of '{source}'"
@@ -327,10 +334,7 @@ def validate_generated_feature_names(
             "picking one, because either choice silently drops data you asked it to check."
         )
 
-    by_name = collections.defaultdict(list)
-    for name, source, _ in generated:
-        by_name[name].append(source)
-    clashes = sorted((name, sources) for name, sources in by_name.items() if len(sources) > 1)
+    clashes = _generated_name_clashes(generated, case_sensitive=case_sensitive)
     if clashes:
         details = "; ".join(f"'{name}' from {sorted(sources)}" for name, sources in clashes)
         raise InvalidParameterError(
@@ -338,6 +342,33 @@ def validate_generated_feature_names(
             "positional, so a duplicated name makes one column's feature indistinguishable from the "
             "other's. Rename one of the source columns."
         )
+
+
+def _uses_case_sensitive_column_resolution(df: DataFrame) -> bool:
+    """Whether Spark resolves column names by their exact case for this DataFrame's session."""
+    configured = df.sparkSession.conf.get("spark.sql.caseSensitive", "false")
+    return isinstance(configured, str) and configured.lower() == "true"
+
+
+def _generated_name_clashes(
+    generated: list[tuple[str, str, str]], *, case_sensitive: bool
+) -> list[tuple[str, list[str]]]:
+    """Find generated names that Spark will resolve to the same field, retaining their original spelling."""
+    clashes: list[tuple[str, list[str]]] = []
+    remaining = list(generated)
+    while remaining:
+        name, source, _ = remaining.pop(0)
+        matching = [(name, source)]
+        nonmatching: list[tuple[str, str, str]] = []
+        for candidate in remaining:
+            if names_resolve_same(name, candidate[0], case_sensitive=case_sensitive):
+                matching.append((candidate[0], candidate[1]))
+            else:
+                nonmatching.append(candidate)
+        remaining = nonmatching
+        if len(matching) > 1:
+            clashes.append((name, [candidate_source for _, candidate_source in matching]))
+    return sorted(clashes)
 
 
 def _validate_float_range(

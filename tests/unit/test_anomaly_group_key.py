@@ -3,10 +3,17 @@
 from collections.abc import Mapping
 import datetime
 import itertools
+from unittest.mock import create_autospec
 
 import pytest
+from pyspark.sql import DataFrame
 
-from databricks.labs.dqx.anomaly.segment_utils import build_baseline_key
+from databricks.labs.dqx.anomaly.segment_utils import (
+    allocate_baseline_key_column,
+    build_baseline_key,
+    with_baseline_key,
+)
+from databricks.labs.dqx.errors import InvalidParameterError
 
 
 @pytest.mark.parametrize(
@@ -57,3 +64,33 @@ def test_adversarial_group_values_have_unique_tuple_keys() -> None:
     keys = {build_baseline_key({"a": a, "b": b}) for a, b in tuples}
     assert len(keys) == len(tuples)
     assert build_baseline_key({}) not in keys
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        [],
+        ["amount", "region"],
+        ["__dqx_baseline_key"],
+        ["__DQX_BASELINE_KEY"],
+        ["__dqx_baseline_key", "__dqx_baseline_key_0", "__DQX_BASELINE_KEY_1"],
+    ],
+)
+def test_allocated_baseline_key_preserves_source_names(columns: list[str]) -> None:
+    allocated = allocate_baseline_key_column(columns)
+    assert allocated.startswith("__dqx_baseline_key")
+    assert allocated.casefold() not in {name.casefold() for name in columns}
+    if "__dqx_baseline_key" not in {name.casefold() for name in columns}:
+        assert allocated == "__dqx_baseline_key"
+
+
+def test_no_grouping_does_not_modify_the_frame() -> None:
+    frame = create_autospec(DataFrame, instance=True)
+    assert with_baseline_key(frame, [], key_column="owned_key") is frame
+
+
+def test_explicit_key_target_must_not_replace_a_source_column() -> None:
+    frame = create_autospec(DataFrame, instance=True)
+    frame.columns = ["region", "OWNED_KEY"]
+    with pytest.raises(InvalidParameterError, match="conflicts with an input column"):
+        with_baseline_key(frame, ["region"], key_column="owned_key")

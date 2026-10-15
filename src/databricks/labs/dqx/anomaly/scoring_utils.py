@@ -6,24 +6,28 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.types import (
     BooleanType,
+    DateType,
     DecimalType,
     DoubleType,
     MapType,
     StringType,
     StructField,
     StructType,
+    TimestampNTZType,
     TimestampType,
 )
 
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema, anomaly_info_struct_schema
+from databricks.labs.dqx.anomaly.column_names import reserve_temporary_column
 from databricks.labs.dqx.anomaly.scoring_config import (
     TAIL_ANCHOR_PERCENTILE,
     TAIL_RATE_PERCENTILE,
     ScoringOutputColumns,
 )
 from databricks.labs.dqx.anomaly.segment_utils import baseline_key_column
+from databricks.labs.dqx.anomaly.temporal_axis import temporal_axis_seconds
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.utils import quote_column_name, safe_filter_expr
+from databricks.labs.dqx.utils import safe_filter_expr
 from databricks.labs.dqx.schema.dq_info_schema import (
     build_dq_info_struct,
     register_dq_info_field,
@@ -433,10 +437,14 @@ def add_baseline_severity_percentile_column(
 
     percentiles = [p for p, _ in sorted(fallback_quantile_points, key=lambda point: point[0])]
     fallback_by_percentile = dict(fallback_quantile_points)
-    quantile_cols = {p: f"__dqx_group_q{int(p * 100):05d}" for p in percentiles}
+    occupied_names = set(df.columns)
 
     owns_group_key = group_key_col is None
-    group_key_col = group_key_col or "__dqx_severity_group_key"
+    group_key_col = group_key_col or reserve_temporary_column("__dqx_severity_group_key", occupied_names)
+    occupied_names.add(group_key_col)
+    quantile_cols = {
+        p: reserve_temporary_column(f"__dqx_group_q{int(p * 100):05d}", occupied_names) for p in percentiles
+    }
     if owns_group_key:
         df = df.withColumn(group_key_col, baseline_key_column(baseline_by))
 
@@ -501,15 +509,18 @@ def mark_stale_baselines(
 
     span = max(float(t_max) - float(t_min), 1.0)
     horizon_epoch = float(t_max) + STALE_HORIZON_SPANS * span
-    row_seconds = F.unix_timestamp(F.col(quote_column_name(baseline_over_time)).cast(TimestampType())).cast(
-        DoubleType()
-    )
+    row_seconds = temporal_axis_seconds(df, baseline_over_time)
+    horizon = F.lit(horizon_epoch).cast(TimestampType())
+    if isinstance(df.schema[baseline_over_time].dataType, (DateType, TimestampNTZType)):
+        # Calendar values have no session time zone. Render on the same axis used
+        # by fitting, rather than displaying a shifted absolute timestamp.
+        horizon = F.lit("1970-01-01 00:00:00").cast(TimestampNTZType()) + F.make_dt_interval(secs=F.lit(horizon_epoch))
     return df.withColumn(
         # A null timestamp is not stale: it has no position to be past the horizon, and the temporal
         # feature already fell back to zero for it. Calling it stale would blame the wrong thing.
         stale_col,
         F.coalesce(row_seconds > F.lit(horizon_epoch), F.lit(False)),
-    ).withColumn(horizon_col, F.lit(horizon_epoch).cast(TimestampType()).cast(StringType()))
+    ).withColumn(horizon_col, horizon.cast(StringType()))
 
 
 def mark_unseen_baselines(
@@ -550,7 +561,7 @@ def mark_unseen_baselines(
     if len(known_group_keys) <= _MAX_ISIN_GROUP_KEYS:
         return df.withColumn(unseen_col, ~F.col(group_key_col).isin(known_group_keys))
 
-    known_col = "__dqx_known_group_key"
+    known_col = reserve_temporary_column("__dqx_known_group_key", set(df.columns))
     known_df = df.sparkSession.createDataFrame(
         [(key,) for key in known_group_keys],
         schema=StructType([StructField(known_col, StringType(), False)]),
