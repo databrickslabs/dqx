@@ -473,7 +473,7 @@ User-initiated views are created under OBO. The task runner reads these views th
 GRANT MANAGE ON VIEW <catalog>.<tmp_schema>.<view_name> TO `<app-sp-id>`;
 ```
 
-Schedule creation/update inspects access using OBO SQL `SHOW GRANTS`, not the grants REST API. Source catalog `USE CATALOG`, source schema `USE SCHEMA`, and table `SELECT` are verified for the app scheduler and actual job runner per schedule. If missing, an authorized caller must establish those grants; failed runner grants block the schedule rather than allowing a later run to fail. These source grants are separate from the fixed startup output checks.
+Schedule creation/update inspects access using OBO SQL `SHOW GRANTS`, not the grants REST API. Source catalog `USE CATALOG`, source schema `USE SCHEMA`, and table `SELECT` are verified for the app scheduler and actual job runner per schedule. If missing, an authorized caller must establish those grants; failed runner grants block the schedule rather than allowing a later run to fail. The schedule editor checks this when it opens: missing catalog or schema usage is listed by service principal name with the `GRANT` statements to run, and saving needs `MANAGE` (or ownership) on each table so Studio can grant `SELECT`. Tables in the built-in `samples` catalog are readable by everyone and need no grants. These source grants are separate from the fixed startup output checks.
 
 ### Genie audience access
 
