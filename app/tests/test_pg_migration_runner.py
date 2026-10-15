@@ -163,27 +163,37 @@ _ADD_COLUMN_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*) (.+)"
 )
 _DROP_TABLE_RE = re.compile(r"DROP TABLE IF EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+_DROP_CONSTRAINT_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) DROP CONSTRAINT IF EXISTS ([a-z_][a-z0-9_]*)"
+)
+_ADD_CONSTRAINT_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD CONSTRAINT ([a-z_][a-z0-9_]*) CHECK \(.+\)"
+)
 
 
 class TestBaselineCatalogue:
-    """v1 is the full schema as CREATE TABLE; later migrations add columns or drop retired tables.
+    """v1 is the full schema as CREATE TABLE; later migrations upgrade existing installs.
 
     The baseline stays the single description of the schema, so it holds no
     ``ALTER TABLE`` or backfill ``UPDATE``. Later migrations exist only to
     upgrade deployments that already applied v1. Each column they add must
     already be in the baseline, and each table they drop must not be, so a
-    fresh install and an upgraded one end up with the same shape.
+    fresh install and an upgraded one end up with the same shape. Constraint
+    replacements are allowed when the CHECK they add is already in v1.
     """
 
     def test_baseline_is_version_one(self):
         assert PG_MIGRATIONS[0].version == 1
 
-    def test_later_migrations_only_add_columns_or_drop_tables(self):
+    def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
-                assert _ADD_COLUMN_RE.fullmatch(stmt) or _DROP_TABLE_RE.fullmatch(
-                    stmt
-                ), f"v{m.version}: not an ADD COLUMN or DROP TABLE IF EXISTS: {stmt[:120]}"
+                assert (
+                    _ADD_COLUMN_RE.fullmatch(stmt)
+                    or _DROP_TABLE_RE.fullmatch(stmt)
+                    or _DROP_CONSTRAINT_RE.fullmatch(stmt)
+                    or _ADD_CONSTRAINT_RE.fullmatch(stmt)
+                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
 
     def test_dropped_tables_are_not_in_the_baseline(self):
         for m in PG_MIGRATIONS[1:]:
@@ -201,9 +211,9 @@ class TestBaselineCatalogue:
                 table, column, definition = match.groups()
                 create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
                 assert create is not None, f"v{m.version}: {table} is not created by the baseline"
-                assert (
-                    f" {column} {definition}," in f" {create.group(1)},"
-                ), f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+                assert f" {column} {definition}," in f" {create.group(1)},", (
+                    f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+                )
 
     def test_every_statement_creates_a_table_index_or_view(self):
         # The baseline is CREATE TABLE / CREATE INDEX plus the single
@@ -457,7 +467,7 @@ class TestMigrationsInjection:
         assert 9002 in bound_versions
         production_versions = {m.version for m in PG_MIGRATIONS}
         assert not (set(bound_versions) & production_versions), (
-            "Injected runner leaked production-catalogue versions: " f"{set(bound_versions) & production_versions}"
+            f"Injected runner leaked production-catalogue versions: {set(bound_versions) & production_versions}"
         )
 
     def test_injected_list_is_snapshotted_defensively(self):
@@ -544,9 +554,7 @@ class TestApplyAtomicity:
             version=42,
             description="failing test",
             sql=(
-                "CREATE TABLE {schema}.t1 (id int);"
-                "CREATE TABLE {schema}.t2 (id int);"
-                "CREATE TABLE {schema}.t3 (id int);"
+                "CREATE TABLE {schema}.t1 (id int);CREATE TABLE {schema}.t2 (id int);CREATE TABLE {schema}.t3 (id int);"
             ),
         )
 

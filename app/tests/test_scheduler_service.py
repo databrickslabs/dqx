@@ -35,6 +35,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _ACTIVE_POLL_SECONDS,
+    _ACTIVE_RUNS_UNLOADED,
     _CRON_WEEKDAY_NAMES,
     _FAILURE_BACKOFF,
     _GC_AGE_HOURS,
@@ -699,17 +700,33 @@ class TestComputeNextCronRun:
 
 def _make_product_scheduler(make_scheduler, *, dp_service=None):
     dp_service = dp_service if dp_service is not None else create_autospec(DataProductService, instance=True)
+    dp_service.member_table_fqns.return_value = []
     svc, mocks = make_scheduler(catalog="main", schema="dqx", tmp_schema="dqx_tmp", data_product_service=dp_service)
     return svc, mocks, dp_service
 
 
-def _active_task_runner_run(app_run_id: str) -> SimpleNamespace:
+def _active_task_runner_run(
+    app_run_id: str,
+    *,
+    source_table_fqn: str | None = None,
+    started: datetime | None = None,
+) -> SimpleNamespace:
     """A Jobs API active-run stub ``parse_task_runner_run`` accepts."""
+    params = [SimpleNamespace(name="run_id", value=app_run_id, default=None)]
+    if source_table_fqn is not None:
+        params.append(
+            SimpleNamespace(
+                name="config_json",
+                value=json.dumps({"source_table_fqn": source_table_fqn}),
+                default=None,
+            )
+        )
+    start = started or datetime(2026, 5, 1, 8, 55, tzinfo=timezone.utc)
     return SimpleNamespace(
         run_id=99,
-        job_parameters=[SimpleNamespace(name="run_id", value=app_run_id, default=None)],
+        job_parameters=params,
         state=SimpleNamespace(life_cycle_state=SimpleNamespace(value="RUNNING"), result_state=None),
-        start_time=1,
+        start_time=int(start.timestamp() * 1000),
     )
 
 
@@ -771,7 +788,14 @@ class TestTickOneProduct:
     def test_skips_when_previous_product_run_is_still_active(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
         svc._job_id = "7"
-        mocks.oltp.query.return_value = [_tracker_row("product:prod1", "2026-05-01T09:00:00+00:00", last_run_id="r1")]
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "product:prod1",
+                "2026-05-01T09:00:00+00:00",
+                last_run_id="r1",
+                last_run_at="2026-05-01T08:55:00+00:00",
+            )
+        ]
         mocks.ws.jobs.list_runs.return_value = [_active_task_runner_run("r1")]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
@@ -781,7 +805,11 @@ class TestTickOneProduct:
         )
 
         dp_service.run.assert_not_called()
-        mocks.oltp.upsert.assert_not_called()
+        mocks.oltp.upsert.assert_called_once()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "skipped"
+        assert value_cols["last_run_id"] == "r1"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
 
     def test_not_due_product_is_skipped(self, make_scheduler):
         svc, mocks, dp_service = _make_product_scheduler(make_scheduler)
@@ -1071,7 +1099,14 @@ class TestTickOneTable:
     def test_skips_when_previous_table_run_is_still_active(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
         svc._job_id = "7"
-        mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00", last_run_id="r1")]
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                "2026-05-01T09:00:00+00:00",
+                last_run_id="r1",
+                last_run_at="2026-05-01T08:55:00+00:00",
+            )
+        ]
         mocks.ws.jobs.list_runs.return_value = [_active_task_runner_run("r1")]
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
 
@@ -1080,22 +1115,84 @@ class TestTickOneTable:
         )
 
         br_service.run_binding.assert_not_called()
-        mocks.oltp.upsert.assert_not_called()
+        value_cols = mocks.oltp.upsert.call_args.kwargs["value_cols"]
+        assert value_cols["status"] == "skipped"
+        assert value_cols["last_run_id"] == "r1"
+        assert "2026-05-02T09:00:00+00:00" in value_cols["next_run_at"].expr
 
-    def test_skips_in_process_overlap_without_jobs_api(self, make_scheduler):
-        """A second tick in the same process skips even when the job id is not numeric."""
+    def test_skips_when_another_schedule_has_the_same_table_in_flight(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        svc._job_id = "7"
         mocks.oltp.query.return_value = [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")]
+        mocks.ws.jobs.list_runs.return_value = [
+            _active_task_runner_run("other-run", source_table_fqn="main.sales.orders")
+        ]
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {
+                "binding_id": "b1",
+                "schedule_cron": "0 9 * * *",
+                "schedule_tz": "UTC",
+                "schedule_kind": "dq_only",
+                "table_fqn": "main.sales.orders",
+            },
+            now,
+        )
+
+        br_service.run_binding.assert_not_called()
+        assert mocks.oltp.upsert.call_args.kwargs["value_cols"]["status"] == "skipped"
+
+    def test_does_not_skip_stale_in_flight_runs(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        svc._job_id = "7"
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                "2026-05-01T09:00:00+00:00",
+                last_run_id="r1",
+                last_run_at="2026-04-30T09:00:00+00:00",
+            )
+        ]
+        mocks.ws.jobs.list_runs.return_value = [
+            _active_task_runner_run("r1", started=datetime(2026, 4, 30, 9, 0, tzinfo=timezone.utc))
+        ]
+        br_service.run_binding.return_value = _binding_run_result()
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}, now
+        )
+
+        br_service.run_binding.assert_called_once()
+
+    def test_recent_unknown_jobs_api_skips_then_stale_unknown_does_not(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
         br_service.run_binding.return_value = _binding_run_result()
         now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
         table = {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"}
 
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                "2026-05-01T09:00:00+00:00",
+                last_run_id="r1",
+                last_run_at="2026-05-01T08:55:00+00:00",
+            )
+        ]
         svc._tick_one_table(table, now)
-        br_service.run_binding.assert_called_once()
+        br_service.run_binding.assert_not_called()
 
+        mocks.oltp.query.return_value = [
+            _tracker_row(
+                "table:b1",
+                "2026-05-01T09:00:00+00:00",
+                last_run_id="r1",
+                last_run_at="2026-04-30T09:00:00+00:00",
+            )
+        ]
         svc._tick_one_table(table, now)
         br_service.run_binding.assert_called_once()
-        assert mocks.oltp.upsert.call_count == 1
 
     def test_fires_again_once_jobs_api_shows_previous_run_idle(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
@@ -1110,6 +1207,29 @@ class TestTickOneTable:
         )
 
         br_service.run_binding.assert_called_once()
+
+    def test_lists_active_runs_once_across_two_due_tables(self, make_scheduler):
+        svc, mocks, br_service = _make_table_scheduler(make_scheduler)
+        svc._job_id = "7"
+        br_service.run_binding.return_value = _binding_run_result()
+        mocks.ws.jobs.list_runs.return_value = []
+        now = datetime(2026, 5, 1, 9, 0, 5, tzinfo=timezone.utc)
+        mocks.oltp.query.side_effect = [
+            [_tracker_row("table:b1", "2026-05-01T09:00:00+00:00")],
+            [_tracker_row("table:b2", "2026-05-01T09:00:00+00:00")],
+        ]
+
+        svc._tick_one_table(
+            {"binding_id": "b1", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"},
+            now,
+        )
+        svc._tick_one_table(
+            {"binding_id": "b2", "schedule_cron": "0 9 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"},
+            now,
+        )
+
+        assert br_service.run_binding.call_count == 2
+        mocks.ws.jobs.list_runs.assert_called_once_with(job_id=7, active_only=True, limit=25)
 
     def test_paused_table_is_skipped_even_when_due(self, make_scheduler):
         svc, mocks, br_service = _make_table_scheduler(make_scheduler)
@@ -1772,7 +1892,7 @@ class TestProductScheduleKind:
         )
 
         dp_service.run.assert_called_once()
-        dp_service.member_table_fqns.assert_not_called()
+        dp_service.member_table_fqns.assert_called_once_with("prod1")
         svc._ws.jobs.run_now.assert_not_called()
 
     def test_profiling_only_fans_out_profiling_per_member(self, make_scheduler):
@@ -1941,6 +2061,7 @@ class TestScoreRefreshUsesJobsApiForRunState:
 
         mocks.ws.jobs.list_runs.return_value = []  # job finished
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
+        svc._tick_active_runs = _ACTIVE_RUNS_UNLOADED
         svc._refresh_scores_for_completed_runs(self.NOW)
 
         mocks.sql.query.assert_called_once()
@@ -2323,9 +2444,10 @@ class TestScoreCacheRefreshOnCompletion:
         }
         svc._load_custom_metrics = lambda: []  # type: ignore[method-assign]
 
-        errors = svc._trigger_run("nightly", {}, "run")
+        errors, submitted = svc._trigger_run("nightly", {}, "run")
 
         assert errors == []
+        assert submitted == ["run_0", "run_1"]
         assert svc._ws.jobs.run_now.call_count == 2
         # Only the real table's run (index 0) is tracked — the synthetic
         # cross-table key has no score-cache row to refresh.
