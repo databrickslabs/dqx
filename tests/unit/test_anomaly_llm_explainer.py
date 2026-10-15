@@ -5,6 +5,7 @@ resolution, baseline-grouping and human-label rendering, SQL-literal escaping, t
 structured-output schema, and the pattern-column threading through ExplanationContext.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import create_autospec
 
@@ -280,50 +281,27 @@ def test_probe_endpoint_reachable_rejects_non_databricks_provider():
     assert not spark.queries
 
 
-def test_attribution_semantics_distinguishes_correlation_from_value_anomalies():
-    """The prompt must say what a contribution *measures*, because the two detectors differ.
-
-    Measured on a live workspace before this existed: with the correlation-aware detector the LLM wrote
-    "Abnormal coolant flow and bearing temperature" and advised "Inspect coolant system and bearing
-    sensors" for rows whose every reading sat *inside* its healthy range. The values were normal; only the
-    relationship between them had broken. Given per-feature importances and nothing else, the model cannot
-    tell the two situations apart -- they look identical in shape -- so it defaults to the value reading
-    and asserts something the data does not support.
-
-    Asserted on the protections rather than on any single word, so a rewording that keeps the guarantees
-    passes and one that drops them fails. The correlation-aware text no longer *mandates* the relationship
-    reading either -- a high contribution is genuinely consistent with a large individual move, so naming
-    one reading as the truth was its own overclaim -- but it must still refuse the value reading as a
-    default, which is what produced "Abnormal coolant flow".
-    """
+def test_attribution_semantics_distinguishes_joint_and_value_oriented_score_attribution():
+    """Detector context describes score attribution, never a feature's deviation or correctness."""
     correlation = llm_explainer.attribution_semantics("Mahalanobis")
-    # The contribution is joint, not univariate: the reason the observed claim was wrong.
-    assert "once every other metric is accounted for" in correlation
-    assert "inside its normal range" in correlation
-    # The instruction that prevents the specific false claim observed.
-    assert "does not distinguish" in correlation
-    assert "do not assert either" in correlation
+    assert "joint model-score attribution conditioned on the other metrics" in correlation
+    assert "does not measure this metric's residual or departure size" in correlation
+    assert "cannot determine" in correlation
+    assert "do not assert a relationship broke or that any metric was abnormal" in correlation
 
     values = llm_explainer.attribution_semantics("IsolationForest")
-    assert "metric's own value" in values
+    assert "value-oriented model-score attribution" in values
+    assert "does not measure how far its value is from training values" in values
+    assert "not which comparison received attribution" in values
     assert correlation != values
 
-    value_based = llm_explainer.attribution_semantics("IsolationForest")
-    assert "was unusual for the rows it was compared against" in value_based
-    assert "relationship" not in value_based
-    # A key covers a column with every comparison made of it, so the reading must not promise which
-    # comparison objected -- a share of 60% on a metric compared three ways says the metric was involved.
-    assert "not which comparison objected" in value_based
-
-    assert correlation != value_based
+    for semantics in (correlation, values):
+        assert "how far each metric's own value sits" not in semantics
+        assert "was unusual for the rows it was compared against" not in semantics
 
 
-def test_attribution_semantics_falls_back_to_the_value_reading():
-    """Unknown or absent algorithms get the value-based reading.
-
-    That is both the historical behaviour and the more conservative claim: describing an extreme value
-    where a relationship broke understates the finding, whereas the reverse invents a relationship claim.
-    """
+def test_attribution_semantics_falls_back_to_value_oriented_score_attribution():
+    """Unknown or absent algorithms get the conservative value-oriented attribution reading."""
     fallback = llm_explainer.attribution_semantics("IsolationForest")
     for algorithm in (None, "", "SomeFutureAlgorithm"):
         assert llm_explainer.attribution_semantics(algorithm) == fallback
@@ -357,10 +335,8 @@ def test_explanation_context_defaults_algorithm_to_none():
 
 # ── the prompt must not teach the model to invent direction ──────────────────────────────────────────
 
-# Words that assert which way a metric moved. The inputs the prompt is built from carry contribution
-# magnitudes, severity percentiles and unsigned drift scores -- nothing that distinguishes a metric far
-# above its norm from one equally far below. A row at (8, 0.5) and its mirror at (-8, -0.5) score
-# identically and produce identical contribution maps, so any of these words is right half the time.
+# Words that assert which way a metric moved. The prompt inputs carry no raw metric values or signed changes,
+# so none supports directional language.
 _DIRECTIONAL_WORDS = (
     "far above",
     "far below",
@@ -426,13 +402,11 @@ def test_every_exemplar_shows_the_attribution_basis_it_is_reading():
 
 
 def test_the_correlation_aware_reading_does_not_assert_a_broken_relationship():
-    """A high contribution there is consistent with a large individual move *or* with a metric that
-    stopped tracking the others while staying in its normal range. The input cannot tell them apart, so
-    instructing the model to describe a broken relationship states more than is known."""
+    """Joint score attribution cannot identify a relationship failure or a metric abnormality."""
     semantics = llm_explainer.attribution_semantics("Mahalanobis")
 
-    assert "does not distinguish" in semantics
-    assert "do not assert either" in semantics
+    assert "cannot determine" in semantics
+    assert "do not assert a relationship broke or that any metric was abnormal" in semantics
 
 
 def test_ensemble_agreement_is_not_presented_as_confidence_in_the_finding():
@@ -544,11 +518,54 @@ def test_the_exemplars_state_business_impact_conditionally():
     be legitimate. Both exemplars previously asserted the consequence outright, which is what a smaller
     model copies into every explanation it writes.
     """
-    responses = [line for line in llm_explainer._PROMPT_EXAMPLES.splitlines() if line.startswith("Response: ")]
+    for response in _exemplar_responses():
+        impact = json.loads(response)["business_impact"]
+        assert impact.lower().startswith("if source "), f"impact should be conditional, got {impact!r}"
+        assert "incorrect" in impact
+        assert "review" in impact
+        assert "would" not in impact.lower()
 
-    for response in responses:
-        impact = response.partition('"business_impact":"')[2].partition('","')[0]
-        assert impact.lower().startswith("if "), f"impact should be conditional, got {impact!r}"
+
+def test_rendered_prompt_separates_attribution_from_deviation_and_dq_diagnosis():
+    """The production prompt must retain the live-review evidence boundary.
+
+    This deliberately renders the full prompt rather than inspecting the source tables: the header is the
+    exact text that reaches ai_query. The prior prompt passed its percentages through examples as comparable
+    departures, despite contribution shares being normalized allocations of model evidence.
+    """
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
+
+    assert "normalized shares of the model's attribution evidence, not observations" in header
+    assert "Similar shares mean only similar shares of model evidence" in header
+    assert "never similarly sized departures" in header
+    assert "displayed feature list can omit lower-ranked metrics" in header
+    assert "entries need not total 100" in header
+    assert "or proof that a value is wrong" in header
+    assert "Treat the explanation as DQ triage" in header
+    assert "NO DIRECTION OR DEVIATION MAGNITUDE" in header
+    assert "far above its norm and one equally far below" not in header
+    assert "Say it departed from its expected pattern" not in header
+    assert "Which comparison made each column depart" not in header
+
+
+def test_rendered_prompt_makes_downstream_impact_a_conditional_review_hypothesis():
+    """Impact belongs to analyst follow-up; model attribution cannot establish observed business harm."""
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
+
+    assert "conditional downstream-review hypothesis, not observed impact" in header
+    assert "condition it on source values being incorrect and used downstream" in header
+    assert "Do not claim harm occurred or will occur" in header
+
+
+@pytest.mark.parametrize("algorithm", ["Mahalanobis", "IsolationForest"])
+def test_production_prompt_and_dynamic_attribution_basis_do_not_claim_deviation_size(algorithm):
+    """The public static header and dynamic detector text must agree on the same evidence boundary."""
+    production_prompt = llm_explainer.AI_QUERY_PROMPT_HEADER + llm_explainer.attribution_semantics(algorithm)
+
+    assert "normalized shares of the model's attribution evidence, not observations" in production_prompt
+    assert "does not measure" in production_prompt
+    assert "far above its norm and one equally far below" not in production_prompt
+    assert "was unusual for the rows it was compared against" not in production_prompt
 
 
 def test_the_instructions_present_the_comparisons_as_context_not_cause():
@@ -563,11 +580,11 @@ def test_the_instructions_present_the_comparisons_as_context_not_cause():
     """
     header = llm_explainer._render_ai_query_prompt_header()
 
-    # With evidence: use it.
-    assert "basis_contributions is the field that says WHICH of those comparisons drove it" in header
-    # Without it: the original prohibition, now scoped to the case that earns it.
+    # With evidence: use the comparison that received model attribution.
+    assert "basis_contributions says WHICH modeled comparison received attribution" in header
+    # Without it: do not invent a comparison.
     assert "not measured" in header
-    assert "do not assign the departure to one of them" in header
+    assert "do not assign the model evidence to one of them" in header
     # And a share on its own still never establishes which comparison objected.
     assert "each feature_contributions share is the total across those" in header
     assert "do not call it unusual outright" in header
@@ -584,8 +601,9 @@ def test_spread_contributions_do_not_license_a_broken_relationship_claim():
     """
     correlation = llm_explainer.attribution_semantics("Mahalanobis")
 
-    assert "each of them contributed, and nothing more" in correlation
-    assert "do not claim a relationship between them broke" in correlation.lower()
+    assert "input cannot determine whether" in correlation
+    assert "Name the metrics the model attributed evidence to" in correlation
+    assert "do not assert a relationship broke" in correlation.lower()
     # The instruction this replaced.
     assert "describe it as the metrics no longer agreeing with each other" not in correlation
 

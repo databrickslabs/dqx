@@ -97,11 +97,16 @@ def test_every_band_has_prompt_wording_and_only_the_withheld_ones_carry_a_clause
 
 @pytest.mark.parametrize("band", [DISCLOSURE_PARTIAL, DISCLOSURE_LIMITED])
 def test_the_prompt_forbids_treating_the_remainder_as_the_whole_decision(band: str):
-    """The specific false claim that was measured, forbidden in the field the model reads first."""
+    """Redaction scope remains explicit even though the displayed list may omit lower-ranked metrics."""
     text = DISCLOSURE_PROMPT_TEXT[band]
 
     assert "cannot be disclosed" in text
-    assert "only what is shown" in text or "minority of what the model used" in text
+    assert "lower-ranked disclosed metrics may also be omitted" in text
+    if band == DISCLOSURE_PARTIAL:
+        assert "cover only what is disclosed" in text
+        assert "portion of the whole decision" in text
+    else:
+        assert "minority of what the model used" in text
 
 
 def test_the_limited_band_forbids_redirecting_the_reader_to_a_weak_contributor():
@@ -154,11 +159,12 @@ def test_the_disclosure_field_is_read_before_the_contributions_it_qualifies():
     )
 
 
-def test_the_contributions_field_says_the_shares_may_cover_only_what_is_disclosed():
-    """Because the shares themselves are renormalised, the field describing them has to say so."""
+def test_the_contributions_field_separates_disclosure_scope_from_top_n_truncation():
+    """Top-N display can omit a permitted tail; redaction still limits the attribution scope."""
     description = AI_QUERY_PROMPT_HEADER.partition("- feature_contributions:")[2].partition("\n")[0]
 
-    assert "normalised across the entries listed here only" in description
+    assert "normalised across the disclosed evidence before this top-ranked list is shortened" in description
+    assert "listed entries need not total 100" in description
     assert "not of the whole decision" in description
 
 

@@ -49,28 +49,37 @@ _PROMPT_INSTRUCTIONS = (
     "flagged this group. Your explanation will be shown for every row in the group — describe the "
     "pattern, not a specific row. You are describing what the model measured, not diagnosing a "
     "root cause: the inputs cannot establish one.\n"
-    "The inputs carry NO DIRECTION. A contribution says how much a metric mattered to the score, "
-    "never whether it was high or low: a metric far above its norm and one equally far below "
-    "produce the identical number. So never say a value was high, low, above, below, elevated, "
-    "inflated, dropped, spiked, or missing. Say it departed from its expected pattern, and leave "
-    "which way unsaid. The same applies to drift magnitudes, which are also unsigned.\n"
+    "feature_contributions are normalized shares of the model's attribution evidence, not observations. "
+    "A share says how the model apportioned its disclosed evidence among metrics; the displayed feature list "
+    "can omit lower-ranked metrics, so its entries need not total 100. It does not "
+    "measure a deviation's size, distance from a baseline, probability of bad data, correctness, or causal "
+    "effect. Similar shares mean only similar shares of model evidence, never similarly sized departures. "
+    "Describe them as model-attribution shares or as metrics involved in the flag; do not call a share a "
+    "departure, an error magnitude, or proof that a value is wrong.\n"
+    "Attribution carries NO DIRECTION OR DEVIATION MAGNITUDE. It does not contain raw metric values "
+    "or a signed change, so never say a value was high, low, above, below, elevated, inflated, dropped, "
+    "spiked, or missing. Do not infer an actual departure from an attribution share; leave both its "
+    "direction and size unstated. Drift summaries are unsigned aggregate distances; they do not establish "
+    "the direction or raw size of a row-level change.\n"
     "baseline_grouping and temporal_baseline tell you which comparisons were AVAILABLE to the model. A "
     "metric may be compared against the table, against its own group and against its expected level at "
     "that time all at once, and each feature_contributions share is the total across those. Treat these "
     "fields as context that widens what the number is consistent with: when either is set, a metric can be "
-    "entirely ordinary for the table and still have departed from a narrower comparison, so do not call it "
-    "unusual outright.\n"
-    "basis_contributions is the field that says WHICH of those comparisons drove it, when it is present. "
-    "Use it: it is the difference between 'units contributed' and 'units was unremarkable in itself but "
-    "departed from what its own history expects at that point in time', and the second is the useful "
-    "sentence. Its shares are within each metric and total 100 per metric, so they do not compete with the "
-    "feature_contributions shares. When it says 'not measured', the evidence for which comparison objected "
-    "genuinely does not exist, so name the comparisons that were in use and do not assign the departure to "
-    "one of them.\n"
+    "entirely ordinary for the table while the model assigns attribution to a narrower comparison, so do not "
+    "call it unusual outright.\n"
+    "basis_contributions says WHICH modeled comparison received attribution, when it is present. Use it: "
+    "it refines 'units contributed' to 'the model assigned most of units' evidence to its time-based "
+    "comparison'. Its shares are within each metric and total 100 per metric, so they do not compete with "
+    "feature_contributions shares. This is still model attribution, not proof that the underlying value "
+    "departed from that comparison. When it says 'not measured', the evidence for which comparison received "
+    "attribution genuinely does not exist, so name the comparisons that were in use and do not assign the "
+    "model evidence to one of them.\n"
     "Be direct and concrete: name the metrics, their shares and the group size without hedging "
     "phrases like 'The data shows', 'It appears that', or 'might indicate'. Being direct means "
     "stating plainly what the inputs contain — it does not license asserting a direction, a cause, "
-    "or a value they do not contain. Do not restate the input field names back to the user, and do "
+    "a deviation size, incorrectness, or an observed business effect. Treat the explanation as DQ triage: "
+    "separate what the model flagged from what an analyst must verify. Do not restate the input field names "
+    "back to the user, and do "
     "not invent feature names, values, or baseline groups that are not present in the input."
 )
 # What a contribution means, per detector family. Keyed by the ``ModelIdentity.algorithm`` prefix that is
@@ -80,23 +89,22 @@ _PROMPT_INSTRUCTIONS = (
 _ATTRIBUTION_SEMANTICS: tuple[tuple[str, str], ...] = (
     (
         "Mahalanobis",
-        "each metric's position once every other metric is accounted for. A high contribution means this "
-        "metric does not fit the pattern the others imply, which can happen either because its own value "
-        "moved a long way or because it stopped tracking the others while staying inside its normal range. "
-        "The input does not distinguish those two cases, so do not assert either: say the metric does not "
-        "fit the pattern. Contributions spread across several metrics mean each of them contributed, and "
-        "nothing more -- that happens when metrics stop agreeing with each other, and equally when several "
-        "unrelated metrics are each unusual at the same time. Name the metrics that contributed; do not "
-        "claim a relationship between them broke.",
+        "a joint model-score attribution conditioned on the other metrics. A high contribution means the "
+        "model assigned a larger share of its score evidence to this metric in that joint context; it does "
+        "not measure this metric's residual or departure size. The input cannot determine whether an "
+        "individual value moved, metrics stopped tracking each other, or several unrelated values changed. "
+        "Name the metrics the model attributed evidence to; do not assert a relationship broke or that any "
+        "metric was abnormal.",
     ),
     (
         "IsolationForest",
-        "how far each metric's own value sits from the values the model was trained on. A high contribution "
-        "means this metric was unusual for the rows it was compared against. Where a metric is compared "
+        "a value-oriented model-score attribution for each metric. A high contribution means the model "
+        "assigned a larger share of score evidence to that metric; it does not measure how far its value is "
+        "from training values or prove it is unusual, incorrect, or abnormal. Where a metric is compared "
         "several ways at once -- against the whole table, against its own group, against its expected level "
         "at that time -- the share covers all of those together, so on its own it says the metric was "
-        "involved and not which comparison objected. basis_contributions answers that for this detector, "
-        "and you should use it.",
+        "involved and not which comparison received attribution. basis_contributions answers that for this "
+        "detector, and you should use it.",
     ),
 )
 _DEFAULT_ATTRIBUTION_SEMANTICS = _ATTRIBUTION_SEMANTICS[-1][1]
@@ -118,12 +126,13 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
         "attribution_basis",
         "What the feature_contributions below are measuring, which differs by detector and decides how "
-        "you may describe the pattern. Follow this field rather than assuming a reading: one basis "
-        "supports saying a feature's own value was unusual, the other does not.",
+        "you may describe the pattern. Follow this field rather than assuming a reading: it identifies "
+        "whether the model attributed score evidence jointly with other metrics or in a value-oriented way. "
+        "Neither basis measures a value's departure or proves it is incorrect.",
     ),
     (
         "evidence_disclosure",
-        "Whether you are being shown all of the evidence. Read this BEFORE feature_contributions, because "
+        "Whether any contributing evidence was withheld. Read this BEFORE feature_contributions, because "
         "it decides what the shares below mean and what you may say about them.",
     ),
     (
@@ -132,18 +141,19 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "e.g. 'amount (82%), quantity (11%), discount (5%)'. One entry per column however many ways that "
         "column was compared, so a share says the column was involved and not which comparison objected. "
         "These are aggregated relative importances — not raw data values, and not percentages of the score. "
-        "The shares are normalised across the entries listed here only, so when evidence_disclosure says "
-        "any was withheld they are shares of what is disclosed and not of the whole decision. See "
+        "They are normalised across the disclosed evidence before this top-ranked list is shortened, so the "
+        "listed entries need not total 100. When evidence_disclosure says any was withheld they are shares "
+        "of what is disclosed and not of the whole decision. See "
         "basis_contributions for which comparison drove each column.",
     ),
     (
         "basis_contributions",
-        "Which comparison made each column depart, e.g. 'units (8%), units vs its group baseline (21%), "
+        "Which modeled comparison received attribution for each column, e.g. 'units (8%), units vs its group baseline (21%), "
         "units vs its expected level at that time (71%)'. Shares are within each column and total 100 per "
         "column, so they refine a feature_contributions entry rather than competing with it. A bare column "
         "name means the column's own value against the whole table. 'not measured' means the split could "
-        "not be computed for this detector, which is not the same as no comparison having contributed — say "
-        "nothing about which one in that case. Columns compared only one way are absent, because there is "
+        "not be computed for this detector, which is not the same as no comparison having received attribution — say "
+        "nothing about which one in that case. These shares do not prove an actual departure. Columns compared only one way are absent, because there is "
         "nothing to distinguish.",
     ),
     ("group_size", "Number of rows in this group, e.g. '312 rows'."),
@@ -160,7 +170,7 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "The columns whose values define each row's baseline group, e.g. 'region' or "
         "'region, product', or 'none' when the model is not grouped. This means a group comparison was available; "
         "it does not establish that this comparison drove the anomaly. Name it as context, and attribute "
-        "a departure to it only when basis_contributions supplies that evidence.",
+        "model attribution to it only when basis_contributions supplies that evidence.",
     ),
     (
         "temporal_baseline",
@@ -169,7 +179,7 @@ _PROMPT_INPUT_FIELDS: tuple[tuple[str, str], ...] = (
         "well as against its overall range -- but not every metric is: where no expectation could be "
         "fitted for one, that comparison contributes nothing for it. So this widens what a contribution "
         "is consistent with rather than explaining it: a metric can sit well inside the range the data "
-        "has always covered and still have departed from what was expected when it arrived. Do not call a "
+        "has always covered while the model attributes evidence to a time-based comparison. Do not call a "
         "metric unusual, high or low overall on the strength of this field, and do not state that it "
         "departed from its expected level -- say the comparison was available.",
     ),
@@ -185,13 +195,14 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
     (
         "narrative",
         "Max 2 sentences, max 40 words total. Describe the GROUP pattern, not a single row. "
-        "Reference the top contributing features and the group size. If drift_summary != 'none', "
-        "frame at least one feature vs baseline.",
+        "Reference the top contributing features and the group size as model-attribution shares, never as "
+        "deviation magnitudes. If drift_summary != 'none', frame at least one feature vs baseline.",
     ),
     (
         "business_impact",
-        "One sentence, max 25 words. Likely downstream business impact if this group of rows is "
-        "processed unchanged. Concrete, tied to the contributing features.",
+        "One sentence, max 25 words. State a conditional downstream-review hypothesis, not observed impact: "
+        "start with 'If', condition it on source values being incorrect and used downstream, and tie it to "
+        "available domain evidence. Do not claim harm occurred or will occur.",
     ),
     (
         "action",
@@ -209,18 +220,17 @@ _PROMPT_OUTPUT_FIELDS: tuple[tuple[str, str], ...] = (
 # those explanations were backwards, stated confidently, in business language.
 #
 # The pair also differs in every field that changes how a contribution may be described, and differs
-# deliberately: *attribution_basis*, which decides whether a share can be read as a feature's own value
-# being unusual, and *temporal_baseline*, which decides whether "unusual" is against the metric's whole
-# range or against the level expected of it at one moment. A field the header tells the model to follow
+# deliberately: *attribution_basis*, which decides whether the score attribution is joint or value-oriented,
+# and *temporal_baseline*, which tells the model that a time-based comparison was available. A field the header tells the model to follow
 # has to appear in the demonstrations, and in both states, or the model learns to treat whichever state
 # it saw as the default and stops reading the field. The *attribution_basis* values here are abbreviated
 # forms of what *attribution_semantics* emits, since the exemplars pin shape rather than restate the
 # header.
 _PROMPT_EXAMPLES = (
     "Example (relationship basis, no drift):\n"
-    "attribution_basis: each metric's position once the others are accounted for\n"
-    "evidence_disclosure: every contributing metric is shown to you, so the shares below cover all of "
-    "the evidence the model used.\n"
+    "attribution_basis: a joint model-score attribution conditioned on the other metrics\n"
+    "evidence_disclosure: no contributing evidence is withheld; the list below still shows only the "
+    "highest-ranked metrics.\n"
     "feature_contributions: amount (61%), quantity (22%)\n"
     # The relationship basis cannot split a column across its comparisons, so this exemplar is also the
     # worked example of the "not measured" case: it names the comparisons that were in use and assigns the
@@ -233,12 +243,12 @@ _PROMPT_EXAMPLES = (
     "temporal_baseline: none\n"
     "threshold: 95.0\n"
     "drift_summary: none\n"
-    'Response: {"narrative":"Across 312 rows, amount accounts for most of what the model measured (61%), '
-    'with quantity next (22%); these rows are judged against their own region.","business_impact":"If '
-    'amount is wrong on these rows, revenue reporting for the affected regions would be affected too.",'
+    'Response: {"narrative":"Across 312 rows, amount has the largest displayed model-attribution share '
+    '(61%), followed by quantity (22%); a region comparison was available.","business_impact":"If source '
+    'amount values are incorrect and used downstream, review calculations that use amount.",'
     '"action":"Reconcile amount against source orders for the affected regions."}\n\n'
     "Example (value basis, judged against time, with drift):\n"
-    "attribution_basis: each feature's own value compared against the rows it was scored against\n"
+    "attribution_basis: a value-oriented model-score attribution for each metric\n"
     "evidence_disclosure: MOST of the contributing evidence cannot be disclosed and is absent from the "
     "shares below, so what remains is a minority of what the model used.\n"
     "feature_contributions: latency_ms (74%), retries (12%)\n"
@@ -262,13 +272,10 @@ _PROMPT_EXAMPLES = (
     # it drops is the claim that they settle the matter. It also does not restate the disclosure limit: the
     # deterministic clause is appended to every withheld narrative, and an exemplar that stated it too would
     # model saying it twice.
-    'Response: {"narrative":"Of what can be shown across these 88 rows, latency_ms carries most (74%) '
-    "and retries a small part (12%); latency_ms has also moved from its training baseline. Almost all of "
-    "latency_ms's own evidence (91%) is against what its history expects at that point in time rather than "
-    "against its overall range, so these rows depart from their expected level for when they "
-    'arrived.","business_impact":"If these rows are wrong, downstream consumers with SLAs would be the '
-    'first to notice.","action":"Compare latency_ms against its expected level for that period rather than '
-    'against its overall range, and take account of the evidence this explanation could not include."}'
+    'Response: {"narrative":"Of the displayed model evidence across 88 rows, latency_ms has 74% and retries '
+    "12%. The model assigns 91% of latency_ms's evidence to its time-based comparison; baseline drift is also "
+    'reported.","business_impact":"If source latency or retry values are incorrect and used downstream, review '
+    'calculations that use those fields.","action":"Check source records and time-based expectations, including evidence this explanation cannot display."}'
 )
 
 if TYPE_CHECKING:
@@ -493,13 +500,13 @@ DISCLOSURE_LIMITED = "limited"
 _LIMITED_DISCLOSURE_SHARE = 0.5
 
 DISCLOSURE_PROMPT_TEXT: dict[str, str] = {
-    DISCLOSURE_COMPLETE: "every contributing metric is shown to you, so the shares below cover all of the "
-    "evidence the model used.",
+    DISCLOSURE_COMPLETE: "no contributing evidence is withheld; the feature list still shows only the "
+    "highest-ranked metrics.",
     DISCLOSURE_PARTIAL: "SOME contributing evidence cannot be disclosed and is absent from the shares below, "
-    "which therefore cover only what is shown. Do not present a share as a portion of the whole decision, "
+    "which therefore cover only what is disclosed; lower-ranked disclosed metrics may also be omitted. Do not present a share as a portion of the whole decision, "
     "and do not describe the metrics you can see as the reason the row was flagged.",
     DISCLOSURE_LIMITED: "MOST of the contributing evidence cannot be disclosed and is absent from the shares "
-    "below, so what remains is a minority of what the model used. Name what you can see, say plainly that "
+    "below, so what remains is a minority of what the model used; lower-ranked disclosed metrics may also be omitted. Name what you can see, say plainly that "
     "the explanation is limited by evidence that cannot be shown, and do not direct the reader to "
     "investigate a metric on the strength of a share this small. Never guess what the withheld evidence was.",
 }
