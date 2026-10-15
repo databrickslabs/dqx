@@ -6881,6 +6881,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"limit": "col2 + 10"},
             user_metadata={"tag1": "value3", "tag2": "023"},
         ),
+        # has_num_decimal_places check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_num_decimal_places,
+            column="col2",
+            check_func_kwargs={"limit": 2},
+        ),
         # is_valid_date check
         DQRowRule(
             criticality="error",

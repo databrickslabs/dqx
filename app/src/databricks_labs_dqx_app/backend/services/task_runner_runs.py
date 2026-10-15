@@ -98,12 +98,17 @@ def list_recent_completed_runs(ws: WorkspaceClient, job_id: int, max_runs: int) 
     return [run for run in parsed if run is not None]
 
 
-def list_active_app_run_ids(ws: WorkspaceClient, job_id: int) -> set[str]:
-    """Return the app run ids of every run of *job_id* that has not finished yet."""
+def list_active_task_runner_runs(ws: WorkspaceClient, job_id: int) -> list[TaskRunnerRun]:
+    """Return every run of *job_id* that has not finished yet."""
     parsed = (
         parse_task_runner_run(run) for run in ws.jobs.list_runs(job_id=job_id, active_only=True, limit=_PAGE_SIZE)
     )
-    return {run.app_run_id for run in parsed if run is not None}
+    return [run for run in parsed if run is not None]
+
+
+def list_active_app_run_ids(ws: WorkspaceClient, job_id: int) -> set[str]:
+    """Return the app run ids of every run of *job_id* that has not finished yet."""
+    return {run.app_run_id for run in list_active_task_runner_runs(ws, job_id)}
 
 
 @app_cache.cached("jobs:recent-completed:{job_id}", ttl=30, reliable=True)

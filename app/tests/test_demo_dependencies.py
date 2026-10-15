@@ -6,6 +6,9 @@ wiring is covered by the route test.
 """
 
 import inspect
+from unittest.mock import MagicMock
+
+import pytest
 
 
 def test_demo_providers_exist() -> None:
@@ -60,3 +63,21 @@ def test_get_demo_seed_service_declares_expected_params() -> None:
         "schedule_config",
     }
     assert expected <= params
+
+
+@pytest.mark.asyncio
+async def test_get_demo_seed_service_forwards_installation_demo_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    from databricks_labs_dqx_app.backend import dependencies
+    from databricks_labs_dqx_app.backend.demo import seed_service
+    from databricks_labs_dqx_app.backend.runtime import rt
+    from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
+
+    seed_constructor = MagicMock()
+    monkeypatch.setattr(seed_service, "DemoSeedService", seed_constructor)
+    monkeypatch.setattr(dependencies, "resolve_execution_principals", lambda _ws: ("runner", "cleanup"))
+    monkeypatch.setattr(setup_runtime, "require_job_id", lambda: 7)
+    params = inspect.signature(dependencies.get_demo_seed_service).parameters
+
+    await dependencies.get_demo_seed_service(**{name: MagicMock() for name in params})
+
+    assert seed_constructor.call_args.kwargs["schema"] == rt.require_resources().demo_schema
