@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "Você não pode configurar esta programação",
-      "descriptionTable": "As execuções programadas leem esta tabela como uma conta de serviço, então configurar uma programação concede acesso de leitura a essa conta — o que exige o privilégio MANAGE que você não tem nesta tabela.",
-      "descriptionCollection": "As execuções programadas leem cada tabela como uma conta de serviço, então configurar uma programação concede acesso de leitura a essa conta — o que exige o privilégio MANAGE que você não tem em uma ou mais tabelas desta coleção.",
-      "holdersLabel": "Peça a um destes para configurá-la no seu lugar:",
-      "holdersLabelForTable": "Quem pode conceder acesso a {{fqn}}:",
+      "descriptionTable": "As programações precisam do privilégio MANAGE nesta tabela, e você não o tem.",
+      "descriptionCollection": "As programações precisam do privilégio MANAGE em cada tabela que leem, e você não o tem em uma ou mais destas tabelas.",
+      "holdersLabel": "Peça a alguém que o tenha para configurar a programação:",
+      "holdersLabelForTable": "Quem tem MANAGE em {{fqn}}:",
       "noHolders": "Nenhum usuário ou grupo com a permissão necessária foi encontrado. Entre em contato com o administrador do seu workspace ou com o proprietário da tabela.",
       "typeUser": "usuário",
       "typeGroup": "grupo",
@@ -40,7 +40,17 @@
       "unverifiedTitle": "Não foi possível verificar o acesso à tabela",
       "unverifiedDescriptionTable": "O SQL warehouse não respondeu a tempo, então não foi possível verificar se as execuções agendadas podem ler esta tabela. Ele ainda pode estar iniciando.",
       "unverifiedDescriptionCollection": "O SQL warehouse não respondeu a tempo, então não foi possível verificar se as execuções agendadas podem ler estas tabelas. Ele ainda pode estar iniciando.",
-      "retry": "Tentar novamente"
+      "retry": "Tentar novamente",
+      "missingGrantsDescriptionTable": "As execuções programadas leem esta tabela como as entidades de serviço do Studio, que ainda não podem usar o catálogo ou o esquema dela.",
+      "missingGrantsDescriptionCollection": "As execuções programadas leem estas tabelas como as entidades de serviço do Studio, que ainda não podem usar alguns dos catálogos ou esquemas delas.",
+      "missingGrant": "{{name}} precisa de {{privilege}} em {{securable}}",
+      "missingGrantsInstructions": "Peça ao proprietário do catálogo e do esquema, ou a alguém com MANAGE sobre eles, que execute estas instruções em um editor SQL e depois clique em Tentar novamente:",
+      "unverifiedPermissionsTitle": "Não foi possível verificar as permissões",
+      "unverifiedPermissionsDescriptionTable": "O Studio não conseguiu ler as permissões desta tabela, então não sabe se você pode configurar uma programação. Tente novamente ou peça ao proprietário da tabela para configurá-la.",
+      "unverifiedPermissionsDescriptionCollection": "O Studio não conseguiu ler as permissões destas tabelas, então não sabe se você pode configurar uma programação. Tente novamente ou peça aos proprietários das tabelas para configurá-la.",
+      "missingGrantsForTable": "Para {{fqn}}:",
+      "unverifiedConfigurationTitle": "Não foi possível verificar o acesso da programação",
+      "unverifiedConfigurationDescription": "A configuração do Studio está incompleta (por exemplo, ele não encontra a entidade de serviço do job de execução de tarefas), então não consegue verificar se esta programação pode ser configurada. Peça a um administrador do Studio para verificar a página de configuração."
     }
   },
   "lifecycle": {
@@ -217,7 +227,6 @@
     "kwTheme": "estilo tema cores predefinição modo escuro claro cabeçalho barra lateral",
     "styling": {
       "companyNameLabel": "Nome da empresa",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Exibido na barra superior",
       "logoRequirements": "PNG, JPEG ou WebP, até 256 KB",
       "logoErrorType": "SVG e outros tipos de arquivo não são compatíveis. Use uma imagem PNG, JPEG ou WebP.",
@@ -358,13 +367,13 @@
     "aiSettingsTitle": "Configurações de IA",
     "aiSettingsEnabledLabel": "Ativar recursos de IA",
     "aiSettingsEnabledHint": "Ativa os recursos de IA em todo o aplicativo.",
-    "aiSettingsEndpointLabel": "Endpoint de serving de IA",
-    "aiSettingsEndpointHint": "Endpoint de serving do modelo usado para os recursos de IA.",
+    "aiSettingsEndpointLabel": "Modelo de IA",
+    "aiSettingsEndpointHint": "Modelo do Unity Gateway usado para os recursos de IA.",
     "aiSettingsManageLink": "Manage in AI Gateway",
-    "aiSettingsEndpointPlaceholder": "ex.: databricks-meta-llama-3-70b-instruct",
-    "aiSettingsSelectEndpointPlaceholder": "Selecione um endpoint de serving",
-    "aiSettingsNoEndpointsFound": "Nenhum endpoint de serving encontrado",
-    "aiSettingsCustomEndpointOption": "{{value}} (atual — não está na lista do workspace)",
+    "aiSettingsEndpointPlaceholder": "ex.: system.ai.claude-sonnet-4-5",
+    "aiSettingsSelectEndpointPlaceholder": "Selecione um modelo",
+    "aiSettingsNoEndpointsFound": "Nenhum modelo encontrado",
+    "aiSettingsCustomEndpointOption": "{{value}} (atual — não está na lista de modelos)",
     "aiSettingsSaved": "Configurações de IA salvas.",
     "aiSettingsSaveFailed": "Falha ao salvar as configurações de IA.",
     "aiSettingsAdminOnlyHint": "Somente administradores podem alterar esta configuração.",
@@ -3088,7 +3097,6 @@
     "checkingTitle": "Verificando a prontidão do Studio",
     "checkingDescription": "O DQX Studio está verificando os recursos necessários para iniciar com segurança.",
     "waitingTitle": "A configuração do Studio precisa de um administrador",
-    "waitingDescription": "Entre em contato com um membro de {{adminGroup}} para concluir as etapas restantes da configuração.",
     "statusUnavailableTitle": "O status da configuração está indisponível",
     "statusUnavailableDescription": "Atualize a página para verificar novamente a prontidão do Studio.",
     "reconcileFailed": "Não foi possível concluir a configuração. Revise as etapas informadas e tente novamente.",
@@ -3136,7 +3144,15 @@
       "reconcile": "Executar configuração",
       "verify_again": "Verificar novamente",
       "openJobs": "Abrir jobs",
+      "openTaskRunnerJob": "Abrir o job de execução",
       "configure": "Salvar configuração"
+    },
+    "notAdmin": {
+      "title": "Você não pode concluir a configuração",
+      "description": "Somente administradores do workspace ou membros de {{adminGroup}} podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
+      "signedInAs": "Você entrou como {{userName}}.",
+      "adminsOnly": "Somente administradores do workspace podem configurar o DQX Studio. Peça a um deles para concluir as etapas abaixo.",
+      "configurationPending": "Aguardando um administrador escolher o catálogo, o prefixo de armazenamento e o grupo de usuários."
     },
     "warningsReview": {
       "title": "A configuração do Studio terminou com avisos",
@@ -3173,7 +3189,7 @@
         "ai": "Manter a IA ativada"
       },
       "help": {
-        "default": "O Studio só vê permissões concedidas diretamente a um usuário ou grupo. Se você concedeu esse acesso por meio de um grupo pai, ou configurou manualmente no workspace, ele pode parecer ausente aqui. Se tiver certeza de que está configurado, você pode continuar mesmo assim.",
+        "default": "O Studio só vê permissões concedidas diretamente a um usuário ou grupo, ou a todos os usuários do workspace. Se você concedeu esse acesso por meio de outro grupo pai, ou configurou manualmente no workspace, ele pode parecer ausente aqui. Se tiver certeza de que está configurado, você pode continuar mesmo assim.",
         "app_sharing": "O Studio não tem permissão para ler com quem o app está compartilhado, então não consegue verificar isso sozinho. Depois de compartilhar o app com seus usuários, confirme aqui.",
         "ai": "Se seus usuários já podem usar este modelo de IA (por exemplo, por meio de um grupo pai), você pode manter os recursos de IA ativados."
       }

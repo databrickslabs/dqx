@@ -383,8 +383,10 @@ class ResourceCheckers:
     def _schema_status(self, schema: str, app_sp: str) -> tuple[str, frozenset[str]]:
         """Classify a storage schema as missing, ok, collision, incomplete or failed.
 
-        A schema is Studio-managed when the app service principal owns it, or holds
-        MANAGE together with USE SCHEMA and CREATE TABLE.
+        A schema is Studio-managed when the app service principal owns it, or holds MANAGE
+        granted to it directly on the schema. MANAGE through a group (including *account
+        users*) or the catalog doesn't count, so a broadly shared schema at Studio's name is
+        a collision. USE SCHEMA and CREATE TABLE may come from any grant.
         """
         full_name = f"{self._resources.volume.catalog}.{schema}"
         try:
@@ -396,11 +398,14 @@ class ResourceCheckers:
         owner = getattr(existing, "owner", None)
         if isinstance(owner, str) and owner.casefold() == app_sp.casefold():
             return "ok", frozenset()
-        privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES | {"MANAGE"})
+        direct = self._inspector.direct_privileges("SCHEMA", full_name, app_sp)
+        if direct is None:
+            return "failed", frozenset()
+        if not has_privilege(direct, "MANAGE"):
+            return "collision", frozenset()
+        privileges = self._inspector.privileges("SCHEMA", full_name, app_sp, required=_SCHEMA_PRIVILEGES)
         if privileges is None:
             return "failed", frozenset()
-        if not has_privilege(privileges, "MANAGE"):
-            return "collision", frozenset()
         missing = frozenset(name for name in _SCHEMA_PRIVILEGES if not has_privilege(privileges, name))
         return ("incomplete", missing) if missing else ("ok", frozenset())
 

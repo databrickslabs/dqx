@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "You can't set up this schedule",
-      "descriptionTable": "Scheduled runs read this table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on this table.",
-      "descriptionCollection": "Scheduled runs read each table as a service account, so setting up a schedule grants that account read access — which needs the MANAGE privilege you don't have on one or more of this collection's tables.",
-      "holdersLabel": "Ask one of these to set it up instead:",
-      "holdersLabelForTable": "Who can grant access to {{fqn}}:",
+      "descriptionTable": "Schedules need the MANAGE privilege on this table, which you don't have.",
+      "descriptionCollection": "Schedules need the MANAGE privilege on every table they read, and you don't have it on one or more of these tables.",
+      "holdersLabel": "Ask someone who has it to set up the schedule:",
+      "holdersLabelForTable": "Who has MANAGE on {{fqn}}:",
       "noHolders": "No users or groups with the required permission were found. Contact your workspace administrator or the table's owner.",
       "typeUser": "user",
       "typeGroup": "group",
@@ -40,7 +40,17 @@
       "unverifiedTitle": "Couldn't check table access",
       "unverifiedDescriptionTable": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read this table. It may still be starting up.",
       "unverifiedDescriptionCollection": "The SQL warehouse didn't respond in time, so we couldn't check whether scheduled runs can read these tables. It may still be starting up.",
-      "retry": "Try again"
+      "retry": "Try again",
+      "missingGrantsDescriptionTable": "Scheduled runs read this table as Studio's service principals, and they can't use its catalog or schema yet.",
+      "missingGrantsDescriptionCollection": "Scheduled runs read these tables as Studio's service principals, and they can't use some of their catalogs or schemas yet.",
+      "missingGrant": "{{name}} needs {{privilege}} on {{securable}}",
+      "missingGrantsInstructions": "Ask the owner of the catalog and schema, or anyone with MANAGE on them, to run these statements in a SQL editor, then click Try again:",
+      "unverifiedPermissionsTitle": "Couldn't check permissions",
+      "unverifiedPermissionsDescriptionTable": "Studio couldn't read the permissions on this table, so it can't tell whether you can set up a schedule. Try again, or ask the table's owner to set it up.",
+      "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up.",
+      "missingGrantsForTable": "For {{fqn}}:",
+      "unverifiedConfigurationTitle": "Couldn't check schedule access",
+      "unverifiedConfigurationDescription": "Studio's setup is incomplete (for example, it can't find the task-runner job's service principal), so it can't check whether this schedule can be set up. Ask a Studio administrator to check the setup page."
     }
   },
   "lifecycle": {
@@ -217,7 +227,6 @@
     "kwTheme": "styling theme colours colors preset dark light mode header sidebar",
     "styling": {
       "companyNameLabel": "Company name",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Shown in the top bar",
       "logoRequirements": "PNG, JPEG or WebP, up to 256 KB",
       "logoErrorType": "SVG and other file types aren't supported. Use a PNG, JPEG or WebP image.",
@@ -358,13 +367,13 @@
     "aiSettingsTitle": "AI",
     "aiSettingsEnabledLabel": "Enable AI features",
     "aiSettingsEnabledHint": "Enables AI features across the app.",
-    "aiSettingsEndpointLabel": "AI serving endpoint",
-    "aiSettingsEndpointHint": "Model serving endpoint used for AI features.",
+    "aiSettingsEndpointLabel": "AI model",
+    "aiSettingsEndpointHint": "Unity Gateway model used for AI features.",
     "aiSettingsManageLink": "Manage in AI Gateway",
-    "aiSettingsEndpointPlaceholder": "e.g. databricks-meta-llama-3-70b-instruct",
-    "aiSettingsSelectEndpointPlaceholder": "Select a serving endpoint",
-    "aiSettingsNoEndpointsFound": "No serving endpoints found",
-    "aiSettingsCustomEndpointOption": "{{value}} (current — not in workspace list)",
+    "aiSettingsEndpointPlaceholder": "e.g. system.ai.claude-sonnet-4-5",
+    "aiSettingsSelectEndpointPlaceholder": "Select a model",
+    "aiSettingsNoEndpointsFound": "No models found",
+    "aiSettingsCustomEndpointOption": "{{value}} (current — not in the model list)",
     "aiSettingsSaved": "AI settings saved.",
     "aiSettingsSaveFailed": "Failed to save AI settings.",
     "aiSettingsAdminOnlyHint": "Only admins can change this setting.",
@@ -3088,7 +3097,6 @@
     "checkingTitle": "Checking Studio readiness",
     "checkingDescription": "DQX Studio is checking the capabilities required to start safely.",
     "waitingTitle": "Studio setup needs an administrator",
-    "waitingDescription": "Contact a member of {{adminGroup}} to complete the remaining setup steps.",
     "statusUnavailableTitle": "Setup status is unavailable",
     "statusUnavailableDescription": "Refresh the page to check Studio readiness again.",
     "reconcileFailed": "Setup could not be completed. Review the reported steps and try again.",
@@ -3136,7 +3144,15 @@
       "reconcile": "Run setup",
       "verify_again": "Verify again",
       "openJobs": "Open Jobs",
+      "openTaskRunnerJob": "Open task-runner job",
       "configure": "Save configuration"
+    },
+    "notAdmin": {
+      "title": "You can't complete setup",
+      "description": "Only workspace admins or members of {{adminGroup}} can set up DQX Studio. Ask one of them to finish the steps below.",
+      "signedInAs": "You're signed in as {{userName}}.",
+      "adminsOnly": "Only workspace admins can set up DQX Studio. Ask one of them to finish the steps below.",
+      "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and audience group."
     },
     "warningsReview": {
       "title": "Studio setup finished with warnings",
@@ -3173,7 +3189,7 @@
         "ai": "Keep AI features on"
       },
       "help": {
-        "default": "Studio can only see permissions given directly to a user or group. If you gave this access through a parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
+        "default": "Studio can only see permissions given directly to a user or group, or to all workspace users. If you gave this access through another parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
         "app_sharing": "Studio isn't allowed to read who the app is shared with, so it can't check this itself. Once you've shared the app with your users, confirm it here.",
         "ai": "If your users can already use this AI model (for example through a parent group), you can keep AI features on."
       }

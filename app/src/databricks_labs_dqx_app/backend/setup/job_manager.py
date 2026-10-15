@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service.compute import Environment
 from databricks.sdk.service.jobs import (
     JobAccessControlRequest,
@@ -79,6 +80,14 @@ class TaskRunnerJobManager:
             str(job_id),
             access_control_list=[_setup_admin_access(user_name)],
         )
+
+    def exists(self, job_id: int) -> bool:
+        """Return whether task-runner job *job_id* still exists; other lookup errors propagate."""
+        try:
+            self.workspace.jobs.get(job_id)
+        except NotFound:
+            return False
+        return True
 
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
         """Report whether a task-runner job uses a distinct service principal."""

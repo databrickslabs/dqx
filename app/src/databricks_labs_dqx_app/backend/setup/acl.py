@@ -7,6 +7,8 @@ from typing import Literal
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 
+from databricks_labs_dqx_app.backend.setup.audience import BROAD_AUDIENCE
+
 AccessStatus = Literal["granted", "missing", "unknown"]
 
 GENIE_RUN_LEVELS = frozenset({"CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
@@ -47,6 +49,8 @@ def missing_principals(
 ) -> tuple[str, ...]:
     """Return the principals that hold none of the sufficient levels, in input order.
 
+    A sufficient level held by the built-in *users* group covers every principal.
+
     Args:
         levels: Casefolded principal to permission levels, from *group_levels*.
         principals: Principals to verify.
@@ -55,6 +59,9 @@ def missing_principals(
     Returns:
         The principals lacking any sufficient level.
     """
+    # The built-in users group contains every workspace identity.
+    if levels.get(BROAD_AUDIENCE, frozenset()) & sufficient:
+        return ()
     return tuple(
         principal for principal in principals if not levels.get(principal.casefold(), frozenset()) & sufficient
     )

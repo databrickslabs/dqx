@@ -47,10 +47,13 @@ async def get_setup_status(
 ) -> SetupStatusResponse:
     """Return readiness, the caller's bootstrap setup access and the resolved configuration."""
     orchestrator = getattr(request.app.state, "setup_orchestrator", None)
+    report = setup_runtime.report()
     return SetupStatusResponse(
-        report=setup_runtime.report(),
+        report=report,
         can_manage=access.can_manage,
         admin_group=sanitize_setup_display(config.admin_group) or "",
+        user_name=access.user_name or "",
+        task_runner_job_id=setup_runtime.job_id if access.can_manage else None,
         configuration=orchestrator.configuration_view() if orchestrator is not None else None,
     )
 
