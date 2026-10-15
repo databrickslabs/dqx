@@ -1,4 +1,4 @@
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.geo.check_funcs import (
@@ -94,7 +94,7 @@ def _within_distance_violation(value: str, distance: int) -> str:
 
 
 def _within_distance_invalid(value: str) -> str:
-    return f"value `{value}` in column `geom` is not a valid geometry"
+    return f"value `{value}` in column `geom` cannot be parsed as a geometry"
 
 
 def _within_distance_not_point(value: str) -> str:
@@ -184,7 +184,7 @@ def test_is_point(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((1 1, 2 2, 3 3, 1 1))` in column `geom` is not a point geometry"],
             [None],
         ],
@@ -207,7 +207,7 @@ def test_is_linestring(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((1 1, 2 2, 3 3, 1 1))` in column `geom` is not a linestring geometry"],
             [None],
         ],
@@ -229,7 +229,7 @@ def test_is_polygon(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `LINESTRING(1 1, 2 2)` in column `geom` is not a polygon geometry"],
             [None],
         ],
@@ -251,7 +251,7 @@ def test_is_multipoint(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `LINESTRING(1 1, 2 2)` in column `geom` is not a multipoint geometry"],
             [None],
         ],
@@ -273,7 +273,7 @@ def test_is_multilinestring(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((1 1, 2 2, 3 3, 1 1))` in column `geom` is not a multilinestring geometry"],
             [None],
         ],
@@ -295,7 +295,7 @@ def test_is_multipolygon(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `LINESTRING(1 1, 2 2)` in column `geom` is not a multipolygon geometry"],
             [None],
         ],
@@ -322,7 +322,7 @@ def test_is_geometrycollection(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((1 1, 2 2, 3 3, 1 1))` in column `geom` is not a geometrycollection geometry"],
             [None],
         ],
@@ -344,7 +344,7 @@ def test_is_ogc_valid(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((0 0,10 10,10 0,0 10,0 0))` in column `geom` is not a valid geometry (in the OGC sense)"],
             [None],
         ],
@@ -414,7 +414,7 @@ def test_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON EMPTY` in column `geom` is an empty geometry"],
             [None],
         ],
@@ -451,15 +451,33 @@ def test_is_not_null_island(skip_if_runtime_not_geo_compatible, spark):
             ],
             [None, None, None],
             [
-                "value `nonsense` in column `geom` is not a valid geometry",
-                "value `nonsense` in column `geomz` is not a valid geometry",
-                "value `nonsense` in column `geomzm` is not a valid geometry",
+                "value `nonsense` in column `geom` cannot be parsed as a geometry",
+                "value `nonsense` in column `geomz` cannot be parsed as a geometry",
+                "value `nonsense` in column `geomzm` cannot be parsed as a geometry",
             ],
             [None, None, None],
         ],
         checked_schema,
     )
     assertDataFrameEqual(actual, expected)
+
+
+def test_single_column_geo_checks_render_binary_input_as_hex(skip_if_runtime_not_geo_compatible, spark):
+    """WKB input is shown as hex, so a malformed (non-UTF-8) blob does not break the error column."""
+    test_df = spark.createDataFrame([[_POINT_FAR_WKB], [bytes.fromhex("01FF02")], [None]], "geom: binary")
+    actual = test_df.select(is_polygon("geom"), is_not_null_island("geom"))
+    expected = spark.createDataFrame(
+        [
+            [f"value `{_POINT_FAR_WKB.hex().upper()}` in column `geom` is not a polygon geometry", None],
+            [
+                "value `01FF02` in column `geom` cannot be parsed as a geometry",
+                "value `01FF02` in column `geom` cannot be parsed as a geometry",
+            ],
+            [None, None],
+        ],
+        "geom_is_not_polygon: string, geom_contains_null_island: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_has_dimension(skip_if_runtime_not_geo_compatible, spark):
@@ -474,7 +492,7 @@ def test_has_dimension(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` does not have the required dimension (0)"],
             [None],
         ],
@@ -496,7 +514,7 @@ def test_has_x_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` has x coordinates outside the range [0, 1]"],
             [None],
         ],
@@ -519,7 +537,7 @@ def test_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["value `nonsense` in column `geom` is not a valid geometry"],
+            ["value `nonsense` in column `geom` cannot be parsed as a geometry"],
             ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` has y coordinates outside the range [0, 1]"],
             [None],
         ],
@@ -563,9 +581,9 @@ def test_is_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
                 "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geog` has area not equal to value: 0.0",
             ],
             [
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geography` in column `geog` is not a valid geography",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geography` in column `geog` cannot be parsed as a geography",
             ],
             [None, None, None],
         ],
@@ -613,9 +631,9 @@ def test_is_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
                 None,
             ],
             [
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geography` in column `geog` is not a valid geography",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geography` in column `geog` cannot be parsed as a geography",
             ],
             [None, None, None],
         ],
@@ -659,9 +677,9 @@ def test_is_area_not_greater_than(skip_if_runtime_not_geo_compatible, spark):
                 "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geog` has area greater than value: 1000.0",
             ],
             [
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geography` in column `geog` is not a valid geography",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geography` in column `geog` cannot be parsed as a geography",
             ],
             [None, None, None],
         ],
@@ -709,9 +727,9 @@ def test_is_area_not_less_than(skip_if_runtime_not_geo_compatible, spark):
                 None,
             ],
             [
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geometry` in column `geom` is not a valid geometry",
-                "value `invalid-geography` in column `geog` is not a valid geography",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geometry` in column `geom` cannot be parsed as a geometry",
+                "value `invalid-geography` in column `geog` cannot be parsed as a geography",
             ],
             [None, None, None],
         ],
@@ -744,7 +762,7 @@ def test_is_num_points_equal_to(skip_if_runtime_not_geo_compatible, spark):
             ["value `LINESTRING(0 0, 1 1)` in column `geom` has number of coordinates not equal to value: 5"],
             ["value `LINESTRING(0 0, 1 1, 2 2)` in column `geom` has number of coordinates not equal to value: 5"],
             [None],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
+            ["value `invalid-geometry` in column `geom` cannot be parsed as a geometry"],
             [None],
         ],
         checked_schema,
@@ -776,7 +794,7 @@ def test_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
             [None],
             [None],
             [None],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
+            ["value `invalid-geometry` in column `geom` cannot be parsed as a geometry"],
             [None],
         ],
         checked_schema,
@@ -810,7 +828,7 @@ def test_is_num_points_not_greater_than(skip_if_runtime_not_geo_compatible, spar
             [
                 "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has number of coordinates greater than value: 3"
             ],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
+            ["value `invalid-geometry` in column `geom` cannot be parsed as a geometry"],
             [None],
         ],
         checked_schema,
@@ -842,7 +860,7 @@ def test_is_num_points_not_less_than(skip_if_runtime_not_geo_compatible, spark):
             ["value `LINESTRING(0 0, 1 1)` in column `geom` has number of coordinates less than value: 3"],
             [None],
             [None],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
+            ["value `invalid-geometry` in column `geom` cannot be parsed as a geometry"],
             [None],
         ],
         checked_schema,
@@ -886,7 +904,7 @@ def test_is_geo_contains_invalid_column_is_flagged(skip_if_runtime_not_geo_compa
     condition = is_geo_contains("geom", _REF_POLYGON, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_NOT_A_GEOMETRY, f"value `{_NOT_A_GEOMETRY}` in column `geom` is not a valid geometry"], [None, None]],
+        [[_NOT_A_GEOMETRY, f"value `{_NOT_A_GEOMETRY}` in column `geom` cannot be parsed as a geometry"], [None, None]],
         _CONTAINS_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -898,7 +916,7 @@ def test_is_geo_contains_invalid_reference_is_flagged(skip_if_runtime_not_geo_co
     condition = is_geo_contains("geom", _NOT_A_GEOMETRY, convert_column=True, convert_reference_geometry=True)
     actual = test_df.select("geom", condition)
     expected = spark.createDataFrame(
-        [[_POINT_INSIDE, "reference geometry for column `geom` is not a valid geometry"], [None, None]],
+        [[_POINT_INSIDE, "reference geometry for column `geom` cannot be parsed as a geometry"], [None, None]],
         _CONTAINS_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1032,7 +1050,7 @@ def test_is_geo_covers_approximate_invalid_geometry_is_flagged(skip_if_runtime_n
 
     `h3_pointash3` is the non-`try` variant and raises on non-point/invalid input; the check gates it
     on the value parsing to a point, so an unparseable value yields NULL H3 cells. That value is now
-    reported as an invalid geometry instead of being skipped, without failing the job.
+    reported as unparseable instead of being skipped, without failing the job.
     """
     test_df = spark.createDataFrame([[_POINT_INSIDE], ["NOT A GEOMETRY"], [None]], _GEO_SCHEMA)
     condition = is_geo_covers("geom", _REF_POLYGON, resolution=7)
@@ -1040,7 +1058,7 @@ def test_is_geo_covers_approximate_invalid_geometry_is_flagged(skip_if_runtime_n
     expected = spark.createDataFrame(
         [
             [_POINT_INSIDE, None],
-            ["NOT A GEOMETRY", "value `NOT A GEOMETRY` in column `geom` is not a valid geometry"],
+            ["NOT A GEOMETRY", "value `NOT A GEOMETRY` in column `geom` cannot be parsed as a geometry"],
             [None, None],
         ],
         _COVERS_APPROXIMATE_SCHEMA,
@@ -1056,10 +1074,55 @@ def test_is_geo_intersects_approximate_invalid_geometry_is_flagged(skip_if_runti
     expected = spark.createDataFrame(
         [
             [_POINT_INSIDE, None],
-            ["NOT A GEOMETRY", "value `NOT A GEOMETRY` in column `geom` is not a valid geometry"],
+            ["NOT A GEOMETRY", "value `NOT A GEOMETRY` in column `geom` cannot be parsed as a geometry"],
             [None, None],
         ],
         _INTERSECTS_APPROXIMATE_SCHEMA,
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_geo_covers_approximate_invalid_reference_is_flagged(skip_if_runtime_not_geo_compatible, spark):
+    """An unparseable reference is reported on every non-null row, including values with no H3 cells."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], ["POINT EMPTY"], [None]], _GEO_SCHEMA)
+    condition = is_geo_covers("geom", _NOT_A_GEOMETRY, resolution=7)
+    actual = test_df.select("geom", condition)
+    message = "reference geometry for column `geom` cannot be parsed as a geometry"
+    expected = spark.createDataFrame(
+        [[_POINT_INSIDE, message], ["POINT EMPTY", message], [None, None]], _COVERS_APPROXIMATE_SCHEMA
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_reference_without_h3_cells_is_flagged(skip_if_runtime_not_geo_compatible, spark):
+    """A reference that parses but has no H3 cells is reported rather than letting every row pass silently."""
+    test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", "POLYGON EMPTY", resolution=7),
+        is_geo_intersects("geom", "LINESTRING(0 0, 1 1)", resolution=7),
+    )
+    message = "reference geometry for column `geom` cannot be represented in H3"
+    expected = spark.createDataFrame(
+        [[_POINT_INSIDE, message, message], [None, None, None]],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_geo_approximate_empty_column_geometry_is_skipped(skip_if_runtime_not_geo_compatible, spark):
+    """A column value that parses but has no H3 cells (an empty geometry) is skipped, not reported."""
+    test_df = spark.createDataFrame([["POLYGON EMPTY"], ["GEOMETRYCOLLECTION EMPTY"], [None]], _GEO_SCHEMA)
+    actual = test_df.select(
+        "geom",
+        is_geo_covers("geom", _REF_POLYGON, resolution=7),
+        is_geo_intersects("geom", _REF_POLYGON, resolution=7),
+    )
+    expected = spark.createDataFrame(
+        [["POLYGON EMPTY", None, None], ["GEOMETRYCOLLECTION EMPTY", None, None], [None, None, None]],
+        "geom: string, geom_is_not_covered_by_reference_geometry_approximately: string, "
+        "geom_does_not_intersect_reference_geometry_approximately: string",
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
@@ -1298,7 +1361,7 @@ def test_is_geo_within_distance_empty_point_violation(skip_if_runtime_not_geo_co
 
 
 def test_is_geo_within_distance_invalid_column_violation(skip_if_runtime_not_geo_compatible, spark):
-    """An unparseable column value is reported as an invalid geometry, showing the raw input."""
+    """An unparseable column value is reported as unparseable, showing the raw input."""
     test_df = spark.createDataFrame([[_NOT_A_GEOMETRY], [None]], _GEO_SCHEMA)
     actual = test_df.select("geom", _within_distance(_POINT_INSIDE, 1000))
     expected = spark.createDataFrame(
@@ -1312,7 +1375,7 @@ def test_is_geo_within_distance_invalid_reference_violation(skip_if_runtime_not_
     test_df = spark.createDataFrame([[_POINT_INSIDE], [None]], _GEO_SCHEMA)
     actual = test_df.select("geom", _within_distance(_NOT_A_GEOMETRY, 1000))
     expected = spark.createDataFrame(
-        [[_POINT_INSIDE, "reference geometry for column `geom` is not a valid geometry"], [None, None]],
+        [[_POINT_INSIDE, "reference geometry for column `geom` cannot be parsed as a geometry"], [None, None]],
         _WITHIN_DISTANCE_SCHEMA,
     )
     assertDataFrameEqual(actual, expected, checkRowOrder=False)
@@ -1488,7 +1551,7 @@ def test_is_geo_within_distance_with_expression_distance(skip_if_runtime_not_geo
 _NATIVE_FLAGS_SCHEMA = "geometry_flagged: boolean, geography_flagged: boolean"
 
 
-def _as_native(spark, values: list[str | None]):
+def _as_native(spark: SparkSession, values: list[str | None]) -> DataFrame:
     """Build a DataFrame with the WKT values parsed into native GEOMETRY (`g`) and GEOGRAPHY (`og`) columns."""
     return spark.createDataFrame([[v] for v in values], _GEO_SCHEMA).select(
         F.call_function("try_to_geometry", F.col("geom")).alias("g"),
