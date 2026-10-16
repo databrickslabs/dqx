@@ -337,10 +337,9 @@ async def get_ai_gateway(
     """Create an AIGateway using the caller's OBO credentials.
 
     Every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
-    as the calling user via their OBO token, so the serving-endpoint call is subject to the
-    user's own UC permissions on the endpoint, not the app's service principal's. Role checks
-    (``require_role``) at the route layer remain the app-level gate on top of that; the SP
-    itself no longer needs (and should not be granted) query access to AI serving endpoints.
+    as the calling user via their OBO token, so the model-service call is subject to the
+    user's own Unity Catalog grants on the model service, not the app's service principal's.
+    Role checks (``require_role``) at the route layer remain the app-level gate on top of that.
     """
     return AIGateway(user_ws=obo_ws, app_settings=app_settings)
 
@@ -352,8 +351,7 @@ async def get_ai_rules_service(
 ) -> AiRulesService:
     """Create an AiRulesService, entirely OBO-authenticated.
 
-    Schema lookups and both LLM legs (the legacy ChatDatabricks path used by the contract
-    importer, and the AIGateway-backed purpose calls — generate_rule/suggest_field/
+    Schema lookups and the AIGateway-backed purpose calls (generate_rule/suggest_field/
     generate_checks_via_gateway) run as the calling user, so every model invocation and UC
     read triggered by an AI-assisted request is subject to that user's own permissions.
 
@@ -574,14 +572,14 @@ async def get_rule_embeddings_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> RuleEmbeddingsService:
-    """Create a RuleEmbeddingsService with split serving-endpoint auth.
+    """Create a RuleEmbeddingsService with split model-service auth.
 
     * **SP** (``sp_ws``): corpus writes / backfill via ``embed_and_store`` —
       publish and startup have no end-user token to query the embedding
-      endpoint as.
+      model as.
     * **OBO** (``obo_ws``): query-time ``embed_texts`` used by retrieval —
-      same user-scoped identity as ``AIGateway``'s judge calls, so endpoint
-      ACLs and the caller's permissions apply. (Kill-switch / rate-limit
+      same user-scoped identity as ``AIGateway``'s judge calls, so the
+      caller's Unity Catalog grants apply. (Kill-switch / rate-limit
       still live on the AIGateway path for generation; embeddings are not
       routed through AIGateway.)
     """
@@ -601,13 +599,11 @@ async def get_rule_retriever(
 
 
 async def get_ai_bootstrap(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
 ) -> AiBootstrap:
-    """Create the best-effort AI grants + embeddings backfill helper."""
-    return AiBootstrap(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
+    """Create the best-effort AI embeddings backfill helper."""
+    return AiBootstrap(embeddings=embeddings, registry=registry)
 
 
 async def get_discovery_service(
@@ -1264,7 +1260,7 @@ CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 class SetupAccess:
     """Authenticated setup-management access derived without application storage."""
 
-    user_name: str
+    user_name: str | None
     can_manage: bool
 
 
@@ -1292,7 +1288,7 @@ def setup_access(user: User, admin_group: str) -> SetupAccess:
         if (display := sanitize_setup_display(group.display)) is not None
     }
     return SetupAccess(
-        user_name=sanitize_setup_display(user.user_name) or "unknown",
+        user_name=sanitize_setup_display(user.user_name),
         can_manage=not setup_groups.isdisjoint(groups),
     )
 

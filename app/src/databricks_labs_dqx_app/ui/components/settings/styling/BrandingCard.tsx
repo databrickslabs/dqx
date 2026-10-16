@@ -98,7 +98,6 @@ function CompanyNameRow({ serverName, disabled }: { serverName: string; disabled
           id="branding-company-name"
           value={value}
           maxLength={MAX_COMPANY_NAME}
-          placeholder={t("config.styling.companyNamePlaceholder")}
           disabled={disabled}
           onChange={(e) => setValue(e.target.value)}
           onBlur={() => save(value)}

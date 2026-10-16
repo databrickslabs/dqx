@@ -2682,8 +2682,22 @@ class ScheduleConfigHistoryOut(BaseModel):
 class ManageHolderOut(BaseModel):
     """A user or group that can grant on a table (holds MANAGE or is an owner)."""
 
-    principal: str = Field(description="User name / email or group name that can grant on the table")
-    type: str = Field(description="Best-effort classification: 'user' or 'group'")
+    principal: str = Field(description="User name / email, group name or service principal application id")
+    type: str = Field(description="Best-effort classification: 'user', 'group' or 'service_principal'")
+    display_name: str | None = Field(
+        default=None, description="Name to show: a service principal's display name, otherwise the principal"
+    )
+
+
+class ScheduleMissingGrantOut(BaseModel):
+    """A catalog or schema usage grant a scheduler service principal still needs."""
+
+    principal: str = Field(description="Service principal application id (the grantee in the statement)")
+    display_name: str = Field(description="Service principal display name, or its application id")
+    privilege: str = Field(description="Missing privilege, e.g. USE_CATALOG")
+    securable_type: str = Field(description="CATALOG or SCHEMA")
+    securable: str = Field(description="Catalog or schema name")
+    statement: str = Field(description="GRANT statement that adds the privilege")
 
 
 class ScheduleOverviewOut(BaseModel):
@@ -2727,16 +2741,23 @@ class SchedulePreflightTableOut(BaseModel):
     directly or via a group). When ``False`` the schedule save is hard-blocked
     and ``manage_holders`` names who to ask instead.
 
-    ``access_unverified`` is ``True`` when the SQL warehouse gave no answer
-    (e.g. still starting) and the caller lacks MANAGE, so grantability is
-    unknown rather than denied. ``can_manage`` is ``False`` and the UI asks
-    the user to retry.
+    ``missing_grants`` is non-empty when the scheduler service principals lack
+    ``USE CATALOG`` / ``USE SCHEMA`` on the table's parents. That blocks the
+    schedule whoever saves it, so ``manage_holders`` is then empty.
+
+    ``access_unverified`` is ``True`` when grantability is unknown rather than
+    denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
+    no answer (e.g. still starting), ``"permissions"`` when the permissions
+    couldn't be read, and ``"configuration"`` when Studio's setup is incomplete
+    (e.g. the scheduler service principals can't be resolved). ``can_manage`` is ``False`` and the UI asks the user to retry.
     """
 
     fqn: str
     can_manage: bool
     manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+    missing_grants: list[ScheduleMissingGrantOut] = Field(default_factory=list)
     access_unverified: bool = False
+    unverified_reason: Literal["warehouse", "permissions", "configuration"] | None = None
 
 
 class SchedulePreflightOut(BaseModel):

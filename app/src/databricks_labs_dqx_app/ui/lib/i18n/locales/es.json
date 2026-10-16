@@ -29,10 +29,10 @@
     },
     "grantWarning": {
       "title": "No puedes configurar esta programación",
-      "descriptionTable": "Las ejecuciones programadas leen esta tabla como una cuenta de servicio, por lo que configurar una programación concede acceso de lectura a esa cuenta, lo que requiere el privilegio MANAGE que no tienes sobre esta tabla.",
-      "descriptionCollection": "Las ejecuciones programadas leen cada tabla como una cuenta de servicio, por lo que configurar una programación concede acceso de lectura a esa cuenta, lo que requiere el privilegio MANAGE que no tienes sobre una o más tablas de esta colección.",
-      "holdersLabel": "Pide a una de estas que la configure en tu lugar:",
-      "holdersLabelForTable": "Quién puede conceder acceso a {{fqn}}:",
+      "descriptionTable": "Las programaciones necesitan el privilegio MANAGE en esta tabla, y no lo tienes.",
+      "descriptionCollection": "Las programaciones necesitan el privilegio MANAGE en cada tabla que leen, y no lo tienes en una o más de estas tablas.",
+      "holdersLabel": "Pide a alguien que lo tenga que configure la programación:",
+      "holdersLabelForTable": "Quién tiene MANAGE en {{fqn}}:",
       "noHolders": "No se encontraron usuarios ni grupos con el permiso necesario. Contacta con el administrador de tu área de trabajo o con el propietario de la tabla.",
       "typeUser": "usuario",
       "typeGroup": "grupo",
@@ -40,7 +40,17 @@
       "unverifiedTitle": "No se pudo comprobar el acceso a la tabla",
       "unverifiedDescriptionTable": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer esta tabla. Puede que aún se esté iniciando.",
       "unverifiedDescriptionCollection": "El SQL warehouse no respondió a tiempo, así que no pudimos comprobar si las ejecuciones programadas pueden leer estas tablas. Puede que aún se esté iniciando.",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "missingGrantsDescriptionTable": "Las ejecuciones programadas leen esta tabla como las entidades de servicio de Studio, que aún no pueden usar su catálogo o esquema.",
+      "missingGrantsDescriptionCollection": "Las ejecuciones programadas leen estas tablas como las entidades de servicio de Studio, que aún no pueden usar algunos de sus catálogos o esquemas.",
+      "missingGrant": "{{name}} necesita {{privilege}} en {{securable}}",
+      "missingGrantsInstructions": "Pide al propietario del catálogo y del esquema, o a alguien con MANAGE sobre ellos, que ejecute estas instrucciones en un editor SQL y luego haz clic en Reintentar:",
+      "unverifiedPermissionsTitle": "No se pudieron comprobar los permisos",
+      "unverifiedPermissionsDescriptionTable": "Studio no pudo leer los permisos de esta tabla, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide al propietario de la tabla que la configure.",
+      "unverifiedPermissionsDescriptionCollection": "Studio no pudo leer los permisos de estas tablas, así que no sabe si puedes configurar una programación. Vuelve a intentarlo o pide a los propietarios de las tablas que la configuren.",
+      "missingGrantsForTable": "Para {{fqn}}:",
+      "unverifiedConfigurationTitle": "No se pudo comprobar el acceso de la programación",
+      "unverifiedConfigurationDescription": "La configuración de Studio está incompleta (por ejemplo, no encuentra la entidad de servicio del trabajo de ejecución de tareas), así que no puede comprobar si se puede configurar esta programación. Pide a un administrador de Studio que revise la página de configuración."
     }
   },
   "lifecycle": {
@@ -217,7 +227,6 @@
     "kwTheme": "estilo tema colores ajuste predefinido modo oscuro claro encabezado barra lateral",
     "styling": {
       "companyNameLabel": "Nombre de la empresa",
-      "companyNamePlaceholder": "Acme",
       "companyNamePreview": "Se muestra en la barra superior",
       "logoRequirements": "PNG, JPEG o WebP, hasta 256 KB",
       "logoErrorType": "SVG y otros tipos de archivo no son compatibles. Usa una imagen PNG, JPEG o WebP.",
@@ -358,13 +367,13 @@
     "aiSettingsTitle": "Configuración de IA",
     "aiSettingsEnabledLabel": "Habilitar funciones de IA",
     "aiSettingsEnabledHint": "Activa las funciones de IA en toda la aplicación.",
-    "aiSettingsEndpointLabel": "Endpoint de serving de IA",
-    "aiSettingsEndpointHint": "Endpoint de serving del modelo usado para las funciones de IA.",
+    "aiSettingsEndpointLabel": "Modelo de IA",
+    "aiSettingsEndpointHint": "Modelo de Unity Gateway usado para las funciones de IA.",
     "aiSettingsManageLink": "Manage in AI Gateway",
-    "aiSettingsEndpointPlaceholder": "p. ej. databricks-meta-llama-3-70b-instruct",
-    "aiSettingsSelectEndpointPlaceholder": "Selecciona un endpoint de serving",
-    "aiSettingsNoEndpointsFound": "No se encontraron endpoints de serving",
-    "aiSettingsCustomEndpointOption": "{{value}} (actual — no está en la lista del workspace)",
+    "aiSettingsEndpointPlaceholder": "p. ej. system.ai.claude-sonnet-4-5",
+    "aiSettingsSelectEndpointPlaceholder": "Selecciona un modelo",
+    "aiSettingsNoEndpointsFound": "No se encontraron modelos",
+    "aiSettingsCustomEndpointOption": "{{value}} (actual — no está en la lista de modelos)",
     "aiSettingsSaved": "Configuración de IA guardada.",
     "aiSettingsSaveFailed": "No se pudo guardar la configuración de IA.",
     "aiSettingsAdminOnlyHint": "Solo los administradores pueden cambiar esta configuración.",
@@ -3088,7 +3097,6 @@
     "checkingTitle": "Comprobando la preparación de Studio",
     "checkingDescription": "DQX Studio está comprobando las capacidades necesarias para iniciarse de forma segura.",
     "waitingTitle": "La configuración de Studio necesita un administrador",
-    "waitingDescription": "Póngase en contacto con un miembro de {{adminGroup}} para completar los pasos restantes de la configuración.",
     "statusUnavailableTitle": "El estado de configuración no está disponible",
     "statusUnavailableDescription": "Actualice la página para comprobar de nuevo la preparación de Studio.",
     "reconcileFailed": "No se pudo completar la configuración. Revise los pasos indicados e inténtelo de nuevo.",
@@ -3136,7 +3144,15 @@
       "reconcile": "Ejecutar configuración",
       "verify_again": "Comprobar de nuevo",
       "openJobs": "Abrir trabajos",
+      "openTaskRunnerJob": "Abrir el job de ejecución",
       "configure": "Guardar configuración"
+    },
+    "notAdmin": {
+      "title": "No puedes completar la configuración",
+      "description": "Solo los administradores del área de trabajo o los miembros de {{adminGroup}} pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "signedInAs": "Has iniciado sesión como {{userName}}.",
+      "adminsOnly": "Solo los administradores del área de trabajo pueden configurar DQX Studio. Pide a uno de ellos que complete los pasos siguientes.",
+      "configurationPending": "Esperando a que un administrador elija el catálogo, el prefijo de almacenamiento y el grupo de usuarios."
     },
     "warningsReview": {
       "title": "La configuración de Studio terminó con advertencias",
@@ -3173,7 +3189,7 @@
         "ai": "Mantener la IA activada"
       },
       "help": {
-        "default": "Studio solo ve los permisos concedidos directamente a un usuario o grupo. Si concediste este acceso a través de un grupo principal, o lo configuraste a mano en el área de trabajo, puede parecer que falta. Si estás seguro de que está configurado, puedes continuar de todos modos.",
+        "default": "Studio solo ve los permisos concedidos directamente a un usuario o grupo, o a todos los usuarios del área de trabajo. Si concediste este acceso a través de otro grupo principal, o lo configuraste a mano en el área de trabajo, puede parecer que falta. Si estás seguro de que está configurado, puedes continuar de todos modos.",
         "app_sharing": "Studio no tiene permiso para leer con quién está compartida la aplicación, así que no puede comprobarlo. Cuando hayas compartido la aplicación con tus usuarios, confírmalo aquí.",
         "ai": "Si tus usuarios ya pueden usar este modelo de IA (por ejemplo, a través de un grupo principal), puedes mantener activadas las funciones de IA."
       }
@@ -3198,6 +3214,7 @@
     "failing": "Requiere atención",
     "failed": "Fallida",
     "partial": "Fallo parcial",
+    "skipped": "Omitida",
     "name": "Programación",
     "type": "Tipo",
     "cadence": "Frecuencia",

@@ -17,6 +17,10 @@ export type SetupViewModel = {
   actions: SetupViewAction[];
   canManage: boolean;
   adminGroup: string;
+  /** Signed-in user, shown when they cannot run setup themselves. */
+  userName: string;
+  /** Resolved task-runner job, linked from the task-runner step (administrators only). */
+  taskRunnerJobId: number | null;
   configuration: SetupConfigurationView | null;
   showConfigurationForm: boolean;
 };
@@ -49,6 +53,8 @@ export function setupView(
   acknowledgedWarnings: ReadonlySet<string> = new Set(),
 ): SetupViewModel {
   const { report, can_manage: canManage, admin_group: adminGroup } = status;
+  const userName = status.user_name ?? "";
+  const taskRunnerJobId = status.task_runner_job_id ?? null;
   const configuration = status.configuration ?? null;
   const actions = canManage
     ? report.steps.flatMap((step) =>
@@ -74,6 +80,8 @@ export function setupView(
       actions: review ? actions : [],
       canManage,
       adminGroup,
+      userName,
+      taskRunnerJobId,
       configuration,
       showConfigurationForm,
     };
@@ -86,6 +94,8 @@ export function setupView(
       actions: [],
       canManage,
       adminGroup,
+      userName,
+      taskRunnerJobId,
       configuration,
       showConfigurationForm,
     };
@@ -97,6 +107,8 @@ export function setupView(
     actions,
     canManage,
     adminGroup,
+    userName,
+    taskRunnerJobId,
     configuration,
     showConfigurationForm,
   };

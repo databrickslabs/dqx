@@ -18,8 +18,8 @@ The two tiers
 ``make app-test``, seconds, no workspace, no tokens). The pipeline under test is
 **real**: a real :class:`RuleSuggester`, a real :class:`CosineRuleRetriever`, a
 real :class:`RuleEmbeddingsService`, a real :class:`AIGateway`. The only faked
-surface is the outbound HTTP call, ``WorkspaceClient.serving_endpoints.query``,
-which is replayed from ``fixtures/suggester_eval/recorded/``.
+surface is the outbound HTTP call, ``WorkspaceClient.api_client.do`` against the
+Unity Gateway embeddings and chat completion routes, which is replayed from ``fixtures/suggester_eval/recorded/``.
 
 Replaying at the HTTP boundary rather than at the ``RuleRetriever`` /
 ``AIGateway`` seam is deliberate. Stubbing those seams is exactly what the
@@ -63,7 +63,7 @@ from typing import Any
 from unittest.mock import create_autospec
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.mixins.open_ai_client import ServingEndpointsExt
+from databricks.sdk.core import ApiClient
 
 from databricks_labs_dqx_app.backend.registry_models import (
     ColumnMappingGroup,
@@ -236,7 +236,7 @@ def text_digest(text: str) -> str:
 
 @dataclass
 class Recordings:
-    """Replay cache captured at the ``serving_endpoints.query`` boundary.
+    """Replay cache captured at the model-service HTTP boundary.
 
     ``embeddings`` maps :func:`text_digest` of the request text to its vector,
     and covers both sides of retrieval — the corpus documents and the
@@ -297,35 +297,11 @@ def load_recordings() -> Recordings:
 
 
 # ---------------------------------------------------------------------------
-# Replay at the serving-endpoint boundary
+# Replay at the model-service HTTP boundary
 # ---------------------------------------------------------------------------
 
-
-@dataclass
-class _EmbeddingItem:
-    embedding: list[float]
-    index: int
-
-
-@dataclass
-class _EmbeddingResponse:
-    data: list[_EmbeddingItem]
-
-
-@dataclass
-class _ChatMessage:
-    content: str
-
-
-@dataclass
-class _ChatChoice:
-    message: _ChatMessage
-    finish_reason: str = "stop"
-
-
-@dataclass
-class _ChatResponse:
-    choices: list[_ChatChoice]
+_EMBEDDINGS_PATH = "/ai-gateway/mlflow/v1/embeddings"
+_CHAT_PATH = "/ai-gateway/mlflow/v1/chat/completions"
 
 
 @dataclass
@@ -343,11 +319,10 @@ class JudgeCall:
 
 
 class ReplayEndpoints:
-    """Replays ``serving_endpoints.query`` for both the embedding and judge calls.
+    """Replays the Unity Gateway embeddings and chat completion calls.
 
-    One class handles both because both features call the same SDK method; the
-    keyword arguments distinguish them (``input=`` for embeddings, ``messages=``
-    for chat completion).
+    Both features go through ``api_client.do``; the request path distinguishes
+    them (``/embeddings`` vs ``/chat/completions``).
 
     Attach it as the ``side_effect`` of an autospecced client rather than
     duck-typing a whole ``WorkspaceClient`` — see :func:`replay_client`.
@@ -359,34 +334,31 @@ class ReplayEndpoints:
         self.embed_call_count = 0
         self.embedded_text_count = 0
 
-    def query(self, **kwargs: Any) -> Any:
-        """Serve whichever of the two call shapes the caller used.
+    def do(self, method: str, path: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        """Serve whichever of the two routes the caller used.
 
-        Takes ``**kwargs`` rather than restating the endpoint's parameters:
-        the autospecced mock this hangs off has already bound the call against
-        the real SDK signature by the time it gets here, so restating them
-        would only add a second, driftable copy (and shadow the ``input``
-        builtin for no benefit).
+        Takes ``**kwargs`` for the remaining request arguments: the autospecced
+        mock this hangs off has already bound the call against the real
+        ``ApiClient.do`` signature by the time it gets here.
         """
-        texts = kwargs.get("input")
-        if texts is not None:
-            return self._embed(list(texts))
-        messages = kwargs.get("messages")
-        if messages is not None:
-            return self._judge(messages)
-        raise MissingRecordingError("serving_endpoints.query called with neither `input` nor `messages`")
+        body = kwargs.get("body") or {}
+        if method == "POST" and path == _EMBEDDINGS_PATH:
+            return self._embed(list(body.get("input") or []))
+        if method == "POST" and path == _CHAT_PATH:
+            return self._judge(body.get("messages") or [])
+        raise MissingRecordingError(f"Unexpected model-service call: {method} {path}")
 
-    def _embed(self, texts: list[str]) -> _EmbeddingResponse:
+    def _embed(self, texts: list[str]) -> dict[str, Any]:
         self.embed_call_count += 1
         self.embedded_text_count += len(texts)
-        return _EmbeddingResponse(
-            data=[
-                _EmbeddingItem(embedding=self._recordings.vector_for(text), index=position)
+        return {
+            "data": [
+                {"embedding": self._recordings.vector_for(text), "index": position}
                 for position, text in enumerate(texts)
             ]
-        )
+        }
 
-    def _judge(self, messages: Sequence[Any]) -> _ChatResponse:
+    def _judge(self, messages: Sequence[dict[str, Any]]) -> dict[str, Any]:
         prompt = self._user_prompt(messages)
         table_fqn = str(prompt.get("table", ""))
         offered = tuple(
@@ -402,21 +374,17 @@ class ReplayEndpoints:
         offered_set = set(offered)
         suggestions = [item for item in self._recordings.verdict_for(table_fqn) if item.get("rule_id") in offered_set]
         content = json.dumps({"suggestions": suggestions})
-        return _ChatResponse(choices=[_ChatChoice(message=_ChatMessage(content=content))])
+        return {
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]
+        }
 
     @staticmethod
-    def _user_prompt(messages: Sequence[Any]) -> dict[str, Any]:
-        """Pull the JSON payload out of the last user message.
-
-        ``AIGateway`` converts the caller's dicts into SDK ``ChatMessage``
-        objects before the boundary, so read ``role``/``content`` off the
-        object rather than assuming a dict.
-        """
+    def _user_prompt(messages: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        """Pull the JSON payload out of the last user message."""
         for message in reversed(list(messages)):
-            role = str(getattr(message, "role", "") or "")
-            if not role.lower().endswith("user"):
+            if str(message.get("role", "")).lower() != "user":
                 continue
-            content = getattr(message, "content", "") or ""
+            content = message.get("content", "") or ""
             try:
                 parsed = json.loads(content)
             except (TypeError, ValueError) as e:
@@ -429,20 +397,20 @@ class ReplayEndpoints:
 def replay_client(recordings: Recordings) -> tuple[Any, ReplayEndpoints]:
     """Build an autospecced ``WorkspaceClient`` whose only live surface is replay.
 
-    The ``serving_endpoints`` child is autospecced *explicitly* against
-    :class:`ServingEndpointsExt`. That matters: ``serving_endpoints`` is a
-    property on :class:`WorkspaceClient`, and ``create_autospec`` does not
-    follow a property's return type, so the default child mock accepts any
-    keyword at all. Speccing it directly means every outbound call is bound
-    against the real SDK signature — a kwarg the endpoint would reject fails
-    here instead of in production, which is precisely the assurance a
-    hand-rolled duck-typed double cannot give.
+    The ``api_client`` child is autospecced *explicitly* against
+    :class:`ApiClient`. That matters: ``api_client`` is a property on
+    :class:`WorkspaceClient`, and ``create_autospec`` does not follow a
+    property's return type, so the default child mock accepts any keyword at
+    all. Speccing it directly means every outbound call is bound against the
+    real SDK signature — a kwarg the client would reject fails here instead of
+    in production, which is precisely the assurance a hand-rolled duck-typed
+    double cannot give.
     """
     endpoints = ReplayEndpoints(recordings)
-    serving_endpoints = create_autospec(ServingEndpointsExt, instance=True)
-    serving_endpoints.query.side_effect = endpoints.query
+    api_client = create_autospec(ApiClient, instance=True)
+    api_client.do.side_effect = endpoints.do
     client = create_autospec(WorkspaceClient, instance=True)
-    client.serving_endpoints = serving_endpoints
+    client.api_client = api_client
     return client, endpoints
 
 

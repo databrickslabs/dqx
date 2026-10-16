@@ -184,6 +184,11 @@ class DQPattern(Enum):
     UUID = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\z"
     UUID_STRICT = r"\A[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\z"
 
+    # Plain or exponent number: optional sign, digits with an optional decimal point ("1", "1.", "1.25", ".5"),
+    # and an optional exponent ("1.5e3", "1.0E-4"). Groups: 1 integer digits, 2 fraction digits, 3 exponent.
+    # No surrounding whitespace. Anchored; ReDoS-safe.
+    DECIMAL_NUMBER = r"\A[+-]?(?=\.?\d)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?\z"
+
 
 # ISO 3166 alpha-2 country code -> SSN / national-id validation pattern. Extension
 # point for additional countries: add a new DQPattern member and map its ISO 3166
@@ -1508,6 +1513,86 @@ def is_not_in_range(
         col_expr_str,
         col_str_norm,
         "in_range",
+    )
+
+
+@register_rule("row")
+def has_num_decimal_places(
+    column: str | Column,
+    limit: int | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether numeric values in the input column have no more than the given number of decimal places.
+
+    Values are judged by their numeric value, so trailing zeros don't count: *DOUBLE* *5.0*, *DECIMAL(10,4)*
+    *1.5000* and the string *'1.250'* have 0, 1 and 2 decimal places. *float*/*double* columns reflect the stored
+    value (1.10 is stored as 1.1). Values are read via their string form, which must be a plain or exponent
+    number: an optional sign, digits with an optional decimal point (*'1'*, *'-1.25'*, *'+1.'*, *'.5'*) and an
+    optional exponent (*'1.5e3'*, *'1.0E-4'*). Anything else, including surrounding whitespace, *NaN* and
+    *Infinity*, fails as not numeric.
+
+    The *limit* may be a literal or a column expression and is evaluated lazily, so it is not validated up-front.
+    A non-null value whose *limit* evaluates to null fails with a 'null limit' message.
+
+    Args:
+        column: column to check; can be a string column name or a column expression.
+        limit: maximum number of decimal places allowed; a non-negative integer, column name, or sql expression.
+        allow_nulls: if True (default), null values pass the check; if False, null values fail the check.
+
+    Returns:
+        Column object for condition.
+
+    Raises:
+        MissingParameterError: if the limit is not provided.
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    str_expr = col_expr.cast("string")
+
+    is_numeric = str_expr.rlike(DQPattern.DECIMAL_NUMBER.value)
+    integer = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 1)
+    fraction = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 2)
+    exponent = F.regexp_extract(str_expr, DQPattern.DECIMAL_NUMBER.value, 3)
+    # Cast the exponent to double so a huge exponent in a string value can't overflow.
+    exponent_value = F.when(exponent == "", F.lit(0)).otherwise(exponent.cast("double"))
+    # Trailing zeros of the whole significand don't count ("100e-2" is 1); an all-zero significand is zero.
+    significand = F.regexp_replace(F.concat(integer, fraction), r"0+\z", "")
+    trailing_zeros = F.length(integer) + F.length(fraction) - F.length(significand)
+    num_decimal_places = F.when(significand == "", F.lit(0)).otherwise(
+        F.greatest(F.length(fraction) - trailing_zeros - exponent_value, F.lit(0))
+    )
+    is_limit_null = col_expr.isNotNull() & limit_expr.isNull()
+
+    condition = is_limit_null | ~is_numeric | (num_decimal_places > limit_expr)
+    message = (
+        F.when(
+            is_limit_null,
+            F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' has a null limit")),
+        )
+        .when(
+            ~is_numeric,
+            F.concat_ws("", F.lit("Value '"), str_expr, F.lit(f"' in Column '{col_expr_str}' is not numeric")),
+        )
+        .otherwise(
+            F.concat_ws(
+                "",
+                F.lit("Value '"),
+                str_expr,
+                F.lit(f"' in Column '{col_expr_str}' has more than "),
+                limit_expr.cast("string"),
+                F.lit(" decimal places"),
+            )
+        )
+    )
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        message,
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "num_decimal_places_greater_than_limit",
     )
 
 
