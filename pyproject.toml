@@ -41,6 +41,9 @@ dependencies = [
     "sqlalchemy>=2.0,<3.0",
     "PyYAML~=6.0.3",
     "pydantic>=2.8.2,<3",
+    # NOTE: protobuf 7 removed FieldDescriptor.label, which MLflow 2.x still uses. Pinned in core rather than in the
+    # anomaly extra because classic job clusters install the wheel without extras, so an extra-only pin is ignored there.
+    "protobuf<7.0",
 ]
 
 [project.optional-dependencies]
