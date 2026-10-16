@@ -23,7 +23,12 @@ from typing import Any, cast
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
-from dqx_task_runner.evaluated_rows import EVALUATED_ROWS_METRIC, with_evaluated_rows_metric
+from dqx_task_runner.evaluated_rows import (
+    EVALUATED_ROWS_METRIC,
+    EvaluatedRowsPlan,
+    prepare_evaluated_rows,
+    with_separate_evaluated_rows,
+)
 
 logger = logging.getLogger("dqx_task_runner")
 
@@ -571,10 +576,11 @@ def _run_dryrun(
     if sample_size:
         df = df.limit(sample_size)
 
-    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
+    # Fails the run when a filter can't be counted (no silent fallback to the table row count).
+    evaluated_rows = prepare_evaluated_rows(df, checks)
     observer = DQMetricsObserver(
         name=_observer_run_name(run_type),
-        custom_metrics=with_evaluated_rows_metric(df, checks, custom_metrics) or None,
+        custom_metrics=_with_observed_evaluated_rows(custom_metrics, evaluated_rows) or None,
         id_overwrite=run_id,
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
@@ -607,6 +613,10 @@ def _run_dryrun(
     error_rows = int(observed.get("error_row_count", 0) or 0)
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
+    if run_type != "preview":
+        # Runs after the snapshot (its own action can't touch it) and returns a merged copy.
+        # Previews persist no metrics, so they skip the extra aggregate.
+        observed = with_separate_evaluated_rows(df, evaluated_rows, observed)
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
@@ -1069,6 +1079,13 @@ def _check_metrics_to_error_summary(check_metrics_json: Any) -> list[dict[str, A
     return rows[:20]
 
 
+def _with_observed_evaluated_rows(custom_metrics: list[str], evaluated_rows: EvaluatedRowsPlan) -> list[str]:
+    """Append the evaluated-rows observer metric, built from the checks so it bypasses ``_validate_custom_metrics``."""
+    if evaluated_rows.observed_metric is None:
+        return custom_metrics
+    return [*custom_metrics, evaluated_rows.observed_metric]
+
+
 def _persist_observed_metrics(
     *,
     spark: SparkSession,
@@ -1196,10 +1213,11 @@ def _run_scheduled(
 
     fingerprint = _compute_fingerprint(checks)
     df = _read_view_with_retry(spark, view_fqn)
-    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
+    # Fails the run when a filter can't be counted (no silent fallback to the table row count).
+    evaluated_rows = prepare_evaluated_rows(df, checks)
     observer = DQMetricsObserver(
         name=_observer_run_name("scheduled"),
-        custom_metrics=with_evaluated_rows_metric(df, checks, custom_metrics) or None,
+        custom_metrics=_with_observed_evaluated_rows(custom_metrics, evaluated_rows) or None,
         id_overwrite=run_id,
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
@@ -1223,6 +1241,8 @@ def _run_scheduled(
     error_rows = int(observed.get("error_row_count", 0) or 0)
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
+    # Runs after the snapshot (its own action can't touch it) and returns a merged copy.
+    observed = with_separate_evaluated_rows(df, evaluated_rows, observed)
 
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
     result_row = spark.createDataFrame(
