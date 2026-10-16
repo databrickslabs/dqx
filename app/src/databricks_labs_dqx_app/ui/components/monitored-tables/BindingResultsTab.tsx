@@ -32,6 +32,7 @@ import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { countChecksAndRules } from "@/components/results/testCounts";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
@@ -607,6 +608,16 @@ function ResultsBody({
   const totalTests = selectedRun?.total_tests ?? 0;
   const tableFailedTests = selectedRun?.table_failed_tests ?? null;
   const tableTotalTests = selectedRun?.table_total_tests ?? null;
+  // Checks / rules for the score subtitle, in the SAME scope as the tests:
+  // the selected run, unfiltered — i.e. the BASE breakdown (run-scoped, no
+  // facets) for effectiveRunId, which is the selected run. Its by_rule rows
+  // are grouped by rule identity, so rules = distinct rules and checks = the
+  // summed check_count (see countChecksAndRules). Placeholder data from the
+  // previous run is ignored so the counts never mix two runs (the subtitle
+  // falls back to "X / Y tests passed" until the run's breakdown lands).
+  const scopeCounts = baseTableQuery.isPlaceholderData
+    ? null
+    : countChecksAndRules(baseTable?.by_rule);
   // Score direction vs the next-older run (runs are newest-first). null when
   // equal or there's no previous run.
   const prevPassRate =
@@ -891,6 +902,7 @@ function ResultsBody({
               totalTests={totalTests}
               tableFailedTests={tableFailedTests}
               tableTotalTests={tableTotalTests}
+              scopeCounts={scopeCounts}
               trend={scoreTrend}
               info={COUNT_INFO}
               breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}

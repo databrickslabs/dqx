@@ -19,6 +19,7 @@ import {
 import selector from "@/lib/selector";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { countChecksAndRules } from "@/components/results/testCounts";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { CollapseRegion } from "@/components/results/CollapseRegion";
@@ -209,12 +210,12 @@ export function computeOverallPoints(
 
 /**
  * Failed/total test counts for the ScoreBox subtitle: every sum comes from
- * the same (filtered) by_table rows so "X / Y row tests passed · A / B table
- * tests passed" is internally consistent. Row and table tests are summed
- * separately, never together. DELIBERATE dqlake deviation — the original hardcodes
+ * the same (filtered) by_table rows so "X / Y tests passed" is internally
+ * consistent. Row and table tests are summed separately here; ScoreBox adds
+ * them together. DELIBERATE dqlake deviation — the original hardcodes
  * totalTests={0}, which suppresses the subtitle on the product ScoreBox
- * entirely. Here ScoreBox renders each part whose total is > 0, so a scope with
- * only table tests still shows its table part.
+ * entirely. Here ScoreBox renders whenever the combined total is > 0, so a
+ * scope with only table tests still shows its counts.
  *
  * *tableFacet* (P7.2): the server self-excludes the table facet from the
  * by_table rows (so the box keeps its full row set), which would leave this
@@ -780,6 +781,13 @@ export function MultiTableResultsSection({
     results?.by_table,
     filters.table,
   );
+  // Checks / rules for the subtitle, in the same scope as those tests: the
+  // filtered breakdown's by_rule rows. Unlike by_table, by_rule does NOT
+  // self-exclude the table facet server-side, so it already matches the
+  // client-side-filtered by_table rows above; rules = distinct by_rule rows
+  // (one per rule identity, not a sum of per-table rule counts) and checks =
+  // their summed check_count — see countChecksAndRules.
+  const scopeCounts = countChecksAndRules(results?.by_rule);
 
   // Over-time chart: a prominent foreground "Average" trendline drawn on top
   // of dull, thin per-table lines. The Average is the SERVER's as-of
@@ -853,6 +861,7 @@ export function MultiTableResultsSection({
       totalTests={totalTests}
       tableFailedTests={tableFailedTests}
       tableTotalTests={tableTotalTests}
+      scopeCounts={scopeCounts}
       info={COUNT_INFO}
       label={scoreLabel(accessibleTableCount)}
       breachCriticality={thresholdEnabled ? lastTrend?.breach_criticality : null}
