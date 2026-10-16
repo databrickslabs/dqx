@@ -13,7 +13,6 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from databricks_labs_dqx_app.backend import dependencies
-from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
@@ -26,7 +25,6 @@ def execution_workspace(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner-sp")))
     workspace.current_user.me.return_value = User(user_name="app-sp")
     monkeypatch.setattr(setup_runtime, "job_id", 42)
-    monkeypatch.setattr(dependencies, "conf", AppConfig(_env_file=None, task_runner_postgres_role=""))
     return workspace
 
 
@@ -97,18 +95,6 @@ def test_execution_dependencies_reject_unresolved_app_identity(
     assert response.status_code == 503
     assert "app service principal" in response.json()["detail"]
     execution_workspace.jobs.run_now.assert_not_called()
-
-
-def test_execution_dependencies_reject_legacy_role_mismatch(
-    execution_client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(dependencies, "conf", AppConfig(_env_file=None, task_runner_postgres_role="other-sp"))
-
-    response = execution_client.get("/execution")
-
-    assert response.status_code == 503
-    assert "DQX_TASK_RUNNER_POSTGRES_ROLE" in response.json()["detail"]
-    assert "match" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("boundary", ["job", "identity"])

@@ -15,7 +15,7 @@ export const SCHEDULE_FILTER_ALL = "all";
 export type ScheduleSourceType = ScheduleOverviewOut["source_type"];
 
 /** Health of a schedule as shown in the Status column and Status filter. */
-export type ScheduleHealth = "active" | "paused" | "failed" | "partial";
+export type ScheduleHealth = "active" | "paused" | "failed" | "partial" | "skipped";
 
 /** Values of the Status filter. `failing` groups failed + partial failures. */
 export type ScheduleStatusFilter = typeof SCHEDULE_FILTER_ALL | "active" | "paused" | "failing";
@@ -46,6 +46,7 @@ export function scheduleHealth(row: ScheduleOverviewOut): ScheduleHealth {
   if (row.paused || row.enabled === false) return "paused";
   if (row.run_status === "failed") return "failed";
   if (row.run_status === "partial_failure") return "partial";
+  if (row.run_status === "skipped") return "skipped";
   return "active";
 }
 
@@ -106,7 +107,7 @@ export type ScheduleSortKey =
 
 /** Status sort rank: a first-click ASC sort leads with the schedules that
  *  need attention (failed, then partial), then healthy, then paused. */
-const HEALTH_RANK: Record<ScheduleHealth, number> = { failed: 0, partial: 1, active: 2, paused: 3 };
+const HEALTH_RANK: Record<ScheduleHealth, number> = { failed: 0, partial: 1, active: 2, skipped: 3, paused: 4 };
 
 const TYPE_RANK: Record<ScheduleSourceType, number> = { table: 0, collection: 1, scope: 2 };
 

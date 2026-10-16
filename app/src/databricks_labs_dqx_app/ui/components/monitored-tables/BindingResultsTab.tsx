@@ -877,7 +877,7 @@ function ResultsBody({
             breachEnabled={thresholdEnabled}
           />
         </div>
-        <div className="sm:pr-2">
+        <div>
           {runsLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : (

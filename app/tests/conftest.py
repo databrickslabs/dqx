@@ -40,6 +40,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 os.environ.setdefault("DQX_CATALOG", "dqx_test")
 os.environ.setdefault("DQX_SCHEMA", "dqx_app_test")
 os.environ.setdefault("DQX_TMP_SCHEMA", "dqx_app_test_tmp")
+os.environ.setdefault("DQX_GENIE_SCHEMA", "dqx_app_test_genie")
+os.environ.setdefault("DQX_DEMO_SCHEMA", "dqx_app_test_demo")
 os.environ.setdefault("DQX_ADMIN_GROUP", "test-admins")
 os.environ.setdefault("DQX_JOB_ID", "")
 os.environ.setdefault("DATABRICKS_WAREHOUSE_ID", "test-warehouse")
@@ -51,8 +53,10 @@ def _activate_test_runtime_resources() -> Iterator[None]:
     from databricks_labs_dqx_app.backend.config import conf
     from databricks_labs_dqx_app.backend.runtime import rt
     from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
+    from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 
     previous_resources = rt.resources
+    audience_groups = conf.user_groups or ["data-team"]
     resources = ActiveResources(
         volume=VolumeLocation(
             conf.catalog,
@@ -73,6 +77,8 @@ def _activate_test_runtime_resources() -> Iterator[None]:
         job_id="1",
         tmp_schema=conf.tmp_schema_name,
         genie_schema=conf.genie_schema_name,
+        demo_schema=conf.demo_schema_name,
+        audience=resolve_audience(audience_groups, conf.admin_group, allow_broad=False),
     )
     rt.activate(resources)
     try:
@@ -304,6 +310,7 @@ def make_scheduler():
         monitored_table_service: Any | None = None,
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
+        job_id: str = "test-job-0",
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -342,13 +349,14 @@ def make_scheduler():
             else:
                 oltp.select_json_text.side_effect = lambda c: f"to_json({c})"
 
+        ws = MagicMock(name="WorkspaceClient")
         svc = SchedulerService(
-            ws=MagicMock(name="WorkspaceClient"),
+            ws=ws,
             warehouse_id="test-wh",
             catalog=catalog,
             schema=schema,
             tmp_schema=tmp_schema if tmp_schema is not None else f"{schema}_tmp",
-            job_id="test-job-0",
+            job_id=job_id,
             oltp_sql=oltp,
             data_product_service=data_product_service,
             binding_run_service=binding_run_service,
@@ -358,7 +366,7 @@ def make_scheduler():
             reconcile_scores_on_start=reconcile_scores_on_start,
         )
 
-        mocks = SimpleNamespace(oltp=oltp)
+        mocks = SimpleNamespace(oltp=oltp, ws=ws)
         # The analytical and tmp executors have no constructor seam
         # today (the constructor builds them from ``ws + warehouse_id +
         # {schema,tmp_schema}``). Tests that need to assert on their

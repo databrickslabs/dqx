@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.jobs import (
     Job,
     JobAccessControlResponse,
@@ -46,6 +47,21 @@ def job_with_run_as(
             )
         )
     )
+
+
+def test_exists_reports_a_deleted_job_as_missing(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = managed_job(42)
+    assert manager.exists(42) is True
+
+    manager.workspace.jobs.get.side_effect = NotFound("job deleted")
+    assert manager.exists(42) is False
+
+
+def test_exists_does_not_hide_other_lookup_errors(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.side_effect = PermissionDenied("no access")
+
+    with pytest.raises(PermissionDenied):
+        manager.exists(42)
 
 
 def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
@@ -100,6 +116,7 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
 
     created = manager.workspace.jobs.create.call_args.kwargs
+    assert created["timeout_seconds"] == 4 * 60 * 60
     assert created["tags"] == {
         "app": "dqx-studio",
         "dqx_studio_managed": "true",
@@ -144,21 +161,17 @@ def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> N
     assert settings.environments[0].spec.dependencies == ["/Volumes/c/s/v/runner.whl", "/Volumes/c/s/v/dqx.whl"]
 
 
-def test_configure_passes_lakebase_coordinates_to_runner(manager: TaskRunnerJobManager) -> None:
+def test_configure_forwards_every_declared_parameter_to_the_runner(manager: TaskRunnerJobManager) -> None:
+    """Each declared job parameter reaches the runner as a *--name* argument."""
+    manager.workspace.jobs.get.return_value = managed_job(42)
+
     manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
 
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
-    parameters = settings.tasks[0].python_wheel_task.parameters
-    for name in (
-        "lakebase_endpoint",
-        "lakebase_database",
-        "lakebase_schema",
-        "lakebase_host",
-        "lakebase_port",
-        "lakebase_username",
-    ):
-        assert f"--{name}" in parameters
-        assert f"{{{{job.parameters.{name}}}}}" in parameters
+    task_args = settings.tasks[0].python_wheel_task.parameters
+    for name in (p.name for p in settings.parameters):
+        assert f"--{name}" in task_args
+        assert f"{{{{job.parameters.{name}}}}}" in task_args
 
 
 def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) -> None:
@@ -177,6 +190,7 @@ def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) ->
     manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
 
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.timeout_seconds == 4 * 60 * 60
     assert settings.tags == {
         "owner": "data-platform",
         "cost_center": "finance",

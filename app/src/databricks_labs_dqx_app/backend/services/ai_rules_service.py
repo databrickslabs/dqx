@@ -8,8 +8,7 @@ from typing import Any, ClassVar, TypedDict
 
 import yaml
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import ChatDatabricks  # type: ignore[import-untyped]
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.llm.llm_core import _filter_unsafe_sql_rules
@@ -516,23 +515,13 @@ _SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
 class AiRulesService:
-    """Generates DQX rules using either the legacy ChatDatabricks leg or the AIGateway.
+    """Generates DQX rules through the AIGateway, entirely OBO-authenticated.
 
-    Two request families live here, both entirely OBO-authenticated:
-
-    - **Legacy / contract leg** (:meth:`generate`, :meth:`generate_from_schema_info`):
-      ChatDatabricks-based generation used by the data-contract importer's natural-language
-      quality-expectation path; predates the AIGateway. Uses the OBO WorkspaceClient for both
-      the UC schema lookup and the model call itself, so the LLM invocation runs as the
-      calling user, not the app's service principal. Left otherwise unchanged — it's a
-      synchronous call chain consumed by
-      :class:`~databricks_labs_dqx_app.backend.services.contract_rules_service.ContractRulesService`.
-    - **AIGateway-backed purpose calls** (:meth:`generate_checks_via_gateway`,
-      :meth:`generate_rule`, :meth:`suggest_field`): route through :class:`AIGateway` (itself
-      OBO-authenticated — see ``services/ai_gateway.py``) for the kill-switch, per-user rate
-      limit, and audit log described in the Rules Registry design spec §8.
-      ``generate_checks_via_gateway`` is the reworked backing for the
-      ``aiAssistedChecksGeneration`` route.
+    The purpose calls (:meth:`generate_checks_via_gateway`, :meth:`generate_rule`,
+    :meth:`suggest_field`, ...) route through :class:`AIGateway` (itself OBO-authenticated —
+    see ``services/ai_gateway.py``) for the kill-switch, per-user rate limit, and audit log
+    described in the Rules Registry design spec §8. ``generate_checks_via_gateway`` is the
+    backing for the ``aiAssistedChecksGeneration`` route.
 
     The few-shot prompt and available-functions list are built once (ClassVar) and reused
     across requests. Only the schema lookup and LLM call are per-request.
@@ -547,7 +536,7 @@ class AiRulesService:
         gateway: AIGateway,
         app_settings: AppSettingsService | None = None,
     ) -> None:
-        self._obo_ws = obo_ws  # user identity — UC table access + legacy ChatDatabricks leg
+        self._obo_ws = obo_ws  # user identity — UC table access
         self._gateway = gateway  # AIGateway-backed purpose calls (also OBO under the hood)
         # Source of the admin-configurable dimension/severity vocabularies that
         # drive the proposal prompt option lists AND post-parse validation.
@@ -668,55 +657,6 @@ class AiRulesService:
         return candidates
 
     # ------------------------------------------------------------------
-    # Legacy / contract leg — unchanged ChatDatabricks-based generation.
-    # ------------------------------------------------------------------
-
-    def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict[str, Any]]:
-        """Generate DQX quality rules from natural language.
-
-        Args:
-            user_input: Natural language description of data quality requirements.
-            table_fqn: Optional fully-qualified table name for schema context.
-
-        Returns:
-            List of DQX rule dicts.
-        """
-        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
-        return self.generate_from_schema_info(user_input=user_input, schema_info=schema_info)
-
-    def generate_from_schema_info(self, user_input: str, schema_info: str = "") -> list[dict[str, Any]]:
-        """Generate DQX rules from natural language with a pre-built schema_info.
-
-        Split out from :meth:`generate` for callers that already know the
-        column context and so have no UC table to look up. The model call runs
-        with the caller's OBO WorkspaceClient (never the app's service
-        principal), so it is subject to the calling user's own UC permissions
-        on the configured serving endpoint.
-
-        Args:
-            user_input: Natural language description of the quality expectation.
-            schema_info: JSON string describing the table columns (may be empty).
-
-        Returns:
-            List of DQX rule dicts.
-        """
-        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
-        human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
-        messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
-
-        # ``max_tokens`` caps the per-call output budget (AGENTS.md / OWASP
-        # LLM04): rule generation returns small JSON payloads, so a bounded
-        # cap protects against pathological prompts triggering runaway,
-        # expensive inference without truncating legitimate responses.
-        llm = ChatDatabricks(
-            endpoint=conf.llm_endpoint,
-            workspace_client=self._obo_ws,
-            max_tokens=conf.llm_max_tokens,
-        )
-        response = llm.invoke(messages)
-        return self._parse_response(str(response.content))
-
-    # ------------------------------------------------------------------
     # AIGateway-backed purpose calls (Phase 4A)
     # ------------------------------------------------------------------
 
@@ -726,11 +666,10 @@ class AiRulesService:
         user_email: str,
         table_fqn: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Gateway-routed replacement for the legacy ``/ai/generate-checks`` path.
+        """Generate DQX checks from natural language for the ``/ai/generate-checks`` path.
 
-        Reworked per the Rules Registry design spec §8: ``aiAssistedChecksGeneration`` now
-        goes through :class:`AIGateway` (kill-switch, per-user rate limit, audit) instead of
-        calling ChatDatabricks directly. Any unsafe ``sql_query`` rule in the model's output
+        Goes through :class:`AIGateway` (kill-switch, per-user rate limit, audit) per the
+        Rules Registry design spec §8. Any unsafe ``sql_query`` rule in the model's output
         is dropped via :func:`_filter_unsafe_sql_rules` before the checks are returned.
 
         Raises:
