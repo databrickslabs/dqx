@@ -92,6 +92,10 @@ def _table(binding_id: str = "b1", table_fqn: str = "cat.schema.tbl", status: st
     return MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, status=status)
 
 
+def _approved_table(version: int) -> MonitoredTable:
+    return MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved", version=version)
+
+
 def _mock_obo_ws(user_email: str = "alice@x") -> MagicMock:
     obo = MagicMock()
     me = MagicMock()
@@ -204,6 +208,25 @@ class TestListAndGet:
         materializer.render_binding_checks_counts_many.assert_called_once_with([("b1", "cat.schema.tbl")])
         # No approved bindings -> no snapshot query issued.
         version_svc.snapshot_counts_many.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("status", "changed", "expected"),
+        [
+            ("approved", True, True),
+            ("approved", False, False),
+            ("draft", True, False),  # a draft is already reviewable; only approved tables need the flag
+        ],
+    )
+    def test_detail_reports_unapproved_rule_changes(self, status, changed, expected):
+        svc = MagicMock()
+        table = _approved_table(version=3) if status == "approved" else _table(status=status)
+        svc.get.return_value = MonitoredTableDetail(table=table, applied_rules=[])
+        version_svc = MagicMock()
+        version_svc.changed_since_version.return_value = changed
+        result = get_monitored_table(
+            "b1", svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock(), version_svc=version_svc
+        )
+        assert result.unapproved_rule_changes is expected
 
     def test_get_returns_detail_with_applied_rules(self):
         svc = MagicMock()
@@ -1257,6 +1280,52 @@ class TestSubmitMonitoredTable:
         rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
         svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
 
+    def _submit_approved_table(self, *, changed: bool) -> tuple[MagicMock, MagicMock]:
+        """Submit an approved v3 table whose remaining checks are all approved (nothing pending)."""
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_approved_table(version=3), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "approved")]
+        svc.set_status.return_value = _table(status="pending_approval" if changed else "approved")
+        extra = _submit_mt_extra()
+        extra["version_svc"].changed_since_version.return_value = changed
+        submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=MagicMock(),
+            obo_ws=_mock_obo_ws(),
+            **extra,
+        )
+        return svc, extra["version_svc"]
+
+    def test_a_removal_only_edit_goes_to_review(self):
+        """Removing rules leaves no check pending; the table still enters review so the
+        approved version that keeps running the removed rules can be replaced."""
+        svc, version_svc = self._submit_approved_table(changed=True)
+        assert version_svc.changed_since_version.call_args.args[:2] == ("b1", 3)
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
+
+    def test_an_unchanged_approved_table_stays_approved(self):
+        svc, _ = self._submit_approved_table(changed=False)
+        svc.set_status.assert_called_once_with("b1", "approved", "alice@x", rationale=None, set_rationale=True)
+
+    def test_a_failed_comparison_never_blocks_the_submit(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_approved_table(version=3), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "approved")]
+        svc.set_status.return_value = _table(status="approved")
+        extra = _submit_mt_extra()
+        extra["version_svc"].changed_since_version.side_effect = RuntimeError("snapshot unreadable")
+        submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=MagicMock(),
+            obo_ws=_mock_obo_ws(),
+            **extra,
+        )
+        svc.set_status.assert_called_once_with("b1", "approved", "alice@x", rationale=None, set_rationale=True)
+
     def test_only_draft_checks_are_submitted(self):
         svc = MagicMock()
         svc.list_materialized_rule_statuses.side_effect = [
@@ -1392,6 +1461,22 @@ class TestApproveMonitoredTable:
         assert result.table.status == "approved"
         assert result.affected_check_count == 2
         rules_catalog.set_status.assert_any_call("r1", "approved", "alice@x")
+        svc.set_status.assert_called_once_with("b1", "approved", "alice@x", rationale=None, set_rationale=True)
+
+    def test_approving_a_removal_only_review_freezes_the_next_version(self):
+        """No check was pending (rules were only removed), yet approval still freezes
+        the next version — the one without the removed rules."""
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "approved")]
+        svc.set_status.return_value = _table(status="approved")
+        version_svc = MagicMock()
+        version_svc.freeze_new_version.return_value = 4
+        result = approve_monitored_table(
+            "b1", monitored_tables_svc=svc, rules_catalog=MagicMock(), version_svc=version_svc, obo_ws=_mock_obo_ws()
+        )
+        assert result.affected_check_count == 0
+        assert result.new_version == 4
         svc.set_status.assert_called_once_with("b1", "approved", "alice@x", rationale=None, set_rationale=True)
 
     def test_approve_freezes_a_new_version_and_returns_it(self):
