@@ -472,3 +472,107 @@ class TestSnapshotCountsMany:
         service.snapshot_counts_many([("b1", 1), ("b1", 1)])
         stmt = sql.query.call_args[0][0]
         assert stmt.count("binding_id = 'b1'") == 1
+
+
+# ---------------------------------------------------------------------------
+# changed_since_version
+# ---------------------------------------------------------------------------
+
+
+def _applied(aid: str, **overrides: object) -> AppliedRule:
+    fields: dict = {"id": aid, "binding_id": "b1", "rule_id": "r1", "column_mapping": [{"column": aid}]}
+    fields.update(overrides)
+    return AppliedRule(**fields)
+
+
+def _frozen_state(applied: list[AppliedRule], *, legacy: bool = False) -> dict:
+    """The state_json a freeze writes for *applied* (legacy: no pass_threshold / pins recorded)."""
+    refs, display = [], []
+    for a in applied:
+        ref = {
+            "applied_rule_id": a.id,
+            "rule_id": a.rule_id,
+            "registry_version": 1,
+            "severity_override": a.severity_override,
+            "pass_threshold": a.pass_threshold,
+            "column_mapping": a.column_mapping,
+            "user_metadata": a.user_metadata,
+        }
+        entry = {"applied_rule_id": a.id, "rule_id": a.rule_id, "pinned_version": a.pinned_version}
+        if legacy:
+            ref.pop("pass_threshold")
+            entry.pop("pinned_version")
+        refs.append(ref)
+        display.append(entry)
+    return {"rule_refs": refs, "applied_rules": display, "check_count": len(refs)}
+
+
+def _live(monitored_tables, applied: list[AppliedRule]) -> None:
+    monitored_tables.get.return_value = MonitoredTableDetail(
+        table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="approved", version=3),
+        applied_rules=[
+            AppliedRuleSummary(
+                applied_rule=a, rule_name="Not Null", rule_dimension="Completeness", rule_severity="High"
+            )
+            for a in applied
+        ],
+    )
+
+
+class TestChangedSinceVersion:
+    """A saved edit on an approved table must be detectable even when no check is pending."""
+
+    FROZEN = [_applied("ar1"), _applied("ar2", severity_override="High", pass_threshold=0, pinned_version=2)]
+
+    def _compare(self, service, sql, monitored_tables, live: list[AppliedRule], *, legacy: bool = False) -> bool:
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state(self.FROZEN, legacy=legacy))]]})
+        _live(monitored_tables, live)
+        return service.changed_since_version("b1", 3)
+
+    def test_unchanged_rules_are_not_a_change(self, service, sql, monitored_tables):
+        assert not self._compare(service, sql, monitored_tables, list(self.FROZEN))
+
+    def test_a_removed_rule_is_a_change(self, service, sql, monitored_tables):
+        assert self._compare(service, sql, monitored_tables, [self.FROZEN[0]])
+
+    def test_an_added_rule_is_a_change(self, service, sql, monitored_tables):
+        assert self._compare(service, sql, monitored_tables, [*self.FROZEN, _applied("ar3")])
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            {"column_mapping": [{"column": "other"}]},
+            {"severity_override": "Low"},
+            {"pass_threshold": None},  # 0 ("never warn") -> admin default is a real change
+            {"user_metadata": {"monitor_only": "true"}},
+            {"pinned_version": None},
+            {"rule_id": "r2"},
+        ],
+    )
+    def test_an_edited_application_is_a_change(self, service, sql, monitored_tables, edit):
+        edited = self.FROZEN[1].model_copy(update=edit)
+        assert self._compare(service, sql, monitored_tables, [self.FROZEN[0], edited])
+
+    def test_fields_a_legacy_snapshot_did_not_record_are_not_compared(self, service, sql, monitored_tables):
+        edited = self.FROZEN[1].model_copy(update={"pass_threshold": 50, "pinned_version": None})
+        assert not self._compare(service, sql, monitored_tables, [self.FROZEN[0], edited], legacy=True)
+
+    def test_empty_tags_match_missing_tags(self, service, sql, monitored_tables):
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state([_applied("ar1", user_metadata={})]))]]})
+        _live(monitored_tables, [_applied("ar1")])
+        assert not service.changed_since_version("b1", 3)
+
+    def test_a_table_the_caller_already_loaded_is_not_read_again(self, service, sql, monitored_tables):
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state(self.FROZEN))]]})
+        _live(monitored_tables, list(self.FROZEN))
+        detail = monitored_tables.get.return_value
+        monitored_tables.get.reset_mock()
+
+        assert not service.changed_since_version("b1", 3, detail)
+        monitored_tables.get.assert_not_called()
+
+    def test_no_approved_version_or_snapshot_is_not_a_change(self, service, sql, monitored_tables):
+        _live(monitored_tables, [_applied("ar1")])
+        assert not service.changed_since_version("b1", 0)
+        sql.query.return_value = []
+        assert not service.changed_since_version("b1", 3)
