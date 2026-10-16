@@ -421,6 +421,25 @@ class TestUpdateDraft:
         updated = svc.update_draft("r1", user_email="alice@x", mode="dqx_native", definition=not_in_list)
         assert updated.polarity is None
 
+    def test_a_metadata_only_edit_leaves_a_stale_polarity_alone(self, svc, sql):
+        """Only a save that changes the check normalises polarity, so editing
+        just the name can't mark an approved rule as modified."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        not_in_list = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["x"]}},
+                "slots": _native_definition().slots,
+                "parameters": [],
+            }
+        )
+        rule = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="approved", version=1, polarity="pass", definition=not_in_list
+        )
+        sql.query.return_value = [_row_for(rule)]
+        updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "Renamed"})
+        assert updated.polarity == "pass"
+
     def test_a_native_function_with_negate_keeps_its_polarity(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 

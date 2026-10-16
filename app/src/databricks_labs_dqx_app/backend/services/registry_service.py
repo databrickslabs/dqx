@@ -762,8 +762,11 @@ class RegistryService:
             rule.polarity = polarity
         # The editor clears polarity for a native function without ``negate`` by
         # sending null, which reads as "not supplied" above; drop the stale value.
+        # Only when the save changes the rule's check, so a metadata-only edit
+        # never alters an approved rule's polarity behind the author's back.
         if (
-            rule.mode == "dqx_native"
+            (mode is not None or definition is not None)
+            and rule.mode == "dqx_native"
             and rule.polarity is not None
             and not supports_negate(str(rule.definition.body.get("function", "")))
         ):

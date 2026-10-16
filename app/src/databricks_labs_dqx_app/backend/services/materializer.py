@@ -324,12 +324,11 @@ def render_check(
         # A native check that accepts a ``negate`` argument surfaces it in the
         # authoring UI as the PASS/FAIL polarity switcher rather than a raw
         # boolean parameter (item 11). Polarity is therefore the single source
-        # of truth for negation: a non-null ``polarity`` on a native rule means
-        # "this function supports negate" and we inject the boolean here.
-        # ``polarity is None`` for native checks WITHOUT a ``negate`` argument,
-        # so this leaves those untouched — no spurious ``negate`` key. A stored
-        # polarity on a function that has no ``negate`` (e.g. one saved before
-        # its function changed) is ignored: DQX rejects the unknown argument.
+        # of truth for negation, and we inject the boolean here — but only when
+        # the function actually takes ``negate``. A native check WITHOUT one
+        # normally has ``polarity is None``; a stored polarity on such a
+        # function (e.g. a rule switched from SQL before the save path cleared
+        # it) is ignored, because DQX rejects the unknown argument.
         if version.polarity is not None:
             if supports_negate(function):
                 arguments["negate"] = version.polarity == "fail"

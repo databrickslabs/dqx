@@ -1,8 +1,9 @@
 """Resolve DQX check functions by name and inspect their signatures.
 
-Shared by the check-functions route (which drives the editor, including the
-UI's ``fnSupportsNegate``), the registry service and the materializer, so they
-all agree on which functions take a ``negate`` argument.
+The resolver is shared by the check-functions route (whose introspected
+parameters drive the UI's ``fnSupportsNegate``), the registry service and the
+materializer. The latter two use :func:`supports_negate` to decide whether a
+stored polarity can be passed to the function as ``negate``.
 """
 
 import inspect
@@ -37,7 +38,7 @@ def resolve_check_callable(name: str) -> Callable[..., Any] | None:
         # "callers must keep working when one optional module misbehaves" —
         # returning None lets the caller skip the broken entry instead of
         # failing outright. See the BLE001 policy in pyproject.toml.
-        logger.warning("Failed to resolve DQX check function %r: %s", name, exc)
+        logger.warning(f"Failed to resolve DQX check function {name!r}: {exc}")
         return None
 
 
