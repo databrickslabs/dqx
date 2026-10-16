@@ -42,12 +42,8 @@ import {
   ApprovalTh,
   ReadOnlyActionHint,
 } from "@/components/drafts/ApprovalQueueCard";
-import {
-  RegistryRuleDiffDialog,
-  TableSpaceDiffDialog,
-  type RegistryDiffTarget,
-  type TableSpaceDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
+import { RuleChangesDialog, type RuleChangesTarget } from "@/components/changes/RuleChangesDialog";
+import { CollectionChangesDialog, type CollectionChangesTarget } from "@/components/changes/CollectionChangesDialog";
 import {
   useApproveRegistryRuleWithRationale,
   useRejectRegistryRuleWithRationale,
@@ -231,7 +227,7 @@ function RegistryApprovalsSection({
       t("rulesDrafts.registryToastFailedRevoke"),
     );
 
-  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<RuleChangesTarget | null>(null);
 
   return (
     <>
@@ -351,7 +347,7 @@ function RegistryApprovalsSection({
         })}
       />
 
-      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <RuleChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>
@@ -597,7 +593,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
   // Reject discards the submitter's pending collection, so it keeps a plain
   // yes/no confirm (no rationale textarea). Approve fires directly.
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<CollectionChangesTarget | null>(null);
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
@@ -728,7 +724,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
         })}
       />
 
-      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <CollectionChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>

@@ -1124,20 +1124,7 @@
     "tableSpaceApproveBody": "Approve \"{{name}}\" and publish its pending changes.",
     "tableSpacesEmptyState": "No collections are awaiting approval.",
     "diff": {
-      "title": "Review changes",
-      "viewChanges": "View changes",
-      "previous": "Previous",
-      "proposed": "Proposed",
-      "proposedDefinition": "Proposed definition",
-      "proposedMembers": "Proposed members",
-      "versionLabel": "Version {{version}}",
-      "empty": "No checks.",
-      "loadFailed": "Failed to load changes.",
-      "rrNoPrior": "This rule has no published version yet — showing the proposed definition being reviewed.",
-      "mtFirstApproval": "This table has never been approved — there is no frozen version to compare against yet. It will be frozen as v1 on approval.",
-      "mtNoPrior": "This is the table's first frozen version — there is no earlier version to compare against.",
-      "tsNoSnapshot": "Collections don't keep per-version snapshots, so there is no prior version to diff. Showing the current proposed members and their governed checks.",
-      "ruleNoPrior": "No earlier recorded change for this rule — showing its current definition."
+      "viewChanges": "View changes"
     }
   },
   "rulesSingleTable": {
@@ -3302,6 +3289,17 @@
     "neverApproved": "This table has never been approved, so there are no versions to compare yet.",
     "neverApprovedShort": "Nothing approved yet: scheduled runs start after the first approval.",
     "runsUse": "Scheduled runs and Run now use approved v{{version}} until changes are approved.",
+    "pendingCompareFirst": "Nothing approved yet → proposed",
+    "noChangesItem": "No changes.",
+    "noChangesCollection": "Nothing changed.",
+    "collectionSettings": "Collection settings",
+    "ruleNeverApproved": "This rule has never been approved, so there are no versions to compare yet.",
+    "ruleNeverApprovedShort": "Nothing approved yet: tables use this rule after its first approval.",
+    "ruleRunsUse": "Tables use approved v{{version}} of this rule until changes are approved.",
+    "collectionNeverApproved": "This collection has never been approved, so there are no versions to compare yet.",
+    "collectionRunsUse": "Scheduled runs use approved v{{version}} until changes are approved.",
+    "notRecordedPending": "v{{version}} was approved before collections recorded their versions, so every current member shows as added.",
+    "notRecordedHistory": "These versions were approved before collections recorded their versions, so they can't be compared. Versions approved from now on can.",
     "status": {
       "added": "Added",
       "removed": "Removed",

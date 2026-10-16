@@ -51,8 +51,6 @@ import {
   useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
-import {
-} from "@/components/drafts/ChangeDiffDialog";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useLabelDefinitions } from "@/lib/api-custom";

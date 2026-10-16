@@ -1124,20 +1124,7 @@
     "tableSpaceApproveBody": "Aprovar \"{{name}}\" e publicar as alterações pendentes.",
     "tableSpacesEmptyState": "Nenhuma coleção aguardando aprovação.",
     "diff": {
-      "title": "Revisar alterações",
-      "viewChanges": "Ver alterações",
-      "previous": "Anterior",
-      "proposed": "Proposto",
-      "proposedDefinition": "Definição proposta",
-      "proposedMembers": "Membros propostos",
-      "versionLabel": "Versão {{version}}",
-      "empty": "Nenhuma verificação.",
-      "loadFailed": "Falha ao carregar as alterações.",
-      "rrNoPrior": "Esta regra ainda não tem uma versão publicada — exibindo a definição proposta em revisão.",
-      "mtFirstApproval": "Esta tabela nunca foi aprovada — ainda não há uma versão congelada para comparar. Ela será congelada como v1 na aprovação.",
-      "mtNoPrior": "Esta é a primeira versão congelada da tabela — não há uma versão anterior para comparar.",
-      "tsNoSnapshot": "As coleções não mantêm snapshots por versão, portanto não há uma versão anterior para comparar. Exibindo os membros propostos atuais e suas verificações.",
-      "ruleNoPrior": "Nenhuma alteração registrada anteriormente para esta regra — exibindo sua definição atual."
+      "viewChanges": "Ver alterações"
     }
   },
   "rulesSingleTable": {
@@ -3302,6 +3289,17 @@
     "neverApproved": "Esta tabela nunca foi aprovada, então ainda não há versões para comparar.",
     "neverApprovedShort": "Nada aprovado ainda: as execuções agendadas começam após a primeira aprovação.",
     "runsUse": "As execuções agendadas e «Executar agora» usam a v{{version}} aprovada até que as alterações sejam aprovadas.",
+    "pendingCompareFirst": "Nada aprovado → proposto",
+    "noChangesItem": "Sem alterações.",
+    "noChangesCollection": "Nada mudou.",
+    "collectionSettings": "Configurações da coleção",
+    "ruleNeverApproved": "Esta regra nunca foi aprovada, então ainda não há versões para comparar.",
+    "ruleNeverApprovedShort": "Nada aprovado: as tabelas usam esta regra após sua primeira aprovação.",
+    "ruleRunsUse": "As tabelas usam a v{{version}} aprovada desta regra até que as alterações sejam aprovadas.",
+    "collectionNeverApproved": "Esta coleção nunca foi aprovada, então ainda não há versões para comparar.",
+    "collectionRunsUse": "As execuções agendadas usam a v{{version}} aprovada até que as alterações sejam aprovadas.",
+    "notRecordedPending": "A v{{version}} foi aprovada antes de as coleções registrarem suas versões, então cada membro atual aparece como adicionado.",
+    "notRecordedHistory": "Estas versões foram aprovadas antes de as coleções registrarem suas versões, então não podem ser comparadas. As versões aprovadas a partir de agora poderão.",
     "status": {
       "added": "Adicionada",
       "removed": "Removida",

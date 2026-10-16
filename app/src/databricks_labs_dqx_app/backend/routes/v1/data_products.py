@@ -11,7 +11,7 @@ approve/reject routes); run is gated on CAN_RUN_ROLES (ADMIN + RULE_AUTHOR).
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
@@ -23,7 +23,6 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_data_product_service,
     get_draft_run_gate_service,
-    get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
     get_schedule_grant_service,
@@ -38,16 +37,16 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
+    CollectionChangeOut,
     CreateDataProductIn,
+    DataProductChangesOut,
     DataProductOut,
-    DataProductReviewChangesOut,
-    DataProductReviewMemberOut,
+    DataProductVersionOut,
     LifecycleRationaleIn,
     RunDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     WarehouseUnavailableError,
@@ -121,58 +120,52 @@ def get_data_product(
 
 
 @router.get(
-    "/{product_id}/review-changes",
-    response_model=DataProductReviewChangesOut,
-    operation_id="getDataProductReviewChanges",
+    "/{product_id}/changes",
+    response_model=DataProductChangesOut,
+    operation_id="getDataProductChanges",
     dependencies=[require_role(*_VIEWERS_PLUS)],
 )
-def get_data_product_review_changes(
+def get_data_product_changes(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
-    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
-) -> DataProductReviewChangesOut:
-    """Return the recoverable prior/proposed state for a Table Space under review.
+    base: Annotated[int | None, Query(ge=0, description="Base version (0 = nothing approved)")] = None,
+    target: Annotated[int | None, Query(ge=1, description="Target version; omit for the current members")] = None,
+) -> DataProductChangesOut:
+    """Compare a collection between two sides: its settings, then each member (added / removed / modified / unchanged).
 
-    Table Spaces have no per-version snapshot store, so there is no true
-    "previous product version" to diff against (documented limitation). What
-    is recoverable is the CURRENT proposed definition — the members being
-    approved and each member's frozen (pinned, else latest-approved) checks.
-    The Drafts & Review popout shows this with a note that no prior product
-    snapshot exists, rather than fabricating a diff.
+    With no *base* or *target*: a collection with changes not yet approved
+    compares its approved version with its current members; otherwise its
+    latest version with the one before it.
     """
     try:
-        detail = svc.get(product_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
-        members: list[DataProductReviewMemberOut] = []
-        for member in detail.members:
-            effective_version = member.pinned_version or member.binding_version
-            checks: list[dict[str, object]] = []
-            if effective_version and effective_version > 0:
-                try:
-                    checks = version_svc.get_checks(member.binding_id, effective_version)
-                except LookupError:
-                    checks = []
-            members.append(
-                DataProductReviewMemberOut(
-                    binding_id=member.binding_id,
-                    table_fqn=member.table_fqn,
-                    pinned_version=member.pinned_version,
-                    binding_version=member.binding_version,
-                    checks=checks,
-                )
-            )
-        return DataProductReviewChangesOut(
-            product_id=detail.product.product_id,
-            name=detail.product.name,
-            version=detail.product.version,
-            members=members,
-        )
-    except HTTPException:
-        raise
+        result = svc.changes(product_id, base, target)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to get review changes for data product {product_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get data product review changes: {e}")
+        logger.error(f"Failed to compare data product {product_id} changes: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compare data product changes: {e}")
+    counts = {status: 0 for status in ("added", "removed", "modified", "unchanged")}
+    for change in result.changes:
+        counts[change.status] += 1
+    return DataProductChangesOut(
+        product_id=product_id,
+        approved_version=result.approved_version,
+        has_pending_changes=result.has_pending_changes,
+        base_version=result.base_version,
+        target_version=result.target_version,
+        base_recorded=result.base_recorded,
+        counts=counts,
+        versions=[
+            DataProductVersionOut(version=v.version, created_by=v.created_by, created_at=v.created_at)
+            for v in result.versions
+        ],
+        changes=[
+            CollectionChangeOut(key=c.key, name=c.name, status=c.status, before=c.before, after=c.after)
+            for c in result.changes
+        ],
+    )
 
 
 # ------------------------------------------------------------------

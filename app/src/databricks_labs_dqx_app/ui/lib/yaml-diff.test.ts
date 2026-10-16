@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffLines, inlineChange, toYaml, unifiedRows } from "./yaml-diff";
+import { diffLines, inlineChange, itemStatus, toYaml, unifiedRows } from "./yaml-diff";
 
 describe("diffLines", () => {
   test("pairs a changed line opposite its replacement", () => {
@@ -49,5 +49,19 @@ describe("inlineChange", () => {
 describe("toYaml", () => {
   test("renders nothing for a missing value", () => {
     expect(toYaml(null)).toBe("");
+  });
+});
+
+describe("itemStatus", () => {
+  const check = { check: { function: "is_not_null", arguments: { column: "id" } } };
+  test("an item missing on one side is added or removed", () => {
+    expect(itemStatus([], [check])).toBe("added");
+    expect(itemStatus([check], [])).toBe("removed");
+  });
+  test("equal sides are unchanged, whatever their key order", () => {
+    expect(itemStatus([check], [{ check: { arguments: { column: "id" }, function: "is_not_null" } }])).toBe("unchanged");
+  });
+  test("a changed argument is modified", () => {
+    expect(itemStatus([check], [{ check: { function: "is_not_null", arguments: { column: "key" } } }])).toBe("modified");
   });
 });

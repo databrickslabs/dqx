@@ -127,3 +127,30 @@ export function inlineChange(line: string, other: string): { before: string; cha
   while (end > 0 && WORD_CHAR.test(line[line.length - end])) end--;
   return { before: line.slice(0, start), changed: line.slice(start, line.length - end), after: line.slice(line.length - end) };
 }
+
+/** One side of a change (zero, one or several checks) as YAML. */
+export function sideYaml(side: unknown[]): string {
+  return side.length ? toYaml(side.length === 1 ? side[0] : side).trim() : "";
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((k) => [k, canonical((value as Record<string, unknown>)[k])]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The status of an item from its two sides, as the server-side comparisons
+ * report it. Key order doesn't count as a change.
+ */
+export function itemStatus(before: unknown[], after: unknown[]): "added" | "removed" | "modified" | "unchanged" {
+  if (!before.length) return "added";
+  if (!after.length) return "removed";
+  return JSON.stringify(canonical(before)) === JSON.stringify(canonical(after)) ? "unchanged" : "modified";
+}

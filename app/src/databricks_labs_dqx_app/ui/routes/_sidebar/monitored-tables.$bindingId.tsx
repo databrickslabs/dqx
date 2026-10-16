@@ -154,8 +154,6 @@ import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-r
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
-import {
-} from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
   RESERVED_SEVERITY_KEY,
