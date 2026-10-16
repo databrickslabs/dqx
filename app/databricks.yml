@@ -500,6 +500,9 @@ resources:
     dqx_task_runner:
       name: "dqx-studio-task-runner"
       max_concurrent_runs: 10
+      # Hung or queued runs must not block the overlapping-schedule skip
+      # forever; keep in sync with ``_IN_FLIGHT_MAX_AGE`` in scheduler_service.
+      timeout_seconds: 14400
       tags:
         app: "dqx-studio"
       run_as:

@@ -3214,6 +3214,7 @@
     "failing": "Richiede attenzione",
     "failed": "Non riuscita",
     "partial": "Errore parziale",
+    "skipped": "Saltata",
     "name": "Pianificazione",
     "type": "Tipo",
     "cadence": "Frequenza",

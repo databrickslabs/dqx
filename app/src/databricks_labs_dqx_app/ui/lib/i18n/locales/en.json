@@ -3214,6 +3214,7 @@
     "failing": "Needs attention",
     "failed": "Failed",
     "partial": "Partial failure",
+    "skipped": "Skipped",
     "name": "Schedule",
     "type": "Type",
     "cadence": "Cadence",
