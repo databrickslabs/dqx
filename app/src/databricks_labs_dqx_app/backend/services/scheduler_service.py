@@ -51,7 +51,6 @@ from databricks_labs_dqx_app.backend.services.scheduler_wake import MarkerVersio
 from databricks_labs_dqx_app.backend.services.task_runner_runs import (
     RECENT_RUNS_LIMIT,
     TaskRunnerRun,
-    list_active_app_run_ids,
     list_active_task_runner_runs,
     list_recent_completed_runs,
 )
