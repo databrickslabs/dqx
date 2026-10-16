@@ -1,0 +1,1 @@
+import{by as t}from"./index-DATBc_eR.js";import{u as p}from"./use-permissions-CpKmOKml.js";function i(){const{data:e}=t({query:{staleTime:1/0}}),{canApproveRules:a}=p(),o=e?.data?.mode,s=o==="auto_bypass"||o==="disabled"?o:"enabled";return{mode:s,willAutoApprove:s==="disabled"||s==="auto_bypass"&&a}}export{i as u};
