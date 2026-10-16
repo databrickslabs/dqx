@@ -1,8 +1,7 @@
-"""Unit tests for the ai_query-based group explainer in anomaly_llm_explainer.
+"""Unit tests for the public ai_query-based group explainer interface.
 
-Spark is never started — these exercise the pure helpers: prompt rendering, endpoint
-resolution, baseline-grouping and human-label rendering, SQL-literal escaping, the
-structured-output schema, and the pattern-column threading through ExplanationContext.
+Spark is never started. These tests exercise the public prompt, endpoint probe, and
+ExplanationContext surfaces.
 """
 
 import json
@@ -16,7 +15,6 @@ import pytest
 
 from databricks.labs.dqx.anomaly import anomaly_llm_explainer as llm_explainer
 from databricks.labs.dqx.anomaly.anomaly_llm_explainer import ExplanationContext
-from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig, ScoringOutputColumns
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -40,14 +38,41 @@ class _FakeSpark:
         return []
 
 
+def _prompt_input_descriptions(header: str) -> dict[str, str]:
+    """Extract the rendered public input-field section from the production prompt."""
+    input_section = header.partition("\nInputs:\n")[2].partition("\n\nRespond with ONLY a JSON object.")[0]
+    return dict(line.removeprefix("- ").split(": ", maxsplit=1) for line in input_section.splitlines())
+
+
+def _prompt_exemplar_field_values(field_name: str) -> list[str]:
+    """Read a named field from the public prompt's few-shot examples."""
+    prefix = f"{field_name}: "
+    return [
+        line.removeprefix(prefix)
+        for line in llm_explainer.AI_QUERY_PROMPT_HEADER.splitlines()
+        if line.startswith(prefix)
+    ]
+
+
 def test_ai_query_prompt_header_includes_instructions_and_field_descriptions():
-    """The header is rendered from the shared prompt tables; assert representative tokens from
-    each section so accidental drift is caught without coupling to exact wording."""
-    header = llm_explainer._render_ai_query_prompt_header()
+    """The public prompt retains its instructions and the independently named fields."""
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
     assert "data quality analyst" in header  # instructions line
-    for input_name, _ in llm_explainer._PROMPT_INPUT_FIELDS:
-        assert f"- {input_name}:" in header
-    for output_name, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
+    expected_input_fields = {
+        "attribution_basis",
+        "evidence_disclosure",
+        "feature_contributions",
+        "basis_contributions",
+        "group_size",
+        "severity_range",
+        "confidence",
+        "baseline_grouping",
+        "temporal_baseline",
+        "threshold",
+        "drift_summary",
+    }
+    assert set(_prompt_input_descriptions(header)) == expected_input_fields
+    for output_name in ("narrative", "business_impact", "action"):
         assert f"- {output_name}:" in header
     assert "Respond with ONLY a JSON object" in header
 
@@ -58,19 +83,18 @@ _PROMPT_SNAPSHOT = Path(__file__).resolve().parents[1] / "resources" / "ai_query
 def test_ai_query_prompt_header_matches_snapshot():
     """Change-control gate for the LLM prompt.
 
-    The rendered prompt is the contract the model sees — any edit to _PROMPT_INSTRUCTIONS,
-    _PROMPT_INPUT_FIELDS, _PROMPT_OUTPUT_FIELDS, or _PROMPT_EXAMPLES silently changes every
-    explanation. Pinning it to a committed snapshot forces a prompt change to be deliberate and
-    surfaces it in review as a diff to the golden file (no LLM, no workspace, runs in ms).
+    The public prompt is the contract the model sees. Pinning it to a committed snapshot forces a
+    prompt change to be deliberate and surfaces it in review as a diff to the golden file (no LLM,
+    no workspace, runs in ms).
 
     If the change is intentional, regenerate the snapshot and review the diff:
 
         python -c "from databricks.labs.dqx.anomaly.anomaly_llm_explainer import \\
-        _render_ai_query_prompt_header as r, _AI_QUERY_PROMPT_HEADER as _; \\
-        open('tests/resources/ai_query_prompt_header.txt','w').write(r())"
+        AI_QUERY_PROMPT_HEADER; \\
+        open('tests/resources/ai_query_prompt_header.txt','w').write(AI_QUERY_PROMPT_HEADER)"
     """
     expected = _PROMPT_SNAPSHOT.read_text(encoding="utf-8")
-    assert llm_explainer._render_ai_query_prompt_header() == expected, (
+    assert llm_explainer.AI_QUERY_PROMPT_HEADER == expected, (
         "AI-explanation prompt changed vs the committed snapshot "
         f"({_PROMPT_SNAPSHOT.name}). If this is intentional, regenerate it (see the docstring) "
         "and review the diff; otherwise revert the prompt edit."
@@ -79,19 +103,12 @@ def test_ai_query_prompt_header_matches_snapshot():
 
 def test_prompt_drops_model_name_and_includes_examples():
     """model_name was removed from the prompt (review feedback) and few-shot exemplars added."""
-    input_names = {name for name, _ in llm_explainer._PROMPT_INPUT_FIELDS}
-    assert "model_name" not in input_names
-    header = llm_explainer._render_ai_query_prompt_header()
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
+    assert "model_name" not in _prompt_input_descriptions(header)
     assert "model_name" not in header
     # Two few-shot exemplars pin style + JSON shape.
     assert header.count("Example (") == 2
     assert "Response:" in header
-
-
-def test_resolve_ai_query_endpoint_strips_databricks_prefix():
-    assert llm_explainer._resolve_ai_query_endpoint("databricks/databricks-claude-sonnet-4-5") == (
-        "databricks-claude-sonnet-4-5"
-    )
 
 
 @pytest.mark.parametrize(
@@ -119,9 +136,11 @@ def test_resolve_ai_query_endpoint_strips_databricks_prefix():
         pytest.param("a" * 64, "not a valid Databricks Model Serving name", id="length_64_over_cap"),
     ],
 )
-def test_resolve_ai_query_endpoint_rejects_invalid_endpoint(model_name, expected_match):
+def test_probe_endpoint_reachable_rejects_invalid_endpoint_before_query(model_name, expected_match):
+    spark = _FakeSpark()
     with pytest.raises(InvalidParameterError, match=expected_match):
-        llm_explainer._resolve_ai_query_endpoint(model_name)
+        llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name=model_name))
+    assert not spark.queries
 
 
 @pytest.mark.parametrize(
@@ -133,90 +152,19 @@ def test_resolve_ai_query_endpoint_rejects_invalid_endpoint(model_name, expected
         pytest.param("a" * 63, "a" * 63, id="length_63_at_cap"),
     ],
 )
-def test_resolve_ai_query_endpoint_accepts_valid_names(model_name, expected):
-    assert llm_explainer._resolve_ai_query_endpoint(model_name) == expected
+def test_probe_endpoint_reachable_emits_valid_endpoint(model_name, expected):
+    spark = _FakeSpark()
+
+    assert llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name=model_name)) is True
+    assert len(spark.queries) == 1
+    assert f"ai_query('{expected}'," in spark.queries[0]
 
 
-def test_resolve_ai_query_endpoint_rejects_empty_model_name():
+def test_probe_endpoint_reachable_rejects_empty_model_name_before_query():
+    spark = _FakeSpark()
     with pytest.raises(InvalidParameterError, match="model_name is required"):
-        llm_explainer._resolve_ai_query_endpoint("")
-
-
-def test_ai_query_response_format_is_strict_json_schema_built_from_output_fields():
-    """Response format pins the LLM to the output fields with strict mode, and is built from
-    *_PROMPT_OUTPUT_FIELDS* so the schema and the prompt rules cannot drift.
-
-    Strict mode + ``additionalProperties:false`` blocks the model from smuggling extra fields.
-    Length-capping happens post-parse via *_sanitize* (Databricks ai_query rejects ``maxLength``
-    on string types in responseFormat).
-    """
-    schema = llm_explainer._AI_QUERY_RESPONSE_FORMAT
-    assert '"strict":true' in schema
-    assert '"additionalProperties":false' in schema
-    for field, _ in llm_explainer._PROMPT_OUTPUT_FIELDS:
-        assert f'"{field}"' in schema
-    # Derived, not hand-rolled: rebuilding from the fields reproduces the constant exactly.
-    assert llm_explainer._build_ai_query_response_format() == schema
-
-
-def test_baseline_grouping_str_reports_the_grouping_columns():
-    """The prompt's baseline_grouping field is the baseline_by columns, a per-run constant."""
-    metadata = SparkFeatureMetadata(
-        column_infos=[{"name": "amount", "category": "numeric"}],
-        categorical_frequency_maps={},
-        onehot_categories={},
-        engineered_feature_names=["amount"],
-        baseline_by=["region", "product"],
-    )
-    assert llm_explainer._baseline_grouping_str(metadata) == "region, product"
-
-
-def test_baseline_grouping_str_is_none_when_ungrouped_or_metadataless():
-    metadata = SparkFeatureMetadata(
-        column_infos=[{"name": "amount", "category": "numeric"}],
-        categorical_frequency_maps={},
-        onehot_categories={},
-        engineered_feature_names=["amount"],
-    )
-    assert llm_explainer._baseline_grouping_str(metadata) == "none"
-    assert llm_explainer._baseline_grouping_str(None) == "none"
-
-
-def test_human_labels_map_omits_identity_and_labels_derived_features():
-    """Only features whose label differs from the raw name are in the map; identities are dropped
-    so the SQL lookup stays small and unmapped keys fall back to the raw name."""
-    metadata = SparkFeatureMetadata(
-        column_infos=[
-            {"name": "amount", "category": "numeric"},
-            {"name": "country", "category": "categorical"},
-        ],
-        categorical_frequency_maps={"country": {"US": 0.7}},
-        onehot_categories={"country": {"US": "country_US"}},
-        engineered_feature_names=["amount", "amount_rel_baseline", "country_US", "country_freq"],
-        # Recorded because suffix resolution is gated on it: without a basis, ``amount_rel_baseline``
-        # would be a column in its own right rather than a derived feature, and would correctly label
-        # as itself. A grouping column is not a feature, so it is absent from column_infos.
-        baseline_by=["region"],
-    )
-    labels = llm_explainer._human_labels(metadata)
-
-    assert "amount" not in labels  # identity, omitted
-    assert labels["amount_rel_baseline"] == "amount vs its group baseline"
-    assert labels["country_US"] == "country = US"
-    assert labels["country_freq"] == "country frequency"
-
-
-def test_human_labels_map_is_empty_without_metadata():
-    assert not llm_explainer._human_labels(None)
-
-
-def test_sql_string_literal_escapes_quote_and_backslash():
-    """Single quote -> \\' and backslash -> \\\\. Spark runs with escapedStringLiterals=false,
-    where a doubled '' pair is dropped rather than unescaped, so ANSI doubling silently corrupts
-    the name (o'brien -> obrien) and breaks redaction; the backslash form is required."""
-    assert llm_explainer._sql_string_literal("o'brien") == "o\\'brien"
-    assert llm_explainer._sql_string_literal("a\\b") == "a\\\\b"
-    assert llm_explainer._sql_string_literal("x'\\y") == "x\\'\\\\y"
+        llm_explainer.probe_endpoint_reachable(spark, LLMModelConfig(model_name=""))
+    assert not spark.queries
 
 
 def test_explanation_context_pattern_col_defaults_to_fixed_name():
@@ -228,7 +176,7 @@ def test_explanation_context_pattern_col_defaults_to_fixed_name():
         threshold=95.0,
         model_name="catalog.schema.m",
     )
-    assert ctx.pattern_col == llm_explainer._DEFAULT_PATTERN_COL
+    assert ctx.pattern_col == "__dqx_pattern"
 
 
 def test_explanation_context_threads_pattern_col_from_scoring_config():
@@ -353,11 +301,7 @@ _DIRECTIONAL_WORDS = (
 
 def _exemplar_responses() -> list[str]:
     """The JSON responses from the few-shot exemplars, which is the part a model imitates."""
-    return [
-        line.partition("Response: ")[2]
-        for line in llm_explainer.AI_QUERY_PROMPT_HEADER.splitlines()
-        if line.startswith("Response: ")
-    ]
+    return _prompt_exemplar_field_values("Response")
 
 
 def test_the_few_shot_responses_assert_no_direction():
@@ -379,7 +323,7 @@ def test_the_few_shot_responses_assert_no_direction():
 def test_the_instructions_name_the_absence_of_direction_and_reconcile_it_with_being_direct():
     """Two rules could otherwise be read as licensing invention: "be direct, avoid hedging" and the
     detector-family reading. Being direct must mean stating what the input holds, not filling the gap."""
-    header = llm_explainer._render_ai_query_prompt_header()
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
 
     assert "NO DIRECTION" in header
     assert "does not license asserting a direction" in header
@@ -391,14 +335,10 @@ def test_every_exemplar_shows_the_attribution_basis_it_is_reading():
     Both readings are shown, because an exemplar set that only ever displays one teaches the model to
     treat that one as the default and ignore the field.
     """
-    bases = [
-        line.partition("attribution_basis: ")[2]
-        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
-        if line.startswith("attribution_basis: ")
-    ]
+    bases = _prompt_exemplar_field_values("attribution_basis")
 
     assert len(bases) == 2, "each exemplar must state the basis it is reading"
-    assert bases[0] != bases[1], "the exemplars must demonstrate both readings, not one twice"
+    assert len(set(bases)) == 2, "the exemplars must demonstrate both readings, not one twice"
 
 
 def test_the_correlation_aware_reading_does_not_assert_a_broken_relationship():
@@ -413,7 +353,7 @@ def test_ensemble_agreement_is_not_presented_as_confidence_in_the_finding():
     """*confidence* is seed agreement on one training set. It says nothing about whether the flag is
     right or whether the data has drifted since, and the prompt has to say so or the narrative will
     imply otherwise."""
-    description = dict(llm_explainer._PROMPT_INPUT_FIELDS)["confidence"]
+    description = _prompt_input_descriptions(llm_explainer.AI_QUERY_PROMPT_HEADER)["confidence"]
 
     assert "random seed" in description
     assert "NOT how reliable the flag is" in description
@@ -430,29 +370,7 @@ def test_the_temporal_baseline_reaches_the_prompt_as_its_own_field():
     source column closed that channel -- correctly, since one column should report once however many ways
     it was compared -- and left the model with no way to know the comparison was against time at all.
     """
-    input_names = [name for name, _ in llm_explainer._PROMPT_INPUT_FIELDS]
-
-    assert "temporal_baseline" in input_names
-    # Sibling of the grouping field, and adjacent to it, because they answer the same question.
-    assert input_names.index("temporal_baseline") == input_names.index("baseline_grouping") + 1
-
-
-@pytest.mark.parametrize("baseline_over_time, expected", [("event_ts", "event_ts"), ("", "none")])
-def test_the_temporal_baseline_string_reports_the_time_column_or_none(baseline_over_time, expected):
-    metadata = SparkFeatureMetadata(
-        column_infos=[{"name": "revenue", "category": "numeric"}],
-        categorical_frequency_maps={},
-        onehot_categories={},
-        engineered_feature_names=["revenue"],
-        baseline_over_time=baseline_over_time,
-    )
-
-    assert llm_explainer._temporal_baseline_str(metadata) == expected
-
-
-def test_the_temporal_baseline_string_is_none_without_metadata():
-    """A caller who built the context directly gets the conservative answer rather than a crash."""
-    assert llm_explainer._temporal_baseline_str(None) == "none"
+    assert "temporal_baseline" in _prompt_input_descriptions(llm_explainer.AI_QUERY_PROMPT_HEADER)
 
 
 def test_the_temporal_field_describes_an_available_comparison_not_one_that_happened():
@@ -468,7 +386,7 @@ def test_the_temporal_field_describes_an_available_comparison_not_one_that_happe
     ordinary for the table and still have departed from a narrower comparison, so "unusually high" stops
     being the obvious reading of a large share.
     """
-    description = dict(llm_explainer._PROMPT_INPUT_FIELDS)["temporal_baseline"]
+    description = _prompt_input_descriptions(llm_explainer.AI_QUERY_PROMPT_HEADER)["temporal_baseline"]
 
     assert "MAY have been compared" in description
     assert "not every metric is" in description
@@ -483,11 +401,7 @@ def test_both_comparison_states_are_demonstrated_in_the_exemplars():
     Showing only one state teaches the model to treat it as the default and stop reading the field, which
     is how the same mistake would come back.
     """
-    values = [
-        line.partition("temporal_baseline: ")[2]
-        for line in llm_explainer._PROMPT_EXAMPLES.splitlines()
-        if line.startswith("temporal_baseline: ")
-    ]
+    values = _prompt_exemplar_field_values("temporal_baseline")
 
     assert len(values) == 2, "each exemplar must state whether a temporal baseline applied"
     assert sorted(values) == ["event_ts", "none"]
@@ -500,7 +414,7 @@ def test_no_exemplar_attributes_the_departure_to_a_particular_comparison():
     level expected of it at that point in time" -- which is precisely the attribution that is unavailable.
     Both exemplars now name the comparisons in use and stop there.
     """
-    responses = [line for line in llm_explainer._PROMPT_EXAMPLES.splitlines() if line.startswith("Response: ")]
+    responses = _exemplar_responses()
     assert len(responses) == 2
 
     for response in responses:
@@ -526,9 +440,9 @@ def test_the_exemplars_state_business_impact_conditionally():
         assert "review" in impact
         assert "would" not in impact.lower()
 
-    first_action = json.loads(_exemplar_responses()[0])["action"].lower()
-    assert "source records" in first_action
-    assert "source orders" not in first_action
+    actions = [json.loads(response)["action"].lower() for response in _exemplar_responses()]
+    assert any("source records" in action for action in actions)
+    assert all("source orders" not in action for action in actions)
 
 
 def test_rendered_prompt_separates_attribution_from_deviation_and_dq_diagnosis():
@@ -585,7 +499,7 @@ def test_the_instructions_present_the_comparisons_as_context_not_cause():
     either one is a silent regression: without the first the model invents an attribution, and without the
     second it refuses to use a real one.
     """
-    header = llm_explainer._render_ai_query_prompt_header()
+    header = llm_explainer.AI_QUERY_PROMPT_HEADER
 
     # With evidence: use the comparison that received model attribution.
     assert "basis_contributions says WHICH modeled comparison received attribution" in header

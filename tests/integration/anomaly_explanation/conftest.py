@@ -6,6 +6,7 @@ import json
 import pytest
 from pyspark.sql import Column, functions as F
 
+from databricks.labs.dqx.anomaly.anomaly_llm_explainer import AI_QUERY_PROMPT_HEADER
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 
 
@@ -28,8 +29,25 @@ def _adversarial_response(response_kind: str) -> Column | None:
 
 
 def _prompt_echo_response(response_kind: str) -> Column:
-    assert response_kind in {"prompt_echo", "basis_redaction", "basis_echo"}
+    assert response_kind in {"prompt_echo", "basis_redaction", "basis_echo", "context_echo"}
     prompt = F.col("__prompt")
+    if response_kind == "context_echo":
+        return F.to_json(
+            F.struct(
+                F.substring_index(
+                    F.substring_index(prompt, "\nfeature_contributions: ", -1), "\nbasis_contributions: ", 1
+                ).alias("narrative"),
+                F.substring_index(
+                    F.substring_index(prompt, "\nbaseline_grouping: ", -1), "\ntemporal_baseline: ", 1
+                ).alias("business_impact"),
+                F.when(
+                    prompt.startswith(AI_QUERY_PROMPT_HEADER),
+                    F.substring_index(F.substring_index(prompt, "\ntemporal_baseline: ", -1), "\nthreshold: ", 1),
+                )
+                .otherwise(F.lit("missing prompt header"))
+                .alias("action"),
+            )
+        )
     if response_kind == "basis_echo":
         basis = F.substring_index(F.substring_index(prompt, "\nbasis_contributions: ", -1), "\ngroup_size: ", 1)
         metric_qualification = prompt.contains(

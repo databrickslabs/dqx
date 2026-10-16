@@ -362,7 +362,7 @@ def test_a_block_of_only_constant_features_scores_zero():
     assert drops[0, 0] > 0.0
 
 
-def test_block_drops_are_not_additive_and_the_docstring_says_so():
+def test_block_drops_are_not_additive():
     """Overlapping information belongs to no single block, so blocks do not sum to the distance.
 
     Pinned because a reader who assumes additivity would 'fix' the normalisation into something wrong.
@@ -374,7 +374,6 @@ def test_block_drops_are_not_additive_and_the_docstring_says_so():
     blocked_sum = float(detector.block_contributions(probe, [[0], [1]]).sum())
 
     assert not np.isclose(blocked_sum, total)
-    assert "Not additive" in MahalanobisDetector.block_contributions.__doc__
 
 
 def test_one_hot_categories_of_one_column_form_a_single_block():

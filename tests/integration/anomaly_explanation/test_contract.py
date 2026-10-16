@@ -6,6 +6,7 @@ materialization and the join back to caller rows execute normally, without paid 
 
 from collections import Counter
 import json
+import re
 
 import numpy as np
 import pytest
@@ -20,6 +21,89 @@ from databricks.labs.dqx.anomaly.drift import DriftResult, format_drift_summary
 from databricks.labs.dqx.anomaly.explainability import format_basis_contributions
 from databricks.labs.dqx.anomaly.feature_naming import AttributionKeys
 from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
+
+
+@pytest.mark.parametrize("metadata_mode", ["grouped_temporal", "grouped", "ungrouped", "absent"])
+@pytest.mark.parametrize("explanation_serving_boundary", ["context_echo"], indirect=True)
+def test_public_explanation_delivers_labels_context_and_response_schema(
+    spark: SparkSession, explanation_serving_boundary: list[str], metadata_mode: str
+) -> None:
+    """Inspect the real serving request and published result, with no private helper calls."""
+    grouped = metadata_mode in {"grouped_temporal", "grouped"}
+    metadata = (
+        SparkFeatureMetadata(
+            column_infos=[
+                {"name": "amount", "category": "numeric"},
+                {"name": "country", "category": "categorical"},
+            ],
+            categorical_frequency_maps={"country": {"US": 0.7}},
+            onehot_categories={"country": {"US": "country_US"}},
+            engineered_feature_names=["amount", "amount_rel_baseline", "country_US", "country_freq"],
+            baseline_by=["region", "product"] if grouped else [],
+            baseline_over_time="event_ts" if metadata_mode == "grouped_temporal" else "",
+        )
+        if metadata_mode != "absent"
+        else None
+    )
+    contributions = {"amount": 40.0, "amount_rel_baseline": 30.0, "country_US": 20.0, "country_freq": 10.0}
+    source = spark.createDataFrame(
+        [(1, 99.0, contributions, 0.0)] * 2 + [(2, 50.0, contributions, 0.0)],
+        "row_id int, severity double, contributions map<string,double>, score_std double",
+    )
+    context = ExplanationContext(
+        severity_col="severity",
+        contributions_col="contributions",
+        score_std_col="score_std",
+        ai_explanation_col="explanation",
+        threshold=95.0,
+        model_name="catalog.schema.model",
+        feature_metadata=metadata,
+    )
+
+    result = add_explanation_column(source, context, is_ensemble=False, endpoint_reachable=True)
+    rows = result.collect()
+
+    expected_labels = [
+        "amount (40%)",
+        "amount vs its group baseline (30%)" if grouped else "amount_rel_baseline (30%)",
+        "country = US (20%)" if metadata else "country_US (20%)",
+        "country frequency (10%)" if metadata else "country_freq (10%)",
+    ]
+    assert len(rows) == 3
+    assert Counter(
+        json.dumps(row.asDict(recursive=True), sort_keys=True) for row in result.select(*source.columns).collect()
+    ) == Counter(json.dumps(row.asDict(recursive=True), sort_keys=True) for row in source.collect())
+    assert result.select(*source.columns).schema == source.schema
+    for row in rows:
+        explanation = row.explanation
+        if row.row_id == 2:
+            assert explanation is None
+            continue
+        assert explanation.narrative == ", ".join(expected_labels)
+        assert explanation.top_drivers == explanation.narrative
+        assert explanation.business_impact == ("region, product" if grouped else "none")
+        assert explanation.action == ("event_ts" if metadata_mode == "grouped_temporal" else "none")
+        assert explanation.group_size == 2
+
+    assert len(explanation_serving_boundary) == 1  # SQL construction, not endpoint invocation count.
+    query = explanation_serving_boundary[0]
+    response_format = re.search(r"responseFormat\s*=>\s*('(?:\\.|[^'\\])*')", query)
+    assert response_format is not None
+    # Let Spark interpret the actual SQL string literal, including its escaping.
+    schema_json = spark.range(1).select(F.expr(response_format.group(1)).alias("response_format")).first()
+    assert schema_json is not None
+    response = json.loads(schema_json.response_format)
+    assert response["type"] == "json_schema"
+    assert response["json_schema"]["strict"] is True
+    schema = response["json_schema"]["schema"]
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"narrative", "business_impact", "action"}
+    assert schema["properties"] == {
+        "narrative": {"type": "string"},
+        "business_impact": {"type": "string"},
+        "action": {"type": "string"},
+    }
 
 
 @pytest.mark.parametrize("redact_all", [False, True])
