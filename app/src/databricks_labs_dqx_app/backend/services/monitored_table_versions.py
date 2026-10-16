@@ -51,7 +51,8 @@ them would make vN reflect state the table-approval never governed.
 
 import json
 import logging
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTableVersion
@@ -65,6 +66,72 @@ from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, R
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+RuleChangeStatus = Literal["added", "removed", "modified", "unchanged"]
+
+# Stamped onto checks per run, not part of what was approved.
+_RUN_STAMPED_KEYS = frozenset({"run_mode", "binding_version"})
+
+
+@dataclass
+class RuleChange:
+    """One applied rule compared between two sides (a frozen version, or the proposed rules)."""
+
+    key: str
+    rule_name: str
+    status: RuleChangeStatus
+    before: list[dict[str, Any]] = field(default_factory=list)
+    after: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _rule_key(check: dict[str, Any]) -> str:
+    meta = check.get("user_metadata") or {}
+    return str(meta.get("applied_rule_id") or meta.get("registry_rule_id") or check.get("name") or "")
+
+
+def _rule_name(checks: list[dict[str, Any]]) -> str:
+    for check in checks:
+        meta = check.get("user_metadata") or {}
+        name = meta.get("name") or check.get("name")
+        if name:
+            return str(name)
+    return ""
+
+
+def _without_run_stamps(check: dict[str, Any]) -> dict[str, Any]:
+    meta = check.get("user_metadata")
+    if not isinstance(meta, dict):
+        return check
+    return {**check, "user_metadata": {k: v for k, v in meta.items() if k not in _RUN_STAMPED_KEYS}}
+
+
+def compare_checks(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[RuleChange]:
+    """Pair two check lists by applied rule and classify each, like files in a git diff.
+
+    A rule's checks are matched across the sides by its applied-rule id, so a
+    reordered or renamed check reads as one change, not scattered lines. Order:
+    the *after* side's rules as they appear, then rules only *before* had.
+    """
+    grouped_before: dict[str, list[dict[str, Any]]] = {}
+    grouped_after: dict[str, list[dict[str, Any]]] = {}
+    for checks, grouped in ((before, grouped_before), (after, grouped_after)):
+        for check in checks:
+            if isinstance(check, dict):
+                grouped.setdefault(_rule_key(check), []).append(_without_run_stamps(check))
+    changes: list[RuleChange] = []
+    for key in [*grouped_after, *(k for k in grouped_before if k not in grouped_after)]:
+        old, new = grouped_before.get(key, []), grouped_after.get(key, [])
+        if not old:
+            status: RuleChangeStatus = "added"
+        elif not new:
+            status = "removed"
+        elif _canonical(old) != _canonical(new):
+            status = "modified"
+        else:
+            status = "unchanged"
+        changes.append(RuleChange(key, _rule_name(new or old), status, old, new))
+    return changes
 
 
 def _canonical(value: Any) -> str:
@@ -342,6 +409,27 @@ class MonitoredTableVersionService:
             if "pinned_version" in frozen_pin and frozen_pin["pinned_version"] != applied.pinned_version:
                 return True
         return False
+
+    def compare(self, binding_id: str, base_version: int, target_version: int | None) -> list[RuleChange]:
+        """Compare *base_version* (0 = nothing approved yet) with *target_version*, per rule.
+
+        *target_version* None means the proposed rules: the table's current
+        applied rules, rendered the way a run would render them.
+        """
+        before = self._checks_or_empty(binding_id, base_version)
+        if target_version is None:
+            after = self._materializer.render_binding_checks(binding_id)
+        else:
+            after = self._checks_or_empty(binding_id, target_version)
+        return compare_checks(before, after)
+
+    def _checks_or_empty(self, binding_id: str, version: int) -> list[dict[str, Any]]:
+        if version <= 0:
+            return []
+        try:
+            return self.get_checks(binding_id, version)
+        except LookupError:
+            return []
 
     def snapshot_counts_many(self, pins: list[tuple[str, int]]) -> dict[tuple[str, int], tuple[int, int]]:
         """Return ``(applied_rule_count, check_count)`` per frozen *(binding_id, version)* pin.

@@ -69,6 +69,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableProfileOut,
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
+    MonitoredTableChangesOut,
     MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
     ApplyProfilingSuggestionsIn,
@@ -87,6 +88,7 @@ from databricks_labs_dqx_app.backend.models import (
     MatchRulesOut,
     SuggestRulesOut,
     TagSuggestionsOut,
+    RuleChangeOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
@@ -731,6 +733,73 @@ def list_monitored_table_versions(
     except Exception as e:
         logger.error(f"Failed to list versions for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list monitored table versions: {e}")
+
+
+@router.get(
+    "/{binding_id}/changes",
+    response_model=MonitoredTableChangesOut,
+    operation_id="getMonitoredTableChanges",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_monitored_table_changes(
+    binding_id: str,
+    svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    base: Annotated[int | None, Query(ge=0, description="Base version (0 = nothing approved)")] = None,
+    target: Annotated[int | None, Query(ge=1, description="Target version; omit for the proposed rules")] = None,
+) -> MonitoredTableChangesOut:
+    """Compare a monitored table's rules between two sides, per rule (added / removed / modified / unchanged).
+
+    With no *base* or *target*: when the table has changes not yet approved
+    (a draft, a pending review, or a saved edit to an approved table) this
+    compares the approved version with the proposed rules; otherwise the
+    latest version with the one before it. *target* omitted with a *base*
+    compares that version with the proposed rules.
+    """
+    user_email = _current_user_email(obo_ws)
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.SELECT,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=user_email,
+    )
+    detail = svc.get(binding_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+    approved = detail.table.version
+    pending = detail.table.status != "approved" or _unapproved_rule_changes(version_svc, detail)
+    if target is not None and target > approved:
+        raise HTTPException(status_code=400, detail=f"Version {target} doesn't exist (latest is {approved})")
+    if base is None and target is None:
+        base, target = (approved, None) if pending or approved == 0 else (approved - 1, approved)
+    elif base is None:
+        base = max((target or approved) - 1, 0)
+    try:
+        changes = version_svc.compare(binding_id, base, target)
+    except Exception as e:
+        logger.error(f"Failed to compare monitored table {binding_id} changes: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compare monitored table changes: {e}")
+    counts = {status: 0 for status in ("added", "removed", "modified", "unchanged")}
+    for change in changes:
+        counts[change.status] += 1
+    return MonitoredTableChangesOut(
+        binding_id=binding_id,
+        approved_version=approved,
+        has_pending_changes=pending,
+        base_version=base,
+        target_version=target,
+        counts=counts,
+        changes=[
+            RuleChangeOut(key=c.key, rule_name=c.rule_name, status=c.status, before=c.before, after=c.after)
+            for c in changes
+        ],
+    )
 
 
 @router.get(

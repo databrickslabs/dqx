@@ -3278,5 +3278,35 @@
     "pickCollectionDescription": "Elige la colección que ejecuta esta programación. Todas sus tablas se ejecutan según la programación.",
     "pickCollectionSearch": "Buscar colecciones",
     "pickCollectionEmpty": "Ninguna colección coincide."
+  },
+  "tableChanges": {
+    "pendingTitle": "Cambios aún no aprobados",
+    "historyTitle": "Historial de versiones",
+    "pendingTab": "Cambios pendientes",
+    "historyTab": "Historial de versiones",
+    "compare": "Comparar",
+    "to": "con",
+    "nothing": "nada (primera aprobación)",
+    "runsNow": "en uso",
+    "pendingCompare": "v{{version}} aprobada → propuesta",
+    "countRemoved": "− {{count}} eliminada(s)",
+    "countAdded": "+ {{count}} añadida(s)",
+    "countModified": "~ {{count}} modificada(s)",
+    "countUnchanged": "{{count}} sin cambios",
+    "showUnchanged": "Mostrar sin cambios",
+    "layout": "Diseño",
+    "unified": "Unificado",
+    "split": "Lado a lado",
+    "noChanges": "Ninguna regla cambió.",
+    "loadFailed": "No se pudieron cargar los cambios.",
+    "neverApproved": "Esta tabla nunca se ha aprobado, así que aún no hay versiones que comparar.",
+    "neverApprovedShort": "Nada aprobado aún: las ejecuciones programadas empiezan tras la primera aprobación.",
+    "runsUse": "Las ejecuciones programadas y «Ejecutar ahora» usan la v{{version}} aprobada hasta que se aprueben los cambios.",
+    "status": {
+      "added": "Añadida",
+      "removed": "Eliminada",
+      "modified": "Modificada",
+      "unchanged": "Sin cambios"
+    }
   }
 }

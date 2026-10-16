@@ -3278,5 +3278,35 @@
     "pickCollectionDescription": "Choisissez la collection exécutée par cette planification. Toutes ses tables s'exécutent selon la planification.",
     "pickCollectionSearch": "Rechercher des collections",
     "pickCollectionEmpty": "Aucune collection ne correspond."
+  },
+  "tableChanges": {
+    "pendingTitle": "Modifications non encore approuvées",
+    "historyTitle": "Historique des versions",
+    "pendingTab": "Modifications en attente",
+    "historyTab": "Historique des versions",
+    "compare": "Comparer",
+    "to": "à",
+    "nothing": "rien (première approbation)",
+    "runsNow": "en cours d'utilisation",
+    "pendingCompare": "v{{version}} approuvée → proposée",
+    "countRemoved": "− {{count}} supprimée(s)",
+    "countAdded": "+ {{count}} ajoutée(s)",
+    "countModified": "~ {{count}} modifiée(s)",
+    "countUnchanged": "{{count}} inchangée(s)",
+    "showUnchanged": "Afficher les inchangées",
+    "layout": "Disposition",
+    "unified": "Unifiée",
+    "split": "Côte à côte",
+    "noChanges": "Aucune règle modifiée.",
+    "loadFailed": "Échec du chargement des modifications.",
+    "neverApproved": "Cette table n'a jamais été approuvée : aucune version à comparer pour l'instant.",
+    "neverApprovedShort": "Rien d'approuvé : les exécutions planifiées commencent après la première approbation.",
+    "runsUse": "Les exécutions planifiées et « Exécuter » utilisent la v{{version}} approuvée jusqu'à l'approbation des modifications.",
+    "status": {
+      "added": "Ajoutée",
+      "removed": "Supprimée",
+      "modified": "Modifiée",
+      "unchanged": "Inchangée"
+    }
   }
 }

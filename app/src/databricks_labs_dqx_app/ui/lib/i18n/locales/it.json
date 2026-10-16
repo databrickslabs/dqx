@@ -3278,5 +3278,35 @@
     "pickCollectionDescription": "Scegli la raccolta eseguita da questa pianificazione. Tutte le sue tabelle vengono eseguite secondo la pianificazione.",
     "pickCollectionSearch": "Cerca raccolte",
     "pickCollectionEmpty": "Nessuna raccolta corrisponde."
+  },
+  "tableChanges": {
+    "pendingTitle": "Modifiche non ancora approvate",
+    "historyTitle": "Cronologia versioni",
+    "pendingTab": "Modifiche in sospeso",
+    "historyTab": "Cronologia versioni",
+    "compare": "Confronta",
+    "to": "con",
+    "nothing": "niente (prima approvazione)",
+    "runsNow": "in uso",
+    "pendingCompare": "v{{version}} approvata → proposta",
+    "countRemoved": "− {{count}} rimosse",
+    "countAdded": "+ {{count}} aggiunte",
+    "countModified": "~ {{count}} modificate",
+    "countUnchanged": "{{count}} invariate",
+    "showUnchanged": "Mostra invariate",
+    "layout": "Layout",
+    "unified": "Unificato",
+    "split": "Affiancato",
+    "noChanges": "Nessuna regola modificata.",
+    "loadFailed": "Impossibile caricare le modifiche.",
+    "neverApproved": "Questa tabella non è mai stata approvata: non ci sono ancora versioni da confrontare.",
+    "neverApprovedShort": "Niente di approvato: le esecuzioni pianificate iniziano dopo la prima approvazione.",
+    "runsUse": "Le esecuzioni pianificate ed «Esegui ora» usano la v{{version}} approvata finché le modifiche non vengono approvate.",
+    "status": {
+      "added": "Aggiunta",
+      "removed": "Rimossa",
+      "modified": "Modificata",
+      "unchanged": "Invariata"
+    }
   }
 }

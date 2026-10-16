@@ -1,7 +1,7 @@
 import { useMemo, useRef, type UIEvent } from "react";
 import { useTranslation } from "react-i18next";
-import yaml from "js-yaml";
 import { cn } from "@/lib/utils";
+import { diffLines, toYaml, type DiffCell, type DiffRow } from "@/lib/yaml-diff";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, Info } from "lucide-react";
 import {
   useListRegistryRuleVersions,
-  useGetMonitoredTableVersionChecks,
   useGetDataProductReviewChanges,
   useGetRuleHistory,
 } from "@/lib/api";
@@ -27,102 +26,15 @@ import {
 /**
  * Shared previous-vs-proposed change-diff popout for the Drafts & Review
  * approval cards (Stream J item 13e). Registry rules diff against their
- * currently-published version snapshot; monitored tables diff the two most
- * recent frozen version snapshots; per-table rule drafts diff the two most
- * recent audit-log entries. Table Spaces have no per-version snapshot store,
- * so their popout shows the current proposed definition with an explicit note
+ * currently-published version snapshot; per-table rule drafts diff the two most
+ * recent audit-log entries; monitored tables use the per-rule TableChangesDialog.
+ * Table Spaces have no per-version snapshot store, so their popout shows the current proposed definition with an explicit note
  * rather than fabricating a diff.
  *
  * All four surfaces render through :func:`ChangeDiffDialog`, keeping the
  * popout visually consistent. YAML is used for the payload panes so any
  * check/definition shape renders legibly without a bespoke renderer per type.
  */
-
-function toYaml(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  try {
-    return yaml.dump(value, { sortKeys: false, noRefs: true, lineWidth: 100 });
-  } catch {
-    return String(value);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Line-level diff (in-house LCS). No diff library is bundled with the app, so
-// we compute the longest-common-subsequence of the two YAML line arrays and
-// back-track it into removed/added/equal operations. Removed and added lines
-// within the same change hunk are then paired row-for-row so a modified line
-// sits opposite its replacement — the alignment that makes a split diff
-// readable (blank filler cells pad the shorter side).
-// ---------------------------------------------------------------------------
-
-type LineTag = "equal" | "removed" | "added";
-interface DiffCell {
-  text: string;
-  tag: LineTag;
-}
-interface DiffRow {
-  left: DiffCell | null;
-  right: DiffCell | null;
-}
-
-function diffLines(previous: string, proposed: string): DiffRow[] {
-  const a = previous.length ? previous.split("\n") : [];
-  const b = proposed.length ? proposed.split("\n") : [];
-  const n = a.length;
-  const m = b.length;
-
-  // lcs[i][j] = length of LCS of a[i:] and b[j:]
-  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-
-  const ops: DiffCell[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      ops.push({ text: a[i], tag: "equal" });
-      i++;
-      j++;
-    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      ops.push({ text: a[i], tag: "removed" });
-      i++;
-    } else {
-      ops.push({ text: b[j], tag: "added" });
-      j++;
-    }
-  }
-  while (i < n) ops.push({ text: a[i++], tag: "removed" });
-  while (j < m) ops.push({ text: b[j++], tag: "added" });
-
-  const rows: DiffRow[] = [];
-  let k = 0;
-  while (k < ops.length) {
-    if (ops[k].tag === "equal") {
-      const cell = ops[k];
-      rows.push({ left: cell, right: cell });
-      k++;
-      continue;
-    }
-    // Gather the contiguous run of non-equal ops and pair removed with added.
-    const removed: DiffCell[] = [];
-    const added: DiffCell[] = [];
-    while (k < ops.length && ops[k].tag !== "equal") {
-      if (ops[k].tag === "removed") removed.push(ops[k]);
-      else added.push(ops[k]);
-      k++;
-    }
-    const max = Math.max(removed.length, added.length);
-    for (let r = 0; r < max; r++) {
-      rows.push({ left: removed[r] ?? null, right: added[r] ?? null });
-    }
-  }
-  return rows;
-}
 
 function DiffLine({ cell }: { cell: DiffCell | null }) {
   if (!cell) {
@@ -431,67 +343,6 @@ export function RegistryRuleDiffDialog({
       note={target && !hasPrior ? t("rulesDrafts.diff.rrNoPrior") : null}
       loading={enabled && isLoading}
       error={isError}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Monitored table — diff the two most recent frozen version snapshots
-// ---------------------------------------------------------------------------
-
-export interface MonitoredTableDiffTarget {
-  bindingId: string;
-  name: string;
-  version: number;
-}
-
-export function MonitoredTableDiffDialog({
-  target,
-  onClose,
-}: {
-  target: MonitoredTableDiffTarget | null;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const version = target?.version ?? 0;
-  const proposedEnabled = !!target && version > 0;
-  const previousEnabled = !!target && version > 1;
-
-  const proposedQuery = useGetMonitoredTableVersionChecks(target?.bindingId ?? "", version, {
-    query: { enabled: proposedEnabled },
-  });
-  const previousQuery = useGetMonitoredTableVersionChecks(target?.bindingId ?? "", Math.max(version - 1, 0), {
-    query: { enabled: previousEnabled },
-  });
-
-  const proposed = proposedQuery.data?.data?.checks ?? [];
-  const previous = previousEnabled ? previousQuery.data?.data?.checks ?? [] : null;
-  const loading = proposedEnabled && (proposedQuery.isLoading || (previousEnabled && previousQuery.isLoading));
-  const error = proposedQuery.isError || (previousEnabled && previousQuery.isError);
-
-  // No approved snapshot yet (version 0): nothing frozen to show for a
-  // first-approval binding — the pending rule set is not frozen until approval.
-  const note = !target
-    ? null
-    : version === 0
-      ? t("rulesDrafts.diff.mtFirstApproval")
-      : !previousEnabled
-        ? t("rulesDrafts.diff.mtNoPrior")
-        : null;
-
-  return (
-    <ChangeDiffDialog
-      open={!!target}
-      onOpenChange={(o) => !o && onClose()}
-      title={t("rulesDrafts.diff.title")}
-      itemName={target?.name ?? ""}
-      previous={previous}
-      proposed={proposed}
-      previousLabel={previousEnabled ? t("rulesDrafts.diff.versionLabel", { version: version - 1 }) : undefined}
-      proposedLabel={version > 0 ? t("rulesDrafts.diff.versionLabel", { version }) : t("rulesDrafts.diff.proposed")}
-      note={note}
-      loading={loading}
-      error={error}
     />
   );
 }

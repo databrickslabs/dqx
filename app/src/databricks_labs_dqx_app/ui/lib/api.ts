@@ -2510,6 +2510,37 @@ export interface ModelServicesOut {
 }
 
 /**
+ * None = the proposed rules
+ */
+export type MonitoredTableChangesOutTargetVersion = number | null;
+
+/**
+ * Rules per status
+ */
+export type MonitoredTableChangesOutCounts = {[key: string]: number};
+
+/**
+ * A monitored table's changes between two sides, per rule — backs the View changes dialog.
+
+The base is a frozen version (0 = nothing approved yet); the target is a
+frozen version, or the proposed rules (``target_version`` None): the
+table's current applied rules, rendered as a run would render them.
+ */
+export interface MonitoredTableChangesOut {
+  binding_id: string;
+  /** The version scheduled runs and Run now use (0 = none) */
+  approved_version: number;
+  /** The proposed rules differ from the approved version */
+  has_pending_changes: boolean;
+  base_version: number;
+  /** None = the proposed rules */
+  target_version?: MonitoredTableChangesOutTargetVersion;
+  /** Rules per status */
+  counts?: MonitoredTableChangesOutCounts;
+  changes?: RuleChangeOut[];
+}
+
+/**
  * A monitored table plus its applied rules, for ``getMonitoredTable``.
  */
 export interface MonitoredTableDetailOut {
@@ -3615,6 +3646,25 @@ export interface RuleCatalogEntryOut {
   created_at?: RuleCatalogEntryOutCreatedAt;
   updated_by?: RuleCatalogEntryOutUpdatedBy;
   updated_at?: RuleCatalogEntryOutUpdatedAt;
+}
+
+export type RuleChangeOutBeforeItem = { [key: string]: unknown };
+
+export type RuleChangeOutAfterItem = { [key: string]: unknown };
+
+/**
+ * One applied rule compared between two sides of a monitored table's changes.
+ */
+export interface RuleChangeOut {
+  /** Applied-rule id the checks on both sides are matched by */
+  key: string;
+  rule_name: string;
+  /** added | removed | modified | unchanged */
+  status: string;
+  /** The rule's checks on the base side */
+  before?: RuleChangeOutBeforeItem[];
+  /** The rule's checks on the target side */
+  after?: RuleChangeOutAfterItem[];
 }
 
 export type RuleDefinitionBody = { [key: string]: unknown };
@@ -5594,6 +5644,17 @@ rule_id?: string | null;
 };
 
 export type DeleteMonitoredTable200 = {[key: string]: string};
+
+export type GetMonitoredTableChangesParams = {
+/**
+ * Base version (0 = nothing approved)
+ */
+base?: number | null;
+/**
+ * Target version; omit for the proposed rules
+ */
+target?: number | null;
+};
 
 export type RemoveAppliedRule200 = {[key: string]: string};
 
@@ -17801,6 +17862,173 @@ export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getListMonitoredTableVersionsSuspenseQueryOptions(bindingId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Compare a monitored table's rules between two sides, per rule (added / removed / modified / unchanged).
+
+With no *base* or *target*: when the table has changes not yet approved
+(a draft, a pending review, or a saved edit to an approved table) this
+compares the approved version with the proposed rules; otherwise the
+latest version with the one before it. *target* omitted with a *base*
+compares that version with the proposed rules.
+ * @summary Get Monitored Table Changes
+ */
+export const getMonitoredTableChanges = (
+    bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableChangesOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/changes`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetMonitoredTableChangesQueryKey = (bindingId?: string,
+    params?: GetMonitoredTableChangesParams,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/changes`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetMonitoredTableChangesQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableChangesQueryKey(bindingId,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableChanges>>> = ({ signal }) => getMonitoredTableChanges(bindingId,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableChangesQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableChanges>>>
+export type GetMonitoredTableChangesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params: undefined |  GetMonitoredTableChangesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Changes
+ */
+
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableChangesQueryOptions(bindingId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetMonitoredTableChangesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableChangesQueryKey(bindingId,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableChanges>>> = ({ signal }) => getMonitoredTableChanges(bindingId,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableChangesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableChanges>>>
+export type GetMonitoredTableChangesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params: undefined |  GetMonitoredTableChangesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Changes
+ */
+
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableChangesSuspenseQueryOptions(bindingId,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
 import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -154,8 +155,6 @@ import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
-  MonitoredTableDiffDialog,
-  type MonitoredTableDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
@@ -461,7 +460,7 @@ function MonitoredTableDetailPage() {
   const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -887,7 +886,7 @@ function MonitoredTableDetailPage() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+        <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, Permissions first (View Data

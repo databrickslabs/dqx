@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
 import { formatDateShort as formatDate, getUserMetadata } from "@/lib/format-utils";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { useTranslation } from "react-i18next";
@@ -43,10 +44,8 @@ import {
 } from "@/components/drafts/ApprovalQueueCard";
 import {
   RegistryRuleDiffDialog,
-  MonitoredTableDiffDialog,
   TableSpaceDiffDialog,
   type RegistryDiffTarget,
-  type MonitoredTableDiffTarget,
   type TableSpaceDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
 import {
@@ -396,7 +395,7 @@ function RegistryApprovalsSection({
  * belongs in the same single approvals queue as registry rules and Table
  * Spaces. Driven by ``useListMonitoredTables`` filtered to the
  * ``pending_approval`` status; the change-diff popout reuses the two most
- * recent frozen version snapshots (see MonitoredTableDiffDialog).
+ * recent frozen version snapshots (see TableChangesDialog).
  */
 function MonitoredTablesApprovalsSection({
   canApproveRules,
@@ -417,7 +416,7 @@ function MonitoredTablesApprovalsSection({
   // Reject discards the submitter's pending binding, so it keeps a plain
   // yes/no confirm (no rationale textarea). Approve fires directly.
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
 
   const runAction = useCallback(
     (bindingId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
@@ -541,7 +540,7 @@ function MonitoredTablesApprovalsSection({
         })}
       />
 
-      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>

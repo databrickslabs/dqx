@@ -3278,5 +3278,35 @@
     "pickCollectionDescription": "Pick the collection this schedule runs. Every table in it runs on the schedule.",
     "pickCollectionSearch": "Search collections",
     "pickCollectionEmpty": "No collections match."
+  },
+  "tableChanges": {
+    "pendingTitle": "Changes not yet approved",
+    "historyTitle": "Version history",
+    "pendingTab": "Pending changes",
+    "historyTab": "Version history",
+    "compare": "Compare",
+    "to": "to",
+    "nothing": "nothing (first approval)",
+    "runsNow": "runs now",
+    "pendingCompare": "Approved v{{version}} → proposed",
+    "countRemoved": "− {{count}} removed",
+    "countAdded": "+ {{count}} added",
+    "countModified": "~ {{count}} modified",
+    "countUnchanged": "{{count}} unchanged",
+    "showUnchanged": "Show unchanged",
+    "layout": "Layout",
+    "unified": "Unified",
+    "split": "Split",
+    "noChanges": "No rules changed.",
+    "loadFailed": "Failed to load changes.",
+    "neverApproved": "This table has never been approved, so there are no versions to compare yet.",
+    "neverApprovedShort": "Nothing approved yet: scheduled runs start after the first approval.",
+    "runsUse": "Scheduled runs and Run now use approved v{{version}} until changes are approved.",
+    "status": {
+      "added": "Added",
+      "removed": "Removed",
+      "modified": "Modified",
+      "unchanged": "Unchanged"
+    }
   }
 }

@@ -34,12 +34,14 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplication
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt_routes
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import RuleChange
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     apply_rule_to_table,
     approve_monitored_table,
     bulk_register_monitored_tables,
     delete_monitored_table,
     get_monitored_table,
+    get_monitored_table_changes,
     get_monitored_table_profile,
     list_monitored_table_versions,
     list_implemented_rules,
@@ -2062,3 +2064,63 @@ class TestListPendingApplications:
             list_pending_applications("b1", pending=pending, registry=registry, **_read_perm_deps(perms=perms))
         assert exc.value.status_code == 403
         pending.list_for_binding.assert_not_called()
+
+
+class TestGetMonitoredTableChanges:
+    """View changes: the default sides and explicit version comparisons."""
+
+    @staticmethod
+    def _call(table: MonitoredTable, *, changed: bool = False, **params):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=table, applied_rules=[])
+        version_svc = MagicMock()
+        version_svc.changed_since_version.return_value = changed
+        version_svc.compare.return_value = []
+        result = get_monitored_table_changes("b1", svc=svc, version_svc=version_svc, **_read_perm_deps(), **params)
+        return result, version_svc
+
+    def test_unapproved_changes_compare_the_approved_version_with_the_proposed_rules(self):
+        result, version_svc = self._call(_approved_table(version=10), changed=True)
+        version_svc.compare.assert_called_once_with("b1", 10, None)
+        assert result.has_pending_changes and result.target_version is None and result.approved_version == 10
+
+    def test_a_draft_or_review_compares_with_the_proposed_rules(self):
+        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="pending_approval", version=4)
+        _, version_svc = self._call(table)
+        version_svc.compare.assert_called_once_with("b1", 4, None)
+
+    def test_no_pending_changes_compare_the_last_two_versions(self):
+        result, version_svc = self._call(_approved_table(version=10))
+        version_svc.compare.assert_called_once_with("b1", 9, 10)
+        assert not result.has_pending_changes
+
+    def test_a_never_approved_table_compares_nothing_with_the_proposed_rules(self):
+        _, version_svc = self._call(_table(status="draft"))
+        version_svc.compare.assert_called_once_with("b1", 0, None)
+
+    def test_any_two_versions_can_be_compared(self):
+        _, version_svc = self._call(_approved_table(version=10), base=6, target=9)
+        version_svc.compare.assert_called_once_with("b1", 6, 9)
+
+    def test_a_target_alone_compares_with_the_version_before_it(self):
+        _, version_svc = self._call(_approved_table(version=10), target=7)
+        version_svc.compare.assert_called_once_with("b1", 6, 7)
+
+    def test_a_version_that_does_not_exist_is_rejected(self):
+        with pytest.raises(HTTPException) as exc:
+            self._call(_approved_table(version=3), target=5)
+        assert exc.value.status_code == 400
+
+    def test_counts_cover_every_status(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_approved_table(version=2), applied_rules=[])
+        version_svc = MagicMock()
+        version_svc.changed_since_version.return_value = True
+        version_svc.compare.return_value = [
+            RuleChange("a1", "One", "removed"),
+            RuleChange("a2", "Two", "removed"),
+            RuleChange("a3", "Three", "unchanged"),
+        ]
+        result = get_monitored_table_changes("b1", svc=svc, version_svc=version_svc, **_read_perm_deps())
+        assert result.counts == {"added": 0, "removed": 2, "modified": 0, "unchanged": 1}
+        assert [c.status for c in result.changes] == ["removed", "removed", "unchanged"]

@@ -3278,5 +3278,35 @@
     "pickCollectionDescription": "Escolha a coleção que este agendamento executa. Todas as tabelas dela são executadas no agendamento.",
     "pickCollectionSearch": "Buscar coleções",
     "pickCollectionEmpty": "Nenhuma coleção corresponde."
+  },
+  "tableChanges": {
+    "pendingTitle": "Alterações ainda não aprovadas",
+    "historyTitle": "Histórico de versões",
+    "pendingTab": "Alterações pendentes",
+    "historyTab": "Histórico de versões",
+    "compare": "Comparar",
+    "to": "com",
+    "nothing": "nada (primeira aprovação)",
+    "runsNow": "em uso",
+    "pendingCompare": "v{{version}} aprovada → proposta",
+    "countRemoved": "− {{count}} removida(s)",
+    "countAdded": "+ {{count}} adicionada(s)",
+    "countModified": "~ {{count}} modificada(s)",
+    "countUnchanged": "{{count}} sem alteração",
+    "showUnchanged": "Mostrar sem alteração",
+    "layout": "Layout",
+    "unified": "Unificado",
+    "split": "Lado a lado",
+    "noChanges": "Nenhuma regra alterada.",
+    "loadFailed": "Falha ao carregar as alterações.",
+    "neverApproved": "Esta tabela nunca foi aprovada, então ainda não há versões para comparar.",
+    "neverApprovedShort": "Nada aprovado ainda: as execuções agendadas começam após a primeira aprovação.",
+    "runsUse": "As execuções agendadas e «Executar agora» usam a v{{version}} aprovada até que as alterações sejam aprovadas.",
+    "status": {
+      "added": "Adicionada",
+      "removed": "Removida",
+      "modified": "Modificada",
+      "unchanged": "Sem alteração"
+    }
   }
 }

@@ -1135,6 +1135,33 @@ class MonitoredTableVersionOut(BaseModel):
         )
 
 
+class RuleChangeOut(BaseModel):
+    """One applied rule compared between two sides of a monitored table's changes."""
+
+    key: str = Field(description="Applied-rule id the checks on both sides are matched by")
+    rule_name: str
+    status: str = Field(description="added | removed | modified | unchanged")
+    before: list[dict[str, Any]] = Field(default_factory=list, description="The rule's checks on the base side")
+    after: list[dict[str, Any]] = Field(default_factory=list, description="The rule's checks on the target side")
+
+
+class MonitoredTableChangesOut(BaseModel):
+    """A monitored table's changes between two sides, per rule — backs the View changes dialog.
+
+    The base is a frozen version (0 = nothing approved yet); the target is a
+    frozen version, or the proposed rules (``target_version`` None): the
+    table's current applied rules, rendered as a run would render them.
+    """
+
+    binding_id: str
+    approved_version: int = Field(description="The version scheduled runs and Run now use (0 = none)")
+    has_pending_changes: bool = Field(description="The proposed rules differ from the approved version")
+    base_version: int
+    target_version: int | None = Field(default=None, description="None = the proposed rules")
+    counts: dict[str, int] = Field(default_factory=dict, description="Rules per status")
+    changes: list[RuleChangeOut] = Field(default_factory=list)
+
+
 class MonitoredTableVersionChecksOut(BaseModel):
     """Frozen ``checks_json`` for one monitored-table version snapshot.
 

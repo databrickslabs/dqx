@@ -28,7 +28,10 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import (
+    MonitoredTableVersionService,
+    compare_checks,
+)
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
 _TABLES = "dqx_test.dqx_app_test.dq_monitored_tables"
@@ -576,3 +579,76 @@ class TestChangedSinceVersion:
         assert not service.changed_since_version("b1", 0)
         sql.query.return_value = []
         assert not service.changed_since_version("b1", 3)
+
+
+# ---------------------------------------------------------------------------
+# compare / compare_checks — the View changes dialog's per-rule diff
+# ---------------------------------------------------------------------------
+
+
+def _rule_check(aid: str, name: str, column: str = "id", **meta: str) -> dict:
+    return {
+        "name": f"{name}_{column}",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": column}},
+        "user_metadata": {"applied_rule_id": aid, "name": name, **meta},
+    }
+
+
+class TestCompareChecks:
+    def test_rules_are_paired_by_applied_rule_and_classified(self):
+        before = [_rule_check("a1", "Keep"), _rule_check("a2", "Drop"), _rule_check("a3", "Edit", column="x")]
+        after = [_rule_check("a1", "Keep"), _rule_check("a3", "Edit", column="y"), _rule_check("a4", "New")]
+
+        changes = {c.key: c for c in compare_checks(before, after)}
+
+        assert {k: c.status for k, c in changes.items()} == {
+            "a1": "unchanged",
+            "a3": "modified",
+            "a4": "added",
+            "a2": "removed",
+        }
+        assert changes["a2"].rule_name == "Drop"
+        assert changes["a2"].after == [] and len(changes["a2"].before) == 1
+
+    def test_removed_rules_come_after_the_proposed_side(self):
+        changes = compare_checks([_rule_check("a1", "Gone"), _rule_check("a2", "Stay")], [_rule_check("a2", "Stay")])
+        assert [c.key for c in changes] == ["a2", "a1"]
+
+    def test_a_reordered_rule_is_not_a_change(self):
+        before = [_rule_check("a1", "One"), _rule_check("a2", "Two")]
+        changes = compare_checks(before, list(reversed(before)))
+        assert {c.status for c in changes} == {"unchanged"}
+
+    def test_run_stamps_are_not_a_change(self):
+        stamped = _rule_check("a1", "One", run_mode="published", binding_version="7")
+        [change] = compare_checks([_rule_check("a1", "One")], [stamped])
+        assert change.status == "unchanged"
+        assert "run_mode" not in change.after[0]["user_metadata"]
+
+    def test_a_new_rule_version_is_a_change(self):
+        [change] = compare_checks(
+            [_rule_check("a1", "One", registry_version="2")], [_rule_check("a1", "One", registry_version="3")]
+        )
+        assert change.status == "modified"
+
+
+class TestCompare:
+    def test_proposed_side_renders_the_current_rules(self, service, sql, materializer):
+        state = {"rule_refs": [{"applied_rule_id": "a1", "rule_id": "r1", "registry_version": 1}]}
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(state)]], f"FROM {_TABLES}": [["cat.schema.customers"]]})
+        materializer.render_applied_checks.return_value = [_rule_check("a1", "Gone")]
+        materializer.render_binding_checks.return_value = []
+
+        [change] = service.compare("b1", 3, None)
+
+        materializer.render_binding_checks.assert_called_once_with("b1")
+        assert change.status == "removed"
+
+    def test_version_zero_or_missing_snapshot_is_an_empty_side(self, service, sql, materializer):
+        materializer.render_binding_checks.return_value = [_rule_check("a1", "New")]
+        sql.query.return_value = []
+
+        [change] = service.compare("b1", 0, None)
+        assert change.status == "added"
+        assert service.compare("b1", 2, 3) == []
