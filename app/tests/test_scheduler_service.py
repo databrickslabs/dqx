@@ -728,7 +728,7 @@ def _active_task_runner_run(
     return SimpleNamespace(
         run_id=99,
         job_parameters=params,
-        state=SimpleNamespace(life_cycle_state=SimpleNamespace(value="RUNNING"), result_state=None),
+        state=SimpleNamespace(life_cycle_state=SimpleNamespace(value="RUNNING"), result_state=None, state_message=""),
         start_time=int(start.timestamp() * 1000),
     )
 
