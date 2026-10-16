@@ -612,12 +612,17 @@ function ResultsBody({
   // the selected run, unfiltered — i.e. the BASE breakdown (run-scoped, no
   // facets) for effectiveRunId, which is the selected run. Its by_rule rows
   // are grouped by rule identity, so rules = distinct rules and checks = the
-  // summed check_count (see countChecksAndRules). Placeholder data from the
-  // previous run is ignored so the counts never mix two runs (the subtitle
-  // falls back to "X / Y tests passed" until the run's breakdown lands).
-  const scopeCounts = baseTableQuery.isPlaceholderData
-    ? null
-    : countChecksAndRules(baseTable?.by_rule);
+  // summed check_count (see countChecksAndRules). While the run's breakdown is
+  // still loading (or only placeholder data from the previous run is shown)
+  // the counts are `undefined`, so the score box holds the line back and
+  // renders it once, complete; a failed breakdown query gives `null`, which
+  // falls back to the plain "X / Y tests passed".
+  const scopeCounts =
+    baseTableQuery.isPlaceholderData || baseTableQuery.isPending
+      ? undefined
+      : baseTableQuery.isError
+        ? null
+        : countChecksAndRules(baseTable?.by_rule);
   // Score direction vs the next-older run (runs are newest-first). null when
   // equal or there's no previous run.
   const prevPassRate =
