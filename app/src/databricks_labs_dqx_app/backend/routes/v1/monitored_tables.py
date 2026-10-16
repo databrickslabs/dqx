@@ -1244,6 +1244,31 @@ def set_applied_rule_severity_override(
 # ------------------------------------------------------------------
 
 
+class BindingTransitionError(Exception):
+    """One or more of a binding's materialized checks could not change status.
+
+    Raised by :func:`_transition_binding_checks` after it has walked back the
+    checks it already moved, so the binding is never left half-transitioned.
+    The message is safe to show to the user: it names the affected rules and
+    carries only the lifecycle's own validation reasons (never raw backend
+    errors).
+    """
+
+
+_UNEXPECTED_TRANSITION_FAILURE = "unexpected error"
+
+
+def _describe_check(rules_catalog: RulesCatalogService, rule_id: str) -> str:
+    """User-facing label for a materialized check: its rule name, else its id."""
+    try:
+        entry = rules_catalog.get_by_rule_id(rule_id)
+    except Exception:  # the label is best effort; the failure itself is still reported
+        entry = None
+    name = entry.checks[0].get("name") if entry is not None and entry.checks else None
+    label = name if isinstance(name, str) and name.strip() else rule_id
+    return " ".join(label.split())
+
+
 def _transition_binding_checks(
     monitored_tables_svc: MonitoredTableService,
     rules_catalog: RulesCatalogService,
@@ -1257,28 +1282,57 @@ def _transition_binding_checks(
 
     Reuses ``RulesCatalogService.set_status`` (the per-rule transition path)
     so nothing about a check's audit trail differs from a hand-submitted one.
-    Per-row failures (e.g. a duplicate-pending guard) are logged and skipped
-    rather than aborting the whole binding — mirroring
-    ``RulesCatalogService.set_status_by_table``'s resilience. Returns the
-    count of checks actually transitioned.
+    The move is all-or-nothing: if any check is refused (e.g. by the
+    duplicate-pending guard), the checks this call already moved are walked
+    back to *from_status* where that is a legal transition, and
+    :class:`BindingTransitionError` is raised naming the refused rules. A
+    silently skipped check would otherwise drop out of the approved set
+    without anyone noticing.
+
+    Returns:
+        The count of checks transitioned.
+
+    Raises:
+        BindingTransitionError: One or more checks could not be transitioned.
     """
-    count = 0
+    moved: list[str] = []
+    failures: list[tuple[str, str]] = []
     for rule_id, status in monitored_tables_svc.list_materialized_rule_statuses(binding_id):
         if status != from_status:
             continue
         try:
             rules_catalog.set_status(rule_id, to_status, user_email)
-            count += 1
-        except Exception:  # one bad row must not abort the whole binding
+            moved.append(rule_id)
+        except ValueError as e:  # lifecycle validation: illegal transition, duplicate guard
+            failures.append((rule_id, str(e)))
+        except Exception:
             logger.warning(
-                "Failed to transition materialized check %s (%s -> %s) for binding %s",
-                rule_id,
-                from_status,
-                to_status,
-                binding_id,
+                f"Failed to transition materialized check {rule_id} ({from_status} -> {to_status}) "
+                f"for binding {binding_id}",
                 exc_info=True,
             )
-    return count
+            failures.append((rule_id, _UNEXPECTED_TRANSITION_FAILURE))
+    if not failures:
+        return len(moved)
+
+    if from_status in RulesCatalogService.VALID_TRANSITIONS.get(to_status, set()):
+        for rule_id in moved:
+            try:
+                rules_catalog.set_status(rule_id, from_status, user_email)
+            except Exception:
+                logger.warning(
+                    f"Failed to roll materialized check {rule_id} back to {from_status} for binding {binding_id}",
+                    exc_info=True,
+                )
+    failed_ids = ", ".join(rule_id for rule_id, _ in failures)
+    logger.warning(
+        f"Refused to move binding {binding_id} checks {from_status} -> {to_status}: "
+        f"{len(failures)} check(s) failed ({failed_ids})"
+    )
+    details = "; ".join(f"{_describe_check(rules_catalog, rule_id)}: {reason}" for rule_id, reason in failures)
+    raise BindingTransitionError(
+        f"{len(failures)} rule(s) on this table could not be moved to '{to_status}'. {details}"
+    )
 
 
 def _rollup_binding_status(monitored_tables_svc: MonitoredTableService, binding_id: str) -> str:
@@ -1450,7 +1504,7 @@ def submit_monitored_table(
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
     except HTTPException:
         raise
-    except DraftRunRequiredError as e:
+    except (DraftRunRequiredError, BindingTransitionError) as e:
         raise HTTPException(status_code=409, detail=str(e))
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1521,6 +1575,8 @@ def approve_monitored_table(
         )
     except HTTPException:
         raise
+    except BindingTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -1587,6 +1643,8 @@ def reject_monitored_table(
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
     except HTTPException:
         raise
+    except BindingTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -1644,6 +1702,8 @@ def revert_monitored_table(
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
     except HTTPException:
         raise
+    except BindingTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
