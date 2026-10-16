@@ -76,7 +76,7 @@ function CountInfo() {
     <span>
       <Trans
         i18nKey="resultsUi.countInfo"
-        components={{ b: <strong /> }}
+        components={{ b: <strong />, br: <br /> }}
       />
     </span>
   );

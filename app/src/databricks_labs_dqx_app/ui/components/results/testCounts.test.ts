@@ -6,6 +6,7 @@ import { combineTestCounts, formatTestCounts } from "./testCounts";
 const EN: Record<string, string> = {
   "resultsUi.rowTestsPassed": "{{passed}} / {{total}} row tests passed",
   "resultsUi.tableTestsPassed": "{{passed}} / {{total}} table tests passed",
+  "resultsUi.testsPassed": "{{passed}} / {{total}} tests passed",
 };
 const t = (key: string, options: Record<string, string>) =>
   (EN[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name: string) => options[name] ?? "");
@@ -24,10 +25,8 @@ describe("formatTestCounts", () => {
     );
   });
 
-  it("omits the table part when there are no table tests", () => {
-    expect(formatTestCounts(t, { failedTests: 3, totalTests: 10, tableTotalTests: 0 })).toBe(
-      "7 / 10 row tests passed",
-    );
+  it("says just 'tests' when there are only row tests", () => {
+    expect(formatTestCounts(t, { failedTests: 3, totalTests: 10, tableTotalTests: 0 })).toBe("7 / 10 tests passed");
     expect(
       formatTestCounts(t, {
         failedTests: 3,
@@ -35,10 +34,10 @@ describe("formatTestCounts", () => {
         tableFailedTests: null,
         tableTotalTests: null,
       }),
-    ).toBe("7 / 10 row tests passed");
+    ).toBe("7 / 10 tests passed");
   });
 
-  it("omits the row part for a scope with only dataset checks", () => {
+  it("says just 'tests' when there are only table tests", () => {
     expect(
       formatTestCounts(t, {
         failedTests: null,
@@ -46,14 +45,14 @@ describe("formatTestCounts", () => {
         tableFailedTests: 1,
         tableTotalTests: 3,
       }),
-    ).toBe("2 / 3 table tests passed");
+    ).toBe("2 / 3 tests passed");
     expect(
       formatTestCounts(t, { failedTests: 0, totalTests: 0, tableFailedTests: 0, tableTotalTests: 2 }),
-    ).toBe("2 / 2 table tests passed");
+    ).toBe("2 / 2 tests passed");
   });
 
   it("treats a null failed count as zero failures", () => {
-    expect(formatTestCounts(t, { failedTests: null, totalTests: 5 })).toBe("5 / 5 row tests passed");
+    expect(formatTestCounts(t, { failedTests: null, totalTests: 5 })).toBe("5 / 5 tests passed");
   });
 
   it("returns an empty string when neither kind of test is present", () => {

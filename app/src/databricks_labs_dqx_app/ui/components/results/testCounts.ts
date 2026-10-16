@@ -22,21 +22,22 @@ function passedOf(t: Translate, key: string, failed: number | null | undefined, 
 }
 
 /**
- * Score-box subtitle: "990,000 / 1,000,000 row tests passed · 0 / 1 table
- * tests passed". A part is omitted when its total is 0/null (a table with
- * only dataset checks has no row tests); "" when neither kind is present.
+ * Score-box subtitle. With both kinds present the counts stay split
+ * ("990,000 / 1,000,000 row tests passed · 0 / 1 table tests passed"); with
+ * only one kind it is just "7 / 10 tests passed"; "" when neither is present.
  */
 export function formatTestCounts(t: Translate, counts: TestCounts): string {
-  const parts: string[] = [];
   const rowTotal = counts.totalTests ?? 0;
-  if (rowTotal > 0) {
-    parts.push(passedOf(t, "resultsUi.rowTestsPassed", counts.failedTests, rowTotal));
-  }
   const tableTotal = counts.tableTotalTests ?? 0;
-  if (tableTotal > 0) {
-    parts.push(passedOf(t, "resultsUi.tableTestsPassed", counts.tableFailedTests, tableTotal));
+  if (rowTotal > 0 && tableTotal > 0) {
+    return [
+      passedOf(t, "resultsUi.rowTestsPassed", counts.failedTests, rowTotal),
+      passedOf(t, "resultsUi.tableTestsPassed", counts.tableFailedTests, tableTotal),
+    ].join(" · ");
   }
-  return parts.join(" · ");
+  if (rowTotal > 0) return passedOf(t, "resultsUi.testsPassed", counts.failedTests, rowTotal);
+  if (tableTotal > 0) return passedOf(t, "resultsUi.testsPassed", counts.tableFailedTests, tableTotal);
+  return "";
 }
 
 /**
