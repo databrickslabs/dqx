@@ -467,8 +467,11 @@ class TestMetricViewDdl:
         # total_tests) stay; these are additive.
         body = _yaml_body(svc.metric_view_ddl())
         measures = {m["name"]: m["expr"] for m in body["measures"]}
-        assert measures["error_tests"] == "SUM(error_count)"
-        assert measures["warning_tests"] == "SUM(warning_count)"
+        # Row-level only, so error_tests + warning_tests == failed_tests (dataset checks are table tests).
+        row_only = "FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')"
+        assert measures["error_tests"] == f"SUM(error_count) {row_only}"
+        assert measures["warning_tests"] == f"SUM(warning_count) {row_only}"
+        assert measures["failed_tests"] == f"SUM(error_count + warning_count) {row_only}"
         # FILTER (WHERE ...) form (docs-preferred over COUNT_IF for metric-view measures).
         assert measures["failed_checks"] == "COUNT(1) FILTER (WHERE (error_count + warning_count) > 0)"
         # COUNT(check_name) so a no-check placeholder run reports 0, not 1.

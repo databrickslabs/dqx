@@ -530,6 +530,37 @@ def test_columns_question_explodes_the_attribution_array() -> None:
     assert "error_count" in sql and "warning_count" in sql
 
 
+@pytest.mark.parametrize(
+    ("question", "alias"),
+    [("Which columns have the most failures?", ""), ("Which columns does this rule fail on most?", "r.")],
+)
+def test_column_failure_questions_keep_row_and_table_failures_apart(question: str, alias: str) -> None:
+    # failed_tests is row-level only everywhere; failing dataset checks are counted
+    # separately as table_failed_tests, never summed into the row failures.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = "".join(by_q[question]["sql"])
+    assert (
+        f"SUM({alias}`error_count` + {alias}`warning_count`)\n"
+        f"                FILTER (WHERE {alias}`check_granularity` IS DISTINCT FROM 'dataset'), 0) AS failed_tests"
+    ) in sql
+    assert (
+        f"COUNT(1) FILTER (WHERE {alias}`check_granularity` = 'dataset'\n"
+        f"                          AND ({alias}`error_count` + {alias}`warning_count`) > 0) AS table_failed_tests"
+    ) in sql
+    # The WHERE keeps every failing check, so a column whose only failures are
+    # dataset checks still appears (with failed_tests = 0); no HAVING drops it.
+    assert f"AND ({alias}`error_count` + {alias}`warning_count`) > 0" in sql
+    assert "HAVING" not in sql
+    assert "ORDER BY failed_tests DESC, table_failed_tests DESC" in sql
+
+
+def test_metric_view_description_marks_error_and_warning_tests_row_level() -> None:
+    # error_tests / warning_tests exclude dataset checks, so Genie must not read
+    # them as including table tests.
+    mv_desc = "".join(build()["data_sources"]["metric_views"][0]["description"])
+    assert "error_tests, warning_tests (row-level failed tests split by criticality" in mv_desc
+
+
 def test_diagnose_family_reuses_one_decomposition_sql() -> None:
     by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
     diagnose = by_q["What is driving my changes in score over time?"]["sql"]

@@ -356,10 +356,16 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # `columns` array (from the frozen rendered rule set), so failures are
     # attributed to every column the failing check maps to. This is
     # rule-to-column attribution, NOT row-level column failures (the raw
-    # rows are not in this space by design).
+    # rows are not in this space by design). failed_tests stays row-level;
+    # failing dataset checks count separately as table_failed_tests (the
+    # WHERE keeps every failing check, so a column with only failing dataset
+    # checks still shows up).
     columns_most_failures = (
         "SELECT col AS column_name,\n"
-        "       SUM(`error_count` + `warning_count`) AS failed_tests,\n"
+        "       COALESCE(SUM(`error_count` + `warning_count`)\n"
+        "                FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset'), 0) AS failed_tests,\n"
+        "       COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
         "       COUNT(DISTINCT `check_name`) AS failing_rules\n"
         f"FROM {v}\n"
         "LATERAL VIEW explode(`columns`) c AS col\n"
@@ -369,7 +375,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  AND `run_time` = (SELECT MAX(`run_time`) FROM " + v + "\n"
         "                    WHERE `input_location` = :table_name AND `run_mode` = 'published')\n"
         "GROUP BY col\n"
-        "ORDER BY failed_tests DESC"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # --- row-level questions over the entitlement-gated view (P4.2) ---
@@ -811,7 +817,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # Per-column attribution for the rule: explode the mapped columns on the
     # shaping view over each table's latest PUBLISHED run (resolved per table
     # via the latest_runs CTE, so a table whose newest run is a draft still
-    # contributes its newest published run), summing failures per column.
+    # contributes its newest published run), summing failures per column —
+    # row-level as failed_tests, failing dataset checks as table_failed_tests.
     rule_columns_failing = (
         "WITH latest_runs AS (\n"
         "  SELECT `input_location`, MAX(`run_time`) AS run_time\n"
@@ -820,7 +827,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  GROUP BY `input_location`\n"
         ")\n"
         "SELECT col AS column_name,\n"
-        "       SUM(r.`error_count` + r.`warning_count`) AS failed_tests,\n"
+        "       COALESCE(SUM(r.`error_count` + r.`warning_count`)\n"
+        "                FILTER (WHERE r.`check_granularity` IS DISTINCT FROM 'dataset'), 0) AS failed_tests,\n"
+        "       COUNT(1) FILTER (WHERE r.`check_granularity` = 'dataset'\n"
+        "                          AND (r.`error_count` + r.`warning_count`) > 0) AS table_failed_tests,\n"
         "       COUNT(DISTINCT r.`input_location`) AS tables\n"
         f"FROM {v} r\n"
         "JOIN latest_runs lr\n"
@@ -830,7 +840,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  AND r.`run_mode` = 'published'\n"
         "  AND (r.`error_count` + r.`warning_count`) > 0\n"
         "GROUP BY col\n"
-        "ORDER BY failed_tests DESC"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # Pooled pass-rate trend for the rule across all its tables per run instant.
@@ -953,7 +963,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "Attribution-based: explodes each failing check's mapped columns array on "
                 "v_dq_check_results (latest published run), so failed tests are attributed to "
                 "every column the failing rule maps to. This is rule-to-column attribution — "
-                "row-level column failures are not available in this space."
+                "row-level column failures are not available in this space. "
+                "failed_tests counts row-level tests; table_failed_tests counts failing table-level "
+                "(dataset) checks separately — never add them."
             ],
         },
         {
@@ -1178,7 +1190,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "Attribution-based: explodes the rule's mapped columns on v_dq_check_results over "
                 "each table's latest published run (scoped by rule_name), so failed tests are "
                 "attributed to every column the rule maps to, most first. This is rule-to-column "
-                "attribution — row-level column failures are not available in this space."
+                "attribution — row-level column failures are not available in this space. "
+                "failed_tests counts row-level tests; table_failed_tests counts failing table-level "
+                "(dataset) checks separately — never add them."
             ],
         },
         {
@@ -1670,7 +1684,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                         "DQ score metric view: measures score (pass rate, 0-1), failed_tests and total_tests "
                         "(row-level tests only), table_failed_tests and table_total_tests (table-level "
                         "dataset checks, one test each; never add to row-level tests), "
-                        "error_tests, warning_tests (active warnings), failed_checks, "
+                        "error_tests, warning_tests (row-level failed tests split by criticality; "
+                        "warnings are active warnings), failed_checks, "
                         "total_checks, rule_count (distinct rules that ran — the answer to 'how many "
                         "rules'), and failed_rule_count (distinct rules with a failing test) over "
                         "dimensions input_location, run_id, run_time, is_latest_run, run_mode, "

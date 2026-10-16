@@ -46,8 +46,9 @@ architecture):
   *failed_tests* / *error_tests* / *warning_tests* / *total_tests* /
   *table_failed_tests* / *table_total_tests* / *score* /
   *failed_checks* / *total_checks* / *rule_count* /
-  *failed_rule_count*. *failed_tests* / *total_tests* count row-level
-  tests only (rows evaluated x row checks); *table_failed_tests* /
+  *failed_rule_count*. *failed_tests* / *error_tests* / *warning_tests* /
+  *total_tests* count row-level tests only (rows evaluated x row
+  checks); *table_failed_tests* /
   *table_total_tests* count dataset checks, one test each, and are
   never added to the row tests. The score measure first averages each
   reusable rule's scorable checks, then gives every rule with at least
@@ -666,11 +667,12 @@ class ScoreViewService:
             "    comment: Failed row-level tests (rows evaluated × row checks) — errors + warnings across the "
             "grouped row checks. Report as a share of total_tests, never a bare count\n"
             "  - name: error_tests\n"
-            "    expr: SUM(error_count)\n"
-            "    comment: Failed tests from ERROR-criticality checks across the grouped rows\n"
+            "    expr: SUM(error_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')\n"
+            "    comment: Failed row-level tests from ERROR-criticality row checks across the grouped rows\n"
             "  - name: warning_tests\n"
-            "    expr: SUM(warning_count)\n"
-            "    comment: Failed tests from WARNING-criticality (active-warning) checks across the grouped rows\n"
+            "    expr: SUM(warning_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')\n"
+            "    comment: Failed row-level tests from WARNING-criticality (active-warning) row checks across the "
+            "grouped rows\n"
             "  - name: total_tests\n"
             "    expr: SUM(evaluated_row_count) FILTER (WHERE check_granularity IS DISTINCT FROM 'dataset')\n"
             "    comment: Total row-level tests (rows evaluated × row checks) — each row check counts the rows "
