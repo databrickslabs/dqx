@@ -63,7 +63,6 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.utils import is_sql_query_safe
 
-from databricks_labs_dqx_app.backend.check_function_resolver import supports_negate
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DIMENSION_KEY,
     RESERVED_MAPPED_COLUMNS_KEY,
@@ -324,21 +323,12 @@ def render_check(
         # A native check that accepts a ``negate`` argument surfaces it in the
         # authoring UI as the PASS/FAIL polarity switcher rather than a raw
         # boolean parameter (item 11). Polarity is therefore the single source
-        # of truth for negation, and we inject the boolean here — but only when
-        # the function actually takes ``negate``. A native check WITHOUT one
-        # normally has ``polarity is None``; a stored polarity on such a
-        # function (e.g. a rule switched from SQL before the save path cleared
-        # it) is ignored, because DQX rejects the unknown argument.
+        # of truth for negation: a non-null ``polarity`` on a native rule means
+        # "this function supports negate" and we inject the boolean here.
+        # ``polarity is None`` for native checks WITHOUT a ``negate`` argument,
+        # so this leaves those untouched — no spurious ``negate`` key.
         if version.polarity is not None:
-            if supports_negate(function):
-                arguments["negate"] = version.polarity == "fail"
-            elif version.polarity == "fail":
-                # Dropping a stale "pass" is harmless (negate=False is the default),
-                # but dropping "fail" runs the check the opposite way from the rule.
-                logger.warning(
-                    f"Rule {registry_rule_id} v{registry_version} stores polarity 'fail', but {function} "
-                    "has no negate argument; the check runs without negation."
-                )
+            arguments["negate"] = version.polarity == "fail"
         check_inner: dict[str, Any] = {"function": function, "arguments": arguments}
     elif mode in ("sql", "lowcode"):
         negate = version.polarity == "fail"

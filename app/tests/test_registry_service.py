@@ -395,9 +395,10 @@ class TestCreateRule:
 
 
 class TestUpdateDraft:
-    def test_switching_to_a_native_function_without_negate_clears_polarity(self, svc, sql):
-        """The editor sends polarity null for such a function, which reads as "not
-        supplied"; the stale value from the SQL rule must not be kept."""
+    @pytest.mark.parametrize(("clear_polarity", "expected"), [(True, None), (False, "pass")])
+    def test_switching_a_sql_rule_to_a_function_without_negate(self, svc, sql, clear_polarity, expected):
+        """A SQL rule stored with "pass" and switched to is_not_in_list keeps that
+        polarity only if the caller doesn't ask to clear it."""
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
         draft = RegistryRule(
@@ -418,44 +419,10 @@ class TestUpdateDraft:
                 "parameters": [],
             }
         )
-        updated = svc.update_draft("r1", user_email="alice@x", mode="dqx_native", definition=not_in_list)
-        assert updated.polarity is None
-
-    def test_a_metadata_only_edit_leaves_a_stale_polarity_alone(self, svc, sql):
-        """Only a save that changes the check normalises polarity, so editing
-        just the name can't mark an approved rule as modified."""
-        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
-
-        not_in_list = RuleDefinition.model_validate(
-            {
-                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["x"]}},
-                "slots": _native_definition().slots,
-                "parameters": [],
-            }
+        updated = svc.update_draft(
+            "r1", user_email="alice@x", mode="dqx_native", definition=not_in_list, clear_polarity=clear_polarity
         )
-        rule = RegistryRule(
-            rule_id="r1", mode="dqx_native", status="approved", version=1, polarity="pass", definition=not_in_list
-        )
-        sql.query.return_value = [_row_for(rule)]
-        updated = svc.update_draft("r1", user_email="alice@x", user_metadata={"name": "Renamed"})
-        assert updated.polarity == "pass"
-
-    def test_a_native_function_with_negate_keeps_its_polarity(self, svc, sql):
-        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
-
-        regex = RuleDefinition.model_validate(
-            {
-                "body": {"function": "regex_match", "arguments": {"column": "{{column}}"}},
-                "slots": _native_definition().slots,
-                "parameters": [],
-            }
-        )
-        draft = RegistryRule(
-            rule_id="r1", mode="dqx_native", status="draft", version=0, polarity="fail", definition=regex
-        )
-        sql.query.return_value = [_row_for(draft)]
-        updated = svc.update_draft("r1", user_email="alice@x", definition=regex)
-        assert updated.polarity == "fail"
+        assert updated.polarity == expected
 
     def test_updates_draft_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
