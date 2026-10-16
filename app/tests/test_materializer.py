@@ -30,12 +30,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleVersion,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
-from databricks_labs_dqx_app.backend.services.materializer import (
-    InvalidMergeColumnsError,
-    MaterializationError,
-    Materializer,
-    render_check,
-)
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer, render_check
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     MonitoredTableDetail,
@@ -583,11 +578,11 @@ class TestRenderCheckNativeNegate:
 
 
 class TestRenderCheckSqlMode:
-    def _sql_definition(self, body: dict, slot_name: str = "column", cardinality: str = "one") -> RuleDefinition:
+    def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
         return RuleDefinition.model_validate(
             {
                 "body": body,
-                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": cardinality}],
+                "slots": [{"name": slot_name, "family": "any", "position": 0, "cardinality": "one"}],
                 "parameters": [],
             }
         )
@@ -629,86 +624,6 @@ class TestRenderCheckSqlMode:
             app_settings=_app_settings_stub(),
         )
         assert check["check"]["arguments"]["negate"] is True
-
-    def _render_query_merge(
-        self,
-        merge_columns: list[str],
-        slot_name: str = "lead_id",
-        cardinality: str = "one",
-        group: dict[str, str] | None = None,
-    ) -> list[str]:
-        definition = self._sql_definition(
-            {
-                "sql_query": f"SELECT {{{{{slot_name}}}}}, TRUE AS condition FROM {{{{input_view}}}}",
-                "merge_columns": merge_columns,
-            },
-            slot_name=slot_name,
-            cardinality=cardinality,
-        )
-        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
-        check, _ = render_check(
-            mode="sql",
-            version=version,
-            group={"lead_id": "leadId"} if group is None else group,
-            effective_severity="High",
-            per_application_tags={},
-            registry_rule_id="r1",
-            registry_version=1,
-            applied_rule_id="ar1",
-            app_settings=_app_settings_stub(),
-        )
-        return check["check"]["arguments"]["merge_columns"]
-
-    def test_a_bare_slot_name_is_a_literal_column_not_the_slot(self):
-        """Only ``{{slot}}`` names a slot; anything else is taken literally."""
-        assert self._render_query_merge(["lead_id"]) == ["lead_id"]
-
-    def test_merge_columns_as_placeholders_or_real_columns_are_unchanged(self):
-        assert self._render_query_merge(["{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
-
-    def test_a_many_slot_merge_column_splits_into_columns(self):
-        assert self._render_query_merge(["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": "a, b"}) == [
-            "a",
-            "b",
-        ]
-
-    def test_a_many_slot_merge_column_drops_empty_items(self):
-        assert self._render_query_merge(
-            ["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": "a, ,b,"}
-        ) == ["a", "b"]
-
-    def test_merge_columns_that_resolve_to_nothing_raise(self):
-        """An empty ``many`` mapping must not quietly drop merge_columns, which
-        would turn a row-level check into a dataset-level one."""
-        with pytest.raises(ValueError, match="resolved to no columns"):
-            self._render_query_merge(["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": " , "})
-
-    def test_a_slot_mapped_to_an_empty_column_raises(self):
-        with pytest.raises(ValueError, match="resolved to no columns"):
-            self._render_query_merge(["{{lead_id}}"], group={"lead_id": ""})
-
-    def test_whitespace_only_literal_merge_columns_are_dropped(self):
-        assert self._render_query_merge(["  ", "pacode"]) == ["pacode"]
-        with pytest.raises(ValueError, match="resolved to no columns"):
-            self._render_query_merge(["  "])
-
-    def test_duplicate_merge_columns_are_deduplicated_in_order(self):
-        assert self._render_query_merge(["{{lead_id}}", " {{lead_id}} ", "pacode", "pacode"]) == ["leadId", "pacode"]
-
-    def test_a_placeholder_with_inner_spaces_is_not_a_slot(self):
-        """Matches _substitute_text, which only replaces an exact ``{{name}}``."""
-        assert self._render_query_merge(["{{ lead_id }}"]) == ["{{ lead_id }}"]
-
-    def test_a_merge_column_for_an_unmapped_slot_raises(self):
-        with pytest.raises(ValueError, match="missing slot 'lead_id'"):
-            self._render_query_merge(["{{lead_id}}"], group={})
-
-    def test_a_literal_column_named_like_a_slot_is_kept(self):
-        """A real column that shares a slot's name must not be swapped for the slot's column."""
-        assert self._render_query_merge(["lead_id", "{{lead_id}}"], group={"lead_id": "other_col"}) == [
-            "lead_id",
-            "other_col",
-        ]
 
     def test_joined_table_is_named_in_the_query_and_binds_nothing(self):
         """A cross-table rule names the table it joins in its own SQL.
@@ -1600,67 +1515,6 @@ class TestAllGroupsFailRenderIsNonDestructive:
         materializer.materialize_binding("b1")
         delete_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("DELETE")]
         assert any("'ar1-0'" in c for c in delete_calls)
-
-
-class TestUnresolvableMergeColumnsFailTheSubmit:
-    """Merge columns that resolve to nothing must fail the submit, not drop the check.
-
-    The binding applies the bad sql_query rule "r1" first, then the native rule "good".
-    """
-
-    @pytest.fixture(autouse=True)
-    def bad_then_good_binding(self, registry, monitored_tables):
-        definition = RuleDefinition.model_validate(
-            {
-                "body": {
-                    "sql_query": "SELECT {{cols}}, TRUE AS condition FROM {{input_view}}",
-                    "merge_columns": ["{{cols}}"],
-                },
-                "slots": [{"name": "cols", "family": "any", "position": 0, "cardinality": "many"}],
-                "parameters": [],
-            }
-        )
-        bad = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"cols": " , "}], mapping_hash="h")
-        good = AppliedRule(
-            id="ar-good", binding_id="b1", rule_id="good", column_mapping=[{"column": "id"}], mapping_hash="h"
-        )
-        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="draft")
-        monitored_tables.get.return_value = MonitoredTableDetail(
-            table=table, applied_rules=[AppliedRuleSummary(applied_rule=bad), AppliedRuleSummary(applied_rule=good)]
-        )
-        rules = {
-            "r1": RegistryRule(
-                rule_id="r1", mode="sql", status="approved", version=1, polarity="pass", definition=definition
-            ),
-            "good": _published_rule(rule_id="good"),
-        }
-        registry.get_rule.side_effect = rules.get
-        registry.get_version.side_effect = lambda rule_id, _version: (
-            _version_snapshot(rule_id="good")
-            if rule_id == "good"
-            else RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
-        )
-
-    @staticmethod
-    def _inserted_row_ids(sql) -> list[str]:
-        inserts = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("INSERT")]
-        return [row_id for row_id in ("ar1-0", "ar-good-0") if any(f"'{row_id}'" in i for i in inserts)]
-
-    def test_submit_raises_after_materializing_the_rest_of_the_binding(self, materializer, sql):
-        with pytest.raises(InvalidMergeColumnsError, match="Rule r1: its merge columns resolved to no columns"):
-            materializer.materialize_binding("b1")
-        assert self._inserted_row_ids(sql) == ["ar-good-0"]
-        # Orphan cleanup still ran for the binding.
-        assert any("applied_rule_id NOT IN" in c.args[0] for c in sql.query.call_args_list)
-
-    def test_approving_another_rule_still_reaches_the_table(self, materializer, sql):
-        sql.query.side_effect = lambda sql_text: [["b1"]] if "dq_applied_rules" in sql_text else []
-        assert materializer.rematerialize_for_rule("good") == ["b1"]
-        assert self._inserted_row_ids(sql) == ["ar-good-0"]
-
-    def test_a_draft_render_skips_only_the_bad_check(self, materializer):
-        checks = materializer.render_binding_checks("b1")
-        assert [c["user_metadata"]["registry_rule_id"] for c in checks] == ["good"]
 
 
 class TestRematerializeForRule:

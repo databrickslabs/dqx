@@ -96,46 +96,6 @@ class TestRegistryRuleToCheckDict:
         # polarity "fail" -> negate True
         assert check["check"]["arguments"]["negate"] is True
 
-    @staticmethod
-    def _sql_query_rule(body_extra: dict) -> RegistryRule:
-        return RegistryRule(
-            rule_id="r3",
-            mode="sql",
-            status="approved",
-            version=1,
-            polarity="pass",
-            definition=RuleDefinition.model_validate(
-                {
-                    "body": {"sql_query": "SELECT {{lead_id}}, TRUE AS condition FROM {{input_view}}", **body_extra},
-                    "slots": [{"name": "lead_id", "family": "any", "position": 0, "cardinality": "one"}],
-                    "parameters": [],
-                }
-            ),
-            user_metadata={},
-        )
-
-    def test_sql_query_merge_columns_export_as_stored_stripped_and_deduplicated(self):
-        """``{{slot}}`` and literal columns are exported as written; a bare slot name stays literal."""
-        rule = self._sql_query_rule({"merge_columns": ["lead_id", "{{lead_id}}", " lead_id ", "pacode", " "]})
-        check = registry_rule_to_check_dict(rule, _app_settings_stub())
-        assert check["check"]["arguments"]["merge_columns"] == ["lead_id", "{{lead_id}}", "pacode"]
-
-    def test_sql_query_non_string_merge_columns_are_skipped(self):
-        rule = self._sql_query_rule({"merge_columns": [{"col": "x"}, ["y"], "pacode"]})
-        check = registry_rule_to_check_dict(rule, _app_settings_stub())
-        assert check["check"]["arguments"]["merge_columns"] == ["pacode"]
-
-    def test_sql_query_all_blank_merge_columns_are_kept_as_stored(self):
-        """Dropping them would export a dataset-level check; keep them so DQX fails loudly."""
-        rule = self._sql_query_rule({"merge_columns": [" ", ""]})
-        check = registry_rule_to_check_dict(rule, _app_settings_stub())
-        assert check["check"]["arguments"]["merge_columns"] == [" ", ""]
-
-    def test_sql_query_without_usable_merge_columns_omits_them(self):
-        for body_extra in ({}, {"merge_columns": []}, {"merge_columns": "lead_id"}):
-            check = registry_rule_to_check_dict(self._sql_query_rule(body_extra), _app_settings_stub())
-            assert "merge_columns" not in check["check"]["arguments"]
-
     def test_message_expr_included_when_set(self):
         rule = _native_rule()
         rule.definition.error_message = "must not be null"

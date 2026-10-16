@@ -95,12 +95,7 @@ def registry_rule_to_check_dict(rule: RegistryRule, app_settings: AppSettingsSer
             arguments["query"] = sql_query
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
-                # Strip and de-duplicate like the materializer, so the export matches what runs.
-                names = [col.strip() for col in merge_columns if isinstance(col, str) and col.strip()]
-                exported = list(dict.fromkeys(names))
-                # Nothing usable left: keep the entries as stored rather than drop them,
-                # which would turn the check dataset-level.
-                arguments["merge_columns"] = exported or merge_columns
+                arguments["merge_columns"] = merge_columns
         else:
             function_name = "sql_expression"
             predicate = body.get("predicate")

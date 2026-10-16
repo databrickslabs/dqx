@@ -126,10 +126,8 @@ def strip_sql_line_comments(sql: str) -> str:
 def escape_sql_string(value: str) -> str:
     """Escape a value for embedding in a SQL single-quoted string literal.
 
-    Doubles single-quotes. That keeps the literal closed, but Databricks SQL
-    reads ``'a''b'`` as two adjacent literals joined into ``ab``, so any quote
-    in *value* is dropped. Backslash-escape quotes instead when they must
-    survive (see :func:`escape_json_for_sql_string_literal`).
+    Databricks SQL uses doubled single-quotes ('') for escaping,
+    NOT backslash-escape (\\'). This function normalizes to the correct form.
 
     Note: this deliberately does NOT escape backslashes. On the Delta /
     Databricks SQL string-literal path a backslash is itself an escape
@@ -147,16 +145,12 @@ def escape_json_for_sql_string_literal(value: str) -> str:
 
     ``json.dumps`` emits backslash escapes (``\\n``, ``\\"``, ``\\\\``). On the
     Databricks SQL string-literal path a backslash is itself an escape
-    character, so those must be doubled — otherwise ``\\n`` in the JSON becomes
-    a literal newline inside the ``parse_json`` argument and JSON parsing fails
-    when persisting multiline ``sql_query`` rules.
-
-    Single quotes are backslash-escaped as well. Databricks SQL reads a doubled
-    quote inside a literal as two adjacent literals and joins them, dropping
-    the quote, so a check's SQL stored this way would lose its string literals
-    (``!= 'x'`` would come back as ``!= x``).
+    character, so those must be doubled before :func:`escape_sql_string` doubles
+    any single-quotes — otherwise ``\\n`` in the JSON becomes a literal newline
+    inside the ``parse_json`` argument and JSON parsing fails when persisting
+    multiline ``sql_query`` rules.
     """
-    return value.replace("\\", "\\\\").replace("'", "\\'")
+    return escape_sql_string(value.replace("\\", "\\\\"))
 
 
 def escape_sql_string_strict(value: str) -> str:
@@ -171,8 +165,6 @@ def escape_sql_string_strict(value: str) -> str:
     ever compared app-side and so never needed SQL-escaping. On the Delta /
     Databricks SQL string-literal path a trailing backslash would otherwise
     consume the closing quote and let the literal break out (injection).
-    Like :func:`escape_sql_string`, any single-quote in *value* is dropped
-    on Databricks SQL rather than kept.
     """
     return value.replace("\\", "\\\\").replace("'", "''")
 
