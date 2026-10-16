@@ -16858,6 +16858,9 @@ export const useBackfillRuleEmbeddings = <TError = AxiosError<HTTPValidationErro
     
 /**
  * List monitored tables, optionally filtered, with per-table applied-rule counts.
+
+Signals the scheduler on the way in (the Tables page load), so a run
+started with no page watching gets its score refreshed promptly.
  * @summary List Monitored Tables
  */
 export const listMonitoredTables = (
@@ -23266,6 +23269,9 @@ catalog-gated, so an inaccessible value simply matches nothing).
 Concurrent member runs of one run set are consolidated onto their
 RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
 markers align; *as_of_batch* caps to a chosen batch's instant.
+
+Signals the scheduler on the way in (the Results page load), so a run
+started with no page watching gets its score refreshed promptly.
  * @summary Get Global Results
  */
 export const getGlobalResults = (
@@ -25814,6 +25820,9 @@ export function useGetRunSetSuspense<TData = Awaited<ReturnType<typeof getRunSet
 
 /**
  * List every data product with resolved members and list-view counters.
+
+Signals the scheduler on the way in (the Collections page load), so a
+run started with no page watching gets its score refreshed promptly.
  * @summary List Data Products
  */
 export const listDataProducts = (
