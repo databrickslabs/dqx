@@ -29,6 +29,7 @@ from pydantic import ValidationError  # type: ignore
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.datacontract.library_metrics import LibraryMetricRulesBuilder
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
@@ -94,6 +95,7 @@ class DataContractRulesGenerator(DQEngineBase):
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
         default_criticality: str = "error",
+        process_library_rules: bool = True,
     ) -> list[dict]:
         """
         Generate DQX quality rules from an ODCS v3.x data contract.
@@ -123,6 +125,7 @@ class DataContractRulesGenerator(DQEngineBase):
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
             strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
+            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True). Set to False to skip this mapping entirely.
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
@@ -141,6 +144,7 @@ class DataContractRulesGenerator(DQEngineBase):
             odcs,
             generate_predefined_rules,
             process_text_rules,
+            process_library_rules,
             generate_schema_validation,
             strict_schema_validation,
             default_criticality,
@@ -241,6 +245,7 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        process_library_rules: bool,
         generate_schema_validation: bool,
         strict_schema_validation: bool,
         default_criticality: str,
@@ -270,6 +275,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
+
+            if process_library_rules:
+                library_rules = self._process_library_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality
+                )
+                dq_rules.extend(library_rules)
 
         return dq_rules
 
@@ -1463,3 +1474,20 @@ class DataContractRulesGenerator(DQEngineBase):
         if owner:
             rule["owner"] = owner
         return rule
+
+    def _process_library_rules_for_schema(
+        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Generate rules from the ODCS type: library quality metric entries of a schema.
+
+        The mapping itself lives in *library_metrics*; this only supplies contract provenance and the
+        per-entry row filter, so library rules honour a row_filter custom property like explicit rules do.
+        """
+        provenance = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+        }
+        builder = LibraryMetricRulesBuilder(provenance, default_criticality, self._quality_row_filter)
+        return builder.build_for_schema(schema_obj, schema_name)
