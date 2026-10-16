@@ -49,6 +49,7 @@ describe("scheduleHealth", () => {
   it("maps failed and partial_failure run statuses", () => {
     expect(scheduleHealth(row({ run_status: "failed" }))).toBe("failed");
     expect(scheduleHealth(row({ run_status: "partial_failure" }))).toBe("partial");
+    expect(scheduleHealth(row({ run_status: "skipped" }))).toBe("skipped");
   });
 
   it("is active otherwise", () => {

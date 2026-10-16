@@ -235,7 +235,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  paused        BOOLEAN NOT NULL DEFAULT FALSE,"
             "  CONSTRAINT chk_dq_schedule_runs_status "
             "    CHECK (status IS NULL OR status IN "
-            "      ('pending','success','partial_failure','failed'))"
+            "      ('pending','success','partial_failure','failed','skipped'))"
             ");"
             # The scheduler loop polls "next_run_at <= now() AND status
             # IS NOT 'pending'" every tick; a btree index on
@@ -766,7 +766,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ----------------------------------------------------------
             f"CREATE OR REPLACE VIEW {_S}.dq_rules_core AS "
             "WITH approved AS ("
-            "  SELECT rule_id, table_fqn, \"check\", rule_fingerprint, created_at "
+            '  SELECT rule_id, table_fqn, "check", rule_fingerprint, created_at '
             f"  FROM {_S}.dq_resolved_rules WHERE status = 'approved'"
             "), set_fp AS ("
             "  SELECT table_fqn, encode(sha256(convert_to("
@@ -779,7 +779,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             ") SELECT "
             "  a.\"check\"->>'name'                          AS name,"
             "  COALESCE(a.\"check\"->>'criticality', 'error') AS criticality,"
-            "  a.\"check\"->'check'                          AS \"check\","
+            '  a."check"->\'check\'                          AS "check",'
             "  a.\"check\"->>'filter'                        AS filter,"
             "  a.table_fqn                                   AS run_config_name,"
             "  a.\"check\"->'user_metadata'                  AS user_metadata,"
@@ -803,6 +803,16 @@ PG_MIGRATIONS: list[PgMigration] = [
         version=3,
         description="Drop dq_run_configs; oversized run configs are staged in Delta",
         sql=f"DROP TABLE IF EXISTS {_S}.dq_run_configs;",
+    ),
+    PgMigration(
+        version=4,
+        description="Allow skipped status on schedule tracker rows",
+        sql=(
+            f"ALTER TABLE {_S}.dq_schedule_runs DROP CONSTRAINT IF EXISTS chk_dq_schedule_runs_status;"
+            f"ALTER TABLE {_S}.dq_schedule_runs ADD CONSTRAINT chk_dq_schedule_runs_status "
+            "CHECK (status IS NULL OR status IN "
+            "('pending','success','partial_failure','failed','skipped'));"
+        ),
     ),
 ]
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service.compute import Environment
 from databricks.sdk.service.jobs import (
     JobAccessControlRequest,
@@ -22,6 +23,9 @@ _MANAGED_TAGS = {"app": "dqx-studio", **_DISCOVERY_TAGS}
 _JOB_NAME = "dqx-studio-task-runner"
 _TASK_KEY = "run_task"
 _ENVIRONMENT_KEY = "default"
+# Must stay in sync with ``timeout_seconds`` on the DAB job and
+# ``_IN_FLIGHT_MAX_AGE`` in ``scheduler_service``.
+_TASK_RUNNER_TIMEOUT_SECONDS = 4 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,7 @@ class TaskRunnerJobManager:
         created = self.workspace.jobs.create(
             name=_JOB_NAME,
             max_concurrent_runs=10,
+            timeout_seconds=_TASK_RUNNER_TIMEOUT_SECONDS,
             tags=dict(_MANAGED_TAGS),
             tasks=[_task_runner_task()],
             parameters=_task_runner_parameters(),
@@ -80,6 +85,14 @@ class TaskRunnerJobManager:
             access_control_list=[_setup_admin_access(user_name)],
         )
 
+    def exists(self, job_id: int) -> bool:
+        """Return whether task-runner job *job_id* still exists; other lookup errors propagate."""
+        try:
+            self.workspace.jobs.get(job_id)
+        except NotFound:
+            return False
+        return True
+
     def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
         """Report whether a task-runner job uses a distinct service principal."""
         job = self.workspace.jobs.get(job_id)
@@ -90,13 +103,16 @@ class TaskRunnerJobManager:
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.PASSED,
                 code="task_runner_run_as_ready",
-                summary="The task-runner job uses a separate service principal.",
+                summary="The task-runner job runs as its own service principal.",
             )
         return SetupStep(
             id=SetupStepId.TASK_RUNNER,
             state=StepState.ACTION_REQUIRED,
             code=_run_as_action_code(run_as, app_sp_id),
-            summary="Assign a service principal distinct from the app identity as this job's run_as identity.",
+            summary=(
+                "The task-runner job must run as its own service principal, not the app's. "
+                "Change Run as on the job, then click Verify again."
+            ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
@@ -108,6 +124,7 @@ class TaskRunnerJobManager:
             job_id=job_id,
             new_settings=JobSettings(
                 tags={**existing_tags, **_MANAGED_TAGS},
+                timeout_seconds=_TASK_RUNNER_TIMEOUT_SECONDS,
                 tasks=[_task_runner_task()],
                 parameters=_task_runner_parameters(),
                 environments=[_task_runner_environment(wheel_paths)],

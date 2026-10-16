@@ -22,6 +22,9 @@ from databricks_labs_dqx_app.backend.services.registry_service import RegistrySe
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService, demo_tag_targets
 
 
+DEMO_SCHEMA = "dqx_studio_demo"
+
+
 def _svc(**over):
     from databricks.sdk import WorkspaceClient
     from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -50,6 +53,7 @@ def _svc(**over):
         binding_run=create_autospec(BindingRunService, instance=True),
         score_cache=create_autospec(ScoreCacheService, instance=True),
         status=create_autospec(DemoStatusStore, instance=True),
+        schema=DEMO_SCHEMA,
     )
     deps.update(over)
     return DemoSeedService(**deps), deps
@@ -112,7 +116,7 @@ def test_build_source_data_tags_demo_schema_and_tables():
     deps["resource_tagger"].reconcile.assert_called_once_with(
         demo_tag_targets(
             "dqx",
-            manifest.SOURCE_SCHEMA,
+            DEMO_SCHEMA,
             tuple(table.name for table in manifest.TABLES),
         )
     )
@@ -1613,7 +1617,7 @@ def test_view_service_names_views_from_its_sql_executor_schema():
 
     mark_tmp_schema_ready()  # skip the CREATE SCHEMA path
     try:
-        svc = ViewService(sql=sql, sp_sql=sp, runner_principal="runner-sp", cleanup_principal="app-sp")
+        svc = ViewService(sql=sql, sp_sql=sp, cleanup_principal="app-sp")
         view_name = svc.create_view("dqx.sales.orders")
         assert (
             ".dqx_studio_tmp.tmp_view_" in view_name
@@ -1780,7 +1784,7 @@ def test_schedule_grants_cover_every_target_table():
     product_ids = {spec.name: f"p-{i}" for i, spec in enumerate(manifest.DATA_PRODUCTS)}
     for spec in manifest.SCHEDULES:
         if spec.target_kind == "table":
-            expected.add(f"dqx.{manifest.SOURCE_SCHEMA}.{spec.target}")
+            expected.add(f"dqx.{DEMO_SCHEMA}.{spec.target}")
         else:
             expected.add(f"dqx.demo.{product_ids[spec.target]}_member")
     assert granted == expected

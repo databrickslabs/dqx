@@ -7,6 +7,8 @@ from pydantic import SecretStr
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks_labs_dqx_app.backend.config import AppConfig
+from databricks_labs_dqx_app.backend.setup.audience import StudioAudience
+from databricks_labs_dqx_app.backend.setup.storage import StudioStorage
 from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
 from databricks_labs_dqx_app.backend.volume import (
     VolumeLocation as VolumeLocation,
@@ -28,6 +30,15 @@ class LakebaseConnection:
 
 
 @dataclass(frozen=True)
+class BootstrapResources:
+    """Bindings available before Studio storage is configured."""
+
+    lakebase: LakebaseConnection
+    warehouse_id: str
+    job_id: str | None
+
+
+@dataclass(frozen=True)
 class ActiveResources:
     """Installation resources that passed setup readiness checks."""
 
@@ -37,6 +48,33 @@ class ActiveResources:
     job_id: str | None
     tmp_schema: str
     genie_schema: str
+    demo_schema: str
+    audience: StudioAudience
+
+
+def build_active_resources(
+    bootstrap: BootstrapResources, storage: StudioStorage, audience: StudioAudience
+) -> ActiveResources:
+    """Combine bootstrap bindings with resolved storage and audience.
+
+    Args:
+        bootstrap: Lakebase, warehouse and job bindings.
+        storage: Resolved Studio storage layout.
+        audience: Resolved Studio audience.
+
+    Returns:
+        Resources ready for activation.
+    """
+    return ActiveResources(
+        volume=storage.volume_location,
+        lakebase=bootstrap.lakebase,
+        warehouse_id=bootstrap.warehouse_id,
+        job_id=bootstrap.job_id,
+        tmp_schema=storage.tmp_schema,
+        genie_schema=storage.genie_schema,
+        demo_schema=storage.demo_schema,
+        audience=audience,
+    )
 
 
 def resolve_lakebase_connection(

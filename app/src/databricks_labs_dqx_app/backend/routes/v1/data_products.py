@@ -49,9 +49,9 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
-    WAREHOUSE_UNAVAILABLE_DETAIL,
     CannotManageError,
     WarehouseUnavailableError,
+    inspection_failure_detail,
     ScheduleGrantService,
     manage_block_detail,
 )
@@ -269,7 +269,7 @@ def update_data_product(
                     blocked.append((fqn, grant_svc.manage_holders(fqn)))
         except WarehouseUnavailableError as e:
             logger.warning("Collection schedule gate inconclusive for %s: %s", product_id, e)
-            raise HTTPException(status_code=503, detail=WAREHOUSE_UNAVAILABLE_DETAIL)
+            raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
         if blocked:
             raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
         try:
