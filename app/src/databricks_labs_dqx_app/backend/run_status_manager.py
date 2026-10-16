@@ -6,6 +6,7 @@ to any other service.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -219,6 +220,33 @@ _status_cache: dict[int, tuple[_JobStatusLike, float]] = {}
 _STALE_RUNNING_MAX_AGE_HOURS = 12
 
 
+# Bound on the job state message copied into a run's error_message.
+_JOB_MESSAGE_MAX_CHARS = 500
+_CONTROL_AND_WHITESPACE_RE = re.compile(r"[\s\x00-\x1f\x7f]+")
+
+
+def ended_job_run_status(
+    life_cycle_state: str | None,
+    result_state: str | None,
+    state_message: str | None,
+) -> tuple[str, str] | None:
+    """Return the (status, error_message) to record for a job that ended without its runner's result.
+
+    ``None`` while the job is still running, or when it succeeded — on
+    success the task runner owns the terminal row (with metrics), so a bare
+    SUCCESS must never be written over it. Otherwise the run is CANCELED when
+    the job's result state is CANCELED and FAILED for every other ending
+    (failed, timed out, internal error, skipped, ...). The job's state message
+    is collapsed to one line and truncated; when it is empty a generic message
+    naming the life cycle state is used.
+    """
+    if life_cycle_state not in _TERMINAL_LIFECYCLE_STATES or result_state == "SUCCESS":
+        return None
+    status = "CANCELED" if result_state == "CANCELED" else "FAILED"
+    message = _CONTROL_AND_WHITESPACE_RE.sub(" ", state_message or "").strip()[:_JOB_MESSAGE_MAX_CHARS]
+    return status, message or f"Run finished with state: {life_cycle_state}"
+
+
 def _cached_job_status(job_run_id: int, status_fn: Callable[[int], _JobStatusLike]) -> _JobStatusLike:
     """Return the job-run status, memoised for ``_STATUS_CACHE_TTL_SECONDS``."""
     now = time.monotonic()
@@ -322,14 +350,12 @@ def reconcile_running_rows(
                 status = None
 
             if status is not None:
-                if status.state not in _TERMINAL_LIFECYCLE_STATES:
-                    # Job still running — do not touch the row.
+                outcome = ended_job_run_status(status.state, status.result_state, status.message)
+                if outcome is None:
+                    # Job still running, or succeeded (the runner owns the
+                    # terminal SUCCESS row) — do not touch the row.
                     continue
-                if status.result_state == "SUCCESS":
-                    # Runner owns the terminal SUCCESS row; don't clobber it.
-                    continue
-                new_status = "CANCELED" if status.result_state == "CANCELED" else "FAILED"
-                error_message = status.message or f"Run finished with state: {status.state}"
+                new_status, error_message = outcome
                 update_run_status(sql, app_conf, table_name, run_id, status=new_status, error_message=error_message)
                 row["status"] = new_status
                 if not row.get("error_message"):

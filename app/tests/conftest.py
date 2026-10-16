@@ -412,6 +412,9 @@ def make_scheduler():
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
         job_id: str = "test-job-0",
+        wake_marker: Any | None = None,
+        wake_check_seconds: float = 5.0,
+        wake_min_tick_gap_seconds: float = 0.0,
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -465,6 +468,9 @@ def make_scheduler():
             monitored_table_service=monitored_table_service,
             tag_reconcile_service=tag_reconcile_service,
             reconcile_scores_on_start=reconcile_scores_on_start,
+            wake_marker=wake_marker,
+            wake_check_seconds=wake_check_seconds,
+            wake_min_tick_gap_seconds=wake_min_tick_gap_seconds,
         )
 
         mocks = SimpleNamespace(oltp=oltp, ws=ws)

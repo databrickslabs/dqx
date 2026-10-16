@@ -37,6 +37,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_rule_suggester,
     get_rules_catalog_service,
     get_schedule_grant_service,
+    get_scheduler_wake_marker,
     get_tag_suggestion_service,
     require_role,
 )
@@ -54,6 +55,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     manage_block_detail,
 )
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
     ApplyRuleIn,
@@ -158,13 +160,19 @@ def list_monitored_tables(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
     status: Annotated[str | None, Query(description="Filter by status")] = None,
     owner: Annotated[str | None, Query(description="Filter by owner")] = None,
     catalog: Annotated[str | None, Query(description="Filter by catalog part of table_fqn")] = None,
     schema: Annotated[str | None, Query(description="Filter by schema part of table_fqn")] = None,
     name: Annotated[str | None, Query(description="Substring search over table_fqn")] = None,
 ) -> list[MonitoredTableSummaryOut]:
-    """List monitored tables, optionally filtered, with per-table applied-rule counts."""
+    """List monitored tables, optionally filtered, with per-table applied-rule counts.
+
+    Signals the scheduler on the way in (the Tables page load), so a run
+    started with no page watching gets its score refreshed promptly.
+    """
+    wake.signal()
     try:
         summaries = svc.list_monitored_tables(status=status, owner=owner, catalog=catalog, schema=schema, name=name)
         _apply_snapshot_check_counts(summaries, version_svc, materializer)
@@ -786,6 +794,7 @@ def run_monitored_table(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> RunMonitoredTableOut:
     """Run a monitored table's approved (latest or pinned) or draft checks.
 
@@ -818,6 +827,7 @@ def run_monitored_table(
             rule_ids=body.rule_ids,
             sample_size=body.sample_size,
         )
+        wake.signal()
         return RunMonitoredTableOut(
             run_set_id=result.run_set_id,
             run_id=result.run_id,

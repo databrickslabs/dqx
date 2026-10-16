@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_preview_sql_executor,
     get_registry_service,
     get_run_set_service,
+    get_scheduler_wake_marker,
     get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -49,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
@@ -151,6 +153,11 @@ def entitlement_mock() -> MagicMock:
 
 
 @pytest.fixture
+def wake_mock() -> MagicMock:
+    return create_autospec(SchedulerWakeMarker, instance=True)
+
+
+@pytest.fixture
 def run_sets_mock() -> MagicMock:
     """Run-set service — no run-set membership by default (runs stay
     unconsolidated: each its own batch via COALESCE)."""
@@ -175,6 +182,7 @@ def client(
     score_cache_mock,
     entitlement_mock,
     run_sets_mock,
+    wake_mock,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -196,6 +204,7 @@ def client(
     app.dependency_overrides[get_score_cache_service] = lambda: score_cache_mock
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     app.dependency_overrides[get_run_set_service] = lambda: run_sets_mock
+    app.dependency_overrides[get_scheduler_wake_marker] = lambda: wake_mock
     return TestClient(app)
 
 
@@ -853,6 +862,13 @@ class TestProductResults:
 
 
 class TestGlobalResults:
+    def test_page_load_wakes_the_scheduler(self, client, sql_mock, wake_mock):
+        # The Results page load signals the scheduler so a run started with no
+        # page watching is picked up promptly — even when the query then fails.
+        sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
+        client.get("/api/v1/dq-results/global")
+        wake_mock.signal.assert_called_once_with()
+
     def test_filters_rows_to_accessible_catalogs(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
             sql_mock,

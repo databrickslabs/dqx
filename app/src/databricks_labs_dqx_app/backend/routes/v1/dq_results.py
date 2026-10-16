@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_run_set_service,
     get_score_cache_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.models import (
     SeverityOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
@@ -873,6 +875,7 @@ def get_global_results(
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -899,7 +902,11 @@ def get_global_results(
     Concurrent member runs of one run set are consolidated onto their
     RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
     markers align; *as_of_batch* caps to a chosen batch's instant.
+
+    Signals the scheduler on the way in (the Results page load), so a run
+    started with no page watching gets its score refreshed promptly.
     """
+    wake.signal()
     _validate_run_id(run_id)
     _validate_run_id(as_of_batch)
     _validate_table_facet(table)

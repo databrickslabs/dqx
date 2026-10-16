@@ -15,6 +15,7 @@ from databricks.sdk.errors import NotFound, PermissionDenied
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
     BulkRegisterMonitoredTablesIn,
@@ -163,13 +164,26 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer, status="draft")
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+            status="draft",
+        )
         assert len(result) == 1
         assert result[0].table.binding_id == "b1"
         assert result[0].applied_rule_count == 3
         svc.list_monitored_tables.assert_called_once_with(
             status="draft", owner=None, catalog=None, schema=None, name=None
         )
+
+    def test_list_wakes_the_scheduler_on_page_load(self):
+        svc = MagicMock()
+        svc.list_monitored_tables.return_value = []
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        list_monitored_tables(svc=svc, version_svc=MagicMock(), materializer=MagicMock(), wake=wake)
+        wake.signal.assert_called_once_with()
 
     def test_list_check_count_from_snapshot_for_approved_binding(self):
         # An approved binding (version > 0) reports its frozen snapshot's
@@ -185,7 +199,12 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {("b1", 4): (2, 7)}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+        )
         assert result[0].check_count == 7  # snapshot len(checks_json), not 999
         version_svc.snapshot_counts_many.assert_called_once_with([("b1", 4)])
         # A snapshot-resolved approved binding is NOT sent to the live-render
@@ -202,7 +221,12 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {"b1": 3}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+        )
         assert result[0].check_count == 3
         # ONE batched draft-count call for the never-approved binding — never a
         # per-binding render loop (B2-141).
@@ -1804,6 +1828,7 @@ class TestRunMonitoredTable:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         assert result.run_set_id == "rs-1"
         assert result.run_id == "run-1"
@@ -1822,6 +1847,43 @@ class TestRunMonitoredTable:
             sample_size=None,
         )
 
+    def test_started_run_wakes_the_scheduler(self):
+        # A run started with no page watching must be tracked promptly, not
+        # after the scheduler's hour-long idle sleep.
+        svc = MagicMock()
+        svc.run_binding.return_value = BindingRunResult(
+            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
+        )
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        run_monitored_table(
+            "b1",
+            body=RunMonitoredTableIn(source="approved", version=None),
+            obo_ws=_mock_obo_ws(),
+            run_svc=svc,
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            wake=wake,
+        )
+        wake.signal.assert_called_once_with()
+
+    def test_failed_run_start_does_not_wake_the_scheduler(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = BindingNotFoundError("b1")
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        with pytest.raises(HTTPException):
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                wake=wake,
+            )
+        wake.signal.assert_not_called()
+
     def test_staging_infra_failure_maps_to_503(self):
         """A RunConfigStagingError (SQL warehouse unreachable / dq_run_configs missing)
         is a server-side fault, not a bad request — it must surface as 503."""
@@ -1838,6 +1900,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 503
 
@@ -1856,6 +1919,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 400
 
@@ -1877,6 +1941,7 @@ class TestRunMonitoredTable:
             role=UserRole.RULE_AUTHOR,
             principal_ids=frozenset({"u1"}),
             perms=perms,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         perms.require_object.assert_called_once()
         call_kwargs = perms.require_object.call_args
@@ -1904,6 +1969,7 @@ class TestRunMonitoredTable:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 perms=perms,
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 403
         svc.run_binding.assert_not_called()
@@ -1920,6 +1986,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 404
 
@@ -1935,6 +2002,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 409
 
@@ -1950,6 +2018,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 422
 
@@ -1965,6 +2034,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 400
 
@@ -1980,6 +2050,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 500
 
@@ -2016,6 +2087,7 @@ class TestRunMonitoredTableInSamplingKnob:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         assert svc.run_binding.call_args.kwargs["sample_size"] == 250
 

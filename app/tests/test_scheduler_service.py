@@ -1697,7 +1697,7 @@ def _stub_idle_sources(svc, *, configs=None, products=0, tables=0):
     svc._get_tracker = lambda name: {"next_run_at": far_future}  # type: ignore[method-assign]
     svc._tick_products = lambda now: products  # type: ignore[method-assign]
     svc._tick_monitored_tables = lambda now: tables  # type: ignore[method-assign]
-    svc._refresh_scores_for_completed_runs = lambda now: None  # type: ignore[method-assign]
+    svc.refresh_scores_for_completed_runs = lambda now: None  # type: ignore[method-assign]
 
 
 @pytest.mark.asyncio
@@ -2080,7 +2080,7 @@ class TestScoreRefreshUsesJobsApiForRunState:
         svc._pending_score_runs["r1"] = self.NOW - timedelta(minutes=30)
         mocks.ws.jobs.list_runs.return_value = _active_runs("r1")
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         mocks.sql.query.assert_not_called()
         score_cache.refresh_all_for_tables.assert_not_called()
@@ -2091,12 +2091,12 @@ class TestScoreRefreshUsesJobsApiForRunState:
         svc, mocks, score_cache = self._scheduler(make_scheduler)
         svc._pending_score_runs["r1"] = self.NOW - timedelta(seconds=30)
         mocks.ws.jobs.list_runs.return_value = _active_runs("r1")
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         mocks.ws.jobs.list_runs.return_value = []  # job finished
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         svc._tick_active_runs_loaded = False
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         mocks.sql.query.assert_called_once()
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
@@ -2107,11 +2107,11 @@ class TestScoreRefreshUsesJobsApiForRunState:
         svc._pending_score_runs["orphan"] = self.NOW - timedelta(minutes=10)
         mocks.ws.jobs.list_runs.return_value = []
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         assert "orphan" in svc._pending_score_runs  # one empty lookup may just be lag
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         assert svc._pending_score_runs == {}
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         assert mocks.sql.query.call_count == 2
 
@@ -2120,10 +2120,10 @@ class TestScoreRefreshUsesJobsApiForRunState:
         svc._pending_score_runs["new"] = self.NOW - timedelta(seconds=30)
         mocks.ws.jobs.list_runs.return_value = []
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         mocks.sql.query.assert_not_called()
 
-        svc._refresh_scores_for_completed_runs(self.NOW + timedelta(minutes=3))
+        svc.refresh_scores_for_completed_runs(self.NOW + timedelta(minutes=3))
         mocks.sql.query.assert_called_once()
 
     def test_jobs_api_failure_falls_back_to_checking_every_tracked_run(self, make_scheduler):
@@ -2132,7 +2132,7 @@ class TestScoreRefreshUsesJobsApiForRunState:
         mocks.ws.jobs.list_runs.side_effect = RuntimeError("jobs api down")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         mocks.sql.query.assert_called_once()
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
@@ -2156,12 +2156,12 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r2")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", ""), ("r2", "main.sales.customers", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.customers", "main.sales.orders"])
         # Completed runs are untracked — the next tick must not refresh again.
         assert svc._pending_score_runs == {}
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         score_cache.refresh_all_for_tables.assert_called_once()
 
     def test_completion_also_denormalizes_run_timestamps(self, make_scheduler):
@@ -2174,7 +2174,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r2")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", ""), ("r2", "main.sales.customers", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         monitored.refresh_run_timestamps.assert_called_once_with(["main.sales.customers", "main.sales.orders"])
 
@@ -2186,7 +2186,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
         # Best-effort: a timestamp-write failure must not raise out of the tick.
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         monitored.refresh_run_timestamps.assert_called_once()
 
     def test_no_timestamp_refresh_without_collaborator(self, make_scheduler):
@@ -2194,14 +2194,14 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r1")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
         # Must not raise when the collaborator is absent.
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
     def test_no_refresh_while_runs_are_still_running(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         svc._track_run_for_score_refresh("r1")
         mocks.sql.query.return_value = []  # only the RUNNING placeholder exists
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_not_called()
         assert "r1" in svc._pending_score_runs  # re-checked next tick
@@ -2212,7 +2212,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r2")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
         assert set(svc._pending_score_runs) == {"r2"}
@@ -2224,7 +2224,7 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse hiccup")
 
         # Best-effort: must not raise out of the tick step.
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         # The run stays untracked — a persistent warehouse failure must not
         # turn into an every-tick retry loop; the browser refresh or the
@@ -2236,7 +2236,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r1")
         mocks.sql.query.return_value = [("r1", "__sql_check__/my_check", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_not_called()
         assert svc._pending_score_runs == {}
@@ -2247,7 +2247,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r1")
         assert svc._pending_score_runs == {}
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         mocks.sql.query.assert_not_called()
 
     def test_runs_whose_terminal_row_never_lands_expire_after_the_ttl(self, make_scheduler, scheduler_caplog):
@@ -2255,7 +2255,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r_old")
         svc._pending_score_runs["r_old"] = self.NOW - _SCORE_REFRESH_TTL - timedelta(minutes=1)
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         assert svc._pending_score_runs == {}
         mocks.sql.query.assert_not_called()  # nothing left to look up
@@ -2272,7 +2272,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.return_value = [("r1",), ("r2",)]
         mocks.sql.query.return_value = []  # nothing terminal yet
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         assert set(svc._pending_score_runs) == {"r1", "r2"}
         stmt = mocks.oltp.query.call_args[0][0]
@@ -2287,7 +2287,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.return_value = [("r1",)]
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
         assert svc._pending_score_runs == {}
@@ -2295,7 +2295,7 @@ class TestScoreCacheRefreshOnCompletion:
         # Next tick: the run-set row is still inside the 24h window, but
         # the run was already processed — no re-track, no second refresh.
         mocks.sql.query.return_value = []
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         score_cache.refresh_all_for_tables.assert_called_once()
         assert svc._pending_score_runs == {}
 
@@ -2306,7 +2306,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.return_value = [("r1",)]  # same run, via its run-set row
         mocks.sql.query.return_value = []
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         assert set(svc._pending_score_runs) == {"r1"}
         assert svc._pending_score_runs["r1"] == started  # launch time not reset
@@ -2315,12 +2315,12 @@ class TestScoreCacheRefreshOnCompletion:
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
         mocks.oltp.query.return_value = [("r1",)]
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         assert "r1" in svc._seen_score_runs
 
         mocks.oltp.query.return_value = []  # window moved past r1's run set
         mocks.sql.query.return_value = []
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         assert svc._seen_score_runs == set()  # bounded across weeks of uptime
 
     def test_pending_runs_without_run_set_rows_survive_the_prune(self, make_scheduler):
@@ -2332,7 +2332,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.return_value = []
         mocks.sql.query.return_value = []
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         assert "r1" in svc._pending_score_runs
         assert "r1" in svc._seen_score_runs
@@ -2343,7 +2343,7 @@ class TestScoreCacheRefreshOnCompletion:
         mocks.oltp.query.side_effect = RuntimeError("postgres down")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
 
-        svc._refresh_scores_for_completed_runs(self.NOW)  # must not raise
+        svc.refresh_scores_for_completed_runs(self.NOW)  # must not raise
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
         assert "sweep" in scheduler_caplog.text.lower()
@@ -2355,11 +2355,11 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.list_monitored_table_fqns.return_value = ["main.sales.orders", "main.hr.people"]
         score_cache.refresh_all_for_tables.return_value = (2, 1)
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.hr.people", "main.sales.orders"])
         # Reconciled this boot — the next pass must not reconcile again.
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         score_cache.refresh_all_for_tables.assert_called_once()
         score_cache.list_monitored_table_fqns.assert_called_once()
 
@@ -2373,7 +2373,7 @@ class TestScoreCacheRefreshOnCompletion:
         svc._track_run_for_score_refresh("r1")
         mocks.sql.query.return_value = [("r1", "legacy.scope.table", "")]  # not a monitored table
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         score_cache.refresh_all_for_tables.assert_called_once_with(["legacy.scope.table", "main.sales.orders"])
         assert svc._pending_score_runs == {}
@@ -2385,7 +2385,7 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.list_monitored_table_fqns.return_value = []
         score_cache.refresh_all_for_tables.return_value = (0, 0)
 
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
 
         # Zero monitored tables still refreshes the derived global row.
         score_cache.refresh_all_for_tables.assert_called_once_with([])
@@ -2396,7 +2396,7 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.refresh_all_for_tables.side_effect = RuntimeError("warehouse down")
 
         for _ in range(_SCORE_RECONCILE_MAX_ATTEMPTS):
-            svc._refresh_scores_for_completed_runs(self.NOW)  # must not raise
+            svc.refresh_scores_for_completed_runs(self.NOW)  # must not raise
         assert score_cache.refresh_all_for_tables.call_count == _SCORE_RECONCILE_MAX_ATTEMPTS
 
         # Budget exhausted: no further reconcile attempts this boot, and the
@@ -2405,14 +2405,14 @@ class TestScoreCacheRefreshOnCompletion:
         score_cache.refresh_all_for_tables.return_value = (1, 0)
         svc._track_run_for_score_refresh("r1")
         mocks.sql.query.return_value = [("r1", "main.sales.orders", "")]
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         assert score_cache.refresh_all_for_tables.call_count == _SCORE_RECONCILE_MAX_ATTEMPTS + 1
         assert score_cache.refresh_all_for_tables.call_args[0][0] == ["main.sales.orders"]
         assert "reconcile" in scheduler_caplog.text
 
     def test_reconcile_off_by_default_preserves_the_per_run_refresh(self, make_scheduler):
         svc, mocks, score_cache = _make_score_scheduler(make_scheduler)
-        svc._refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.NOW)
         score_cache.list_monitored_table_fqns.assert_not_called()
         score_cache.refresh_all_for_tables.assert_not_called()
 
