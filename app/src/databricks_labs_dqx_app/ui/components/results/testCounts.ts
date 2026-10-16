@@ -40,7 +40,7 @@ export function formatTestCounts(t: Translate, counts: TestCounts): string {
 
 /**
  * Per-row indicator for breakdown tables ("1 / 2 table tests failed"; the
- * *short* form "1 / 2 table" fits under the row-failure count), shown only
+ * *short* form "1 / 2 table tests" fits under the row-failure count), shown only
  * when the row has dataset checks; "" otherwise.
  */
 export function formatTableTestsFailed(

@@ -213,7 +213,8 @@ export function computeOverallPoints(
  * tests passed" is internally consistent. Row and table tests are summed
  * separately, never together. DELIBERATE dqlake deviation — the original hardcodes
  * totalTests={0}, which suppresses the subtitle on the product ScoreBox
- * entirely (its ScoreBox only renders the subtitle when totalTests > 0).
+ * entirely. Here ScoreBox renders each part whose total is > 0, so a scope with
+ * only table tests still shows its table part.
  *
  * *tableFacet* (P7.2): the server self-excludes the table facet from the
  * by_table rows (so the box keeps its full row set), which would leave this

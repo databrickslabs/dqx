@@ -7,7 +7,7 @@ const EN: Record<string, string> = {
   "resultsUi.rowTestsPassed": "{{passed}} / {{total}} row tests passed",
   "resultsUi.tableTestsPassed": "{{passed}} / {{total}} table tests passed",
   "resultsUi.tableTestsFailed": "{{failed}} / {{total}} table tests failed",
-  "resultsUi.tableTestsFailedShort": "{{failed}} / {{total}} table",
+  "resultsUi.tableTestsFailedShort": "{{failed}} / {{total}} table tests",
 };
 const t = (key: string, options: Record<string, string>) =>
   (EN[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name: string) => options[name] ?? "");
@@ -78,7 +78,7 @@ describe("formatTableTestsFailed (breakdown-row indicator)", () => {
   });
 
   it("has a short form that fits a narrow table cell", () => {
-    expect(formatTableTestsFailed(t, 1, 2, { short: true })).toBe("1 / 2 table");
+    expect(formatTableTestsFailed(t, 1, 2, { short: true })).toBe("1 / 2 table tests");
   });
 
   it("returns an empty string when the row has no table tests", () => {
