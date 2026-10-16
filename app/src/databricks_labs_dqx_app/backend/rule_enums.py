@@ -1,4 +1,4 @@
-"""Lifecycle enums for the per-table rules catalog (``dq_quality_rules``).
+"""Lifecycle enums for the per-table rules catalog (``dq_resolved_rules``).
 
 Kept in a leaf module so migrations and ``RulesCatalogService`` can import them
 without pulling in ``models`` (which itself imports services that import the

@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.jobs import (
     Job,
     JobAccessControlResponse,
@@ -29,7 +30,7 @@ def managed_job(job_id: int) -> Job:
     """Build the minimal Jobs API response for a Studio-managed job."""
     return Job(
         job_id=job_id,
-        settings=JobSettings(tags={"dqx_studio_managed": "true", "dqx_component": "task_runner"}),
+        settings=JobSettings(tags={"app": "dqx-studio", "dqx_studio_managed": "true", "dqx_component": "task_runner"}),
     )
 
 
@@ -48,6 +49,21 @@ def job_with_run_as(
     )
 
 
+def test_exists_reports_a_deleted_job_as_missing(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = managed_job(42)
+    assert manager.exists(42) is True
+
+    manager.workspace.jobs.get.side_effect = NotFound("job deleted")
+    assert manager.exists(42) is False
+
+
+def test_exists_does_not_hide_other_lookup_errors(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.side_effect = PermissionDenied("no access")
+
+    with pytest.raises(PermissionDenied):
+        manager.exists(42)
+
+
 def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
     """A configured job ID prevents discovery and duplicate creation."""
     result = manager.resolve("42")
@@ -64,6 +80,35 @@ def test_resolve_rediscovers_tagged_job_before_create(manager: TaskRunnerJobMana
     manager.workspace.jobs.create.assert_not_called()
 
 
+def test_resolve_rediscovers_and_upgrades_legacy_managed_job(manager: TaskRunnerJobManager) -> None:
+    """An upgraded installation reuses its legacy job and adds the ownership tag."""
+    legacy_job = Job(
+        job_id=45,
+        settings=JobSettings(
+            tags={
+                "owner": "data-platform",
+                "dqx_studio_managed": "true",
+                "dqx_component": "task_runner",
+            }
+        ),
+    )
+    manager.workspace.jobs.list.return_value = [legacy_job]
+    manager.workspace.jobs.get.return_value = legacy_job
+
+    resolved = manager.resolve(None)
+    manager.configure(resolved.job_id, ["/Volumes/c/s/v/runner.whl"])
+
+    assert resolved == ResolvedJob(job_id=45, created=False)
+    manager.workspace.jobs.create.assert_not_called()
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.tags == {
+        "owner": "data-platform",
+        "app": "dqx-studio",
+        "dqx_studio_managed": "true",
+        "dqx_component": "task_runner",
+    }
+
+
 def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJobManager) -> None:
     """A first reconciliation creates a discoverable job the setup admin can manage."""
     manager.workspace.jobs.create.return_value.job_id = 44
@@ -71,7 +116,12 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
 
     created = manager.workspace.jobs.create.call_args.kwargs
-    assert created["tags"] == {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
+    assert created["timeout_seconds"] == 4 * 60 * 60
+    assert created["tags"] == {
+        "app": "dqx-studio",
+        "dqx_studio_managed": "true",
+        "dqx_component": "task_runner",
+    }
     assert created["access_control_list"][0].user_name == "admin@example.com"
 
 
@@ -111,6 +161,19 @@ def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> N
     assert settings.environments[0].spec.dependencies == ["/Volumes/c/s/v/runner.whl", "/Volumes/c/s/v/dqx.whl"]
 
 
+def test_configure_forwards_every_declared_parameter_to_the_runner(manager: TaskRunnerJobManager) -> None:
+    """Each declared job parameter reaches the runner as a *--name* argument."""
+    manager.workspace.jobs.get.return_value = managed_job(42)
+
+    manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
+
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    task_args = settings.tasks[0].python_wheel_task.parameters
+    for name in (p.name for p in settings.parameters):
+        assert f"--{name}" in task_args
+        assert f"{{{{job.parameters.{name}}}}}" in task_args
+
+
 def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) -> None:
     """Reconciliation retains ownership, cost, and governance tags set outside Studio."""
     manager.workspace.jobs.get.return_value = Job(
@@ -127,10 +190,12 @@ def test_configure_preserves_external_job_tags(manager: TaskRunnerJobManager) ->
     manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
 
     settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.timeout_seconds == 4 * 60 * 60
     assert settings.tags == {
         "owner": "data-platform",
         "cost_center": "finance",
         "governance": "regulated",
+        "app": "dqx-studio",
         "dqx_studio_managed": "true",
         "dqx_component": "task_runner",
     }

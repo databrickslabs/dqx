@@ -9,7 +9,7 @@ middleware.
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -66,6 +66,13 @@ def _enabled_settings() -> MagicMock:
     """App-settings mock with approvals mode = ``enabled`` (no auto-approve)."""
     app_settings = MagicMock()
     app_settings.get_approvals_mode.return_value = "enabled"
+    return app_settings
+
+
+def _disabled_settings() -> MagicMock:
+    """App-settings mock with approvals mode = ``disabled`` (every submit auto-approves)."""
+    app_settings = MagicMock()
+    app_settings.get_approvals_mode.return_value = "disabled"
     return app_settings
 
 
@@ -231,6 +238,7 @@ class TestUpdate:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            grant_svc=MagicMock(),
         )
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
@@ -246,6 +254,7 @@ class TestUpdate:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                grant_svc=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -261,6 +270,7 @@ class TestUpdate:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                grant_svc=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -418,6 +428,44 @@ class TestSubmit:
             )
         assert excinfo.value.status_code == 404
 
+    def test_submit_auto_approve_notifies_scheduler(self):
+        # A submit that auto-approves (disabled mode) activates any cron on the
+        # space, so it must wake the scheduler just like an explicit approve.
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            submit_data_product(
+                "p1",
+                svc=svc,
+                app_settings=_disabled_settings(),
+                draft_run_gate=MagicMock(),
+                perms=MagicMock(),
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                obo_ws=_mock_obo_ws(),
+            )
+        svc.approve.assert_called_once()
+        notify.assert_called_once()
+
+    def test_submit_without_auto_approve_does_not_notify_scheduler(self):
+        # In ``enabled`` mode the submit only moves to pending_approval — no cron
+        # activates yet, so the scheduler must not be woken.
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=0)
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            submit_data_product(
+                "p1",
+                svc=svc,
+                app_settings=_enabled_settings(),
+                draft_run_gate=MagicMock(),
+                perms=MagicMock(),
+                role=UserRole.RULE_AUTHOR,
+                principal_ids=frozenset(),
+                obo_ws=_mock_obo_ws(),
+            )
+        svc.approve.assert_not_called()
+        notify.assert_not_called()
+
     def test_submit_approved_unchanged_raises_409(self):
         """Minor fix: submitting an already-approved, unchanged space via the
         API directly (bypassing the UI's disabled submit button) must 409, not
@@ -462,6 +510,15 @@ class TestApprove:
         with pytest.raises(HTTPException) as excinfo:
             approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
         assert excinfo.value.status_code == 404
+
+    def test_approve_notifies_scheduler(self):
+        # Approval activates any cron on the space; the scheduler must be woken
+        # so its first run does not wait out the idle poll interval.
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
+        with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        notify.assert_called_once()
 
 
 class TestReject:

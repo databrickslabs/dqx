@@ -18,29 +18,33 @@ from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
 from .common.authorization import UserRole, get_user_email
 from .config import AppConfig, conf, get_sql_warehouse_path
-from .demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
 from .demo.status import DemoStatusStore
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
 from .sanitization import replace_control_characters
 from .setup.runtime import setup_runtime
-from .setup.orchestrator import SetupOrchestrator
+from .setup.configuration import SetupConfigurationStore
+from .setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
+from .setup.resources import ActiveResources
 from .services.ai_gateway import AIGateway
 from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.contract_rules_service import ContractRulesService
 from .services.database_reset_service import DatabaseResetService
 from .services.discovery import DiscoveryService
+from .services.reset_status import ResetStatusStore
 from .services.draft_run_gate_service import DraftRunGateService
 from .services.job_service import JobService
 from .services.role_service import RoleService
 from .services.permissions_service import PermissionsService
 from .services.registry_service import RegistryService
+from .services.resource_tagging_service import ResourceTaggingService
 from .services.monitored_table_service import MonitoredTableService
 from .services.apply_rules_service import ApplyRulesService
 from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
+from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
@@ -55,6 +59,7 @@ from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
 from .services.compute_service import ComputeService, resolve_warehouse_id
+from .services.schedule_grant_service import ScheduleGrantService
 from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
@@ -100,6 +105,7 @@ _SP_TTL = 45 * 60  # 45 minutes
 _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
+_WORKSPACE_ADMINS_GROUP = "admins"  # workspace administrators may always run setup
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +117,13 @@ _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interva
 async def get_sp_ws() -> WorkspaceClient:
     """Return the app's service-principal WorkspaceClient, cached for 45 min."""
     return WorkspaceClient()
+
+
+async def get_resource_tagging_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ResourceTaggingService:
+    """Create the ownership-tag reconciler backed by the app service principal."""
+    return ResourceTaggingService(sp_ws)
 
 
 # ---------------------------------------------------------------------------
@@ -285,10 +298,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     """Build the zero-arg Genie re-provision callable, or None when unavailable.
 
     Mirrors ``backend.app._ensure_genie_space``: requires a bound SQL warehouse
-    to attach a freshly-created space to, and resolves the SP's parent folder
-    (falling back to ``/Shared``). ``ensure_dq_genie_space`` is itself idempotent
-    and never raises out of its own body; the callable is invoked best-effort by
-    the reset service, which records (never re-raises) any failure.
+    to attach a freshly-created space to. ``ensure_dq_genie_space`` is itself
+    idempotent and never raises out of its own body; the callable is invoked
+    best-effort by the reset service, which records (never re-raises) any failure.
     """
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
@@ -298,19 +310,13 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        try:
-            parent_path = f"/Users/{sp_ws.current_user.me().user_name}"
-        except Exception:
-            # Best-effort: the parent folder is cosmetic — fall back to a
-            # location every workspace has rather than skip provisioning.
-            parent_path = "/Shared"
         return ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
-            parent_path=parent_path,
             catalog=resources.volume.catalog,
             schema=resources.genie_schema,
+            audience_groups=resources.audience.workspace_principals,
         )
 
     return _reprovision
@@ -331,10 +337,9 @@ async def get_ai_gateway(
     """Create an AIGateway using the caller's OBO credentials.
 
     Every AIGateway call (kill-switch, rate limit, audit — see services/ai_gateway.py) runs
-    as the calling user via their OBO token, so the serving-endpoint call is subject to the
-    user's own UC permissions on the endpoint, not the app's service principal's. Role checks
-    (``require_role``) at the route layer remain the app-level gate on top of that; the SP
-    itself no longer needs (and should not be granted) query access to AI serving endpoints.
+    as the calling user via their OBO token, so the model-service call is subject to the
+    user's own Unity Catalog grants on the model service, not the app's service principal's.
+    Role checks (``require_role``) at the route layer remain the app-level gate on top of that.
     """
     return AIGateway(user_ws=obo_ws, app_settings=app_settings)
 
@@ -346,8 +351,7 @@ async def get_ai_rules_service(
 ) -> AiRulesService:
     """Create an AiRulesService, entirely OBO-authenticated.
 
-    Schema lookups and both LLM legs (the legacy ChatDatabricks path used by the contract
-    importer, and the AIGateway-backed purpose calls — generate_rule/suggest_field/
+    Schema lookups and the AIGateway-backed purpose calls (generate_rule/suggest_field/
     generate_checks_via_gateway) run as the calling user, so every model invocation and UC
     read triggered by an AI-assisted request is subject to that user's own permissions.
 
@@ -568,14 +572,14 @@ async def get_rule_embeddings_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> RuleEmbeddingsService:
-    """Create a RuleEmbeddingsService with split serving-endpoint auth.
+    """Create a RuleEmbeddingsService with split model-service auth.
 
     * **SP** (``sp_ws``): corpus writes / backfill via ``embed_and_store`` —
       publish and startup have no end-user token to query the embedding
-      endpoint as.
+      model as.
     * **OBO** (``obo_ws``): query-time ``embed_texts`` used by retrieval —
-      same user-scoped identity as ``AIGateway``'s judge calls, so endpoint
-      ACLs and the caller's permissions apply. (Kill-switch / rate-limit
+      same user-scoped identity as ``AIGateway``'s judge calls, so the
+      caller's Unity Catalog grants apply. (Kill-switch / rate-limit
       still live on the AIGateway path for generation; embeddings are not
       routed through AIGateway.)
     """
@@ -595,13 +599,11 @@ async def get_rule_retriever(
 
 
 async def get_ai_bootstrap(
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
 ) -> AiBootstrap:
-    """Create the best-effort AI grants + embeddings backfill helper."""
-    return AiBootstrap(sp_ws=sp_ws, app_settings=app_settings, embeddings=embeddings, registry=registry)
+    """Create the best-effort AI embeddings backfill helper."""
+    return AiBootstrap(embeddings=embeddings, registry=registry)
 
 
 async def get_discovery_service(
@@ -666,6 +668,7 @@ async def get_profiling_suggestion_service(
 async def get_view_service(
     sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> ViewService:
     """Create a ViewService with split auth.
 
@@ -673,7 +676,21 @@ async def get_view_service(
     enforced.  Schema DDL uses the SP executor so that users don't need
     catalog-level CREATE SCHEMA privileges.
     """
-    return ViewService(sql=sql, sp_sql=sp_sql)
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
+    _runner, cleanup = await asyncio.to_thread(resolve_execution_principals, sp_ws)
+    return ViewService(sql=sql, sp_sql=sp_sql, cleanup_principal=cleanup)
+
+
+async def get_scheduler_view_service(sp_ws: WorkspaceClient, sp_sql: SqlExecutor) -> ViewService:
+    """Create background views in the temporary schema under the app identity."""
+    resources = rt.require_resources()
+    tmp_sql = SqlExecutor(
+        ws=sp_ws,
+        warehouse_id=resources.warehouse_id,
+        catalog=resources.volume.catalog,
+        schema=resources.tmp_schema,
+    )
+    return await get_view_service(sql=tmp_sql, sp_sql=sp_sql, sp_ws=sp_ws)
 
 
 async def get_comments_service(
@@ -689,6 +706,21 @@ async def get_compute_service(
 ) -> ComputeService:
     """Create a ComputeService (SP-scoped listing + warehouse access checks, P22-B)."""
     return ComputeService(sp_ws=sp_ws, app_settings=app_settings)
+
+
+async def get_schedule_grant_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> ScheduleGrantService:
+    """Create a ScheduleGrantService (OBO grantability checks + scheduler grants, Task 12).
+
+    Reads and grants run under the caller's OBO client; *sp_ws* is used only to
+    resolve the app SP identity and derive the task-runner SP from the bound job.
+    """
+    resources = rt.require_resources()
+    return ScheduleGrantService(
+        obo_ws=obo_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=resources.warehouse_id or ""
+    )
 
 
 async def get_preview_sql_executor(
@@ -774,13 +806,16 @@ async def get_job_service(
     admin-configured SQL warehouse (``dq_app_settings``) is resolved here and
     threaded into the submitted run so the task runner's temp-view cleanup path
     honours it (env fallback when unset).
+
+    Oversized run configs are staged in the ``dq_run_configs`` Delta table in the
+    main schema, which the runner reads with Spark.
     """
+    await asyncio.to_thread(resolve_execution_principals, sp_ws)
     return JobService(
         ws=sp_ws,
         job_id=str(_require_resolved_job_id()),
         sql=sql,
         warehouse_id=resolve_warehouse_id(app_settings),
-        wheels_volume=rt.require_resources().volume.path,
     )
 
 
@@ -793,6 +828,66 @@ def _require_resolved_job_id() -> int:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DQX Studio setup is not ready.",
         ) from None
+
+
+def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
+    """Resolve fresh runner and app identities, failing closed with setup guidance.
+
+    Raises:
+        HTTPException: Setup or identity inspection is unavailable, or the
+            principals are not distinct.
+    """
+    job_id = _require_resolved_job_id()
+    # SDK authentication and transport failures may contain credentials; sanitize
+    # every failure at these external boundaries rather than exposing raw messages.
+    try:
+        job = workspace.jobs.get(job_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to inspect the task-runner job. Confirm the configured job exists and the "
+                "app service principal has CAN_MANAGE on it, then verify again in Studio setup."
+            ),
+        ) from None
+    runner = getattr(getattr(job.settings, "run_as", None), "service_principal_name", None)
+    try:
+        identity = workspace.current_user.me()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Unable to resolve the app service principal identity. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        ) from None
+    app_principal = identity.user_name or identity.id
+    if (
+        not isinstance(app_principal, str)
+        or not app_principal.strip()
+        or sanitize_setup_display(app_principal) != app_principal
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "A valid app service principal identity is required. Check the app's workspace "
+                "authentication and identity access, then verify again in Studio setup."
+            ),
+        )
+    if (
+        not isinstance(runner, str)
+        or not runner.strip()
+        or sanitize_setup_display(runner) != runner
+        or runner.casefold() == app_principal.casefold()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Assign a task-runner service principal distinct from the app service principal "
+                "in the Jobs UI, then verify again in Studio setup."
+            ),
+        )
+    return runner, app_principal
 
 
 async def get_run_set_service(
@@ -869,6 +964,22 @@ async def get_score_cache_service(
     )
 
 
+async def get_metadata_dim_service(
+    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> MetadataDimService:
+    """Create the materializer for the Genie metadata dimensions."""
+    resources = rt.require_resources()
+    return MetadataDimService(
+        sp_sql=sp_sql,
+        registry=registry,
+        monitored_tables=monitored_tables,
+        genie_schema=resources.genie_schema,
+        audience_groups=resources.audience.uc_principals,
+    )
+
+
 async def get_entitlement_service(
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> EntitlementService:
@@ -940,6 +1051,13 @@ async def get_demo_status_store(
     return DemoStatusStore(app_settings)
 
 
+async def get_reset_status_store(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ResetStatusStore:
+    """Create the settings-backed store for the long-running database-reset job status."""
+    return ResetStatusStore(app_settings)
+
+
 async def get_demo_seed_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
@@ -958,6 +1076,7 @@ async def get_demo_seed_service(
     status: Annotated[DemoStatusStore, Depends(get_demo_status_store)],
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
+    schedule_config: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -967,22 +1086,27 @@ async def get_demo_seed_service(
     load-bearing:
 
     * ``demo_sql`` is a fresh :class:`SqlExecutor` bound to the demo source
-      schema (:data:`~backend.demo.manifest.SOURCE_SCHEMA`), where the seeded
+      schema (*resources.demo_schema*), where the seeded
       e-commerce tables live, rather than the app's own ``dqx_studio`` schema.
     * The :class:`BindingRunService` is built with a :class:`ViewService` whose
       ``sql`` AND ``sp_sql`` slots are BOTH the SP executor — unlike the OBO
       ``get_view_service`` used on request paths — so background runs create
       their temp views with no user token.
+    * The :class:`ScheduleGrantService` for the paused demo schedules uses the
+      SP on both legs (``obo_ws`` too): the SP created the demo tables, so its
+      read probe passes and only the best-effort task-runner grant runs.
     """
     from .demo.seed_service import DemoSeedService
 
     resources = rt.require_resources()
     warehouse_id = resources.warehouse_id
+    # Called for its run_as validation side effect (runner must be a distinct SP); the runner result is unused.
+    _runner_principal, cleanup_principal = await asyncio.to_thread(resolve_execution_principals, sp_ws)
     demo_sql = SqlExecutor(
         ws=sp_ws,
         warehouse_id=warehouse_id,
         catalog=resources.volume.catalog,
-        schema=DEMO_SOURCE_SCHEMA,
+        schema=resources.demo_schema,
     )
     sp_view = ViewService(
         sql=SqlExecutor(
@@ -992,6 +1116,7 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        cleanup_principal=cleanup_principal,
     )
     # Profiler temp views for the demo profiling phase are created on the tmp
     # schema (like the request-path ViewService), but as the SP — the seed runs
@@ -1004,6 +1129,7 @@ async def get_demo_seed_service(
             schema=resources.tmp_schema,
         ),
         sp_sql=sp_sql,
+        cleanup_principal=cleanup_principal,
     )
     binding_run = BindingRunService(
         monitored_tables=monitored_tables,
@@ -1020,6 +1146,7 @@ async def get_demo_seed_service(
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=sp_ws,
+        resource_tagger=ResourceTaggingService(sp_ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,
@@ -1034,7 +1161,12 @@ async def get_demo_seed_service(
         embeddings=embeddings,
         job_service=job_service,
         profiler_view=profiler_view,
+        schedule_config=schedule_config,
+        schedule_grants=ScheduleGrantService(
+            obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
+        ),
         catalog=resources.volume.catalog,
+        schema=resources.demo_schema,
     )
 
 
@@ -1128,27 +1260,36 @@ CurrentUserRole = Annotated[UserRole, Depends(get_user_role)]
 class SetupAccess:
     """Authenticated setup-management access derived without application storage."""
 
-    user_name: str
+    user_name: str | None
     can_manage: bool
 
 
 def setup_access(user: User, admin_group: str) -> SetupAccess:
     """Derive bootstrap setup access from a trusted SCIM user record.
 
+    Members of the configured administrator group or of the workspace *admins* group may
+    manage setup. Group names are compared case-insensitively after sanitization.
+
     Args:
         user: User returned by the caller's OBO-authenticated SCIM request.
         admin_group: Configured Databricks group permitted to manage setup.
 
     Returns:
-        Sanitized user identity and whether they are a member of the configured group.
+        Sanitized user identity and whether they may manage setup.
     """
-    configured_group = sanitize_setup_display(admin_group)
+    setup_groups = {
+        group.casefold()
+        for group in (sanitize_setup_display(admin_group), _WORKSPACE_ADMINS_GROUP)
+        if group is not None
+    }
     groups = {
-        display for group in (user.groups or []) if (display := sanitize_setup_display(group.display)) is not None
+        display.casefold()
+        for group in (user.groups or [])
+        if (display := sanitize_setup_display(group.display)) is not None
     }
     return SetupAccess(
-        user_name=sanitize_setup_display(user.user_name) or "unknown",
-        can_manage=configured_group is not None and configured_group in groups,
+        user_name=sanitize_setup_display(user.user_name),
+        can_manage=not setup_groups.isdisjoint(groups),
     )
 
 
@@ -1188,7 +1329,10 @@ def require_setup_admin() -> object:
         if not access.can_manage:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Setup reconciliation requires membership in the configured administrator group.",
+                detail=(
+                    "Setup reconciliation requires membership in the configured administrator group "
+                    "or the workspace admins group."
+                ),
             )
         return access
 
@@ -1201,6 +1345,40 @@ def get_setup_orchestrator(request: Request) -> SetupOrchestrator:
     if orchestrator is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
     return orchestrator
+
+
+def get_setup_configuration_store(request: Request) -> SetupConfigurationStore:
+    """Return the setup choices store built over the startup Lakebase executor.
+
+    The store is published on application state during startup, before activation, so it is
+    available while the setup gate still blocks every other database-backed route.
+    """
+    store = getattr(request.app.state, "setup_configuration_store", None)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DQX Studio setup is unavailable.")
+    return store
+
+
+def get_setup_sql_reader_factory(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+) -> ReaderSqlFactory:
+    """Return a builder of OBO SQL executors for setup grant inspection on given storage.
+
+    Setup binds storage during a run (for example right after new choices are saved), so
+    the orchestrator builds the executor once it knows which storage is bound.
+    """
+    warehouse_id = orchestrator.bootstrap.warehouse_id
+
+    def build(resources: ActiveResources) -> SqlExecutor | None:
+        return SqlExecutor(
+            ws=obo_ws,
+            warehouse_id=warehouse_id,
+            catalog=resources.volume.catalog,
+            schema=resources.tmp_schema,
+        )
+
+    return build
 
 
 def sanitize_setup_display(value: str | None) -> str | None:
@@ -1314,12 +1492,14 @@ __all__ = [
     "get_user_role",
     "get_comments_service",
     "get_compute_service",
+    "get_schedule_grant_service",
     "get_preview_sql_executor",
     "get_table_data_service",
     "get_rule_test_service",
     "get_review_status_service",
     "get_schedule_config_service",
     "get_demo_status_store",
+    "get_reset_status_store",
     "get_demo_seed_service",
     "require_role",
     "CurrentUserRole",

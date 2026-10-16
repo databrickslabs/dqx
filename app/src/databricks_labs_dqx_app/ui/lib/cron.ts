@@ -145,24 +145,70 @@ export function cronToSimple(cron: string | null | undefined): { cadence: Simple
   return null;
 }
 
+/** i18n key stem for each weekday, indexed by POSIX cron number (0 = Sunday).
+ *  The humanizer resolves a day-of-week to one of these and looks it up via
+ *  `t("schedule.weekday.<stem>")`, so the rendered day name stays localized
+ *  (no English literal is interpolated into the hint). */
+const WEEKDAY_KEYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+/** Resolve a single day-of-week token — a number `0`-`7` or a 3-letter name —
+ *  to its normalized weekday index `0`-`6` (Sunday = 0; both `0` and `7` mean
+ *  Sunday, matching POSIX cron). Returns null for anything that isn't a single
+ *  day (`*`, comma lists, `a-b` ranges, or `*​/n` steps). */
+function resolveWeekday(dow: string): number | null {
+  const token = dow.trim();
+  if (token === "*" || token.includes(",") || token.includes("-") || token.includes("/")) return null;
+  const num = resolveToken(token, WEEKDAY_NAMES);
+  if (num === null || num < 0 || num > 7) return null;
+  return num % 7; // 7 -> 0 (Sunday)
+}
+
+/** Parse a "runs weekly on one weekday" cron (`{mm} {hh} * * {dow}`) into its
+ *  "HH:MM" time and weekday i18n key. Returns null for any other shape —
+ *  hourly/daily, a non-numeric minute/hour, a specific day-of-month/month, or a
+ *  day-of-week that isn't a single value. Unlike `cronToSimple` (which only
+ *  recognizes the Monday shape its simple picker emits) this accepts every
+ *  weekday so the humanizer can name it. */
+function parseWeeklyCron(cron: string): { time: string; dayKey: string } | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minute, hour, dom, month, dow] = parts;
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return null;
+  if (dom !== "*" || month !== "*") return null;
+  const day = resolveWeekday(dow);
+  if (day === null) return null;
+  const mm = String(Number(minute)).padStart(2, "0");
+  const hh = String(Number(hour)).padStart(2, "0");
+  return { time: `${hh}:${mm}`, dayKey: WEEKDAY_KEYS[day] };
+}
+
 /** Human-readable hint for a cron expression, built entirely from `t()`
  *  fragments (i18n-sane by construction — no English string literals are
- *  interpolated into the result). Falls back to a generic "runs on: <cron>"
- *  translation for shapes outside the three simple cadences. Callers should
- *  gate on `isValidCron` first for malformed input. */
+ *  interpolated into the result). Renders the hourly and daily cadences, plus
+ *  a weekly-on-any-weekday cadence (Sunday through Saturday, `0`/`7` = Sunday).
+ *  Falls back to a generic "runs on: <cron>" translation only for expressions
+ *  outside those shapes. Callers should gate on `isValidCron` first for
+ *  malformed input. */
 export function cronHint(cron: string, tz: string | null | undefined, t: TFunction): string {
   const trimmed = cron.trim();
   const tzLabel = tz || "UTC";
   const simple = cronToSimple(trimmed);
-  if (simple) {
-    if (simple.cadence === "hourly") {
-      const minute = simple.time.split(":")[1];
-      return t("dataProducts.scheduleHintHourly", { minute, tz: tzLabel });
-    }
-    if (simple.cadence === "weekly") {
-      return t("dataProducts.scheduleHintWeekly", { time: simple.time, tz: tzLabel });
-    }
+  if (simple?.cadence === "hourly") {
+    const minute = simple.time.split(":")[1];
+    return t("dataProducts.scheduleHintHourly", { minute, tz: tzLabel });
+  }
+  if (simple?.cadence === "daily") {
     return t("dataProducts.scheduleHintDaily", { time: simple.time, tz: tzLabel });
+  }
+  // Weekly on a single weekday (any day, including Sunday `0`/`7`), resolved
+  // straight from the dow field so every day renders — not just Monday.
+  const weekly = parseWeeklyCron(trimmed);
+  if (weekly) {
+    return t("dataProducts.scheduleHintWeekly", {
+      day: t(`schedule.weekday.${weekly.dayKey}`),
+      time: weekly.time,
+      tz: tzLabel,
+    });
   }
   return t("dataProducts.scheduleHintRaw", { cron: trimmed, tz: tzLabel });
 }

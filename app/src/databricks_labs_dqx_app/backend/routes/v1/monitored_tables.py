@@ -4,14 +4,17 @@ Layer 2 of the Rules Registry
 (``docs/superpowers/specs/2026-07-02-rules-registry-design.md`` §7): a thin
 binding recording that a table is under active Rules Registry governance,
 plus the live link of applied registry rules and the materializer that
-renders them into ``dq_quality_rules`` (Phase 3C).
+renders them into ``dq_resolved_rules`` (Phase 3C).
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -33,6 +36,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_rule_suggester,
     get_rules_catalog_service,
+    get_schedule_grant_service,
     get_tag_suggestion_service,
     require_role,
 )
@@ -42,6 +46,13 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
     DraftRunRequiredError,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    CannotManageError,
+    WarehouseUnavailableError,
+    inspection_failure_detail,
+    ScheduleGrantService,
+    manage_block_detail,
+)
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AppliedRuleOut,
@@ -51,6 +62,7 @@ from databricks_labs_dqx_app.backend.models import (
     BatchRecordPendingApplicationsOut,
     BulkRegisterMonitoredTablesIn,
     BulkRegisterMonitoredTablesOut,
+    ImplementedRuleOut,
     LifecycleRationaleIn,
     MonitoredTableDetailOut,
     MonitoredTableOut,
@@ -78,7 +90,10 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
+    get_rule_dimension,
     get_rule_name,
+    get_rule_pass_threshold,
+    get_rule_severity,
     RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
@@ -95,7 +110,7 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     MissingSnapshotError,
     NeverApprovedError,
 )
-from databricks_labs_dqx_app.backend.run_config_store import RunConfigTooLargeError
+from databricks_labs_dqx_app.backend.run_config_store import RunConfigError, RunConfigStagingError
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -104,6 +119,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -168,7 +184,7 @@ def _apply_snapshot_check_counts(
     B2-25: the overview "# Checks" must agree with the DQ score and the detail
     page. The score is derived from the FROZEN per-version snapshot (via
     ``dq_metrics``), whereas ``MonitoredTableService.list_monitored_tables``
-    counts live ``dq_quality_rules`` rows — a transient set that a
+    counts live ``dq_resolved_rules`` rows — a transient set that a
     re-materialization can (wrongly, pre-Fix-B) drop to zero, so a scored table
     could show 0 checks. Count from the snapshot instead:
 
@@ -212,6 +228,61 @@ def _apply_snapshot_check_counts(
                 summary.check_count = snapshot[1]
                 continue
         summary.check_count = live_counts.get(summary.table.binding_id, 0)
+
+
+@router.get(
+    "/implemented-rules",
+    response_model=list[ImplementedRuleOut],
+    operation_id="listImplementedRules",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_implemented_rules(
+    tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    applied_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    binding_id: Annotated[str | None, Query(description="Only this monitored table's rule applications")] = None,
+    rule_id: Annotated[str | None, Query(description="Only this registry rule's applications")] = None,
+) -> list[ImplementedRuleOut]:
+    """List rule applications, enriched with each monitored table's FQN and the rule's tags.
+
+    Scoped reads power the lazy row expansions on the overviews: *binding_id*
+    lists one table's applied rules (Tables overview), *rule_id* lists the
+    tables one rule is applied to (Rules overview). With neither, every
+    application is listed. Each scope is a single filtered query plus one
+    batched table-FQN lookup and one batched rule lookup. Applications whose
+    binding no longer resolves to a monitored table are skipped.
+    """
+    try:
+        if binding_id:
+            applied = applied_rules.list_applied(binding_id)
+            if rule_id:
+                applied = [row for row in applied if row.rule_id == rule_id]
+        elif rule_id:
+            applied = applied_rules.list_bindings_for_rule(rule_id)
+        else:
+            applied = applied_rules.list_all()
+        table_by_binding = tables.get_table_fqns({row.binding_id for row in applied})
+        applied = [row for row in applied if row.binding_id in table_by_binding]
+
+        # Enrich with rule metadata
+        rules = registry.get_rules_many({row.rule_id for row in applied})
+        result: list[ImplementedRuleOut] = []
+        for row in applied:
+            base = AppliedRuleOut.from_domain(row).model_dump()
+            rule = rules.get(row.rule_id)
+            if rule is not None:
+                base.update(
+                    rule_name=get_rule_name(rule.user_metadata),
+                    rule_dimension=get_rule_dimension(rule.user_metadata),
+                    rule_severity=get_rule_severity(rule.user_metadata),
+                    rule_pass_threshold=get_rule_pass_threshold(rule.user_metadata),
+                    rule_source=rule.source,
+                )
+            result.append(ImplementedRuleOut(**base, table_fqn=table_by_binding[row.binding_id]))
+        return result
+    except Exception as e:
+        logger.error(f"Failed to list implemented rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list implemented rules.")
 
 
 @router.get(
@@ -309,6 +380,57 @@ def register_monitored_table(
         raise HTTPException(status_code=500, detail=f"Failed to register monitored table: {e}")
 
 
+_UC_VERIFY_WORKERS = 8
+
+
+def _verify_tables_accessible(obo_ws: WorkspaceClient, table_fqns: list[str]) -> None:
+    """Raise 422 if any syntactically valid FQN is missing or not readable in Unity Catalog.
+
+    Invalid FQNs are skipped here — :meth:`MonitoredTableService.bulk_register`
+    already reports them in the summary. Lookups run concurrently so a large
+    onboarding batch stays bounded in latency.
+    """
+    candidates: list[str] = []
+    for fqn in dict.fromkeys(table_fqns):
+        try:
+            validate_fqn(fqn)
+        except ValueError:
+            continue
+        candidates.append(fqn)
+    if not candidates:
+        return
+
+    def _check(fqn: str) -> str | None:
+        try:
+            obo_ws.tables.get(full_name=fqn)
+            return None
+        except (NotFound, PermissionDenied):
+            return fqn
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(_UC_VERIFY_WORKERS, len(candidates))) as pool:
+            unavailable = [fqn for fqn in pool.map(_check, candidates) if fqn is not None]
+    except Exception as e:
+        logger.error(f"Failed to verify bulk-registered tables in Unity Catalog: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "import_table_validation_failed",
+                "message": "Could not verify the tables in Unity Catalog. Please try again.",
+            },
+        )
+    if unavailable:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "import_tables_unavailable",
+                "message": "Registration blocked: one or more tables do not exist or are not accessible "
+                "in Unity Catalog.",
+                "tables": unavailable,
+            },
+        )
+
+
 @router.post(
     "/bulk",
     response_model=BulkRegisterMonitoredTablesOut,
@@ -327,15 +449,20 @@ def bulk_register_monitored_tables(
     back in the summary rather than failing the whole batch — see
     :meth:`MonitoredTableService.bulk_register`.
 
+    Every syntactically valid FQN is first verified in Unity Catalog with the
+    caller's OBO identity. If any table does not exist or is not accessible,
+    the whole import is rejected (422, listing the tables) before any binding
+    is written — otherwise the caller would be left with bindings that can
+    never be profiled or run.
+
     Unlike single register, bulk register does **not** resolve each table's
-    Unity Catalog owner: that would be one ``tables.get`` round-trip per table
-    (N calls, plus rate-limit exposure) on a path meant for onboarding many
-    tables quickly. When no owner is pinned, every binding defaults to the
+    Unity Catalog owner. When no owner is pinned, every binding defaults to the
     creator; a per-table owner can be assigned afterwards from the table's
     Permissions tab.
     """
     try:
         user_email = _current_user_email(obo_ws)
+        _verify_tables_accessible(obo_ws, body.table_fqns)
         result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
         # Apply-on-tag: auto-attach matches for only the NEWLY-registered tables
         # (never skipped_existing/invalid). ``BulkRegisterResult.registered`` is a
@@ -353,6 +480,8 @@ def bulk_register_monitored_tables(
             except Exception:
                 logger.warning("Tag auto-apply after bulk-register failed (non-fatal)", exc_info=True)
         return BulkRegisterMonitoredTablesOut.from_domain(result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to bulk-register monitored tables: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to bulk-register monitored tables: {e}")
@@ -377,7 +506,7 @@ def delete_monitored_table(
     the caller is an admin/approver.
 
     TODO(Phase 3C): once the materializer exists, block/handle
-    de-materialization of any ``dq_quality_rules`` rows tied to this
+    de-materialization of any ``dq_resolved_rules`` rows tied to this
     binding's applications before allowing deletion.
     """
     user_email = _current_user_email(obo_ws)
@@ -454,12 +583,19 @@ def update_monitored_table_schedule(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
 ) -> MonitoredTableOut:
     """Set or clear a monitored table's run schedule (P21 item 14).
 
     Requires ``MODIFY`` on the monitored table unless the caller is an
     admin/approver. Orthogonal to the review lifecycle — does NOT flip the
     binding's status. An approved table with a cron fires on the in-app scheduler.
+
+    When a schedule is being *set* (a non-empty cron), the caller must be able to
+    grant the scheduler service principals SELECT on the source table — scheduled
+    runs have no OBO token and read as those SPs. If the caller can grant we do so
+    (idempotently) before saving; if not, the save is hard-blocked (403) naming
+    the users/groups that hold MANAGE (Task 12).
     """
     user_email = _current_user_email(obo_ws)
     perms.require_object(
@@ -470,6 +606,28 @@ def update_monitored_table_schedule(
         principal_ids=set(principal_ids),
         principal_email=user_email,
     )
+
+    # Only gate/grant when a schedule is actually being set/enabled — clearing a
+    # schedule (empty cron) needs no source-table access.
+    if (body.schedule_cron or "").strip():
+        detail = svc.get(binding_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
+        table_fqn = detail.table.table_fqn
+        try:
+            grant_svc.grant_select_to_schedulers(table_fqn)
+        except CannotManageError as e:
+            raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+        except WarehouseUnavailableError as e:
+            logger.warning("Schedule gate inconclusive for %s: %s", binding_id, e)
+            raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
+        except Exception as e:
+            logger.error(f"Failed to grant scheduler access on {binding_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not grant the scheduler read access to this table.",
+            )
+
     try:
         table = svc.update_schedule(
             binding_id,
@@ -479,6 +637,11 @@ def update_monitored_table_schedule(
             schedule_kind=body.schedule_kind,
             schedule_sample_size=body.schedule_sample_size,
         )
+        # Setting a cron on an approved table activates it immediately (the
+        # schedule is orthogonal to the review lifecycle) — wake the scheduler
+        # so its first run does not wait out the idle poll interval.
+        if (body.schedule_cron or "").strip():
+            scheduler_registry.notify_scheduler()
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -669,7 +832,15 @@ def run_monitored_table(
         raise HTTPException(status_code=422, detail=str(e))
     except BindingRunError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except RunConfigTooLargeError as e:
+    except RunConfigStagingError as e:
+        # Staging the oversized config failed for an infrastructure reason
+        # (SQL warehouse unreachable, or dq_run_configs missing) — a server-side
+        # fault, not a bad request. Subclass check must precede RunConfigError.
+        logger.error(f"Failed to stage run config for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e))
+    except RunConfigError as e:
+        # Caller/config-level: config too large to submit even as a manifest
+        # stub. This is genuinely 400-class.
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to run monitored table {binding_id}: {e}", exc_info=True)
@@ -766,7 +937,14 @@ def batch_record_pending_applications(
     user_email = _current_user_email(obo_ws)
     for index, entry in enumerate(body.applications):
         try:
-            pending.record(entry.binding_id, entry.rule_id, entry.column_mapping, user_email)
+            pending.record(
+                entry.binding_id,
+                entry.rule_id,
+                entry.column_mapping,
+                user_email,
+                row_filter=entry.row_filter,
+                pass_threshold=entry.pass_threshold,
+            )
             recorded += 1
         except Exception as e:
             logger.error(
@@ -835,6 +1013,8 @@ def list_pending_applications(
                     rule_name=get_rule_name(rule.user_metadata) if rule else None,
                     rule_status=rule.status if rule else None,
                     column_mapping=row.column_mapping,
+                    row_filter=row.row_filter,
+                    pass_threshold=row.pass_threshold,
                     created_by=row.created_by,
                     created_at=row.created_at.isoformat() if row.created_at else None,
                 )
@@ -950,7 +1130,7 @@ def remove_applied_rule(
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+    """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
     Requires ``APPLY`` on the monitored table unless the caller is an admin/approver.
     """
@@ -1056,11 +1236,11 @@ def set_applied_rule_severity_override(
 # parallel status-mutation implementation, these routes REUSE the per-rule
 # transition path (``RulesCatalogService.set_status`` — the exact call
 # ``routes/v1/rules.py`` submit/approve/reject make) to move each of the
-# binding's materialized ``dq_quality_rules`` rows, so audit/history/version
+# binding's materialized ``dq_resolved_rules`` rows, so audit/history/version
 # semantics are identical for a table's checks whether they were submitted
 # one at a time from Drafts & Review or in bulk from here. The binding's own
 # status is then rolled up from its checks. The scheduler is untouched: it
-# still runs only ``dq_quality_rules`` rows at ``status='approved'``.
+# still runs only ``dq_resolved_rules`` rows at ``status='approved'``.
 # ------------------------------------------------------------------
 
 
@@ -1178,7 +1358,7 @@ def submit_monitored_table(
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
 
-    Materializes the binding's applied rules into ``dq_quality_rules`` (the
+    Materializes the binding's applied rules into ``dq_resolved_rules`` (the
     UI has already persisted any staged edits via ``saveAppliedRules``), then
     submits every freshly-materialized ``draft`` check for approval — reusing
     the same per-rule transition the Drafts & Review queue uses — and rolls
@@ -1300,7 +1480,7 @@ def approve_monitored_table(
     Reuses the per-rule approve transition so each check's audit trail is
     identical to a hand-approval, then rolls the binding up to ``approved``.
     From here the scheduler picks the checks up (it runs only ``approved``
-    ``dq_quality_rules`` rows).
+    ``dq_resolved_rules`` rows).
 
     Table approval is the ONLY event that bumps the monitored-table version:
     after the binding rolls up to ``approved`` the newly-approved rule set is

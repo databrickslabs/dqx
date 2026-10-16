@@ -114,7 +114,6 @@ export function SchedulePicker({ cron, timezone, onChange, onValidityChange, can
                 aria-invalid={cronInvalid}
                 aria-label={t("dataProducts.scheduleCronAriaLabel")}
               />
-              <p className="text-xs text-muted-foreground">{t("dataProducts.scheduleCronHelp")}</p>
               {cronInvalid ? (
                 <p className="text-xs text-destructive">{t("dataProducts.scheduleCronInvalid")}</p>
               ) : cronTrimmed.length > 0 ? (

@@ -803,6 +803,23 @@ class TestDeleteBuiltinRules:
 # ---------------------------------------------------------------------------
 
 
+class TestFillOwnerDisplayNames:
+    def test_delegates_to_the_shared_helper_for_the_rules_table(self, svc, sql, monkeypatch):
+        import databricks_labs_dqx_app.backend.services.registry_service as mod
+
+        calls: list = []
+        monkeypatch.setattr(mod, "fill_owner_display_names_from_cache", lambda *a, **kw: calls.append((a, kw)))
+        objects, defer, mark = [object()], object(), object()
+
+        svc.fill_owner_display_names(objects, defer=defer, mark_unverified=mark)
+
+        [(args, kwargs)] = calls
+        assert args[0] is objects
+        assert args[2] is sql
+        assert "dq_rules" in args[3]
+        assert kwargs == {"defer": defer, "mark_unverified": mark}
+
+
 class TestListAndGet:
     def test_list_filters_by_status_in_sql(self, svc, sql):
         sql.query.return_value = []

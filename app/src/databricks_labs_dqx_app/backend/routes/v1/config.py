@@ -9,6 +9,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_ai_bootstrap,
@@ -32,6 +33,7 @@ from databricks_labs_dqx_app.backend.services.app_settings_service import (
     AppSettingsService,
 )
 from databricks_labs_dqx_app.backend.services.ai_bootstrap import AiBootstrap
+from databricks_labs_dqx_app.backend.services.model_services import CHAT_COMPLETIONS_API, ModelServices
 
 _TZ_SETTING_KEY = "display_timezone"
 _TZ_DEFAULT = "UTC"
@@ -153,16 +155,6 @@ class LabelDefinitionsIn(BaseModel):
     definitions: list[LabelDefinition]
 
 
-def _notify_scheduler() -> None:
-    """Best-effort reload of the background scheduler after config changes."""
-    try:
-        from databricks_labs_dqx_app.backend._scheduler_registry import notify_scheduler
-
-        notify_scheduler()
-    except Exception:
-        pass
-
-
 router = APIRouter()
 
 
@@ -199,7 +191,7 @@ def save_config(
     """Save workspace config to application state (admin only)."""
     try:
         svc.save_config(body.config, user_email=email)
-        _notify_scheduler()
+        scheduler_registry.notify_scheduler()
         config = svc.get_config()
         return ConfigOut(config=config)
     except Exception as e:
@@ -249,7 +241,7 @@ def save_run_config(
         config.run_configs.append(body.config)
 
     svc.save_config(config, user_email=email)
-    _notify_scheduler()
+    scheduler_registry.notify_scheduler()
     return RunConfigOut(config=body.config)
 
 
@@ -273,7 +265,7 @@ def delete_run_config(
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     svc.save_config(config, user_email=email)
-    _notify_scheduler()
+    scheduler_registry.notify_scheduler()
     return ConfigOut(config=config)
 
 
@@ -1009,7 +1001,7 @@ class AiSettingsIn(BaseModel):
 
 
 def _fire_and_forget_ensure_ai_ready(bootstrap: AiBootstrap) -> None:
-    """Kick off AI grants + embeddings backfill on a background thread.
+    """Kick off the AI embeddings backfill on a background thread.
 
     ``AiBootstrap.ensure_ai_ready`` is an async, best-effort, never-raising
     coroutine. This route runs synchronously with no event loop of its own,
@@ -1086,8 +1078,8 @@ def save_ai_settings(
     logger.info("Saved AI Gateway settings (by=%s)", email)
 
     # Best-effort, non-blocking AI bootstrap: whenever a save leaves AI
-    # enabled, grant serving-endpoint access and backfill embeddings so
-    # cosine rule suggestions work without a separate admin action.
+    # enabled, backfill embeddings so cosine rule suggestions work without
+    # a separate admin action.
     if svc.get_ai_enabled():
         _fire_and_forget_ensure_ai_ready(bootstrap)
 
@@ -1095,36 +1087,35 @@ def save_ai_settings(
 
 
 # ----------------------------------------------------------------------
-# Serving endpoints — Rules Registry Phase 7F. Backs the AI settings
-# dropdown so admins pick ``ai_endpoint_name``/``embedding_endpoint_name``
-# from the workspace's actual serving endpoints instead of typing a raw
+# Model services — backs the AI settings dropdown so admins pick
+# ``ai_endpoint_name`` from the Databricks-provided chat models in
+# ``system.ai`` (Unity Gateway model services) instead of typing a raw
 # string. Read-only, best-effort: any SDK failure (permissions, transient
 # outage) degrades to an empty list rather than a 500 so the settings page
-# still renders and free-text fallback remains possible.
+# still renders and the current value stays selectable.
 # ----------------------------------------------------------------------
 
 
-class ServingEndpointsOut(BaseModel):
+class ModelServicesOut(BaseModel):
     names: list[str]
 
 
 @router.get(
-    "/serving-endpoints",
-    response_model=ServingEndpointsOut,
-    operation_id="listServingEndpoints",
+    "/model-services",
+    response_model=ModelServicesOut,
+    operation_id="listModelServices",
     dependencies=[require_role(UserRole.ADMIN)],
 )
-async def list_serving_endpoints(
+async def list_model_services(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-) -> ServingEndpointsOut:
-    """Return the workspace's serving endpoint names, or ``[]`` on any SDK failure."""
+) -> ModelServicesOut:
+    """Return the chat model services in ``system.ai``, or ``[]`` on any SDK failure."""
     try:
-        endpoints = await asyncio.to_thread(lambda: list(sp_ws.serving_endpoints.list()))
+        names = await asyncio.to_thread(ModelServices(sp_ws).list_names, api_type=CHAT_COMPLETIONS_API)
     except DatabricksError:
-        logger.warning("Failed to list serving endpoints", exc_info=True)
-        return ServingEndpointsOut(names=[])
-    names = sorted({endpoint.name for endpoint in endpoints if endpoint.name})
-    return ServingEndpointsOut(names=names)
+        logger.warning("Failed to list AI model services", exc_info=True)
+        return ModelServicesOut(names=[])
+    return ModelServicesOut(names=names)
 
 
 # ----------------------------------------------------------------------

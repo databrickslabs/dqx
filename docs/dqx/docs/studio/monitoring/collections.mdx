@@ -9,9 +9,9 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Collections (data products)
 
-This page is for stewards who own a **data product** — a set of related tables
+This page is for stewards who own a data product or domain — a set of related tables
 that people rely on together. A **collection** groups those tables so you can
-see, run, and report on their quality as one thing.
+see, run, and report on their quality as a single unit.
 
 A collection is more than a place to schedule runs. Its real value is a single
 view of quality **across related tables**: the tables that feed one Genie space,
@@ -21,7 +21,7 @@ its own, you open the collection and see how the whole product is doing at once.
 <Admonition type="tip" title="You don't need a collection to start">
 Begin by monitoring a table or two. When you have a few related tables you want
 to run and report on together, group them into a collection. Collections are
-optional until then.
+totally optional.
 </Admonition>
 
 ## A concrete example
@@ -53,7 +53,7 @@ three together and drill into whichever table is dragging the score down.
 4. Add the related monitored tables as **members**. You add tables you already
    monitor, so their rules and checks come along automatically.
 
-<Admonition type="note" title="Members are monitored tables">
+<Admonition type="note" title="Collection consists of monitored tables">
 A collection is built from tables you're already monitoring. If a table isn't
 listed when you add members, monitor it first — see
 [Monitor a table](/docs/studio/monitoring/).
@@ -100,7 +100,7 @@ You can run every member table's checks together, on demand or on a schedule.
   **weekly**, or on a custom **cron** schedule for finer control. You can
   **pause**, **resume**, or **delete** a schedule at any time.
 
-Running a collection takes the **Rule Author** (or Admin) role plus **Execute**
+Running a collection requires the **Rule Author** (or Admin) role and **Execute**
 permission on the collection. For the full picture of how runs work, see
 [Run checks & schedule](/docs/studio/monitoring/run-and-schedule).
 

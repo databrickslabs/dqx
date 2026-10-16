@@ -1,12 +1,30 @@
+import base64
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from pydantic import TypeAdapter, ValidationError
 
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, normalize_approvals_mode
+from databricks_labs_dqx_app.backend.common.branding import (
+    CUSTOM_PRESET_PREFIX,
+    LOGO_SLOTS,
+    PRESET_IDS,
+    MAX_CUSTOM_PRESETS,
+    BrandingValidationError,
+    custom_preset_number,
+    logo_hash,
+    normalize_colors,
+    parse_stored_branding,
+    sanitize_company_name,
+    sanitize_preset_name,
+    validate_preset,
+)
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+from databricks_labs_dqx_app.backend.services.model_services import model_service_name
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -15,17 +33,104 @@ _CONFIG_KEY = "workspace_config"
 _SETUP_JOB_ID_KEY = "setup_task_runner_job_id"
 _SETUP_COMPLETED_AT_KEY = "setup_completed_at"
 _SETUP_COMPLETED_BY_KEY = "setup_completed_by"
+_BRANDING_KEY = "branding_v1"
+_BRANDING_LOGO_KEY_PREFIX = "branding_logo_"
 
 # Compiled-in fallback for the ``draft_run_sample_limit`` setting — the
 # row cap applied to DRAFT monitored-table runs when the admin has not
-# configured one. 0 means unlimited. Shared by ``BindingRunService`` and
-# the ``/config/draft-run-sample-limit`` admin endpoints.
-DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 1000
+# configured one. 0 means unlimited, so out of the box a draft run scans the
+# whole table, matching approved runs; a pass rate measured on a subset is not
+# the table's pass rate. Shared by ``BindingRunService`` and the
+# ``/config/draft-run-sample-limit`` admin endpoints.
+DRAFT_RUN_SAMPLE_LIMIT_DEFAULT = 0
 
 # Compiled-in fallback for the ``default_pass_threshold`` setting — the
 # org-wide minimum pass rate (%) below which a check warns. Shared by
 # the breach evaluator (results service) and the admin settings endpoint.
 DEFAULT_PASS_THRESHOLD_DEFAULT = 70
+
+# Compiled-in fallbacks for the profiler sampling setting — how much of a
+# source table the profiler reads. ``kind`` is one of ``full`` (whole
+# table), ``records`` (a random row cap) or ``percent`` (a random
+# fraction); ``value`` is the row count or the percentage respectively
+# and is ignored for ``full``. Shared by the profiler routes and the
+# ``/compute/profiler-sample`` admin endpoints.
+ProfilerSampleKind = Literal["full", "records", "percent"]
+AiEnabledSource = Literal["default", "admin", "setup"]
+PROFILER_SAMPLE_KIND_FULL: ProfilerSampleKind = "full"
+PROFILER_SAMPLE_KIND_RECORDS: ProfilerSampleKind = "records"
+PROFILER_SAMPLE_KIND_PERCENT: ProfilerSampleKind = "percent"
+
+
+@dataclass(frozen=True)
+class StoredLogo:
+    """A stored branding logo."""
+
+    mime: str
+    data: bytes
+    hash: str
+
+
+PROFILER_SAMPLE_KIND_DEFAULT: ProfilerSampleKind = PROFILER_SAMPLE_KIND_PERCENT
+PROFILER_SAMPLE_VALUE_DEFAULT = 10
+# Per-kind fallback when the kind is set but the value is missing or corrupt.
+# A single global fallback is unsafe across units: 50,000 as a *percentage*
+# clamps to 100, which silently means "whole table" — the opposite of a cap.
+PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND: dict[str, int] = {
+    PROFILER_SAMPLE_KIND_PERCENT: 10,
+    PROFILER_SAMPLE_KIND_RECORDS: 50_000,
+}
+# Sanity ceiling for the ``records`` form. Admins who genuinely want the
+# whole table pick ``full`` rather than an enormous row count.
+PROFILER_SAMPLE_RECORDS_MAX = 10_000_000
+
+
+@dataclass(frozen=True)
+class ProfilerSample:
+    """Resolved profiler sampling policy.
+
+    Attributes:
+        kind: One of ``full``, ``records`` or ``percent``.
+        value: Row count when *kind* is ``records``, percentage 1-100 when
+            *kind* is ``percent``, and 0 when *kind* is ``full``.
+    """
+
+    kind: ProfilerSampleKind
+    value: int
+
+    @property
+    def is_full_table(self) -> bool:
+        """Whether the profiler should read the whole table."""
+        return self.kind == PROFILER_SAMPLE_KIND_FULL
+
+
+def parse_profiler_sample_kind(raw: str | None) -> ProfilerSampleKind | None:
+    """Narrow *raw* to a known sampling kind, or ``None`` if unrecognised.
+
+    Explicit literal returns so the type checker can prove the result is a
+    :data:`ProfilerSampleKind` rather than a bare ``str``.
+    """
+    kind = (raw or "").strip().lower()
+    if kind == "full":
+        return "full"
+    if kind == "records":
+        return "records"
+    if kind == "percent":
+        return "percent"
+    return None
+
+
+def clamp_profiler_sample_value(kind: ProfilerSampleKind, value: int) -> int:
+    """Clamp *value* into the range valid for *kind*.
+
+    Percentages clamp to 1-100; row counts clamp to
+    1-:data:`PROFILER_SAMPLE_RECORDS_MAX`. Callers rely on this so a
+    corrupt or hostile stored value can never widen the scan.
+    """
+    if kind == PROFILER_SAMPLE_KIND_PERCENT:
+        return max(1, min(100, int(value)))
+    return max(1, min(PROFILER_SAMPLE_RECORDS_MAX, int(value)))
+
 
 # Module-level adapter so we pay the type-tree walk once at import time
 # rather than on every ``get_config`` call. ``TypeAdapter`` is Pydantic's
@@ -137,6 +242,13 @@ class AppSettingsService:
         )
         logger.info("Saved setting: %s (by=%s)", key, user_email or "system")
 
+    def delete_setting(self, key: str) -> None:
+        """Delete a single setting by key (no-op when absent)."""
+        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+
+        self._sql.execute(f"DELETE FROM {self._table} WHERE setting_key = '{escape_sql_string(key)}'")
+        logger.info("Deleted setting: %s", key)
+
     def record_setup_completion(
         self,
         job_id: int,
@@ -235,9 +347,10 @@ class AppSettingsService:
         return int(days)
 
     # ------------------------------------------------------------------
-    # Draft-run sampling (legacy admin setting) — kept for API compatibility.
-    # The UI no longer exposes this; draft runs take an optional per-request
-    # ``sample_size`` (default 1000) on the run endpoints. See
+    # Draft-run sampling. Surfaced to admins under Settings -> Compute ->
+    # Draft runs, and honoured by the run endpoints when the request omits
+    # ``sample_size``. The compiled-in fallback is
+    # :data:`DRAFT_RUN_SAMPLE_LIMIT_DEFAULT` (0 = whole table). See
     # ``BindingRunService.run_binding``.
     # ------------------------------------------------------------------
 
@@ -260,6 +373,73 @@ class AppSettingsService:
         """Persist the draft-run sample limit (0 = unlimited). Returns the saved value."""
         self.save_setting(self._DRAFT_RUN_SAMPLE_LIMIT_KEY, str(int(limit)), user_email=user_email)
         return int(limit)
+
+    # ------------------------------------------------------------------
+    # Profiler sampling — how much of a source table the profiler reads.
+    # Stored as two keys so the shape stays greppable in dq_app_settings
+    # and a corrupt value in one cannot silently change the other:
+    #   * ``profiler_sample_kind``  — ``full`` | ``records`` | ``percent``
+    #   * ``profiler_sample_value`` — row count (records) or 1-100 (percent)
+    # The two forms are mutually exclusive by construction: ``kind`` picks
+    # which one ``value`` means. An unset or unparseable pair reads back as
+    # the compiled-in default so profiling always has a bounded default.
+    # ------------------------------------------------------------------
+
+    _PROFILER_SAMPLE_KIND_KEY = "profiler_sample_kind"
+    _PROFILER_SAMPLE_VALUE_KEY = "profiler_sample_value"
+
+    def get_profiler_sample(self) -> ProfilerSample:
+        """Return the configured profiler sampling policy, falling back to the default.
+
+        Never raises: an unset, unknown or out-of-range stored value is
+        logged and replaced by the compiled-in default so a corrupt row
+        cannot make profiling read an unbounded table by accident.
+        """
+        raw_kind = self.get_setting(self._PROFILER_SAMPLE_KIND_KEY)
+        parsed = parse_profiler_sample_kind(raw_kind)
+        if parsed is None:
+            if raw_kind:
+                logger.warning(
+                    "Setting %s is not a known kind (%r); using default",
+                    self._PROFILER_SAMPLE_KIND_KEY,
+                    replace_control_characters(str(raw_kind)),
+                )
+            parsed = PROFILER_SAMPLE_KIND_DEFAULT
+        kind = parsed
+
+        if kind == PROFILER_SAMPLE_KIND_FULL:
+            return ProfilerSample(kind=kind, value=0)
+
+        value = self._get_int_setting(self._PROFILER_SAMPLE_VALUE_KEY)
+        if value is None:
+            # Fall back in the unit the kind actually uses — see
+            # PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND for why this must not be a
+            # single global default.
+            value = PROFILER_SAMPLE_VALUE_DEFAULT_BY_KIND.get(kind, PROFILER_SAMPLE_VALUE_DEFAULT)
+        return ProfilerSample(kind=kind, value=clamp_profiler_sample_value(kind, value))
+
+    def save_profiler_sample(self, kind: str, value: int, *, user_email: str | None = None) -> ProfilerSample:
+        """Persist the profiler sampling policy. Returns the saved value.
+
+        Args:
+            kind: One of ``full``, ``records`` or ``percent``.
+            value: Row count (*records*) or percentage 1-100 (*percent*).
+                Ignored when *kind* is ``full``.
+            user_email: Acting admin, recorded for audit.
+
+        Raises:
+            ValueError: If *kind* is not a known sampling kind.
+        """
+        cleaned_kind = parse_profiler_sample_kind(kind)
+        if cleaned_kind is None:
+            raise ValueError(f"Unknown profiler sample kind: {kind!r}")
+
+        stored_value = (
+            0 if cleaned_kind == PROFILER_SAMPLE_KIND_FULL else clamp_profiler_sample_value(cleaned_kind, value)
+        )
+        self.save_setting(self._PROFILER_SAMPLE_KIND_KEY, cleaned_kind, user_email=user_email)
+        self.save_setting(self._PROFILER_SAMPLE_VALUE_KEY, str(stored_value), user_email=user_email)
+        return ProfilerSample(kind=cleaned_kind, value=stored_value)
 
     def _get_int_setting(self, key: str) -> int | None:
         raw = self.get_setting(key)
@@ -741,6 +921,24 @@ class AppSettingsService:
                 "High": "error",
                 "Critical": "error",
             },
+            # One-line explanations shown alongside each severity wherever the
+            # value is surfaced (admin editor, label picker tooltip) — parallel
+            # to the dimension seed's ``value_descriptions`` above.
+            "value_descriptions": {
+                "Critical": (
+                    "Blocking issues with severe impact on pipelines, use-case outcomes, or regulatory "
+                    "requirements — must be resolved before the data is trusted or consumed."
+                ),
+                "High": (
+                    "Serious issues that significantly undermine data reliability or downstream decisions "
+                    "and should be addressed promptly."
+                ),
+                "Medium": (
+                    "Moderate issues worth investigating that may affect some consumers but don't block "
+                    "usage of the data."
+                ),
+                "Low": "Minor issues with limited impact — track and address opportunistically.",
+            },
         },
     ]
 
@@ -787,6 +985,50 @@ class AppSettingsService:
         logger.info("Seeded reserved label definition(s): %s", [s["key"] for s in missing])
         return True
 
+    def backfill_reserved_value_descriptions_if_missing(self, *, user_email: str | None = None) -> bool:
+        """Fill in seed ``value_descriptions`` for already-seeded reserved keys.
+
+        The seed above is only applied to keys that don't yet exist
+        (:meth:`seed_reserved_label_definitions_if_absent`), so a deployment
+        that was seeded before a description was added to the seed never picks
+        it up. This closes that gap: for each stored reserved definition, it
+        copies over any ``value_descriptions`` entry the seed defines but the
+        stored definition is missing.
+
+        Safe and non-destructive: an existing (admin-authored) description is
+        never overwritten, descriptions are only added for values the stored
+        definition still lists, and no other field or user-created definition
+        is touched. Idempotent — returns ``True`` iff a write happened.
+        """
+        seeds_by_key = {seed["key"]: seed for seed in self._RESERVED_LABEL_DEFINITION_SEEDS}
+        existing = self.get_label_definitions()
+        changed = False
+
+        for definition in existing:
+            seed = seeds_by_key.get(definition.get("key"))
+            if seed is None:
+                continue
+            seed_descriptions = seed.get("value_descriptions")
+            if not seed_descriptions:
+                continue
+            current = definition.get("value_descriptions")
+            if not isinstance(current, dict):
+                current = {}
+            defined_values = set(definition.get("values") or seed.get("values") or [])
+            for value, description in seed_descriptions.items():
+                if value in defined_values and not current.get(value):
+                    current[value] = description
+                    changed = True
+            if current:
+                definition["value_descriptions"] = current
+
+        if not changed:
+            return False
+
+        self.save_setting(self._LABEL_DEFINITIONS_KEY, json.dumps(existing), user_email=user_email)
+        logger.info("Backfilled reserved label value_descriptions for keys: %s", list(seeds_by_key))
+        return True
+
     # ------------------------------------------------------------------
     # AI Gateway settings — Rules Registry Phase 4A. Kill-switch, serving
     # endpoint name, and per-user hourly rate limit for AIGateway
@@ -794,25 +1036,26 @@ class AppSettingsService:
     # request) so the AI-assisted authoring surfaces work out of the box on
     # a fresh deploy. The admin kill-switch remains: setting ``ai_enabled``
     # to ``false`` turns every AI affordance off app-wide. Note the cost
-    # implication — AI serving-endpoint calls run On-Behalf-Of the caller
+    # implication — AI model calls run On-Behalf-Of the caller
     # (see ``get_ai_gateway``), so an enabled default means those calls can
     # be incurred without an explicit opt-in.
     # ------------------------------------------------------------------
 
     _AI_ENABLED_KEY = "ai_enabled"
+    _AI_ENABLED_SOURCE_KEY = "ai_enabled_source"
     _AI_ENDPOINT_NAME_KEY = "ai_endpoint_name"
     _AI_RATE_LIMIT_KEY = "ai_rate_limit_per_user_per_hour"
 
     AI_RATE_LIMIT_DEFAULT = 30
 
-    # Seeded default AI serving endpoint — a reasonable out-of-the-box
+    # Seeded default AI model service — a reasonable out-of-the-box
     # selection for the admin dropdown (Rules Registry Phase 7F). AI is ON by
     # default (see :meth:`get_ai_enabled`) and this endpoint is what shows up
     # pre-selected. An admin who explicitly saves an empty value gets that
     # empty value back (see the ``raw is None`` check below) rather than being
     # forced back to the default on every read.
     #
-    # Chosen over the previous ``databricks-gpt-5-4-nano`` default because a
+    # Chosen over the previous gpt-5-4-nano default because a
     # live golden-set eval against field-eng (see
     # ``tests/ai_eval/test_rule_suggester_live.py``) showed nano returning
     # NO suggestions on tables past ~50 columns (blew the fixed max_tokens
@@ -822,7 +1065,12 @@ class AppSettingsService:
     # wide tables successfully. Admins can still switch to nano/mini/haiku
     # via the AI settings dropdown, but the fresh-deploy default now points
     # at a model that works on realistic (wide) tables out of the box.
-    AI_ENDPOINT_NAME_DEFAULT = "databricks-claude-sonnet-4-5"
+    #
+    # Names are Unity Gateway model services (``system.ai.*``): the legacy
+    # ``databricks-*`` pay-per-token serving endpoints are retired on
+    # March 30, 2027. Names saved before the migration are mapped onto their
+    # model service on read (see :func:`model_service_name`).
+    AI_ENDPOINT_NAME_DEFAULT = "system.ai.claude-sonnet-4-5"
 
     def get_ai_enabled(self) -> bool:
         """Return whether the AI kill-switch is on; defaults to ``True`` (on) when unset.
@@ -838,27 +1086,49 @@ class AppSettingsService:
             return True
         return raw.strip().lower() == "true"
 
-    def save_ai_enabled(self, enabled: bool, *, user_email: str | None = None) -> bool:
-        """Persist the AI kill-switch setting. Returns the saved value."""
+    def save_ai_enabled(
+        self,
+        enabled: bool,
+        *,
+        user_email: str | None = None,
+        source: AiEnabledSource = "admin",
+    ) -> bool:
+        """Persist the AI kill-switch setting. Returns the saved value.
+
+        Args:
+            enabled: Whether AI features are on.
+            user_email: Who made the change.
+            source: *admin* for an administrator's choice, *setup* when setup turned AI
+                off (or back on) because Studio users could not use the AI model. Setup
+                never overrides an administrator's choice.
+        """
         self.save_setting(self._AI_ENABLED_KEY, "true" if enabled else "false", user_email=user_email)
+        self.save_setting(self._AI_ENABLED_SOURCE_KEY, source, user_email=user_email)
         return enabled
 
+    def get_ai_enabled_source(self) -> AiEnabledSource:
+        """Return who decided the AI kill-switch: the *default*, an *admin*, or *setup*."""
+        if self.get_setting(self._AI_ENABLED_KEY) is None:
+            return "default"
+        return "setup" if self.get_setting(self._AI_ENABLED_SOURCE_KEY) == "setup" else "admin"
+
     def get_ai_endpoint_name(self) -> str:
-        """Return the configured AI serving endpoint name.
+        """Return the configured AI model service name.
 
         Defaults to :data:`AI_ENDPOINT_NAME_DEFAULT` when the setting has
         never been saved (no row). An admin who explicitly saves an empty
         value gets ``""`` back, not the default — the row exists, it's just
-        empty.
+        empty. A legacy ``databricks-*`` endpoint name is returned as its
+        ``system.ai`` model service.
         """
         raw = self.get_setting(self._AI_ENDPOINT_NAME_KEY)
         if raw is None:
             return self.AI_ENDPOINT_NAME_DEFAULT
-        return raw.strip()
+        return model_service_name(raw)
 
     def save_ai_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
-        """Persist the AI serving endpoint name. Returns the cleaned (trimmed) value."""
-        cleaned = (endpoint_name or "").strip()
+        """Persist the AI model service name. Returns the cleaned value (legacy names mapped)."""
+        cleaned = model_service_name(endpoint_name)
         self.save_setting(self._AI_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 
@@ -925,42 +1195,43 @@ class AppSettingsService:
     # endpoint dropdown; the embedding endpoint defaults so cosine rule
     # suggestions work from that alone.
     #
-    #   * ``embedding_endpoint_name`` — Databricks serving endpoint that
+    #   * ``embedding_endpoint_name`` — Unity Gateway model service that
     #     turns rule/query text into an embedding vector
     #     (``services/rule_embeddings.py``). Defaults to
-    #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Foundation Model API
-    #     embedding endpoint available out-of-the-box in most workspaces.
+    #     :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT`, a Databricks-provided
+    #     embedding model available out-of-the-box in most workspaces.
     #
     # The setter is kept (and the setting remains independently overridable
     # via direct API calls) for backwards compatibility/testing — nothing
     # in the UI writes to it anymore. ``AiBootstrap.ensure_ai_ready`` /
-    # the suggester degrade gracefully if the embedding endpoint isn't
+    # the suggester degrade gracefully if the embedding model isn't
     # usable yet — see ``services/ai_bootstrap.py``.
     # ------------------------------------------------------------------
 
     _EMBEDDING_ENDPOINT_NAME_KEY = "embedding_endpoint_name"
 
-    # A widely-available Foundation Model API embedding endpoint — a
+    # A widely-available Databricks-provided embedding model service — a
     # reasonable out-of-the-box default so the rule-mapping suggester
     # works the moment an admin flips "Enable AI" on, without a separate
     # embedding-endpoint field to fill in.
-    EMBEDDING_ENDPOINT_NAME_DEFAULT = "databricks-gte-large-en"
+    EMBEDDING_ENDPOINT_NAME_DEFAULT = "system.ai.gte-large-en"
 
     def get_embedding_endpoint_name(self) -> str:
-        """Return the embedding serving endpoint name.
+        """Return the embedding model service name.
 
         Defaults to :data:`EMBEDDING_ENDPOINT_NAME_DEFAULT` when the
         setting is unset — either no row at all, or a row holding an
-        empty/whitespace-only value.
+        empty/whitespace-only value. A legacy ``databricks-*`` endpoint
+        name is returned as its ``system.ai`` model service.
         """
         raw = self.get_setting(self._EMBEDDING_ENDPOINT_NAME_KEY)
         if raw is None or not raw.strip():
             return self.EMBEDDING_ENDPOINT_NAME_DEFAULT
-        return raw.strip()
+        return model_service_name(raw)
 
     def save_embedding_endpoint_name(self, endpoint_name: str, *, user_email: str | None = None) -> str:
-        """Persist the embedding serving endpoint name. Returns the cleaned (trimmed) value."""
-        cleaned = (endpoint_name or "").strip()
+        """Persist the embedding model service name. Returns the cleaned value (legacy names mapped)."""
+        cleaned = model_service_name(endpoint_name)
         self.save_setting(self._EMBEDDING_ENDPOINT_NAME_KEY, cleaned, user_email=user_email)
         return cleaned
 
@@ -1079,6 +1350,216 @@ class AppSettingsService:
             "color": color.strip(),
             "is_default": bool(item.get("is_default")),
         }
+
+    # ------------------------------------------------------------------
+    # Branding — company name, header logos and colour theme (custom styling).
+    # ``branding_v1`` holds the JSON value, including each logo's content hash;
+    # each logo's bytes have their own key so the (small) branding read never
+    # carries image bytes.
+    # ------------------------------------------------------------------
+
+    def get_branding(self) -> dict[str, object]:
+        """Return the stored branding, with invalid fields dropped."""
+        return parse_stored_branding(self.get_setting(_BRANDING_KEY))
+
+    def _save_branding(self, branding: dict[str, object], user_email: str | None) -> dict[str, object]:
+        self.save_setting(_BRANDING_KEY, json.dumps(branding), user_email=user_email)
+        return branding
+
+    def save_branding_company_name(self, name: object, *, user_email: str | None = None) -> dict[str, object]:
+        """Validate and store the company name (empty clears it)."""
+        branding = self.get_branding()
+        branding["company_name"] = sanitize_company_name(name)
+        return self._save_branding(branding, user_email)
+
+    def save_branding_theme(
+        self,
+        preset: object,
+        light_colors: object,
+        dark_customised: bool,
+        dark_colors: object,
+        *,
+        user_email: str | None = None,
+    ) -> dict[str, object]:
+        """Validate and store the colour theme.
+
+        Saving with a preset selected updates that preset: a custom preset's colours, or the saved
+        edit of a built-in preset (its original colours stay available to "Reset theme"). A theme
+        with colours but no preset (a new theme) is kept as a new custom preset, "Custom N",
+        reusing an existing custom preset with the same colours.
+        """
+        branding = self.get_branding()
+        custom = branding_custom_presets(branding)
+        dark_map = normalize_colors(dark_colors)
+        light: dict[str, object] = {"colors": normalize_colors(light_colors)}
+        dark: dict[str, object] = {"customised": bool(dark_customised) and bool(dark_map), "colors": dark_map}
+        chosen = validate_preset(preset, tuple(str(c["id"]) for c in custom))
+        if chosen is None and (light["colors"] or dark_map):
+            chosen = self._custom_preset_for(custom, light, dark)
+        else:
+            for existing in custom:
+                if existing["id"] == chosen:
+                    existing["light"] = light
+                    existing["dark"] = dark
+        edited = branding_edited_presets(branding)
+        if chosen in PRESET_IDS:
+            edited = [e for e in edited if e["id"] != chosen] + [{"id": chosen, "light": light, "dark": dark}]
+        branding["edited_presets"] = edited
+        branding["preset"] = chosen
+        branding["light"] = light
+        branding["dark"] = dark
+        branding["custom_presets"] = custom
+        return self._save_branding(branding, user_email)
+
+    @staticmethod
+    def _custom_preset_for(custom: list[dict[str, object]], light: dict[str, object], dark: dict[str, object]) -> str:
+        for existing in custom:
+            if existing["light"] == light and existing["dark"] == dark:
+                return str(existing["id"])
+        if len(custom) >= MAX_CUSTOM_PRESETS:
+            raise BrandingValidationError(
+                f"You can keep up to {MAX_CUSTOM_PRESETS} custom presets. Delete one to save a new one."
+            )
+        numbers = [custom_preset_number(str(c["id"])) or 0 for c in custom]
+        preset_id = f"{CUSTOM_PRESET_PREFIX}{max(numbers, default=0) + 1}"
+        custom.append({"id": preset_id, "name": None, "light": light, "dark": dark})
+        return preset_id
+
+    def rename_branding_custom_preset(
+        self, preset_id: str, name: object, *, user_email: str | None = None
+    ) -> dict[str, object]:
+        """Rename a saved custom preset; an empty name shows it as "Custom N" again."""
+        branding = self.get_branding()
+        custom = branding_custom_presets(branding)
+        target = next((c for c in custom if c["id"] == preset_id), None)
+        if target is None:
+            raise LookupError("Unknown custom preset.")
+        target["name"] = sanitize_preset_name(name)
+        branding["custom_presets"] = custom
+        return self._save_branding(branding, user_email)
+
+    def delete_branding_custom_preset(self, preset_id: str, *, user_email: str | None = None) -> dict[str, object]:
+        """Delete a saved custom preset; the current colours are kept even if they came from it."""
+        branding = self.get_branding()
+        custom = branding_custom_presets(branding)
+        remaining = [c for c in custom if c["id"] != preset_id]
+        if len(remaining) == len(custom):
+            raise LookupError("Unknown custom preset.")
+        branding["custom_presets"] = remaining
+        if branding.get("preset") == preset_id:
+            branding["preset"] = None
+        return self._save_branding(branding, user_email)
+
+    @staticmethod
+    def _logo_key(slot: str) -> str:
+        if slot not in LOGO_SLOTS:
+            raise BrandingValidationError("Logo slot must be 'light' or 'dark'.")
+        return f"{_BRANDING_LOGO_KEY_PREFIX}{slot}"
+
+    def get_branding_logo(self, slot: str) -> StoredLogo | None:
+        """Return the stored logo for *slot*, or None when unset or unreadable."""
+        raw = self.get_setting(self._logo_key(slot))
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+            data = base64.b64decode(payload["data_base64"], validate=True)
+            return StoredLogo(mime=str(payload["content_type"]), data=data, hash=logo_hash(data))
+        except (ValueError, KeyError, TypeError):
+            logger.warning(f"Stored {slot} logo is unreadable; ignoring it")
+            return None
+
+    def save_branding_logo(self, slot: str, mime: str, raw: bytes, *, user_email: str | None = None) -> StoredLogo:
+        """Store an already-validated logo.
+
+        The first logo is shared by light and dark mode, whichever *slot* it was uploaded to. Once a
+        logo exists, each upload replaces only *slot*'s logo, and the other mode keeps the one it
+        showed before.
+        """
+        self._logo_key(slot)
+        branding = self.get_branding()
+        hashes = branding_logo_hashes(branding)
+        if not hashes["light"] and not hashes["dark"]:
+            target = "light"
+            branding["logo_mode"] = "shared"
+        else:
+            target = slot
+            if branding.get("logo_mode") != "separate":
+                # Leaving shared mode: the dark slot gets the shared logo unless it is being replaced.
+                if slot == "light" and not hashes["dark"]:
+                    shared = self.get_branding_logo("light")
+                    if shared is not None:
+                        hashes["dark"] = self._write_logo("dark", shared.mime, shared.data, user_email)
+                branding["logo_mode"] = "separate"
+        hashes[target] = self._write_logo(target, mime, raw, user_email)
+        branding["logos"] = hashes
+        self._save_branding(branding, user_email)
+        return StoredLogo(mime=mime, data=raw, hash=hashes[target] or "")
+
+    def _write_logo(self, slot: str, mime: str, raw: bytes, user_email: str | None) -> str:
+        digest = logo_hash(raw)
+        payload = {"content_type": mime, "data_base64": base64.b64encode(raw).decode(), "sha256": digest}
+        self.save_setting(self._logo_key(slot), json.dumps(payload), user_email=user_email)
+        return digest
+
+    def delete_branding_logo(self, slot: str, *, user_email: str | None = None) -> None:
+        """Remove the logo for *slot*; with no logos left, the next upload is shared again."""
+        self.delete_setting(self._logo_key(slot))
+        branding = self.get_branding()
+        hashes = branding_logo_hashes(branding)
+        hashes[slot] = None
+        branding["logos"] = hashes
+        if not hashes["light"] and not hashes["dark"]:
+            branding["logo_mode"] = "shared"
+        self._save_branding(branding, user_email)
+
+    def get_branding_logo_hashes(self) -> dict[str, str | None]:
+        """Return each slot's logo hash (None when unset), read from the small branding value."""
+        return branding_logo_hashes(self.get_branding())
+
+
+def branding_edited_presets(branding: dict[str, object]) -> list[dict[str, object]]:
+    """Return the saved edits of built-in presets held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        A new list of edits, each with a built-in preset *id*, *light* and *dark*.
+    """
+    stored = branding.get("edited_presets")
+    return [e for e in stored if isinstance(e, dict)] if isinstance(stored, list) else []
+
+
+def branding_custom_presets(branding: dict[str, object]) -> list[dict[str, object]]:
+    """Return the saved custom presets held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        A new list of custom presets, each with *id*, *light* and *dark*.
+    """
+    stored = branding.get("custom_presets")
+    return [c for c in stored if isinstance(c, dict)] if isinstance(stored, list) else []
+
+
+def branding_logo_hashes(branding: dict[str, object]) -> dict[str, str | None]:
+    """Return the per-slot logo hashes held in a parsed branding value.
+
+    Args:
+        branding: A value returned by get_branding().
+
+    Returns:
+        Each logo slot mapped to its content hash, or None when unset.
+    """
+    stored = branding.get("logos")
+    hashes: dict[str, str | None] = {slot: None for slot in LOGO_SLOTS}
+    if isinstance(stored, dict):
+        for slot in LOGO_SLOTS:
+            digest = stored.get(slot)
+            hashes[slot] = digest if isinstance(digest, str) else None
+    return hashes
 
 
 def _sanitize_audit_identity(value: str | None) -> str | None:

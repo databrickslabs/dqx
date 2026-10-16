@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from databricks.labs.dqx.rule import compute_rule_fingerprint
+
 from databricks_labs_dqx_app.backend.rule_enums import RuleSource, RuleStatus
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
@@ -66,8 +68,8 @@ class RulesCatalogService:
 
     def __init__(self, sql: OltpExecutorProtocol) -> None:
         self._sql = sql
-        self._table = sql.fqn("dq_quality_rules")
-        self._history_table = sql.fqn("dq_quality_rules_history")
+        self._table = sql.fqn("dq_resolved_rules")
+        self._history_table = sql.fqn("dq_resolved_rules_history")
         # ``check`` is a SQL reserved word in both Delta and Postgres,
         # so quote it via the executor so we get backticks on Delta and
         # double-quotes on Postgres.
@@ -170,12 +172,16 @@ class RulesCatalogService:
             rule_id = uuid4().hex[:16]
             check_json = json.dumps(check)
             check_expr = self._sql.json_literal_expr(check_json)
+            # dqx-core per-rule fingerprint (SHA-256 of the canonicalized check),
+            # stored so the dq_rules_core view can expose it and external
+            # pipelines can load these rules via DQEngine.load_checks.
+            e_fp = escape_sql_string(compute_rule_fingerprint(check))
             sql = (
                 f"INSERT INTO {self._table} "
                 f"(rule_id, table_fqn, {check_col}, version, status, source, "
-                f"created_by, created_at, updated_by, updated_at) "
+                f"rule_fingerprint, created_by, created_at, updated_by, updated_at) "
                 f"VALUES ('{rule_id}', '{e_table}', {check_expr}, 1, 'draft', '{e_source}', "
-                f"'{e_user}', now(), '{e_user}', now())"
+                f"'{e_fp}', '{e_user}', now(), '{e_user}', now())"
             )
             self._sql.execute(sql)
             self._record_history(
@@ -229,12 +235,16 @@ class RulesCatalogService:
         check_expr = self._sql.json_literal_expr(check_json)
         e_user = escape_sql_string(user_email)
         e_rule_id = escape_sql_string(rule_id)
+        # Recompute the per-rule fingerprint from the new check content so the
+        # stored value stays in lock-step with the rule (see save()).
+        e_fp = escape_sql_string(compute_rule_fingerprint(check))
 
         sql = (
             f"UPDATE {self._table} SET "
             f"  {self._check_col} = {check_expr}, "
             f"  version = version + 1, "
             f"  status = 'draft', "
+            f"  rule_fingerprint = '{e_fp}', "
             f"  updated_by = '{e_user}', "
             f"  updated_at = now() "
             f"WHERE rule_id = '{e_rule_id}'"
@@ -612,7 +622,7 @@ class RulesCatalogService:
     def get_history(self, rule_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """Return a rule's recorded change history (newest first).
 
-        Reads the append-only ``dq_quality_rules_history`` audit trail written
+        Reads the append-only ``dq_resolved_rules_history`` audit trail written
         by :meth:`_record_history`. Each entry carries the post-state ``check``
         payload and the ``prev_status``/``new_status`` transition, so callers
         (Drafts & Review's change-diff popout) can reconstruct a
@@ -649,7 +659,7 @@ class RulesCatalogService:
 
     @staticmethod
     def _history_row_to_dict(row: list[str]) -> dict[str, Any]:
-        """Map a raw ``dq_quality_rules_history`` row to a serializable dict."""
+        """Map a raw ``dq_resolved_rules_history`` row to a serializable dict."""
         check_raw = row[2]
         check: dict[str, Any] | None = None
         if check_raw:

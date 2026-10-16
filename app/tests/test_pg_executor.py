@@ -74,6 +74,7 @@ def _make_pg_executor(
     conn_cm = pool.connection.return_value
     conn_cm.__exit__.return_value = None  # don't swallow exceptions
     with (
+        patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
         patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool", return_value=pool) as pool_factory,
         patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
     ):
@@ -1238,6 +1239,7 @@ class TestRefreshObservability:
                 "databricks_labs_dqx_app.backend.pg_executor._generate_token",
                 return_value="bootstrap-token",
             ),
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as Pool,
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1312,6 +1314,7 @@ class TestRefreshTuningClamps:
                 "databricks_labs_dqx_app.backend.pg_executor._generate_token",
                 return_value="t",
             ),
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool"),
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1332,6 +1335,7 @@ class TestRefreshTuningClamps:
                 "databricks_labs_dqx_app.backend.pg_executor._generate_token",
                 return_value="t",
             ),
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool"),
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1363,6 +1367,7 @@ class TestRefreshTuningClamps:
                 "databricks_labs_dqx_app.backend.pg_executor._generate_token",
                 return_value="t",
             ),
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool"),
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1475,6 +1480,7 @@ class TestBuildPgExecutorFromConnection:
         )
 
         with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1497,6 +1503,7 @@ class TestBuildPgExecutorFromConnection:
         )
 
         with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread") as thread_factory,
         ):
@@ -1510,6 +1517,68 @@ class TestBuildPgExecutorFromConnection:
         ws.postgres.get_endpoint.assert_not_called()
         ws.postgres.generate_database_credential.assert_not_called()
         ws.current_user.me.assert_not_called()
+
+    def test_pool_min_size_defaults_to_zero_for_scale_to_zero(self) -> None:
+        # A held-open connection (min_size >= 1) keeps a scale-to-zero Lakebase
+        # endpoint awake; the default must drain to zero so it can suspend.
+        ws = self._workspace()
+        connection = LakebaseConnection(
+            endpoint=None,
+            host="db.example",
+            port=5432,
+            database="dqx",
+            username="app",
+            password=SecretStr("secret"),
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+        ):
+            pool.check_connection = MagicMock()
+            build_pg_executor_from_connection(ws, connection)  # no pool_min_size override
+
+        assert pool.call_args.kwargs["min_size"] == 0
+
+    def test_startup_probe_uses_direct_connection_so_pool_can_drain_immediately(self) -> None:
+        # With min_size=0 ``open(wait=True)`` establishes no connection, so a
+        # one-shot direct probe must fail fast without leaving an idle connection
+        # in the pool until psycopg's max_idle timeout elapses.
+        ws = self._workspace()
+        connection = LakebaseConnection(
+            endpoint=None,
+            host="db.example",
+            port=5432,
+            database="dqx",
+            username="app",
+            password=SecretStr("secret"),
+            schema="dqx_studio",
+        )
+
+        with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect") as connect,
+            patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
+            patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
+        ):
+            pool.check_connection = MagicMock()
+            build_pg_executor_from_connection(ws, connection)
+
+        connect.assert_called_once_with(
+            conninfo="",
+            host="db.example",
+            port=5432,
+            dbname="dqx",
+            user="app",
+            password="secret",
+            sslmode="require",
+            options="-c search_path=dqx_studio",
+            connect_timeout=30,
+        )
+        probe = connect.return_value.__enter__.return_value
+        probe.execute.assert_called_once_with("SELECT 1")
+        pool.return_value.connection.assert_not_called()
 
     def test_marketplace_binding_resolves_endpoint_and_uses_workspace_credentials(self) -> None:
         ws = self._workspace()
@@ -1535,6 +1604,7 @@ class TestBuildPgExecutorFromConnection:
         )
 
         with (
+            patch("databricks_labs_dqx_app.backend.pg_executor.Connection.connect"),
             patch("databricks_labs_dqx_app.backend.pg_executor.ConnectionPool") as pool,
             patch("databricks_labs_dqx_app.backend.pg_executor.threading.Thread"),
         ):
@@ -1780,7 +1850,7 @@ class TestSimpleProperties:
     def test_fqn_returns_two_part_name(self) -> None:
         """Postgres has one catalog per connection — fqn drops the catalog part."""
         e = _make_pg_executor(schema="my_schema")
-        assert e.fqn("dq_quality_rules") == "my_schema.dq_quality_rules"
+        assert e.fqn("dq_resolved_rules") == "my_schema.dq_resolved_rules"
 
     def test_ts_text_is_identity(self) -> None:
         """Postgres lets ``_to_text`` ISO-format the timestamp on the way out."""

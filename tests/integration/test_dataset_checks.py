@@ -22,9 +22,11 @@ from databricks.labs.dqx.check_funcs import (
     is_data_fresh_per_time_window,
     has_no_gaps_per_time_window,
     has_valid_schema,
+    is_in_distribution,
     sql_query,
     aggr_matches_dataset,
 )
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError, UnsafeSqlQueryError
 
@@ -2915,6 +2917,444 @@ def test_compare_datasets_pairs_duplicate_keys_by_compared_values(spark: SparkSe
     }
 
 
+def test_compare_datasets_filter_excludes_rows_from_duplicate_pairing(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    actual = {row["value"]: row["violation"] for row in rows}
+
+    assert len(rows) == 3
+    assert actual == {"A": None, "B": None, "C": None}
+
+
+def test_compare_datasets_strict_mode_ignores_duplicate_keys_outside_filter(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "A", False), (1, "B", True), (1, "C", None)], "id int, value string, in_scope boolean"
+    )
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        raise_on_duplicate_keys=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_rejects_in_scope_duplicate_keys(spark: SparkSession):
+    df = spark.createDataFrame([(1, "A", True), (1, "B", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B")], "id int, value string")
+    _, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", row_filter="in_scope", raise_on_duplicate_keys=True
+    )
+
+    with pytest.raises(InvalidParameterError, match="source dataset contains duplicate matching keys"):
+        apply(df, spark, {"ref_df": ref_df})
+
+
+def test_compare_datasets_filter_preserves_missing_reference_rows(spark: SparkSession):
+    # A filtered source row (id=1) is still present in the source, so it must pair with its reference
+    # counterpart (violation suppressed) rather than splitting into a phantom "missing" row. A reference
+    # key that is genuinely absent from the source (id=2) must still be reported as missing (issue #1504).
+    df = spark.createDataFrame([(1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "B"), (2, "C")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("id", "value", "in_scope", condition.alias("violation")).collect()
+    excluded_row = next(row for row in actual if row["id"] == 1)
+    missing_row = next(row for row in actual if row["id"] == 2)
+
+    assert len(actual) == 2
+    # The filtered source row pairs with reference id=1 and is not reported as missing.
+    assert excluded_row["in_scope"] is False
+    assert excluded_row["violation"] is None
+    # The reference-only row (id=2) is still reported as missing.
+    assert missing_row["in_scope"] is None
+    assert json.loads(missing_row["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "C"}},
+    }
+
+
+@pytest.mark.parametrize("excluded_scope", [False, None])
+def test_compare_datasets_filter_reports_surplus_reference_with_duplicate_key(
+    spark: SparkSession, excluded_scope: bool | None
+):
+    df = spark.createDataFrame([(1, "X", True), (1, "Z", excluded_scope)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert next(row for row in rows if row["in_scope"] is True)["violation"] is None
+    assert next(row for row in rows if row["value"] == "Z")["violation"] is None
+    assert json.loads(next(row for row in rows if row["value"] is None)["violation"]) == {
+        "row_missing": True,
+        "row_extra": False,
+        "changed": {"value": {"ref": "X"}},
+    }
+
+
+def test_compare_datasets_filter_reports_surplus_reference_without_compared_columns(spark: SparkSession):
+    df = spark.createDataFrame([(1, True), (1, False)], "id int, in_scope boolean")
+    ref_df = spark.createDataFrame([(1,), (1,)], "id int")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows if row["in_scope"] is not None)
+    assert json.loads(next(row for row in rows if row["in_scope"] is None)["violation"])["row_missing"] is True
+
+
+def test_compare_datasets_filter_duplicate_keys_preserves_exact_matches(spark: SparkSession):
+    df = spark.createDataFrame([(1, "B", True), (1, "A", False)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "A"), (1, "B")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    result = apply(df, spark, {"ref_df": ref_df})
+    actual = result.select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_row = next(row for row in actual if row["in_scope"] is True)
+    excluded_row = next(row for row in actual if row["in_scope"] is False)
+
+    assert len(actual) == 2
+    assert in_scope_row["violation"] is None
+    assert excluded_row["violation"] is None
+
+
+def test_compare_datasets_filter_compares_residual_in_scope_rows_to_full_reference(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(1, "X", True), (1, "X", True), (1, "Y", False)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (1, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", "in_scope", condition.alias("violation")).collect()
+    in_scope_rows = [row for row in rows if row["in_scope"] is True]
+
+    assert len(rows) == 3
+    assert sum(row["violation"] is None for row in in_scope_rows) == 1
+    assert {
+        json.loads(row["violation"])["changed"]["value"]["ref"] for row in in_scope_rows if row["violation"] is not None
+    } == {"Y"}
+    assert next(row for row in rows if row["in_scope"] is False)["violation"] is None
+
+
+def test_compare_datasets_filter_prioritizes_tolerant_in_scope_match(spark: SparkSession):
+    df = spark.createDataFrame([(1, 1.05, True), (1, 1.0, False)], "id int, value double, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, 1.0)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.1,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_filter_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # Regression (#1504 follow-up): residual pairing ranks rows by their compared values so the n-th
+    # source row pairs with the n-th reference row. Ordering numeric values by their string cast sorted
+    # "10.0" before "2.0", reordering the two sides differently and pairing 2.0<->9.7 and 10.0<->2.3 --
+    # both flagged even though each in-scope row is within abs_tolerance of a reference partner
+    # (2.0~2.3, 10.0~9.7). Native numeric ordering keeps the sides aligned so neither is flagged.
+    df = spark.createDataFrame(
+        [(1, 2.0, True), (1, 10.0, True)],
+        "id int, value double, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("in_scope", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_unfiltered_tolerant_match_survives_interleaved_values(spark: SparkSession):
+    # The native-numeric ordering fix also feeds the unfiltered positional path (no row_filter), which
+    # orders duplicate-key rows purely by their compared values. With the old string cast, "10.0" < "2.0"
+    # reordered the two sides and mispaired 2.0<->9.7 and 10.0<->2.3 -- flagging both rows even though each
+    # is within abs_tolerance of a reference partner (2.0~2.3, 10.0~9.7). Native ordering keeps them aligned.
+    df = spark.createDataFrame([(1, 2.0), (1, 10.0)], "id int, value double")
+    ref_df = spark.createDataFrame([(1, 2.3), (1, 9.7)], "id int, value double")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        abs_tolerance=0.5,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_strict_mode_non_null_safe_excludes_null_keys_from_uniqueness(spark: SparkSession):
+    # Strict mode (raise_on_duplicate_keys=True) + null_safe_row_matching=False + row_filter: null matching
+    # keys are dropped before the scope-aware uniqueness aggregation, so two in-scope null-key rows are not
+    # counted as duplicate keys and do NOT raise. The non-null in-scope key stays unique and matches exactly.
+    df = spark.createDataFrame(
+        [(1, "A", True), (None, "B", True), (None, "C", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "A")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_row_matching=False,
+        raise_on_duplicate_keys=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+
+    assert len(rows) == 3  # no InvalidParameterError: null-key in-scope rows are excluded from the check
+    assert next(row for row in rows if row["id"] == 1)["violation"] is None
+
+
+def test_compare_datasets_null_filter_present_row_with_diff_is_suppressed(spark: SparkSession):
+    # A present source row whose row_filter evaluates to NULL (in_scope is NULL) is treated as out-of-scope
+    # and suppressed even when it genuinely differs from its reference on a compared column:
+    # (row_missing | filter_col) & ~all_is_ok -> NULL & True -> NULL. An in-scope row with a real diff is
+    # still flagged. Guards the intended behavior change from `filter_col.isNull() | filter_col`.
+    df = spark.createDataFrame(
+        [(1, "A", True), (2, "X", None)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "B"), (2, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+    null_filter_row = next(row for row in rows if row["id"] == 2)
+    in_scope_row = next(row for row in rows if row["id"] == 1)
+
+    # NULL-evaluating filter suppresses the change on the present row, despite value X != ref Y.
+    assert null_filter_row["violation"] is None
+    # The genuinely in-scope diff is still reported.
+    assert json.loads(in_scope_row["violation"])["changed"]["value"] == {"df": "A", "ref": "B"}
+
+
+def test_compare_datasets_filter_default_drops_surplus_reference(spark: SparkSession):
+    # With check_missing_records unset (default False), a surplus reference row on a filtered exact-value
+    # pairing key must be silently dropped, not surfaced as missing. The single in-scope X pairs with one
+    # reference X; the extra reference X does not appear in the output.
+    df = spark.createDataFrame([(1, "X", True)], "id int, value string, in_scope boolean")
+    ref_df = spark.createDataFrame([(1, "X"), (1, "X")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+
+    assert len(rows) == 1  # the surplus reference row is not reported
+    assert rows[0]["violation"] is None
+
+
+def test_compare_datasets_filter_null_values_not_flagged_without_null_safe_matching(spark: SparkSession):
+    # Regression: the filtered exact-value pairing path (triggered by row_filter) groups compared
+    # values null-safely, but change detection with null_safe_column_value_matching=False uses `!=`,
+    # where NULL != NULL evaluates to NULL (not True). A paired NULL/NULL in-scope row must therefore
+    # NOT be reported as a violation, while a genuine value change is still flagged.
+    df = spark.createDataFrame(
+        [(1, None, True), (1, None, True), (2, "a", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, None), (1, None), (2, "b")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_column_value_matching=False,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+
+    null_rows = [row for row in rows if row["id"] == 1]
+    changed_row = next(row for row in rows if row["id"] == 2)
+
+    assert len(null_rows) == 2
+    # NULL == NULL under non-null-safe matching is not a change, so the paired rows carry no violation.
+    assert all(row["violation"] is None for row in null_rows)
+    # A real difference on the same filtered path is still detected.
+    changed = json.loads(changed_row["violation"])["changed"]
+    assert changed["value"]["df"] == "a"
+    assert changed["value"]["ref"] == "b"
+
+
+def test_compare_datasets_filter_drops_null_keys_without_null_safe_row_matching(spark: SparkSession):
+    # Coverage gap #1: exact-value pairing path (row_filter set) with null_safe_row_matching=False.
+    # Null matching keys are dropped before value-group counting, so a null-key in-scope row does not
+    # pair with a null-key reference, while a non-null key still pairs exactly.
+    df = spark.createDataFrame(
+        [(1, "X", True), (None, "Y", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (None, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        null_safe_row_matching=False,
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+    matched = next(row for row in rows if row["id"] == 1)
+    null_violations = [json.loads(row["violation"]) for row in rows if row["id"] is None and row["violation"]]
+
+    # The non-null key pairs and matches exactly.
+    assert matched["violation"] is None
+    # The null-key source and reference rows do not match under non-null-safe matching, so they are
+    # reported as extra (source) and missing (reference) rather than silently paired.
+    assert any(v["row_extra"] for v in null_violations)
+    assert any(v["row_missing"] for v in null_violations)
+
+
+def test_compare_datasets_filter_pairs_null_keys_with_null_safe_row_matching(spark: SparkSession):
+    # Coverage gap #2: exact-value pairing path with null matching keys under default null-safe row
+    # matching. A null-key in-scope row pairs null-safely with its null-key reference.
+    df = spark.createDataFrame(
+        [(1, "X", True), (None, "Y", True)],
+        "id int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "X"), (None, "Y")], "id int, value string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+        check_missing_records=True,
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    # Both the non-null and the null matching key pair (null-safe) and their values match.
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_compare_datasets_filter_pairs_composite_keys(spark: SparkSession):
+    # Coverage gap #3: exact-value pairing path with a composite (multi-column) matching key.
+    df = spark.createDataFrame(
+        [(1, 10, "X", True), (1, 20, "Y", True), (1, 30, "Z", False)],
+        "id int, sub int, value string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, 10, "X"), (1, 20, "W")], "id int, sub int, value string")
+    condition, apply = compare_datasets(
+        columns=["id", "sub"],
+        ref_columns=["id", "sub"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("sub", condition.alias("violation")).collect()
+    by_sub = {row["sub"]: row for row in rows}
+
+    # (1, 10): X == X exact match on the composite key.
+    assert by_sub[10]["violation"] is None
+    # (1, 20): Y vs W is a genuine change.
+    changed = json.loads(by_sub[20]["violation"])["changed"]["value"]
+    assert changed["df"] == "Y"
+    assert changed["ref"] == "W"
+    # (1, 30) is out of scope and suppressed.
+    assert by_sub[30]["violation"] is None
+
+
+def test_compare_datasets_filter_exact_match_across_multiple_compare_columns(spark: SparkSession):
+    # Coverage gap #4: exact-value pairing path grouping on multiple compare columns. Each in-scope
+    # row exact-matches the reference row with the same (c1, c2); a residual row still reports its diff.
+    df = spark.createDataFrame(
+        [(1, "A", "X", True), (1, "A", "Y", True)],
+        "id int, c1 string, c2 string, in_scope boolean",
+    )
+    ref_df = spark.createDataFrame([(1, "A", "X"), (1, "A", "Z")], "id int, c1 string, c2 string")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="in_scope",
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("c2", condition.alias("violation")).collect()
+    by_c2 = {row["c2"]: row for row in rows}
+
+    # (A, X) exact-matches reference (A, X) across both compared columns.
+    assert by_c2["X"]["violation"] is None
+    # (A, Y) has no exact reference; it pairs with the remaining reference (A, Z) and reports the c2 diff.
+    changed = json.loads(by_c2["Y"]["violation"])["changed"]["c2"]
+    assert changed["df"] == "Y"
+    assert changed["ref"] == "Z"
+
+
 @pytest.mark.parametrize("duplicate_key", [1, None])
 @pytest.mark.parametrize("compare_values", [False, True])
 def test_compare_datasets_pairs_duplicate_keys_without_cartesian_fanout(
@@ -4589,3 +5029,324 @@ def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession
         "a string, b int, c double, d string, has_invalid_schema string",
     )
     assertDataFrameEqual(actual_condition_df, expected_condition_df)
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — Total Variation Distance dataset check
+# ---------------------------------------------------------------------------
+
+
+def _apply_and_collect_violations(condition: Column, apply_method: Callable, df: DataFrame) -> list[Any]:
+    """Run the dataset-level check and return the violation message per row."""
+    return [row["violation"] for row in apply_method(df).select(condition.alias("violation")).collect()]
+
+
+def test_is_in_distribution_matches_within_distance(spark: SparkSession):
+    """Case 1: A:7 B:2 C:1 (10 rows) vs expected {A:0.75, B:0.15, C:0.10}, distance 0.05 → pass.
+
+    Actual proportions A=0.7, B=0.2, C=0.1 differ from expected by TVD=0.05 which is not greater
+    than the allowed 0.05, so no rows are flagged."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
+    assert all(v is None for v in _apply_and_collect_violations(condition, apply_method, df))
+
+
+def test_is_in_distribution_expected_omits_key_falls_into_residual_bucket(spark: SparkSession):
+    """Case 2: same 10 rows, expected {A:0.75, B:0.15} — implicit residual mass 0.10 absorbs C."""
+    values = ["A"] * 7 + ["B"] * 2 + ["C"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15}, distance=0.05)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_fails_when_distance_too_small(spark: SparkSession):
+    """Case 3: same 10 rows and exact expected, but distance=0 → TVD=0.05 flags every row."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.0)
+    violations = _apply_and_collect_violations(condition, apply_method, df)
+    expected_message = (
+        "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
+        "which exceeds the allowed distance=0.0."
+    )
+    assert violations == [expected_message] * len(violations)
+
+
+def test_is_in_distribution_fails_for_residual_bucket_when_distance_too_small(spark: SparkSession):
+    """Case 4: same 10 rows, expected {A:0.75, B:0.15} (residual 0.10 vs actual 0.10) but distance=0.001
+    → violation is driven by A/B deviations (0.05 each), not the residual."""
+    df = spark.createDataFrame([(v,) for v in ["A"] * 7 + ["B"] * 2 + ["C"]], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.15}, distance=0.001)
+    violations = _apply_and_collect_violations(condition, apply_method, df)
+    expected_message = (
+        "Column 'value' actual distribution deviates from expected by TVD=0.050000, "
+        "which exceeds the allowed distance=0.001."
+    )
+    assert violations == [expected_message] * len(violations)
+
+
+def test_is_in_distribution_exact_match_passes_at_distance_zero(spark: SparkSession):
+    """Exact match: actual distribution equals expected → TVD=0, passes even at distance=0."""
+    values = ["A", "A", "B", "B"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.0)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_extra_value_aggregated_into_residual(spark: SparkSession):
+    """Case 5: A:6 B:2 C:1 D:1 (10 rows) with expected {A:0.7, B:0.2, C:0.1} (sum=1, residual=0).
+    Actual: A=0.6, B=0.2, C=0.1, residual=0.1 → TVD = 0.5*(0.1+0+0+0.1) = 0.1 → passes at distance=0.15."""
+    values = ["A"] * 6 + ["B"] * 2 + ["C"] + ["D"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.7, "B": 0.2, "C": 0.1}, distance=0.15)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_skips_null_values(spark: SparkSession):
+    """Case 6: null values in the target column are excluded from the actual distribution."""
+    values = ["A", "A", "A", "B", None, None]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.001)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_case_insensitive_normalisation(spark: SparkSession):
+    """Case 7: case_sensitive=False lowercases both the column and expected keys before comparing."""
+    values = ["a", "A", "A", "B", "b"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.6, "B": 0.4}, distance=0.001, case_sensitive=False)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "spark_type, arrow_type, values, distribution",
+    [
+        ("boolean", "boolean", [True, True, True, False], {True: 0.75, False: 0.25}),
+        ("string", "string", ["x", "x", "x", "y"], {"x": 0.75, "y": 0.25}),
+        ("char(3)", "string", ["abc", "abc", "abc", "xyz"], {"abc": 0.75, "xyz": 0.25}),
+        ("byte", "byte", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("short", "short", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("int", "int", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        ("long", "long", [1, 1, 1, 2], {1: 0.75, 2: 0.25}),
+        (
+            "date",
+            "date",
+            [date(2024, 1, 1)] * 3 + [date(2024, 2, 1)],
+            {date(2024, 1, 1): 0.75, date(2024, 2, 1): 0.25},
+        ),
+    ],
+)
+def test_is_in_distribution_supported_column_types(
+    spark: SparkSession,
+    spark_type: str,
+    arrow_type: str,
+    values: list,
+    distribution: dict,
+):
+    """Case 8: every supported Spark type must be accepted and evaluated correctly."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {arrow_type}")
+    df = df.withColumn("value", F.col("value").cast(spark_type))
+    condition, apply_method = is_in_distribution("value", distribution, distance=0.001)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        f"value: {arrow_type}, value_is_not_in_distribution: string",
+    ).withColumn("value", F.col("value").cast(spark_type))
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+@pytest.mark.parametrize(
+    "spark_type, values, spark_type_display",
+    [
+        ("float", [1.0, 1.0, 2.0, 2.0], "float"),
+        ("double", [1.0, 1.0, 2.0, 2.0], "double"),
+        ("array<int>", [[1], [2]], "array<int>"),
+        ("binary", [bytes([1]), bytes([2])], "binary"),
+        (
+            "timestamp",
+            [datetime(2024, 1, 1), datetime(2024, 2, 1)],
+            "timestamp",
+        ),
+        ("decimal(10,2)", [Decimal("1.00"), Decimal("2.00")], "decimal(10,2)"),
+    ],
+)
+def test_is_in_distribution_unsupported_column_types(
+    spark: SparkSession,
+    spark_type: str,
+    values: list,
+    spark_type_display: str,
+):
+    """Case 9: unsupported column types must be rejected at apply time with a clear error."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
+    _, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.5)
+    with pytest.raises(InvalidParameterError) as exc_info:
+        apply_method(df)
+    assert str(exc_info.value) == (
+        f"Column 'value' has unsupported type '{spark_type_display}' for 'is_in_distribution'; "
+        "expected one of: boolean, string, char, byte, short, integer, long, date."
+    )
+
+
+@pytest.mark.parametrize(
+    "spark_type, values, distribution, expected_key_type_display, expected_python_type_display",
+    [
+        # str keys against a non-string column
+        ("int", [1, 2, 3], {"A": 0.5, "B": 0.5}, "str", "int"),
+        ("boolean", [True, False], {"A": 0.5, "B": 0.5}, "str", "bool"),
+        ("date", [date(2024, 1, 1), date(2024, 2, 1)], {"A": 0.5, "B": 0.5}, "str", "date"),
+        # int keys against a non-integer column
+        ("string", ["x", "y"], {1: 0.5, 2: 0.5}, "int", "str"),
+        ("boolean", [True, False], {1: 0.5, 2: 0.5}, "int", "bool"),
+        ("date", [date(2024, 1, 1), date(2024, 2, 1)], {1: 0.5, 2: 0.5}, "int", "date"),
+        # bool keys against non-boolean column (bool must not silently match integer columns)
+        ("int", [1, 0], {True: 0.5, False: 0.5}, "bool", "int"),
+        ("string", ["x", "y"], {True: 0.5, False: 0.5}, "bool", "str"),
+        # date keys against a non-date column
+        ("int", [1, 2], {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "int"),
+        ("string", ["x", "y"], {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "str"),
+    ],
+)
+def test_is_in_distribution_column_key_type_mismatch(
+    spark: SparkSession,
+    spark_type: str,
+    values: list,
+    distribution: dict,
+    expected_key_type_display: str,
+    expected_python_type_display: str,
+):
+    """Column type must be compatible with the distribution key type; a mismatch must fail loudly
+    at apply time rather than silently producing zero matches via cast-driven type coercion."""
+    df = spark.createDataFrame([(v,) for v in values], f"value: {spark_type}")
+    _, apply_method = is_in_distribution("value", distribution, distance=0.5)
+    with pytest.raises(InvalidParameterError) as exc_info:
+        apply_method(df)
+    assert str(exc_info.value) == (
+        f"Column 'value' type '{spark_type}' is not compatible with 'distribution' key type "
+        f"'{expected_key_type_display}'; expected '{expected_python_type_display}'."
+    )
+
+
+def test_is_in_distribution_treats_missing_expected_key_as_zero(spark: SparkSession):
+    """A key present in the expected distribution but absent from the actual data is treated as a
+    zero-probability observation and folded into the TVD calculation."""
+    values = ["A", "A", "A", "B"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    # actual A=0.75, B=0.25, C=0 → TVD = 0.5*(|0.5-0.75|+|0.4-0.25|+|0.1-0|) = 0.25
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.4, "C": 0.1}, distance=0.3)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_row_filter_applied_before_distribution(spark: SparkSession):
+    """row_filter narrows the dataset before the actual distribution is computed."""
+    rows = [("A", 1), ("A", 1), ("A", 1), ("B", 1), ("X", 2), ("Y", 2)]
+    df = spark.createDataFrame(rows, "value: string, keep: int")
+    condition, apply_method = is_in_distribution("value", {"A": 0.75, "B": 0.25}, distance=0.001, row_filter="keep = 1")
+    actual = apply_method(df).select("value", "keep", condition)
+    expected = spark.createDataFrame(
+        [(v, k, None) for v, k in rows],
+        "value: string, keep: int, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_empty_dataframe(spark: SparkSession):
+    """An empty dataset (no rows at all) produces no violations."""
+    df = spark.createDataFrame([], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.01)
+    assert _apply_and_collect_violations(condition, apply_method, df) == []
+
+
+def test_is_in_distribution_all_nulls_dataframe(spark: SparkSession):
+    """A dataset where every row is NULL yields no actual distribution and therefore no violation."""
+    df = spark.createDataFrame([(None,), (None,), (None,)], "value: string")
+    condition, apply_method = is_in_distribution("value", {"A": 0.5, "B": 0.5}, distance=0.01)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(None, None), (None, None), (None, None)],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_accepts_column_expression(spark: SparkSession):
+    """The check accepts a Spark Column expression in addition to a plain column name."""
+    values = ["A"] * 7 + ["B"] * 2 + ["C"]
+    df = spark.createDataFrame([(v,) for v in values], "value: string")
+    condition, apply_method = is_in_distribution(F.col("value"), {"A": 0.75, "B": 0.15, "C": 0.10}, distance=0.05)
+    actual = apply_method(df).select("value", condition)
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "value: string, value_is_not_in_distribution: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_accepts_wrapped_column_expression(spark: SparkSession):
+    """A wrapped Column expression like F.upper(F.col('v')) is supported — the check must resolve
+    the type off the expression itself, not by looking up the rendered expression string in the
+    input schema (which would KeyError since 'upper(v)' is not a field name).
+    """
+    values = ["a", "A", "a", "b"]
+    df = spark.createDataFrame([(v,) for v in values], "v: string")
+    # After UPPER, 'a' → 'A' (3 rows) and 'b' → 'B' (1 row) → matches {A: 0.75, B: 0.25} exactly.
+    condition, apply_method = is_in_distribution(F.upper(F.col("v")), {"A": 0.75, "B": 0.25}, distance=0.0)
+    actual = apply_method(df).select("v", condition.alias("violation"))
+    expected = spark.createDataFrame(
+        [(v, None) for v in values],
+        "v: string, violation: string",
+    )
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
+
+
+def test_is_in_distribution_flags_via_metadata_api(ws, spark):
+    """End-to-end dict/metadata → apply_checks_by_metadata path must catch a real distribution
+    mismatch, not just verify the check runs (the shared 'apply every check' YAML fixture uses
+    distance=1.0 which cannot fail).
+    """
+    df = spark.createDataFrame([("A",), ("A",), ("A",), ("A",), ("B",)], "value: string")
+    # actual A=0.8, B=0.2 vs expected A=0.5, B=0.5 → TVD = 0.5*(0.3+0.3) = 0.3 > distance=0.1.
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_distribution",
+                "arguments": {
+                    "column": "value",
+                    "distribution": {"A": 0.5, "B": 0.5},
+                    "distance": 0.1,
+                },
+            },
+        }
+    ]
+    checked = DQEngine(ws).apply_checks_by_metadata(df, checks)
+    errors = checked.select(F.col("_errors")).collect()
+    assert all(row["_errors"] is not None for row in errors)

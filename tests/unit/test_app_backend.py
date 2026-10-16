@@ -50,7 +50,7 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
     save_rules,
     submit_for_approval,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService, ProfilerSample
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.draft_run_gate_service import DraftRunGateService
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
@@ -67,6 +67,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -115,6 +116,8 @@ def _activate_test_runtime_resources() -> Generator[None, None, None]:
         job_id="1",
         tmp_schema=conf.tmp_schema_name,
         genie_schema=conf.genie_schema_name,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     rt.activate(resources)
     try:
@@ -1378,6 +1381,8 @@ class TestJobService:
 # Tests for ViewService
 # ============================================================================
 
+VIEW_CLEANUP_PRINCIPAL = "22222222-2222-4222-8222-222222222222"
+
 
 class TestViewService:
     """Unit tests for ViewService."""
@@ -1396,7 +1401,7 @@ class TestViewService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return ViewService(sql=sql)
+        return ViewService(sql=sql, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1407,24 +1412,55 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view should issue CREATE OR REPLACE VIEW referencing the source table."""
+        """Create the source view with only the app cleanup MANAGE grant."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        view = svc.create_view("cat.sch.src_table")
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
+
+    def test_create_view_adds_limit_clause_for_a_row_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A records sample should cap the view with LIMIT.
+
+        The row count query returns no usable value against this mock, so the
+        builder takes its documented non-random fallback — a bare LIMIT.
+        """
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000))
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        sql_stmts = [c.kwargs["statement"] for c in calls]
+        assert any("LIMIT 5000" in s for s in sql_stmts)
+
+    def test_create_view_uses_tablesample_for_a_percent_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """A percent sample should use TABLESAMPLE and never a LIMIT."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table", sample=ProfilerSample(kind="percent", value=10))
+
+        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert any("TABLESAMPLE (10 PERCENT)" in s for s in create)
+        assert not any("LIMIT" in s for s in create)
+
+    def test_create_view_without_a_sample_scans_the_whole_table(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """DQ runs pass no sample, so their view must not narrow the table."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
         svc.create_view("cat.sch.src_table")
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
-        sql_stmts = [c.kwargs["statement"] for c in calls]
-        assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
-
-    def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view with sample_limit should append LIMIT to the SQL."""
-        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
-
-        svc.create_view("cat.sch.src_table", sample_limit=5000)
-
-        calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
-        sql_stmts = [c.kwargs["statement"] for c in calls]
-        assert any("LIMIT 5000" in s for s in sql_stmts)
+        create = [c.kwargs["statement"] for c in calls if "CREATE OR REPLACE VIEW" in c.kwargs["statement"]]
+        assert create
+        assert not any("LIMIT" in s or "TABLESAMPLE" in s for s in create)
 
     def test_create_view_raises_on_sql_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """_ensure_schema should raise RuntimeError when the statement fails."""
@@ -1493,17 +1529,22 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view_from_sql should embed the user query in CREATE OR REPLACE VIEW ... AS."""
+        """Embed the query and grant only app cleanup MANAGE."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
         query = "SELECT id FROM cat.sch.src_table"
 
-        svc.create_view_from_sql(query)
+        view = svc.create_view_from_sql(query)
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         create_stmts = [s for s in sql_stmts if "CREATE OR REPLACE VIEW" in s]
         assert len(create_stmts) == 1
         assert query in create_stmts[0]
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
     # ---------- create_view_from_sql: is_sql_query_safe gate ----------
 
@@ -1804,21 +1845,25 @@ class TestProfilerRoutes:
         """submit_profile_run should create a view and submit a job, returning run ids."""
         mock_view_svc.create_view.return_value = "cat.sch.tmp_view_xyz"  # type: ignore[attr-defined]
         mock_job_svc.submit_run.return_value = 77777  # type: ignore[attr-defined]
-        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_limit=5000)
+        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_kind="records", sample_value=5000)
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         result = submit_profile_run(
             body=body,
             obo_ws=mock_obo_ws,
             view_svc=mock_view_svc,
             job_svc=mock_job_svc,
             app_conf=app_conf,
+            app_settings=mock_app_settings,
         )
 
         assert isinstance(result, ProfileRunOut)
         assert result.job_run_id == 77777
         assert len(result.run_id) > 0
-        mock_view_svc.create_view.assert_called_once_with("cat.sch.src_table", sample_limit=5000)  # type: ignore[attr-defined]
+        mock_view_svc.create_view.assert_called_once_with(  # type: ignore[attr-defined]
+            "cat.sch.src_table", sample=ProfilerSample(kind="records", value=5000)
+        )
 
     def test_submit_profile_run_raises_500_on_error(
         self,
@@ -1831,6 +1876,7 @@ class TestProfilerRoutes:
         body = ProfileRunIn(table_fqn="cat.sch.src_table")
 
         app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        mock_app_settings = create_autospec(AppSettingsService, instance=True)
         with pytest.raises(HTTPException) as exc:
             submit_profile_run(
                 body=body,
@@ -1838,6 +1884,7 @@ class TestProfilerRoutes:
                 view_svc=mock_view_svc,
                 job_svc=mock_job_svc,
                 app_conf=app_conf,
+                app_settings=mock_app_settings,
             )
 
         assert exc.value.status_code == 500

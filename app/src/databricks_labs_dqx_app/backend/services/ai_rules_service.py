@@ -8,8 +8,7 @@ from typing import Any, ClassVar, TypedDict
 
 import yaml
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import ChatDatabricks  # type: ignore[import-untyped]
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.llm.llm_core import _filter_unsafe_sql_rules
@@ -17,6 +16,7 @@ from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_defin
 from databricks.labs.dqx.utils import is_sql_query_safe
 
 from databricks_labs_dqx_app.backend.config import AI_SAMPLE_ROW_LIMIT, conf
+from databricks_labs_dqx_app.backend.models import CheckFunctionDef
 from databricks_labs_dqx_app.backend.lowcode_compile import (
     CompiledLowcodeBody,
     brace_bare_slot_refs,
@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.lowcode_compile import (
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments
+from databricks_labs_dqx_app.backend.text_case import to_title_case
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +193,84 @@ _DQX_NATIVE_COVERAGE_GUIDANCE = (
     "that can express all of it. Prefer a built-in check whenever one genuinely covers the "
     "whole requirement."
 )
+# Built-in checks target ONE column of the table under test: the authoring UI
+# binds a native rule's column slots to exactly one column unless the check takes
+# a LIST-typed columns parameter (a composite-key check like ``is_unique``) — see
+# `filteredNativeFns` in RegistryRuleFormDialog.tsx. A requirement that relates
+# two different columns ("shipped date not before delivery date") therefore has no
+# authorable built-in form, even though DQX itself would accept a second column
+# passed to a value argument such as ``is_not_less_than(limit=...)``. Without this
+# the native pass answered such descriptions with a check the editor cannot bind,
+# instead of declining to the Condition Builder, which expresses col-vs-col
+# comparisons natively. `_native_needs_extra_columns` enforces the same rule on
+# the response, because a prompt is guidance and not a guarantee.
+_DQX_NATIVE_MULTI_COLUMN_GUIDANCE = (
+    "\n- A built-in check may target only ONE column of the table under test. The sole exception "
+    "is a check whose column argument takes a LIST of columns (a composite-key check such as "
+    "is_unique). If the requirement RELATES TWO OR MORE DIFFERENT columns to each other — e.g. "
+    '"shipped date is not before delivery date", "end date after start date", "discount under '
+    'list price" — no built-in check can express it: return exactly {"decline": true} and nothing '
+    "else, and it will be built on a surface that compares columns. NEVER pass a column name to a "
+    "non-column argument (a limit/value/threshold argument) to work around this."
+)
+
+# The full guidance block the dqx_native pass gets: a built-in check must cover
+# the requirement IN FULL (above) and must need only one column (here).
+_DQX_NATIVE_GUIDANCE = _DQX_NATIVE_COVERAGE_GUIDANCE + _DQX_NATIVE_MULTI_COLUMN_GUIDANCE
+
 # Sentinel key the native pass returns to decline (see above).
 _DECLINE_KEY = "decline"
+
+# The one rule field whose suggestions are normalised to Title Case.
+_NAME_FIELD = "name"
 
 _FIELD_SUGGESTION_SYSTEM_TEMPLATE = """\
 You are helping a data owner fill in one field of a data quality rule definition. Given the \
 rule's context, suggest a concise value for the field "{field}".
-
+{guidance}
 Return ONLY a JSON object: {{"value": "<suggested value>"}}"""
+
+# Per-field additions to the suggestion prompt. The rule context carries
+# snake_case identifiers (the DQX check-function name, column/slot names), which
+# primes the model to answer in snake_case too — so the name field states the
+# expected casing explicitly. The server also enforces it after parsing (see
+# ``suggest_field``), because a prompt is guidance and not a guarantee.
+_FIELD_SUGGESTION_GUIDANCE: dict[str, str] = {
+    _NAME_FIELD: (
+        "\nWrite the name as a short Title Case phrase using spaces — NOT snake_case, "
+        "camelCase, or the check-function identifier. Capitalise each word. Do not end "
+        'with a full stop. For example "Order Amount Must Be Positive", not '
+        '"order_amount_must_be_positive".\n'
+    ),
+}
+
+
+def _repair_name_casing(value: str) -> str:
+    """Title-case a suggested rule name, but only when it is clearly mis-cased.
+
+    The prompt asks for Title Case and usually gets it. This repairs the two
+    failure modes the snake_case-heavy rule context actually provokes:
+
+    * an identifier-style suggestion (``order_amount_must_be_positive``)
+    * an all-lower-case phrase (``order amount must be positive``)
+
+    A suggestion that already carries capitals is returned untouched, so
+    acronyms and proper nouns the model got right survive — blanket re-casing
+    would flatten "PostgreSQL" to "Postgresql" and "SKU" to "Sku".
+
+    Args:
+        value: The model's raw suggestion.
+
+    Returns:
+        The suggestion, title-cased only if it needed it.
+    """
+    stripped = value.strip()
+    looks_like_identifier = "_" in stripped
+    has_no_capitals = stripped == stripped.lower()
+    if looks_like_identifier or has_no_capitals:
+        return to_title_case(stripped)
+    return stripped
+
 
 # --- SQL predicate authoring assistants (write / improve / explain) -------------
 # Ported from dqlake's AiAssistMenu backend (backend/routers/ai.py). Predicates are
@@ -444,23 +515,13 @@ _SLOT_TOKEN_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
 
 
 class AiRulesService:
-    """Generates DQX rules using either the legacy ChatDatabricks leg or the AIGateway.
+    """Generates DQX rules through the AIGateway, entirely OBO-authenticated.
 
-    Two request families live here, both entirely OBO-authenticated:
-
-    - **Legacy / contract leg** (:meth:`generate`, :meth:`generate_from_schema_info`):
-      ChatDatabricks-based generation used by the data-contract importer's natural-language
-      quality-expectation path; predates the AIGateway. Uses the OBO WorkspaceClient for both
-      the UC schema lookup and the model call itself, so the LLM invocation runs as the
-      calling user, not the app's service principal. Left otherwise unchanged — it's a
-      synchronous call chain consumed by
-      :class:`~databricks_labs_dqx_app.backend.services.contract_rules_service.ContractRulesService`.
-    - **AIGateway-backed purpose calls** (:meth:`generate_checks_via_gateway`,
-      :meth:`generate_rule`, :meth:`suggest_field`): route through :class:`AIGateway` (itself
-      OBO-authenticated — see ``services/ai_gateway.py``) for the kill-switch, per-user rate
-      limit, and audit log described in the Rules Registry design spec §8.
-      ``generate_checks_via_gateway`` is the reworked backing for the
-      ``aiAssistedChecksGeneration`` route.
+    The purpose calls (:meth:`generate_checks_via_gateway`, :meth:`generate_rule`,
+    :meth:`suggest_field`, ...) route through :class:`AIGateway` (itself OBO-authenticated —
+    see ``services/ai_gateway.py``) for the kill-switch, per-user rate limit, and audit log
+    described in the Rules Registry design spec §8. ``generate_checks_via_gateway`` is the
+    backing for the ``aiAssistedChecksGeneration`` route.
 
     The few-shot prompt and available-functions list are built once (ClassVar) and reused
     across requests. Only the schema lookup and LLM call are per-request.
@@ -475,7 +536,7 @@ class AiRulesService:
         gateway: AIGateway,
         app_settings: AppSettingsService | None = None,
     ) -> None:
-        self._obo_ws = obo_ws  # user identity — UC table access + legacy ChatDatabricks leg
+        self._obo_ws = obo_ws  # user identity — UC table access
         self._gateway = gateway  # AIGateway-backed purpose calls (also OBO under the hood)
         # Source of the admin-configurable dimension/severity vocabularies that
         # drive the proposal prompt option lists AND post-parse validation.
@@ -596,55 +657,6 @@ class AiRulesService:
         return candidates
 
     # ------------------------------------------------------------------
-    # Legacy / contract leg — unchanged ChatDatabricks-based generation.
-    # ------------------------------------------------------------------
-
-    def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict[str, Any]]:
-        """Generate DQX quality rules from natural language.
-
-        Args:
-            user_input: Natural language description of data quality requirements.
-            table_fqn: Optional fully-qualified table name for schema context.
-
-        Returns:
-            List of DQX rule dicts.
-        """
-        schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
-        return self.generate_from_schema_info(user_input=user_input, schema_info=schema_info)
-
-    def generate_from_schema_info(self, user_input: str, schema_info: str = "") -> list[dict[str, Any]]:
-        """Generate DQX rules from natural language with a pre-built schema_info.
-
-        Split out from :meth:`generate` for callers that already know the
-        column context and so have no UC table to look up. The model call runs
-        with the caller's OBO WorkspaceClient (never the app's service
-        principal), so it is subject to the calling user's own UC permissions
-        on the configured serving endpoint.
-
-        Args:
-            user_input: Natural language description of the quality expectation.
-            schema_info: JSON string describing the table columns (may be empty).
-
-        Returns:
-            List of DQX rule dicts.
-        """
-        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
-        human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
-        messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
-
-        # ``max_tokens`` caps the per-call output budget (AGENTS.md / OWASP
-        # LLM04): rule generation returns small JSON payloads, so a bounded
-        # cap protects against pathological prompts triggering runaway,
-        # expensive inference without truncating legitimate responses.
-        llm = ChatDatabricks(
-            endpoint=conf.llm_endpoint,
-            workspace_client=self._obo_ws,
-            max_tokens=conf.llm_max_tokens,
-        )
-        response = llm.invoke(messages)
-        return self._parse_response(str(response.content))
-
-    # ------------------------------------------------------------------
     # AIGateway-backed purpose calls (Phase 4A)
     # ------------------------------------------------------------------
 
@@ -654,11 +666,10 @@ class AiRulesService:
         user_email: str,
         table_fqn: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Gateway-routed replacement for the legacy ``/ai/generate-checks`` path.
+        """Generate DQX checks from natural language for the ``/ai/generate-checks`` path.
 
-        Reworked per the Rules Registry design spec §8: ``aiAssistedChecksGeneration`` now
-        goes through :class:`AIGateway` (kill-switch, per-user rate limit, audit) instead of
-        calling ChatDatabricks directly. Any unsafe ``sql_query`` rule in the model's output
+        Goes through :class:`AIGateway` (kill-switch, per-user rate limit, audit) per the
+        Rules Registry design spec §8. Any unsafe ``sql_query`` rule in the model's output
         is dropped via :func:`_filter_unsafe_sql_rules` before the checks are returned.
 
         Raises:
@@ -829,7 +840,7 @@ class AiRulesService:
             definition_shape=definition_shape,
             columns_field=_DQX_NATIVE_COLUMNS_FIELD if is_native else _SQL_COLUMNS_FIELD,
             columns_guidance=_DQX_NATIVE_COLUMNS_GUIDANCE if is_native else _SQL_COLUMNS_GUIDANCE,
-            coverage_guidance=_DQX_NATIVE_COVERAGE_GUIDANCE if is_native else "",
+            coverage_guidance=_DQX_NATIVE_GUIDANCE if is_native else "",
             dimensions=", ".join(dimensions),
             severities=", ".join(severities),
             available_functions=self._get_available_functions(),
@@ -915,6 +926,17 @@ class AiRulesService:
             # (item B2-32): names come from the model's chosen column references,
             # families are locked to the check function's own semantics.
             slots = self._derive_native_slots(function, arguments, proposal.get("columns"))
+            if self._native_needs_extra_columns(function, arguments, slots, proposal.get("columns")):
+                # Needs more than the one column a native rule can be bound to —
+                # fall through so the requirement lands on the Condition Builder,
+                # which compares two columns natively (see
+                # _DQX_NATIVE_MULTI_COLUMN_GUIDANCE).
+                logger.info(
+                    "AI-generated dqx_native rule dropped: check '%s' is not authorable as a "
+                    "single-column native rule (needs multiple columns or an unbindable value argument)",
+                    function,
+                )
+                return None
         elif mode == "sql":
             sql_query = definition.get("sql_query")
             if not isinstance(sql_query, str) or not sql_query.strip():
@@ -1130,9 +1152,7 @@ class AiRulesService:
             ``cardinality``, ``arg_key``), or ``[]`` when the function is
             unknown or has no column parameters.
         """
-        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
-
-        fn_def = next((f for f in _introspect_check_functions() if f.name == function), None)
+        fn_def = AiRulesService._check_function_def(function)
         if fn_def is None:
             return []
 
@@ -1171,6 +1191,88 @@ class AiRulesService:
                 )
                 position += 1
         return slots
+
+    @staticmethod
+    def _native_needs_extra_columns(
+        function: str,
+        arguments: dict[str, Any],
+        slots: list[dict[str, Any]],
+        ai_columns: object,
+    ) -> bool:
+        """Whether a validated native proposal needs more columns than it can be bound to.
+
+        A native registry rule binds its column slots to ONE column of the monitored
+        table, unless the check's column argument is LIST-typed (a composite-key check
+        such as *is_unique*), which accepts any number. The two ways a proposal outgrows
+        that — both produced by descriptions relating two columns, e.g. "shipped date is
+        not before delivery date" — are:
+
+        * the check has several single-column parameters (*is_older_than_col2_for_n_days*),
+          so more than one slot was derived; or
+        * a second column name was smuggled into a NON-column argument (*limit*,
+          *value*, …), which the editor renders as a literal input, leaving the column
+          unbindable at apply time.
+
+        Both are rejected so :meth:`generate_rule` falls through to the Condition
+        Builder, which expresses column-vs-column comparisons directly.
+
+        Args:
+            function: The validated check-function name.
+            arguments: The proposal's ``definition.arguments``.
+            slots: The slots derived by :meth:`_derive_native_slots`.
+            ai_columns: The model's top-level ``columns`` array — the columns it
+                says the rule references, which is how a column smuggled into a
+                value argument is recognised. Non-list ignored.
+
+        Returns:
+            True when the proposal cannot be authored as a native rule.
+        """
+        fn_def = AiRulesService._check_function_def(function)
+        if fn_def is None:
+            return False
+        column_params = [p for p in fn_def.params if p.kind in ("column", "columns")]
+        # A list-typed column argument is the one check shape that legitimately
+        # binds several columns (a composite key), so the slot COUNT says nothing
+        # about bindability there — but the value arguments are still checked
+        # below, rather than exempting the whole function.
+        if not any(p.kind == "columns" for p in column_params) and len(slots) > 1:
+            return True
+        # A second column smuggled into a value argument: the value names one of
+        # the columns the model itself declared, or is a {{placeholder}} — either
+        # way the editor renders that argument as a literal, not a column binding.
+        #
+        # KNOWN GAP: a BARE column name the model did not also declare in
+        # ``columns`` is not recognised here, and cannot be without a column
+        # universe to check against — this endpoint has none, because a registry
+        # rule is table-agnostic (the authoring form sends only the description).
+        # A purely textual test would misread legitimate string literals, which
+        # are shaped identically to a column name in exactly these arguments
+        # (``is_equal_to(value="emea")``, ``is_valid_national_id(country="GB")``).
+        # `_DQX_NATIVE_MULTI_COLUMN_GUIDANCE` is the primary defence; this is the
+        # backstop for the forms that ARE recognisable.
+        declared = {
+            AiRulesService._sanitize_slot_name(name) for name in AiRulesService._declared_column_names(ai_columns)
+        }
+        column_param_names = {p.name for p in column_params}
+        for key, value in arguments.items():
+            if key in column_param_names or not isinstance(value, str):
+                continue
+            if _SLOT_TOKEN_RE.match(value.strip()):
+                return True
+            if AiRulesService._sanitize_slot_name(value) in declared:
+                return True
+        return False
+
+    @staticmethod
+    def _check_function_def(function: str) -> CheckFunctionDef | None:
+        """The introspected definition of one check function, or None when unknown.
+
+        Shared by the slot derivation and the bindability guard so both read the
+        same (lru_cached) catalog through one lookup.
+        """
+        from ..routes.v1.check_functions import _introspect_check_functions  # noqa: PLC0415
+
+        return next((f for f in _introspect_check_functions() if f.name == function), None)
 
     @staticmethod
     def _slot_names_from_arg(value: object) -> list[str]:
@@ -1216,7 +1318,9 @@ class AiRulesService:
             AIRateLimitExceededError: caller is over their hourly quota.
             AIResponseParseError: the model's response did not contain a usable suggestion.
         """
-        system = _FIELD_SUGGESTION_SYSTEM_TEMPLATE.format(field=field)
+        system = _FIELD_SUGGESTION_SYSTEM_TEMPLATE.format(
+            field=field, guidance=_FIELD_SUGGESTION_GUIDANCE.get(field, "")
+        )
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": context},
@@ -1232,6 +1336,8 @@ class AiRulesService:
         value = parsed.get("value")
         if not isinstance(value, str) or not value.strip():
             raise AIResponseParseError(f"AI did not return a usable suggestion for field '{field}'.")
+        if field == _NAME_FIELD:
+            return _repair_name_casing(value)
         return value.strip()
 
     # ------------------------------------------------------------------

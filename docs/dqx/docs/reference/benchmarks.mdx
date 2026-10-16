@@ -13,6 +13,7 @@ sidebar_position: 508
 * 100 million rows are used for each test.
 * DQX rules are executed in parallel and in distributed manner using Spark. To minimize test variability, each type of check is executed sequentially in this benchmark. Specific tests, such as `test_benchmark_apply_checks_all_dataset_checks` and `test_benchmark_apply_checks_all_row_checks`, execute all types of checks in parallel simultaneously.
 * Benchmarks are created using Databricks Serverless cluster.
+* Each test runs for a minimum of 3 rounds; the reported statistics are aggregated across the rounds executed (see the Rounds column).
 * The provided benchmarks are indicative. You should always consider benchmarking results in the context of your own data and environment.
 
 ## Results
@@ -25,6 +26,7 @@ sidebar_position: 508
 | test_benchmark_are_polygons_mutually_disjoint | 0.543028 | 0.530832 | 0.461183 | 0.649264 | 0.068385 | 0.070691 | 0.506159 | 0.576850 | 5 | 0 | 2 | 1.84 |
 | test_benchmark_compare_datasets[lazy_pairing] | 7.713215 | 7.710461 | 6.015724 | 10.965409 | 1.997065 | 2.442362 | 6.104391 | 8.546753 | 5 | 0 | 1 | 0.13 |
 | test_benchmark_compare_datasets[strict] | 6.779206 | 6.706592 | 6.686954 | 7.080397 | 0.168787 | 0.111965 | 6.698219 | 6.810184 | 5 | 1 | 1 | 0.15 |
+| test_benchmark_compare_datasets_filtered | 13.618499 | 13.635732 | 13.579416 | 13.640349 | 0.033926 | 0.045700 | 13.593495 | 13.639195 | 3 | 0 | 1 | 0.07 |
 | test_benchmark_foreach_compare_datasets[n_rows_100000000_n_columns_5] | 25.879615 | 25.919933 | 25.536855 | 26.071184 | 0.217230 | 0.307223 | 25.748681 | 26.055904 | 5 | 0 | 1 | 0.04 |
 | test_benchmark_foreach_foreign_key[n_rows_100000000_n_columns_5] | 24.264873 | 22.893218 | 20.587308 | 29.037093 | 4.062789 | 7.705522 | 20.652819 | 28.358341 | 5 | 0 | 1 | 0.04 |
 | test_benchmark_foreach_has_no_outliers[n_rows_100000000_n_columns_5] | 22.524313 | 22.347593 | 22.104944 | 22.924248 | 0.374170 | 0.646915 | 22.271984 | 22.918899 | 5 | 0 | 3 | 0.04 |
@@ -100,9 +102,11 @@ sidebar_position: 508
 | test_benchmark_is_equal_to | 0.241270 | 0.241646 | 0.226919 | 0.248632 | 0.008799 | 0.010992 | 0.237380 | 0.248371 | 5 | 0 | 1 | 4.14 |
 | test_benchmark_is_geo_covers_approximate | 0.315839 | 0.303825 | 0.260800 | 0.403604 | 0.052941 | 0.047328 | 0.288500 | 0.335827 | 5 | 0 | 2 | 3.17 |
 | test_benchmark_is_geo_covers_precise | 0.310589 | 0.323666 | 0.260539 | 0.373275 | 0.047434 | 0.076369 | 0.264342 | 0.340711 | 5 | 0 | 2 | 3.22 |
+| test_benchmark_is_geo_within_distance | 0.346828 | 0.341430 | 0.338786 | 0.360268 | 0.011714 | 0.016111 | 0.339447 | 0.355559 | 3 | 0 | 1 | 2.88 |
 | test_benchmark_is_geography | 0.213287 | 0.212428 | 0.209852 | 0.217141 | 0.002817 | 0.004011 | 0.211498 | 0.215510 | 5 | 0 | 2 | 4.69 |
 | test_benchmark_is_geometry | 0.219831 | 0.214826 | 0.212297 | 0.238342 | 0.010652 | 0.010117 | 0.213906 | 0.224022 | 5 | 0 | 1 | 4.55 |
 | test_benchmark_is_geometrycollection | 0.212428 | 0.212908 | 0.210102 | 0.214169 | 0.001574 | 0.002194 | 0.211298 | 0.213491 | 5 | 0 | 2 | 4.71 |
+| test_benchmark_is_in_distribution | 0.389281 | 0.391175 | 0.372517 | 0.404153 | 0.015903 | 0.023727 | 0.377181 | 0.400908 | 3 | 0 | 1 | 2.57 |
 | test_benchmark_is_in_list[col1] | 0.236102 | 0.236503 | 0.227829 | 0.246569 | 0.007036 | 0.008989 | 0.230909 | 0.239897 | 5 | 0 | 2 | 4.24 |
 | test_benchmark_is_in_list[col2] | 0.289593 | 0.276054 | 0.232456 | 0.372550 | 0.053040 | 0.065903 | 0.255264 | 0.321166 | 5 | 0 | 2 | 3.45 |
 | test_benchmark_is_in_list[col3] | 0.278913 | 0.276144 | 0.261990 | 0.308485 | 0.018107 | 0.021908 | 0.265834 | 0.287742 | 5 | 0 | 1 | 3.59 |

@@ -34,7 +34,7 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import Rules
 _TABLES = "dqx_test.dqx_app_test.dq_monitored_tables"
 _VERSIONS = "dqx_test.dqx_app_test.dq_monitored_table_versions"
 _APPLIED = "dqx_test.dqx_app_test.dq_applied_rules"
-_QUALITY = "dqx_test.dqx_app_test.dq_quality_rules"
+_QUALITY = "dqx_test.dqx_app_test.dq_resolved_rules"
 
 
 @pytest.fixture

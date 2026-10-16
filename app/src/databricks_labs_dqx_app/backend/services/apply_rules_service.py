@@ -125,7 +125,7 @@ class ApplyRulesService:
         self._app_settings = app_settings
         self._table = sql.fqn("dq_applied_rules")
         self._monitored_table = sql.fqn("dq_monitored_tables")
-        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._quality_rules_table = sql.fqn("dq_resolved_rules")
         self._suppressions_table = sql.fqn("dq_tag_auto_suppressions")
         self._select_cols = self._build_select_cols()
 
@@ -600,7 +600,7 @@ class ApplyRulesService:
           identical-mapping-hash update-in-place case.
         - A mapping change (new ``mapping_hash``) inserts the new row via
           :meth:`apply_rule` and removes the old row (via :meth:`remove_applied`,
-          which also cleans up any materialized ``dq_quality_rules`` rows)
+          which also cleans up any materialized ``dq_resolved_rules`` rows)
           since it no longer matches any desired entry's hash.
         - Any existing row whose ``rule_id`` isn't in *desired* at all is
           removed the same way.
@@ -718,6 +718,12 @@ class ApplyRulesService:
         rows = self._sql.query(sql)
         return [self._row_to_applied_rule(row) for row in rows]
 
+    def list_all(self) -> list[AppliedRule]:
+        """List every applied rule across all monitored-table bindings."""
+        sql = f"SELECT {self._select_cols} FROM {self._table} ORDER BY created_at DESC"  # noqa: S608
+        rows = self._sql.query(sql)
+        return [self._row_to_applied_rule(row) for row in rows]
+
     def list_bindings_for_rule(self, rule_id: str) -> list[AppliedRule]:
         """List every application of *rule_id*, across all monitored-table bindings.
 
@@ -758,7 +764,7 @@ class ApplyRulesService:
     # ------------------------------------------------------------------
 
     def remove_applied(self, applied_rule_id: str, user_email: str | None = None) -> None:
-        """Remove an applied rule and every ``dq_quality_rules`` row it materialized.
+        """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
         Suppression tombstone: when the removed row was TAG-AUTO applied
         (``user_metadata[ORIGIN_KEY] == ORIGIN_TAG_AUTO``), this also records a

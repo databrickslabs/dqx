@@ -60,6 +60,51 @@ export function isColumnRef(v: unknown): v is ColumnRefValue {
   );
 }
 
+/**
+ * Every DECLARED-COLUMN name the AST references, from all three reference
+ * sites — a row's LHS `column_ref`, a row's RHS value, and a join key's
+ * input-side `column_ref`.
+ *
+ * The RHS is walked RECURSIVELY because a column reference (item 42) can sit
+ * anywhere a literal can: as the scalar value (`{{a}} <= {{b}}`), inside an
+ * array (a `between` bound, an `in` entry), or as an aggregated row's
+ * `{ aggregate, column_ref }` comparison spec. A shallow read of `value` missed
+ * the column-vs-column case entirely, which made the authoring form report a
+ * genuinely-referenced column as unused and refuse to save.
+ *
+ * Dotted names are JOINED-TABLE columns (`orders.id`), which compile to raw
+ * identifiers rather than `{{slot}}` placeholders, so they are not declared
+ * columns and are left out.
+ */
+export function collectAstColumnRefs(ast: LowcodeAstV2): Set<string> {
+  const refs = new Set<string>();
+  const add = (name: unknown): void => {
+    if (typeof name === "string" && name.length > 0 && !name.includes(".")) refs.add(name);
+  };
+  const walkValue = (value: unknown): void => {
+    if (isColumnRef(value)) {
+      add(value.$col);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(walkValue);
+      return;
+    }
+    if (value && typeof value === "object") {
+      // An aggregated row's RHS comparison spec ({ aggregate, column_ref }).
+      add((value as Record<string, unknown>).column_ref);
+    }
+  };
+  for (const row of ast.rows ?? []) {
+    add(row.column_ref);
+    walkValue(row.value);
+  }
+  for (const join of ast.joins ?? []) {
+    for (const key of join.keys ?? []) add(key.column_ref);
+  }
+  return refs;
+}
+
 export interface JoinKeyAst {
   joined_column: string;
   column_ref: string;
@@ -95,18 +140,34 @@ export function hashAst(ast: LowcodeAstV2): string {
  * now-undeclared name). Three reference sites are rewritten:
  *
  *   • each row's LHS `column_ref` (the statement stub),
- *   • each row's RHS `value` when it's a `{ $col }` column reference (item 42),
+ *   • each row's RHS `value` wherever a `{ $col }` column reference sits (item
+ *     42) — the scalar value, a `between` bound, an `in` entry, or an
+ *     aggregated row's `{ aggregate, column_ref }` comparison spec,
  *   • each join key's `column_ref` (the input-side of the join condition).
+ *
+ * The RHS walk deliberately covers the same reference sites as
+ * {@link collectAstColumnRefs}: a site one function counts and the other misses
+ * leaves a rename half-applied on a rule the "unused column" gate then passes.
  *
  * A no-op (same-named or absent) still returns a structurally-equal ast. When
  * *oldName* equals *newName* the input reference is returned unchanged.
  */
 export function renameColumnInAst(ast: LowcodeAstV2, oldName: string, newName: string): LowcodeAstV2 {
   if (oldName === newName) return ast;
+  const renameInValue = (value: unknown): unknown => {
+    if (isColumnRef(value)) return value.$col === oldName ? { $col: newName } : value;
+    if (Array.isArray(value)) return value.map(renameInValue);
+    if (value && typeof value === "object") {
+      const spec = value as Record<string, unknown>;
+      return spec.column_ref === oldName ? { ...spec, column_ref: newName } : value;
+    }
+    return value;
+  };
   const rows = ast.rows.map((row): AnyRow => {
     let next = row;
     if (next.column_ref === oldName) next = { ...next, column_ref: newName };
-    if (isColumnRef(next.value) && next.value.$col === oldName) next = { ...next, value: { $col: newName } };
+    const value = renameInValue(next.value);
+    if (value !== next.value) next = { ...next, value };
     return next;
   });
   const joins = ast.joins.map((join) => ({

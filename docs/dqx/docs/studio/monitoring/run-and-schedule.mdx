@@ -10,7 +10,7 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Run checks & schedule
 
 A **run** evaluates every check on a table (or a whole collection) against the
-current data and records the results. You can run on demand or on a schedule.
+current data and records the results. You can run checks on demand or on a schedule.
 
 ## Run now
 
@@ -20,7 +20,9 @@ in the background, so you can leave the page. When it finishes it appears in
 [Review results](/docs/studio/running/) view.
 
 **Run now** (and every scheduled run) always evaluates the **full table** — it
-never samples. Use this for published monitoring.
+never samples. These are the runs your real, ongoing monitoring relies on:
+because they cover every row, their scores and failing-row counts are exact. To
+try unpublished changes cheaply, use **Run draft** below, which samples.
 
 <Admonition type="note" title="Who can run checks">
 Running is part of the **Rule Author** role (Admins can run too); Approvers and
@@ -58,8 +60,8 @@ Open the **Schedule** tab on a monitored table or collection to configure:
 - **Timezone** — when the run should fire
 - **What to run** — quality checks only, profiling only, or both
 
-Scheduled runs always use the **latest approved** rule set and scan the **full
-table** (no sample). Draft sample size does not apply to schedules.
+Scheduled runs always use the **latest approved** rule set and currently scan the **full
+table** (not a sample or increment). Draft sample size does not apply to schedules.
 
 <ThemedImage
   alt="The schedule editor: an hourly/daily/weekly cadence picker with a time and timezone, a cron option, and Save and Remove schedule buttons"
@@ -73,5 +75,5 @@ table** (no sample). Draft sample size does not apply to schedules.
 
 Every past run shows up in **Runs History**, with its status and how long it
 took — validation runs and profiling runs alike. Once a run finishes, head to
-[Review results](/docs/studio/running/) to read the score and investigate
-anything that failed.
+[Review results](/docs/studio/running/) to check the score and investigate
+any quality issues.

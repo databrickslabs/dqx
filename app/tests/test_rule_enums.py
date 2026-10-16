@@ -79,7 +79,7 @@ def test_service_valid_statuses_derive_from_enum():
 
 def _rules_table_ddl() -> list:
     """The rules-table DDL from the Postgres migration."""
-    pg = next(m.sql for m in PG_MIGRATIONS if "CREATE TABLE" in m.sql and "dq_quality_rules" in m.sql)
+    pg = next(m.sql for m in PG_MIGRATIONS if "CREATE TABLE" in m.sql and "dq_resolved_rules" in m.sql)
     return [pytest.param(pg, id="postgres")]
 
 

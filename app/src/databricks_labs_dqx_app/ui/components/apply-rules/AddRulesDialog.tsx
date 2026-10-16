@@ -198,7 +198,7 @@ export function AddRulesDialog({
                 link: (
                   <Link
                     to="/registry-rules/new"
-                    className="underline underline-offset-2 hover:text-foreground"
+                    className="font-semibold underline underline-offset-2 hover:text-foreground"
                     onClick={() => handleClose(false)}
                   />
                 ),

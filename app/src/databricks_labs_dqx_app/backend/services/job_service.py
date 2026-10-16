@@ -10,8 +10,14 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
 
-from databricks_labs_dqx_app.backend.run_config_store import prepare_config_json
+from databricks_labs_dqx_app.backend.run_config_store import (
+    build_manifest_config_payload,
+    delete_staged_config,
+    prepare_config_json,
+)
+from databricks_labs_dqx_app.backend.services.task_runner_runs import TaskRunnerRun, cached_recent_completed_runs
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,6 @@ class JobService:
         job_id: str,
         sql: SqlExecutor,
         warehouse_id: str | None = None,
-        wheels_volume: str | None = None,
     ) -> None:
         self._ws = ws
         self._job_id = int(job_id) if job_id else 0
@@ -43,7 +48,6 @@ class JobService:
         # caller) wins; otherwise fall back to the SP executor's env-bound
         # warehouse so behaviour is unchanged when no override is set.
         self._warehouse_id = (warehouse_id or "").strip() or (sql.warehouse_id or "")
-        self._wheels_volume = (wheels_volume or "").strip()
 
     def submit_run(
         self,
@@ -70,17 +74,22 @@ class JobService:
             "warehouse_id": self._warehouse_id,
         }
         config_json = prepare_config_json(
-            self._ws,
-            wheels_volume=self._wheels_volume,
+            self._sql,
             run_id=run_id,
             config=config,
             job_parameters_without_config=base_params,
         )
+        staged = config_json == build_manifest_config_payload(config)
 
-        run = self._ws.jobs.run_now(
-            job_id=self._job_id,
-            job_parameters={**base_params, "config_json": config_json},
-        )
+        try:
+            run = self._ws.jobs.run_now(
+                job_id=self._job_id,
+                job_parameters={**base_params, "config_json": config_json},
+            )
+        except Exception:
+            if staged:
+                delete_staged_config(self._sql, run_id)
+            raise
         logger.info(
             "Submitted job run %s (job_id=%s, task_type=%s, app_run_id=%s)",
             run.run_id,
@@ -104,6 +113,17 @@ class JobService:
             result_state=state.result_state.value if state and state.result_state else None,
             message=state.state_message if state else None,
         )
+
+    async def list_recent_failed_runs(self) -> list[TaskRunnerRun]:
+        """Return the failed, non-preview runs among the most recent completed runs, newest first.
+
+        Read from the Jobs API (shared 30s cache), never the SQL warehouse, so the
+        app-wide failure-toast poll does not keep the warehouse running.
+        """
+        if not self._job_id:
+            return []
+        runs = await cached_recent_completed_runs(self._ws, self._job_id)
+        return [run for run in runs if run.is_failed and not run.is_preview]
 
     def get_run_creator(self, job_run_id: int) -> str | None:
         """Return the requesting end-user for a job run, or None if unavailable.
@@ -142,6 +162,7 @@ class JobService:
         size_value: int,
         run_type: str | None = None,
         job_run_id: int | None = None,
+        sample_kind: str | None = None,
     ) -> None:
         """Insert a RUNNING placeholder row. Non-fatal on failure.
 
@@ -150,8 +171,6 @@ class JobService:
         warehouse stamps the value with its own clock and zone-mapping
         works correctly on the cluster key.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
         eu = escape_sql_string(requesting_user)
         ef = escape_sql_string(source_table_fqn)
@@ -166,6 +185,9 @@ class JobService:
         if job_run_id is not None:
             cols += ", job_run_id"
             vals += f", {int(job_run_id)}"
+        if sample_kind is not None:
+            cols += ", sample_kind"
+            vals += f", '{escape_sql_string(sample_kind)}'"
 
         sql = f"INSERT INTO {table} ({cols}) VALUES ({vals})"
         try:
@@ -182,8 +204,13 @@ class JobService:
         view_fqn: str,
         sample_limit: int,
         job_run_id: int | None = None,
+        sample_kind: str | None = None,
     ) -> None:
-        """Insert a RUNNING placeholder for a profiler run."""
+        """Insert a RUNNING placeholder for a profiler run.
+
+        *sample_kind* says which unit *sample_limit* speaks; without it a
+        percentage run and a whole-table run both record 0 and read the same.
+        """
         self._record_running_placeholder(
             table,
             run_id,
@@ -193,6 +220,7 @@ class JobService:
             "sample_limit",
             sample_limit,
             job_run_id=job_run_id,
+            sample_kind=sample_kind,
         )
 
     def record_dryrun_started(
@@ -223,7 +251,7 @@ class JobService:
     # the existing query_dicts → JSON serialization keeps producing ISO
     # values for the frontend without further plumbing.
     _PROFILE_COLS = (
-        "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, "
+        "run_id, requesting_user, source_table_fqn, view_fqn, sample_limit, sample_kind, "
         "rows_profiled, columns_profiled, duration_seconds, summary_json, "
         "generated_rules_json, status, error_message, canceled_by, job_run_id, "
         "CAST(updated_at AS STRING) AS updated_at, "
@@ -256,8 +284,6 @@ class JobService:
         returned (server-side filter), so callers scoped to a single table
         don't have to pull the full history and filter client-side.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         where = ""
         if source_table_fqn:
             where = f"  WHERE source_table_fqn = '{escape_sql_string(source_table_fqn)}' "
@@ -359,12 +385,66 @@ class JobService:
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
+        Shared by the dry-run and profiler result readers, which must still see
+        ``preview`` runs and whose tables (e.g. ``dq_profiling_results``) have no
+        ``run_type`` column — so this stays a plain, column-agnostic lookup. The
+        monitoring health endpoint uses :meth:`get_run_status_row` instead.
+
         Uses the SP WorkspaceClient and SQL Statement Execution API.
         Returns a dict keyed by column name, or None if no row found.
         """
-        from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
-
         er = escape_sql_string(run_id)
         sql = f"SELECT * FROM {table} WHERE run_id = '{er}' AND status != 'RUNNING' LIMIT 1"  # noqa: S608
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
+
+    def get_run_status_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
+        """Read a run's health row by run_id for the external monitoring endpoint.
+
+        Unlike the shared :meth:`get_run_result_row`, this excludes ad-hoc
+        ``preview`` runs — a throwaway preview never stands in for a run's health,
+        matching the by-table reader — and orders by ``updated_at DESC`` so the
+        result is deterministic if a run_id ever has more than one terminal row.
+        Only ever queries ``dq_validation_runs``, which carries ``run_type`` and
+        ``updated_at``.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no row found.
+        """
+        er = escape_sql_string(run_id)
+        sql = (
+            f"SELECT * FROM {table} WHERE run_id = '{er}' "  # noqa: S608
+            f"AND status != 'RUNNING' AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
+        rows = self._sql.query_dicts(sql)
+        return rows[0] if rows else None
+
+    def get_latest_completed_run_result_row(self, table: str, source_table_fqn: str) -> dict[str, str | None] | None:
+        """Read the most recently completed, non-preview run row for a table.
+
+        "Most recent" is by completion time (``updated_at``), not ``created_at``:
+        the runner back-dates ``created_at`` to the run's start, so with
+        overlapping runs a long run that finished later would otherwise lose
+        to a short run that finished earlier. The table name is compared
+        case-insensitively, as Unity Catalog identifiers are.
+
+        Completed means the run finished (``SUCCESS`` or ``FAILED``): in-progress
+        and canceled runs carry no results about the table's data, so they are
+        skipped. A ``FAILED`` run stays — the checks couldn't run, which a
+        monitor should see. Ad-hoc preview runs (``run_type = 'preview'``) are
+        excluded so a throwaway preview never stands in for the table's health.
+
+        Uses the SP WorkspaceClient and SQL Statement Execution API.
+        Returns a dict keyed by column name, or None if no run was ever
+        recorded for this table.
+        """
+        ef = escape_sql_string(source_table_fqn)
+        sql = (
+            f"SELECT *, unix_timestamp(updated_at) AS updated_at_epoch "  # noqa: S608
+            f"FROM {table} WHERE lower(source_table_fqn) = lower('{ef}') "
+            f"AND status NOT IN ('RUNNING', 'CANCELED') AND COALESCE(run_type, 'dryrun') != 'preview' "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
         rows = self._sql.query_dicts(sql)
         return rows[0] if rows else None

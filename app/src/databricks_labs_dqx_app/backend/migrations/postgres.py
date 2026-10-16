@@ -25,24 +25,20 @@ Schema mapping highlights
   declaratively where the access pattern justifies them.  Each table
   gets the small set of indexes the FastAPI services actually need.
 
-Single-baseline schema
-----------------------
-:data:`PG_MIGRATIONS` holds exactly one entry: v1, which creates every
-OLTP table at its final shape.  The app has no external installs to
-upgrade yet, so the schema is expressed as ``CREATE TABLE`` rather than
-a replayable chain of ``ALTER TABLE`` steps — a shape change is edited
-into the baseline in place.
+Baseline plus additive upgrades
+-------------------------------
+v1 creates every OLTP table at its final shape, so a fresh install
+reads the whole schema in one place.  A column added later is written
+into the v1 ``CREATE TABLE`` **and** appended as a later
+:class:`PgMigration` of ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``
+statements.
 
-**An existing deployment does not pick up an edited baseline.** Its
-``dq_migrations`` table already records v1 as applied, so the runner
-skips it and the old columns stay. Re-provision such a workspace with
-``DROP SCHEMA … CASCADE`` (or the admin database-reset action) and let
-the next start rebuild it.
-
-Once the app ships externally this has to change: append a new
-:class:`PgMigration` with the next version number instead of editing v1.
-Postgres supports ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` natively,
-so re-running such a migration is safe out of the box.
+The ALTER is what upgrades an existing deployment: its ``dq_migrations``
+table already records v1 as applied, so an edited baseline alone is
+skipped and the new column never appears.  On a fresh install the ALTER
+is a no-op because v1 already created the column.  Keep later
+migrations additive (``ADD COLUMN IF NOT EXISTS`` only) so the baseline
+stays the single description of the schema.
 """
 
 import logging
@@ -126,19 +122,26 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  updated_by    TEXT"
             ");"
             # ----------------------------------------------------------
-            # dq_quality_rules — active rule catalog. ``registry_rule_id``/
-            # ``registry_version``/``applied_rule_id`` are provenance
-            # columns (Phase 3A, see docs/superpowers/specs/2026-07-02-
-            # rules-registry-design.md §3.1): when a row was materialized
-            # from a Rules Registry application, they point back at the
-            # source ``dq_rules`` row, the published version substituted,
-            # and the ``dq_applied_rules`` link — all NULL for rules
-            # authored directly against a table (unchanged legacy path).
-            # ``source='registry'`` marks a materialized row (Phase 3C
-            # ``Materializer``); the runner ignores ``source`` entirely so
-            # this is purely provenance for the UI/audit trail.
+            # dq_resolved_rules — active (resolved) per-table rule catalog.
+            # Renamed from ``dq_quality_rules`` so the name is not confused
+            # with the table-agnostic registry ``dq_rules``: these are the
+            # rules resolved/materialized against a concrete ``table_fqn``.
+            # ``registry_rule_id``/``registry_version``/``applied_rule_id``
+            # are Rules Registry provenance columns: when a row was
+            # materialized from a Rules Registry application, they point
+            # back at the source ``dq_rules`` row, the published version
+            # substituted, and the ``dq_applied_rules`` link — all NULL for
+            # rules authored directly against a table (unchanged legacy
+            # path). ``source='registry'`` marks a materialized row (Phase
+            # 3C ``Materializer``); the runner ignores ``source`` entirely
+            # so this is purely provenance for the UI/audit trail.
+            # ``rule_fingerprint`` is the dqx-core per-rule SHA-256
+            # (``compute_rule_fingerprint``) written by every writer; it
+            # powers the ``dq_rules_core`` compatibility view (below) so
+            # external pipelines can load these rules with the standard
+            # ``DQEngine.load_checks``.
             # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules ("
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_resolved_rules ("
             "  rule_id           TEXT PRIMARY KEY,"
             "  table_fqn         TEXT NOT NULL,"
             '  "check"           JSONB NOT NULL,'
@@ -148,24 +151,29 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  registry_rule_id  TEXT,"
             "  registry_version  INTEGER,"
             "  applied_rule_id   TEXT,"
+            # NOT NULL: every writer (RulesCatalogService.save/update_rule,
+            # Materializer) sets this via compute_rule_fingerprint. Enforcing it
+            # keeps the dq_rules_core set-fingerprint aggregation exact — a NULL
+            # would be silently skipped by string_agg and weaken uniqueness.
+            "  rule_fingerprint  TEXT NOT NULL,"
             "  created_by TEXT,"
             "  created_at TIMESTAMPTZ,"
             "  updated_by TEXT,"
             "  updated_at TIMESTAMPTZ,"
-            "  CONSTRAINT chk_dq_quality_rules_status "
+            "  CONSTRAINT chk_dq_resolved_rules_status "
             f"    CHECK (status IN ({RuleStatus.sql_in_list()})),"
-            "  CONSTRAINT chk_dq_quality_rules_source "
+            "  CONSTRAINT chk_dq_resolved_rules_source "
             f"    CHECK (source IN ({RuleSource.sql_in_list()}))"
             ");"
             # Two read-paths dominate: by table_fqn (rules-list page) and
             # by status filter (review queue). One composite index covers
             # both since Postgres can use a leading-column-only scan.
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_table_status "
-            f"  ON {_S}.dq_quality_rules (table_fqn, status);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_table_status "
+            f"  ON {_S}.dq_resolved_rules (table_fqn, status);"
             # ----------------------------------------------------------
-            # dq_quality_rules_history — append-only audit trail.
+            # dq_resolved_rules_history — append-only audit trail.
             # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_quality_rules_history ("
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_resolved_rules_history ("
             "  history_id  BIGSERIAL PRIMARY KEY,"
             "  rule_id     TEXT,"
             "  table_fqn   TEXT NOT NULL,"
@@ -178,10 +186,10 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  changed_by  TEXT,"
             "  changed_at  TIMESTAMPTZ"
             ");"
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_history_rule_changed_at "
-            f"  ON {_S}.dq_quality_rules_history (rule_id, changed_at DESC);"
-            f"CREATE INDEX IF NOT EXISTS idx_dq_quality_rules_history_table_changed_at "
-            f"  ON {_S}.dq_quality_rules_history (table_fqn, changed_at DESC);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_history_rule_changed_at "
+            f"  ON {_S}.dq_resolved_rules_history (rule_id, changed_at DESC);"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_resolved_rules_history_table_changed_at "
+            f"  ON {_S}.dq_resolved_rules_history (table_fqn, changed_at DESC);"
             # ----------------------------------------------------------
             # dq_role_mappings — RBAC.
             # ----------------------------------------------------------
@@ -221,9 +229,13 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  last_run_id   TEXT,"
             "  status        TEXT,"
             "  updated_at    TIMESTAMPTZ,"
+            # Pause is its own flag, not a status: the scheduler rewrites
+            # ``status`` after every firing, which would silently undo a pause
+            # issued mid-run, and resuming would erase the last run's outcome.
+            "  paused        BOOLEAN NOT NULL DEFAULT FALSE,"
             "  CONSTRAINT chk_dq_schedule_runs_status "
             "    CHECK (status IS NULL OR status IN "
-            "      ('pending','success','partial_failure','failed'))"
+            "      ('pending','success','partial_failure','failed','skipped'))"
             ");"
             # The scheduler loop polls "next_run_at <= now() AND status
             # IS NOT 'pending'" every tick; a btree index on
@@ -265,7 +277,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ``user_metadata`` (see ``label_definitions``/Phase 1),
             # same as arbitrary free-text tags. ``rule_id`` is a
             # hex-string id generated in Python (``uuid4().hex[:16]``,
-            # matching ``dq_quality_rules.rule_id`` / ``dq_comments.comment_id``)
+            # matching ``dq_resolved_rules.rule_id`` / ``dq_comments.comment_id``)
             # stored as TEXT rather than the native ``UUID`` type, so all
             # entity ids share one representation across the schema.
             # ----------------------------------------------------------
@@ -334,7 +346,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             # ----------------------------------------------------------
             # dq_rules_history — append-only audit trail for the
             # registry rule lifecycle (create/update/status transitions/
-            # delete), mirroring ``dq_quality_rules_history``'s shape.
+            # delete), mirroring ``dq_resolved_rules_history``'s shape.
             # ----------------------------------------------------------
             f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
             "  history_id    BIGSERIAL PRIMARY KEY,"
@@ -465,6 +477,8 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  column_mapping JSONB,"
             "  created_by     TEXT,"
             "  created_at     TIMESTAMPTZ,"
+            "  row_filter     TEXT,"
+            "  pass_threshold INT,"
             "  CONSTRAINT uq_dq_pending_applications_binding_rule "
             "    UNIQUE (binding_id, rule_id)"
             ");"
@@ -722,6 +736,82 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  model        TEXT,"
             "  updated_at   TIMESTAMPTZ"
             ");"
+            # dq_rules_core — dqx-core-compatible READ view over the
+            # APPROVED rules in ``dq_resolved_rules``. It reshapes Studio's
+            # storage into exactly the columns dqx-core's
+            # ``LakebaseChecksStorageHandler`` reads, so external pipelines
+            # can load Studio-authored rules with the standard API:
+            #
+            #   engine.load_checks(LakebaseChecksStorageConfig(
+            #       location="<cat>.{schema}.dq_rules_core",
+            #       instance_name="<lakebase-instance>",
+            #       run_config_name="<table_fqn>"))
+            #
+            # Column mapping: ``run_config_name`` <- ``table_fqn``; ``check``
+            # <- the INNER ``{{function, arguments, for_each_column}}`` object
+            # (Studio packs the whole rule into the ``"check"`` JSONB, dqx-core
+            # wants only the inner check); name/criticality/filter/
+            # user_metadata/message_expr are read out of that blob.
+            #
+            # ``rule_set_fingerprint`` is computed here (not stored) as a
+            # GROUP BY over each table's approved rows, so every row of a
+            # ``table_fqn`` shares one value — which is what the loader needs
+            # to select "the latest rule set" and return the whole set. It
+            # reproduces dqx-core's ``compute_rule_set_fingerprint``
+            # (sha256 of the JSON array of sorted per-rule fingerprints) over
+            # the stored ``rule_fingerprint`` values. For rule sets that
+            # contain a ``for_each_column`` check the value may differ from a
+            # core computation that expands the fan-out first — this only
+            # affects the informational fingerprint, never which rules load.
+            # ----------------------------------------------------------
+            f"CREATE OR REPLACE VIEW {_S}.dq_rules_core AS "
+            "WITH approved AS ("
+            '  SELECT rule_id, table_fqn, "check", rule_fingerprint, created_at '
+            f"  FROM {_S}.dq_resolved_rules WHERE status = 'approved'"
+            "), set_fp AS ("
+            "  SELECT table_fqn, encode(sha256(convert_to("
+            # COLLATE "C" forces codepoint ordering so the hash byte-matches
+            # dqx-core's compute_rule_set_fingerprint (Python sorts by codepoint),
+            # independent of the database's default collation.
+            "    '[' || string_agg('\"' || rule_fingerprint || '\"', ', ' ORDER BY rule_fingerprint COLLATE \"C\") || ']',"
+            "    'UTF8')), 'hex') AS rule_set_fingerprint "
+            "  FROM approved GROUP BY table_fqn"
+            ") SELECT "
+            "  a.\"check\"->>'name'                          AS name,"
+            "  COALESCE(a.\"check\"->>'criticality', 'error') AS criticality,"
+            '  a."check"->\'check\'                          AS "check",'
+            "  a.\"check\"->>'filter'                        AS filter,"
+            "  a.table_fqn                                   AS run_config_name,"
+            "  a.\"check\"->'user_metadata'                  AS user_metadata,"
+            "  a.\"check\"->>'message_expr'                  AS message_expr,"
+            "  a.created_at                                  AS created_at,"
+            "  a.rule_fingerprint                            AS rule_fingerprint,"
+            "  s.rule_set_fingerprint                        AS rule_set_fingerprint "
+            "FROM approved a JOIN set_fp s USING (table_fqn)"
+        ),
+    ),
+    PgMigration(
+        version=2,
+        description="Schedule pause flag; row filter and pass threshold on pending applications",
+        sql=(
+            f"ALTER TABLE {_S}.dq_schedule_runs ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT FALSE;"
+            f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS row_filter TEXT;"
+            f"ALTER TABLE {_S}.dq_pending_applications ADD COLUMN IF NOT EXISTS pass_threshold INT;"
+        ),
+    ),
+    PgMigration(
+        version=3,
+        description="Drop dq_run_configs; oversized run configs are staged in Delta",
+        sql=f"DROP TABLE IF EXISTS {_S}.dq_run_configs;",
+    ),
+    PgMigration(
+        version=4,
+        description="Allow skipped status on schedule tracker rows",
+        sql=(
+            f"ALTER TABLE {_S}.dq_schedule_runs DROP CONSTRAINT IF EXISTS chk_dq_schedule_runs_status;"
+            f"ALTER TABLE {_S}.dq_schedule_runs ADD CONSTRAINT chk_dq_schedule_runs_status "
+            "CHECK (status IS NULL OR status IN "
+            "('pending','success','partial_failure','failed','skipped'));"
         ),
     ),
 ]

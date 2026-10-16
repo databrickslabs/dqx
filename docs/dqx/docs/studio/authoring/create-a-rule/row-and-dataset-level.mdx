@@ -1,0 +1,140 @@
+---
+sidebar_position: 3
+title: Row-level vs dataset-level rules
+---
+
+import Admonition from '@theme/Admonition';
+
+# Row-level vs dataset-level rules
+
+Every rule answers one of two questions:
+
+- **Row-level** — *Does this individual row look good?* Failures are attributed
+  to specific rows (and you can open sample failing records).
+- **Dataset-level** — *Does a group of rows look good together?* The check is
+  evaluated over a set of rows — the whole dataset, or groups of rows within it —
+  rather than each row on its own. The failure is still recorded on the offending
+  rows: checks that can single out the culprits mark exactly those rows (for example
+  duplicate keys, or rows missing a reference), while checks whose verdict is about
+  the group as a whole (a global aggregate, a schema check) mark every row in the
+  failing group.
+
+Most rules are row-level. Reach for dataset-level when the expectation is about the whole table or a
+*set* of rows rather than one row on its own — for example "the table is not
+empty", "the average order amount stays in bounds per region", or "there are no
+orphaned orders".
+
+<Admonition type="tip" title="Why this matters for results">
+A row-level failure points you straight at the bad records. A dataset-level failure
+is recorded on rows too: some checks pinpoint the specific offenders (duplicates,
+referential gaps), while others flag every row in the failing group (a global
+aggregate, a schema check). Choose based on how you want to investigate later — see
+[Review results](/docs/studio/running/).
+</Admonition>
+
+## How authoring decides the level
+
+You don't always pick this yourself. It depends on how you write the rule.
+
+| How you author | Who decides row vs dataset | What to know |
+| -------------- | ------------------------- | ------------ |
+| **Built-in check** | The check — fixed | Some checks always evaluate each row (for example "is not null"). Others evaluate a group of rows (uniqueness, some aggregates, reference lookups) and still attribute failures to individual rows when they can identify them. |
+| **Visual builder** | Derived from what you build | A plain condition is row-level. Adding **joins** or **grouping** still keeps the rule row-level: results are merged back onto key columns. |
+| **SQL — plain condition** | Always row-level | A boolean expression over `{{column}}` placeholders is evaluated per row. There is no **Applies to** switch. |
+| **SQL — full query** | **You choose** | The Condition header shows **Applies to**: **Row-level** or **Dataset-level**. |
+
+## Built-in checks
+
+When you pick a ready-made check, its level is a property of that check — not a
+setting you change.
+
+Examples (not an exhaustive list):
+
+- **Typically row-level:** is not null; is in list; is in range; matches a
+  pattern; date/timestamp checks.
+- **Evaluated over a group of rows:** is unique; some aggregate / rolling
+  checks; looking a value up in a reference table.
+
+Even when a check evaluates a group of rows to *compute* its result, the failure
+is always recorded on the offending rows — this is core DQX behaviour. Checks that can single out the culprits mark exactly those
+rows (for example duplicate keys, or values missing from a reference table); checks
+whose verdict is about the group as a whole (a global aggregate, a schema check)
+mark every row in the failing group.
+
+## Visual builder
+
+In the visual builder:
+
+1. Build your `IF …` conditions as usual.
+2. Optionally open **Advanced** for a **filter**, **joins**, or **group-by**.
+
+Joins and grouping do **not** flip the rule to a single group-wide verdict.
+They stay row-level: DQX merges results back using the join / group keys so
+each failing row can still be found.
+
+For a true "one verdict for the whole dataset" custom rule, use a
+[SQL query](#sql-full-query) set to **Dataset-level**.
+
+## SQL — plain condition
+
+If your SQL is a boolean expression (not a full `SELECT`), it always runs
+**row-level**:
+
+```sql
+{{amount}} > 0 AND {{amount}} < 1000000
+```
+
+You can still add a join in **Advanced → Joins** for a cross-table predicate;
+results remain per row. See
+[Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules).
+
+## SQL — full query {#sql-full-query}
+
+When you write a full query (`SELECT … FROM {{input_view}} …`), the Condition
+header shows **Applies to**. Pick the level that matches what the query means.
+
+### Row-level
+
+- Each row carries a boolean `condition` column (`TRUE` = fail).
+- You must choose **Merge results back on** key columns so failures can be
+  matched to rows of the monitored table.
+- Those merge columns must appear in the query's `SELECT` list alongside
+  `condition`.
+
+```sql
+SELECT
+  o.{{order_id}},
+  o.{{customer_id}},
+  (c.id IS NULL) AS condition
+FROM {{input_view}} o
+LEFT JOIN catalog.schema.customers c ON o.{{customer_id}} = c.id
+```
+
+### Dataset-level
+
+- One verdict for the whole dataset (or the filtered set of rows).
+- The query must aggregate to **exactly one row** and return a boolean
+  `condition` (`TRUE` = fail). A query that returns one row per input row fails
+  at runtime when set to dataset-level.
+
+```sql
+SELECT
+  (AVG({{amount}}) < 0 OR AVG({{amount}}) > 1000000) AS condition
+FROM {{input_view}}
+```
+
+<Admonition type="caution" title="Match the switch to the query">
+**Row-level** without merge keys, or **Dataset-level** without a single aggregated
+row, will fail when the rule runs. The editor warns you about these cases.
+</Admonition>
+
+## How this shows up in quality scores
+
+In the quality score, a row-level check contributes the **fraction of rows that
+passed** (for example 99.9% when 10 of 10,000 rows fail). A dataset-level check
+contributes **one pass/fail verdict**, counted a single time — never once per row,
+even when it flags every row in the failing group. That keeps table size from
+distorting the score: one dataset-wide expectation (such as "the table isn't empty")
+always weighs the same, instead of a huge table letting it dominate the result or a
+tiny one making it negligible. For how that rolls up into the DQ score, see
+[Review results](/docs/studio/running/#read-the-score).

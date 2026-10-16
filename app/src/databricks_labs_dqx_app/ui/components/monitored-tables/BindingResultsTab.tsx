@@ -67,7 +67,7 @@ import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift"
  *  surfaces (product/global/rule — see MultiTableResults); this single-table
  *  tab never toggles it (a table facet is meaningless on a one-table scope),
  *  so its `filters.table` stays empty and the param is never sent. */
-export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema";
+export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema" | "outcome";
 
 /** Help text shown behind the "?" icon on the two count charts. The rule /
  *  check / test terms are bold so the distinction reads at a glance. */
@@ -96,6 +96,8 @@ export type MultiFilters = {
   catalog: string[];
   /** Two-part `catalog.schema` identities — see backend `schema_of`. */
   schema: string[];
+  /** "passed" / "failed" check outcome (Global Results only). */
+  outcome: string[];
   runId?: string | null;
 };
 
@@ -107,6 +109,7 @@ export const EMPTY_FILTERS: MultiFilters = {
   table: [],
   catalog: [],
   schema: [],
+  outcome: [],
 };
 
 /** Toggle a value in a facet's multi-select set: add if absent, remove if
@@ -143,6 +146,7 @@ export function facetQueryParams(filters: MultiFilters): {
   table?: string[];
   catalog?: string[];
   schema?: string[];
+  outcome?: string[];
 } {
   return {
     dimension: orUndef(filters.dimension),
@@ -156,6 +160,7 @@ export function facetQueryParams(filters: MultiFilters): {
     // them); every other surface leaves them empty, so they drop out here.
     catalog: orUndef(filters.catalog),
     schema: orUndef(filters.schema),
+    outcome: orUndef(filters.outcome),
   };
 }
 
@@ -370,6 +375,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   table: "resultsUi.chipTable",
   catalog: "resultsUi.chipCatalog",
   schema: "resultsUi.chipSchema",
+  outcome: "resultsUi.chipOutcome",
 };
 
 function ResultsBody({
@@ -546,10 +552,14 @@ function ResultsBody({
   // hover reflects each rule's own breach regardless of the active drilldown
   // filter.
   const breachedRuleCriticality: Record<string, string> = {};
+  // Same keying, carrying the frozen threshold so the ⚠ tooltip can name the
+  // percentage the rule was judged against.
+  const breachedRuleThreshold: Record<string, number> = {};
   if (thresholdEnabled) {
     for (const r of base.by_rule) {
       if (r.breached && r.label && (r.breach_criticality === "error" || r.breach_criticality === "warn")) {
         breachedRuleCriticality[r.label] = r.breach_criticality;
+        if (r.pass_threshold != null) breachedRuleThreshold[r.label] = r.pass_threshold;
       }
     }
   }
@@ -867,7 +877,7 @@ function ResultsBody({
             breachEnabled={thresholdEnabled}
           />
         </div>
-        <div className="sm:pr-2">
+        <div>
           {runsLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : (
@@ -1096,6 +1106,7 @@ function ResultsBody({
                   severityRanks={sevRanks}
                   dimensionColors={dimColors}
                   breachedRuleCriticality={breachedRuleCriticality}
+                  breachedRuleThreshold={breachedRuleThreshold}
                 />
               )}
             </CollapseRegion>

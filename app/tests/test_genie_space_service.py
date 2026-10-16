@@ -11,9 +11,28 @@ workspace).
 
 import json
 import re
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, call, create_autospec
 
 import pytest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
+from databricks.sdk.service.iam import (
+    AccessControlRequest,
+    AccessControlResponse,
+    ObjectPermissions,
+    Permission,
+    PermissionLevel,
+    PermissionsAPI,
+)
+from databricks.sdk.service.sql import (
+    ServiceError,
+    StatementExecutionAPI,
+    StatementResponse,
+    StatementState,
+    StatementStatus,
+    WarehousesAPI,
+    WarehousePermissions,
+)
 
 from databricks_labs_dqx_app.backend.services import genie_space_service as gs
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -55,9 +74,31 @@ def settings() -> MagicMock:
 @pytest.fixture
 def ws() -> MagicMock:
     """WorkspaceClient mock whose raw REST surface (api_client.do) is scriptable."""
-    ws = MagicMock(name="WorkspaceClient")
+    ws = create_autospec(WorkspaceClient, instance=True)
     ws.api_client.do.return_value = {"spaces": []}
+    ws.permissions = create_autospec(PermissionsAPI, instance=True)
+    ws.permissions.get.return_value = ObjectPermissions(access_control_list=[])
+    ws.warehouses = create_autospec(WarehousesAPI, instance=True)
+    ws.warehouses.get_permissions.return_value = WarehousePermissions.from_dict(
+        {
+            "access_control_list": [
+                {
+                    "service_principal_name": "studio-app-client-id",
+                    "all_permissions": [{"permission_level": "CAN_USE"}],
+                }
+            ]
+        }
+    )
+    ws.statement_execution = create_autospec(StatementExecutionAPI, instance=True)
+    ws.statement_execution.execute_statement.return_value = StatementResponse(
+        status=StatementStatus(state=StatementState.FAILED, error=ServiceError(message="sensitive SQL error"))
+    )
     return ws
+
+
+@pytest.fixture(autouse=True)
+def app_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "studio-app-client-id")
 
 
 def do_calls(ws: MagicMock) -> list[tuple]:
@@ -806,15 +847,297 @@ def test_random_ids_do_not_perturb_the_hash() -> None:
 # ---------------------------------------------------------------------------
 
 
-def ensure(settings: MagicMock, ws: MagicMock) -> str | None:
+def ensure(settings: MagicMock, ws: MagicMock, *, audience_groups: tuple[str, ...] = ()) -> str | None:
     return gs.ensure_dq_genie_space(
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog=CATALOG,
         schema=SCHEMA,
+        audience_groups=audience_groups,
     )
+
+
+@pytest.fixture
+def existing_space(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "space-123"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.return_value = {"space_id": "space-123", "warehouse_id": "wh-1"}
+
+
+def test_default_audience_leaves_permissions_administrator_managed(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    assert ensure(settings, ws) == "space-123"
+    ws.permissions.get.assert_not_called()
+    ws.permissions.update.assert_not_called()
+
+
+def test_audience_reconciliation_only_updates_missing_or_view_only_groups(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    ws.permissions.get.return_value = ObjectPermissions(
+        access_control_list=[
+            AccessControlResponse(
+                group_name="viewers", all_permissions=[Permission(permission_level=PermissionLevel.CAN_VIEW)]
+            ),
+            AccessControlResponse(
+                group_name="editors", all_permissions=[Permission(permission_level=PermissionLevel.CAN_EDIT)]
+            ),
+            AccessControlResponse(
+                user_name="owner", all_permissions=[Permission(permission_level=PermissionLevel.IS_OWNER)]
+            ),
+            AccessControlResponse(
+                group_name="unrelated", all_permissions=[Permission(permission_level=PermissionLevel.CAN_RUN)]
+            ),
+        ]
+    )
+
+    assert ensure(settings, ws, audience_groups=("viewers", "editors", "new-group", "new-group")) == "space-123"
+
+    # Read, grant the missing groups, then re-read to verify.
+    assert [call.args for call in ws.permissions.get.call_args_list] == [("genie", "space-123")] * 2
+    ws.permissions.update.assert_called_once_with(
+        "genie",
+        "space-123",
+        access_control_list=[
+            AccessControlRequest(group_name="viewers", permission_level=PermissionLevel.CAN_RUN),
+            AccessControlRequest(group_name="new-group", permission_level=PermissionLevel.CAN_RUN),
+        ],
+    )
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
+
+
+@pytest.mark.parametrize("level", [PermissionLevel.CAN_RUN, PermissionLevel.CAN_EDIT, PermissionLevel.CAN_MANAGE])
+@pytest.mark.parametrize("inherited", [False, True])
+def test_sufficient_audience_permissions_are_not_downgraded(
+    settings: MagicMock, ws: MagicMock, existing_space: None, level: PermissionLevel, inherited: bool
+) -> None:
+    ws.permissions.get.return_value = ObjectPermissions(
+        access_control_list=[
+            AccessControlResponse(
+                group_name="readers", all_permissions=[Permission(permission_level=level, inherited=inherited)]
+            )
+        ]
+    )
+    assert ensure(settings, ws, audience_groups=("readers",)) == "space-123"
+    ws.permissions.update.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["get", "update"])
+def test_audience_failure_keeps_space_and_retries_next_provision(
+    settings: MagicMock, ws: MagicMock, existing_space: None, operation: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    getattr(ws.permissions, operation).side_effect = RuntimeError("sensitive ACL details")
+    assert ensure(settings, ws, audience_groups=("readers",)) == "space-123"
+    assert settings.store[gs.SETTING_SPACE_ID] == "space-123"
+    assert "sensitive ACL details" not in caplog.text
+    getattr(ws.permissions, operation).side_effect = None
+    assert ensure(settings, ws, audience_groups=("readers",)) == "space-123"
+    assert ws.permissions.get.call_count >= 2
+    assert ws.permissions.update.call_count >= 1
+
+
+def test_created_space_receives_configured_audience(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [{"spaces": []}, {"space_id": "space-123"}]
+    assert ensure(settings, ws, audience_groups=("readers",)) == "space-123"
+    ws.permissions.update.assert_called_once_with(
+        "genie",
+        "space-123",
+        access_control_list=[AccessControlRequest(group_name="readers", permission_level=PermissionLevel.CAN_RUN)],
+    )
+
+
+def test_matching_hash_still_reconciles_changed_warehouse(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    ws.api_client.do.side_effect = [{"space_id": "space-123", "warehouse_id": "old-wh"}, {}]
+    assert ensure(settings, ws) == "space-123"
+    ws.warehouses.get_permissions.assert_called_with("wh-1")
+    ws.statement_execution.execute_statement.assert_not_called()
+    assert do_calls(ws)[-1].kwargs["body"] == {"warehouse_id": "wh-1"}
+    assert settings.store[gs.SETTING_CONFIG_HASH] == gs.config_hash(CATALOG, SCHEMA)
+
+
+def test_unchanged_warehouse_needs_no_access_probe(settings: MagicMock, ws: MagicMock, existing_space: None) -> None:
+    assert ensure(settings, ws) == "space-123"
+    ws.warehouses.get_permissions.assert_not_called()
+    ws.statement_execution.execute_statement.assert_not_called()
+
+
+@pytest.fixture
+def group_only_warehouse_access(ws: MagicMock) -> None:
+    ws.warehouses.get_permissions.return_value = WarehousePermissions.from_dict(
+        {"access_control_list": [{"group_name": "readers", "all_permissions": [{"permission_level": "CAN_USE"}]}]}
+    )
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_successful_app_sql_probe_allows_rebinding_without_direct_acl(
+    settings: MagicMock, ws: MagicMock, existing_space: None, group_only_warehouse_access: None, unknown: bool
+) -> None:
+    ws.api_client.do.side_effect = [{"space_id": "space-123", "warehouse_id": "old-wh"}, {}]
+    if unknown:
+        ws.warehouses.get_permissions.side_effect = RuntimeError("ACL not visible to app")
+    ws.statement_execution.execute_statement.return_value = StatementResponse(
+        status=StatementStatus(state=StatementState.SUCCEEDED)
+    )
+
+    assert ensure(settings, ws) == "space-123"
+
+    probe = ws.statement_execution.execute_statement.call_args
+    assert probe is not None
+    assert probe.kwargs["warehouse_id"] == "wh-1"
+    assert probe.kwargs["statement"] == "SELECT 1"
+    assert probe.kwargs["wait_timeout"] == "30s"
+    patch = do_calls(ws)[-1]
+    assert patch.kwargs["body"] == {"warehouse_id": "wh-1"}
+    assert ws.mock_calls.index(call.statement_execution.execute_statement(**probe.kwargs)) < ws.mock_calls.index(
+        call.api_client.do(*patch.args, **patch.kwargs)
+    )
+
+
+def test_app_sql_probe_polls_to_completion_before_rebinding(
+    settings: MagicMock, ws: MagicMock, existing_space: None, group_only_warehouse_access: None
+) -> None:
+    ws.api_client.do.side_effect = [{"space_id": "space-123", "warehouse_id": "old-wh"}, {}]
+    ws.statement_execution.execute_statement.return_value = StatementResponse(
+        statement_id="probe-statement", status=StatementStatus(state=StatementState.PENDING)
+    )
+    ws.statement_execution.get_statement.return_value = StatementResponse(
+        statement_id="probe-statement", status=StatementStatus(state=StatementState.SUCCEEDED)
+    )
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.statement_execution.get_statement.assert_called_once_with("probe-statement")
+    assert do_calls(ws)[-1].kwargs["body"] == {"warehouse_id": "wh-1"}
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+@pytest.mark.parametrize("failure", [RuntimeError("sensitive network error"), TimeoutError("sensitive timeout")])
+def test_app_sql_probe_exception_retains_old_warehouse(
+    settings: MagicMock,
+    ws: MagicMock,
+    existing_space: None,
+    group_only_warehouse_access: None,
+    unknown: bool,
+    failure: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ws.api_client.do.return_value = {"space_id": "space-123", "warehouse_id": "old-wh"}
+    if unknown:
+        ws.warehouses.get_permissions.side_effect = RuntimeError("ACL not visible to app")
+    ws.statement_execution.execute_statement.side_effect = failure
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.statement_execution.execute_statement.assert_called_once()
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
+    assert settings.store[gs.SETTING_SPACE_ID] == "space-123"
+    assert "sensitive" not in caplog.text
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_unverified_warehouse_access_keeps_old_binding(
+    settings: MagicMock, ws: MagicMock, existing_space: None, unknown: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    ws.api_client.do.return_value = {"space_id": "space-123", "warehouse_id": "old-wh"}
+    ws.warehouses.get_permissions.return_value = WarehousePermissions(access_control_list=[])
+    if unknown:
+        ws.warehouses.get_permissions.side_effect = RuntimeError("permission API unavailable")
+    assert ensure(settings, ws, audience_groups=("readers",)) == "space-123"
+    ws.warehouses.get_permissions.assert_called_with("wh-1")
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
+    ws.permissions.update.assert_called_once()
+    ws.statement_execution.execute_statement.assert_called_once()
+    assert "sensitive SQL error" not in caplog.text
+
+
+def test_changed_content_and_warehouse_are_reconciled_together(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
+    ws.api_client.do.side_effect = [{"space_id": "space-123", "warehouse_id": "old-wh"}, {}]
+    assert ensure(settings, ws) == "space-123"
+    body = do_calls(ws)[-1].kwargs["body"]
+    assert body["warehouse_id"] == "wh-1"
+    assert json.loads(body["serialized_space"])["version"] == 2
+    assert settings.store[gs.SETTING_CONFIG_HASH] == gs.config_hash(CATALOG, SCHEMA)
+
+
+def test_denied_warehouse_does_not_block_content_update(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
+    ws.api_client.do.side_effect = [{"space_id": "space-123", "warehouse_id": "old-wh"}, {}]
+    ws.warehouses.get_permissions.return_value = WarehousePermissions(access_control_list=[])
+    assert ensure(settings, ws) == "space-123"
+    assert set(do_calls(ws)[-1].kwargs["body"]) == {"serialized_space"}
+    assert settings.store[gs.SETTING_CONFIG_HASH] == gs.config_hash(CATALOG, SCHEMA)
+
+
+def test_warehouse_patch_failure_retries_without_replacing_space(
+    settings: MagicMock, ws: MagicMock, existing_space: None
+) -> None:
+    detail = {"space_id": "space-123", "warehouse_id": "old-wh"}
+    ws.api_client.do.side_effect = [detail, RuntimeError("temporary failure"), detail, {}]
+    assert ensure(settings, ws) == "space-123"
+    assert ensure(settings, ws) == "space-123"
+    assert [call.kwargs["body"] for call in do_calls(ws) if call.args[0] == "PATCH"] == [
+        {"warehouse_id": "wh-1"},
+        {"warehouse_id": "wh-1"},
+    ]
+    assert settings.store[gs.SETTING_SPACE_ID] == "space-123"
+
+
+def test_adopted_space_reconciles_warehouse_and_audience(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "adopted", "title": gs.SPACE_TITLE}]},
+        {"space_id": "adopted", "parent_path": "/Shared/dqx-studio/studio-app-client-id", "warehouse_id": "old-wh"},
+        {},
+    ]
+    assert ensure(settings, ws, audience_groups=("readers",)) == "adopted"
+    assert do_calls(ws)[-1].kwargs["body"]["warehouse_id"] == "wh-1"
+    assert {call.args for call in ws.permissions.get.call_args_list} == {("genie", "adopted")}
+
+
+def test_adopted_space_failed_patch_does_not_trust_hash_from_previous_space(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    detail = {
+        "space_id": "adopted",
+        "parent_path": "/Shared/dqx-studio/studio-app-client-id",
+        "warehouse_id": "wh-1",
+    }
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "adopted", "title": gs.SPACE_TITLE}]},
+        detail,
+        RuntimeError("temporary patch failure"),
+        detail,
+        {},
+    ]
+    assert ensure(settings, ws) == "adopted"
+    assert settings.store[gs.SETTING_CONFIG_HASH] != gs.config_hash(CATALOG, SCHEMA)
+    assert ensure(settings, ws) == "adopted"
+    assert len([call for call in do_calls(ws) if call.args[0] == "PATCH"]) == 2
+    assert settings.store[gs.SETTING_CONFIG_HASH] == gs.config_hash(CATALOG, SCHEMA)
+
+
+def test_adoption_hash_write_failure_does_not_persist_unverified_space(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "adopted", "title": gs.SPACE_TITLE}]},
+        {"space_id": "adopted", "parent_path": "/Shared/dqx-studio/studio-app-client-id", "warehouse_id": "wh-1"},
+    ]
+
+    def save(key: str, value: str) -> None:
+        if key == gs.SETTING_CONFIG_HASH:
+            raise RuntimeError("settings write unavailable")
+        settings.store[key] = value
+
+    settings.save_setting.side_effect = save
+    assert ensure(settings, ws) is None
+    assert gs.SETTING_SPACE_ID not in settings.store
 
 
 def test_creates_space_and_persists_id_hash_status(settings: MagicMock, ws: MagicMock) -> None:
@@ -830,7 +1153,7 @@ def test_creates_space_and_persists_id_hash_status(settings: MagicMock, ws: Magi
     assert create_call.args == ("POST", "/api/2.0/genie/spaces")
     body = create_call.kwargs["body"]
     assert body["warehouse_id"] == "wh-1"
-    assert body["parent_path"] == "/Users/sp"
+    assert body["parent_path"] == "/Shared/dqx-studio/studio-app-client-id"
     assert body["title"] == gs.SPACE_TITLE
     assert json.loads(body["serialized_space"])["version"] == 2
 
@@ -839,14 +1162,29 @@ def test_creates_space_and_persists_id_hash_status(settings: MagicMock, ws: Magi
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
+def test_creates_shared_parent_folder_before_space(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {"spaces": []},
+        {"space_id": "space-123"},
+    ]
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+
+
 def test_reuses_existing_space_by_title_prefix_newest_first(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.return_value = {
-        "spaces": [
-            {"space_id": "old", "title": f"{gs.SPACE_TITLE} 2026-01-01 00:00:00"},
-            {"space_id": "new", "title": f"{gs.SPACE_TITLE} 2026-06-01 00:00:00"},
-            {"space_id": "unrelated", "title": "Some other space"},
-        ]
-    }
+    ws.api_client.do.side_effect = [
+        {
+            "spaces": [
+                {"space_id": "old", "title": f"{gs.SPACE_TITLE} 2026-01-01 00:00:00"},
+                {"space_id": "new", "title": f"{gs.SPACE_TITLE} 2026-06-01 00:00:00"},
+                {"space_id": "unrelated", "title": "Some other space"},
+            ]
+        },
+        {"space_id": "new", "parent_path": "/Shared/dqx-studio/studio-app-client-id", "warehouse_id": "wh-1"},
+        {},
+    ]
     assert ensure(settings, ws) == "new"
     # Found by prefix — no POST create happened.
     assert all(c.args[0] != "POST" for c in do_calls(ws))
@@ -854,13 +1192,48 @@ def test_reuses_existing_space_by_title_prefix_newest_first(settings: MagicMock,
     assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
 
 
+def test_does_not_reuse_title_match_from_another_parent(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "other-space", "title": gs.SPACE_TITLE}]},
+        {"space_id": "other-space", "parent_path": "/Users/service-principal"},
+        {"space_id": "shared-space"},
+    ]
+
+    assert ensure(settings, ws) == "shared-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert create_call.kwargs["body"]["parent_path"] == "/Shared/dqx-studio/studio-app-client-id"
+
+
+def test_parent_lookup_failure_checks_remaining_candidates_before_giving_up(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = [
+        {
+            "spaces": [
+                {"space_id": "unavailable", "title": gs.SPACE_TITLE},
+                {"space_id": "candidate", "title": gs.SPACE_TITLE},
+            ]
+        },
+        RuntimeError("temporary detail failure"),
+        {"space_id": "candidate", "parent_path": "/Shared/dqx-studio/studio-app-client-id", "warehouse_id": "wh-1"},
+        {},
+    ]
+
+    assert ensure(settings, ws) == "candidate"
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
+
+
 def test_find_pages_through_the_space_list(settings: MagicMock, ws: MagicMock) -> None:
     ws.api_client.do.side_effect = [
         {"spaces": [{"space_id": "x", "title": "nope"}], "next_page_token": "t2"},
         {"spaces": [{"space_id": "match", "title": f"{gs.SPACE_TITLE} 2026-05-01"}]},
+        {"space_id": "match", "parent_path": "/Shared/dqx-studio/studio-app-client-id", "warehouse_id": "wh-1"},
+        {},
     ]
-    assert gs._find_space_id_by_title(ws, gs.SPACE_TITLE) == "match"
-    first, second = do_calls(ws)
+    assert ensure(settings, ws) == "match"
+    first, second, _detail, _patch = do_calls(ws)
     assert first.kwargs == {"query": {"page_size": 100}}
     assert second.kwargs == {"query": {"page_size": 100, "page_token": "t2"}}
 
@@ -868,9 +1241,96 @@ def test_find_pages_through_the_space_list(settings: MagicMock, ws: MagicMock) -
 def test_noop_when_id_present_and_hash_unchanged(settings: MagicMock, ws: MagicMock) -> None:
     settings.store[gs.SETTING_SPACE_ID] = "space-123"
     settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.return_value = {"space_id": "space-123", "warehouse_id": "wh-1"}
     assert ensure(settings, ws) == "space-123"
-    ws.api_client.do.assert_not_called()
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
     settings.save_setting.assert_not_called()
+
+
+def test_recreates_when_stored_space_is_deleted_with_unchanged_config(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        NotFound("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_recreates_when_stored_space_response_is_not_found(settings: MagicMock, ws: MagicMock) -> None:
+    class RuntimeNotFoundError(RuntimeError):
+        error_code = "NOT_FOUND"
+
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = [
+        RuntimeNotFoundError("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_permission_denied_on_verify_keeps_stored_space(settings: MagicMock, ws: MagicMock) -> None:
+    # PERMISSION_DENIED on the verify GET is not proof the space is gone (a
+    # transient ACL blip): the stored id must be kept, not dropped and
+    # recreated, which would orphan the original and leave a duplicate.
+    class RuntimePermissionDeniedError(RuntimeError):
+        error_code = "PERMISSION_DENIED"
+
+    settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimePermissionDeniedError("app identity cannot access space")
+
+    assert ensure(settings, ws) == "inaccessible-space"
+
+    assert settings.store[gs.SETTING_SPACE_ID] == "inaccessible-space"
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/inaccessible-space")
+
+
+def test_recreates_when_stored_space_is_deleted_during_config_update(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "deleted-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
+    ws.api_client.do.side_effect = [
+        NotFound("space was deleted"),
+        {"spaces": []},
+        {"space_id": "replacement-space"},
+    ]
+
+    assert ensure(settings, ws) == "replacement-space"
+
+    ws.workspace.mkdirs.assert_called_once_with("/Shared/dqx-studio/studio-app-client-id")
+    assert settings.store[gs.SETTING_SPACE_ID] == "replacement-space"
+
+
+def test_transient_verification_failure_keeps_stored_space_usable(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "space-123"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimeError("temporary verification failure")
+
+    assert ensure(settings, ws) == "space-123"
+
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/space-123")
+    assert gs.SETTING_STATUS not in settings.store
+
+
+def test_transient_verification_failure_never_replaces_stored_space(settings: MagicMock, ws: MagicMock) -> None:
+    settings.store[gs.SETTING_SPACE_ID] = "inaccessible-space"
+    settings.store[gs.SETTING_CONFIG_HASH] = gs.config_hash(CATALOG, SCHEMA)
+    ws.api_client.do.side_effect = RuntimeError("stored space is inaccessible")
+
+    assert ensure(settings, ws) == "inaccessible-space"
+
+    assert settings.store[gs.SETTING_SPACE_ID] == "inaccessible-space"
+    ws.api_client.do.assert_called_once_with("GET", "/api/2.0/genie/spaces/inaccessible-space")
 
 
 def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) -> None:
@@ -879,7 +1339,7 @@ def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) 
     ws.api_client.do.return_value = {}
     assert ensure(settings, ws) == "space-123"
 
-    (patch_call,) = do_calls(ws)
+    _verify_call, patch_call = do_calls(ws)
     assert patch_call.args == ("PATCH", "/api/2.0/genie/spaces/space-123")
     assert json.loads(patch_call.kwargs["body"]["serialized_space"])["version"] == 2
 
@@ -890,7 +1350,7 @@ def test_patches_in_place_when_hash_drifted(settings: MagicMock, ws: MagicMock) 
 def test_patch_failure_keeps_old_hash_so_next_boot_retries(settings: MagicMock, ws: MagicMock) -> None:
     settings.store[gs.SETTING_SPACE_ID] = "space-123"
     settings.store[gs.SETTING_CONFIG_HASH] = "stale-hash"
-    ws.api_client.do.side_effect = RuntimeError("transient flap")
+    ws.api_client.do.side_effect = [{"space_id": "space-123"}, RuntimeError("transient flap")]
     assert ensure(settings, ws) == "space-123"
     # Hash NOT advanced — the next provision sees a mismatch and retries.
     assert settings.store[gs.SETTING_CONFIG_HASH] == "stale-hash"
@@ -924,7 +1384,6 @@ def test_ensure_never_raises_even_when_settings_blow_up(ws: MagicMock) -> None:
             settings=settings,
             ws=ws,
             warehouse_id="wh-1",
-            parent_path="/Users/sp",
             catalog=CATALOG,
             schema=SCHEMA,
         )
@@ -932,13 +1391,76 @@ def test_ensure_never_raises_even_when_settings_blow_up(ws: MagicMock) -> None:
     )
 
 
-def test_list_failure_degrades_to_create(settings: MagicMock, ws: MagicMock) -> None:
-    ws.api_client.do.side_effect = [
-        RuntimeError("list unavailable"),
-        {"space_id": "space-9"},
+def test_list_failure_does_not_create_duplicate(settings: MagicMock, ws: MagicMock) -> None:
+    ws.api_client.do.side_effect = RuntimeError("list unavailable")
+
+    assert ensure(settings, ws) is None
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
+
+
+def test_paging_cap_degrades_to_create_rather_than_failing_forever(settings: MagicMock, ws: MagicMock) -> None:
+    # A workspace larger than the paging cap exposes no reusable candidate in
+    # the scanned pages. Degrade to creating the space (and store its id) rather
+    # than hard-failing every startup — a permanent, self-repeating failure that
+    # would never provision the space.
+    ws.api_client.do.side_effect = [{"spaces": [], "next_page_token": f"page-{page + 1}"} for page in range(20)] + [
+        {"space_id": "created-space"}
     ]
-    assert ensure(settings, ws) == "space-9"
-    assert settings.store[gs.SETTING_SPACE_ID] == "space-9"
+
+    assert ensure(settings, ws) == "created-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert settings.store[gs.SETTING_SPACE_ID] == "created-space"
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
+
+
+def test_unclassifiable_title_matches_degrade_to_create(settings: MagicMock, ws: MagicMock) -> None:
+    # The list succeeds and surfaces a title-matching space, but its detail GET
+    # fails (e.g. a PERMISSION_DENIED on another deployment's space) so it can't
+    # be confirmed against this parent, and no other candidate matches. Degrade
+    # to creating the space rather than hard-failing every startup — the same
+    # resilience contract the paging-cap branch already follows. Raising here
+    # would store no id and repeat the failure on every boot.
+    ws.api_client.do.side_effect = [
+        {"spaces": [{"space_id": "foreign", "title": gs.SPACE_TITLE}]},
+        RuntimeError("detail unavailable"),
+        {"space_id": "created-space"},
+    ]
+
+    assert ensure(settings, ws) == "created-space"
+
+    create_call = do_calls(ws)[-1]
+    assert create_call.args == ("POST", "/api/2.0/genie/spaces")
+    assert settings.store[gs.SETTING_SPACE_ID] == "created-space"
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_READY
+
+
+def test_space_parent_path_requires_a_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "some-client")
+    assert gs.space_parent_path() == "/Shared/dqx-studio/some-client"
+    # Without a client id there is no per-deployment isolation, so refuse to
+    # resolve a path rather than collapse onto the shared root.
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    with pytest.raises(ValueError):
+        gs.space_parent_path()
+
+
+def test_missing_client_id_fails_closed_without_provisioning(
+    settings: MagicMock, ws: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without a per-deployment client id, two Studio deployments in one
+    # workspace would collapse onto the shared root and adopt each other's
+    # space. Fail closed (no create, status error) rather than risk a
+    # cross-deployment collision.
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+
+    assert ensure(settings, ws) is None
+
+    assert all(call.args[0] != "POST" for call in do_calls(ws))
+    assert settings.store[gs.SETTING_STATUS] == gs.STATUS_ERROR
 
 
 def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: MagicMock, caplog) -> None:
@@ -949,7 +1471,6 @@ def test_invalid_catalog_fails_fast_with_clear_error(settings: MagicMock, ws: Ma
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog="bad`catalog",  # Invalid: contains backtick
         schema=SCHEMA,
     )
@@ -965,7 +1486,6 @@ def test_invalid_schema_fails_fast_with_clear_error(settings: MagicMock, ws: Mag
         settings=settings,
         ws=ws,
         warehouse_id="wh-1",
-        parent_path="/Users/sp",
         catalog=CATALOG,
         schema="bad\\schema",  # Invalid: contains backslash
     )

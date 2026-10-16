@@ -409,6 +409,41 @@
       }
     },
     {
+      "group": null,
+      "name": "test_benchmark_compare_datasets_filtered",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_compare_datasets_filtered",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 13.579415617999985,
+        "max": 13.640349455999967,
+        "mean": 13.618499184333208,
+        "stddev": 0.03392599279531698,
+        "rounds": 3,
+        "median": 13.635732478999671,
+        "iqr": 0.04570037849998698,
+        "q1": 13.593494833249906,
+        "q3": 13.639195211749893,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 13.579415617999985,
+        "hd15iqr": 13.640349455999967,
+        "ops": 0.07342953041039979,
+        "total": 40.85549755299962,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_foreach_compare_datasets_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_compare_datasets[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_compare_datasets[n_rows_100000000_n_columns_5]",
@@ -3262,6 +3297,41 @@
     },
     {
       "group": null,
+      "name": "test_benchmark_is_geo_within_distance",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_geo_within_distance",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.338786118999451,
+        "max": 0.3602679830000852,
+        "mean": 0.3468280813331148,
+        "stddev": 0.011714133857011361,
+        "rounds": 3,
+        "median": 0.34143014199980826,
+        "iqr": 0.016111398000475674,
+        "q1": 0.3394471247495403,
+        "q3": 0.355558522750016,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.338786118999451,
+        "hd15iqr": 0.3602679830000852,
+        "ops": 2.8832728773179674,
+        "total": 1.0404842439993445,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_is_geography",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_geography",
       "params": null,
@@ -3362,6 +3432,41 @@
         "hd15iqr": 0.21416911900041669,
         "ops": 4.707474666770039,
         "total": 1.0621406069999466,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
+      "name": "test_benchmark_is_in_distribution",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_distribution",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.3725166639997042,
+        "max": 0.40415257699987706,
+        "mean": 0.38928132066666876,
+        "stddev": 0.015902718995710392,
+        "rounds": 3,
+        "median": 0.39117472100042505,
+        "iqr": 0.023726934750129658,
+        "q1": 0.3771811782498844,
+        "q3": 0.40090811300001405,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.3725166639997042,
+        "hd15iqr": 0.40415257699987706,
+        "ops": 2.5688363322633543,
+        "total": 1.1678439620000063,
         "iterations": 1
       }
     },

@@ -154,6 +154,8 @@ class ProfilerConfig:
     max_null_ratio: float | None = None
     max_empty_ratio: float | None = None
     outliers_ratio: float | None = None
+    profile_geospatial: bool = False  # Opts into profiling of native GEOMETRY/GEOGRAPHY columns
+    geospatial_srid: int = 3857  # SRID used to compute areas when profiling GEOMETRY columns
 
 
 @dataclass

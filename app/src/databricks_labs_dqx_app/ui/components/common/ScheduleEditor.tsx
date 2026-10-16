@@ -59,10 +59,18 @@ interface Props {
   onKindChange: (kind: ScheduleKind) => void;
   /** Called with the new sample size; 0 means the whole table. */
   onSampleSizeChange: (sampleSize: number) => void;
-  /** Called when the schedule is removed (cron cleared to null). */
-  onRemove: () => void;
+  /** Called when the schedule is removed (cron cleared to null). Return false
+   *  when the removal is deferred (e.g. behind a confirmation), so the cron
+   *  being shown keeps its validity until it is actually cleared. */
+  onRemove: () => boolean | void;
+  /** Shows the "Remove schedule" button. Off for the New schedule page, where
+   *  there is nothing to remove yet. Defaults to true. */
+  removable?: boolean;
   /** Reports whether the displayed cron is one the backend scheduler accepts. */
   onValidityChange: (valid: boolean) => void;
+  /** Node rendered ABOVE the first schedule setting (e.g. a permission warning
+   *  card) — shown in both the empty state and the editor. */
+  banner?: ReactNode;
   /** Extra controls (e.g. a Save button) rendered in the editor footer. */
   actions?: ReactNode;
   /** Optional footer note shown under the editor. */
@@ -82,7 +90,9 @@ export function ScheduleEditor({
   onKindChange,
   onSampleSizeChange,
   onRemove,
+  removable = true,
   onValidityChange,
+  banner,
   actions,
   footerNote,
   emptyText,
@@ -101,6 +111,7 @@ export function ScheduleEditor({
   if (!showEditor) {
     return (
       <div className="space-y-4 max-w-xl">
+        {banner}
         <p className="text-sm text-muted-foreground">{emptyText}</p>
         {canEdit && (
           <Button
@@ -120,6 +131,7 @@ export function ScheduleEditor({
 
   return (
     <div className="space-y-6 max-w-xl">
+      {banner}
       <div className="space-y-2">
         <Label htmlFor="schedule-kind">{t("schedule.kindLabel")}</Label>
         <Select
@@ -140,14 +152,6 @@ export function ScheduleEditor({
         </Select>
       </div>
 
-      <SchedulePicker
-        cron={cron ?? DEFAULT_CADENCE_CRON}
-        timezone={timezone}
-        onChange={onChange}
-        onValidityChange={onValidityChange}
-        canEdit={canEdit}
-      />
-
       <div className="space-y-2">
         <Label>{t("schedule.sampleLabel")}</Label>
         <SampleSelector
@@ -163,17 +167,26 @@ export function ScheduleEditor({
           }}
           disablePercent
         />
-        <p className="text-xs text-muted-foreground">{t("schedule.sampleHint")}</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t("schedule.frequencyLabel")}</Label>
+        <SchedulePicker
+          cron={cron ?? DEFAULT_CADENCE_CRON}
+          timezone={timezone}
+          onChange={onChange}
+          onValidityChange={onValidityChange}
+          canEdit={canEdit}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {canEdit && (
+        {canEdit && removable && (
           <Button
             variant="outline"
             size="sm"
             onClick={() => {
-              onRemove();
-              onValidityChange(true);
+              if (onRemove() !== false) onValidityChange(true);
               setEditing(false);
             }}
           >

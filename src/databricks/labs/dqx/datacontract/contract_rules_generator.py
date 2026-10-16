@@ -34,6 +34,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
+from databricks.labs.dqx.utils import normalize_column_expr
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -756,6 +757,7 @@ class DataContractRulesGenerator(DQEngineBase):
         has_float_limits = (minimum is not None and isinstance(minimum, float)) or (
             maximum is not None and isinstance(maximum, float)
         )
+        normalized_column = normalize_column_expr(column_path)
 
         if minimum is not None and maximum is not None:
             if has_float_limits:
@@ -764,7 +766,7 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{column_path} >= {minimum} AND {column_path} <= {maximum}",
+                                "expression": f"{normalized_column} >= {minimum} AND {normalized_column} <= {maximum}",
                                 "columns": [column_path],
                             },
                         },
@@ -805,7 +807,7 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{column_path} >= {minimum}",
+                                "expression": f"{normalized_column} >= {minimum}",
                                 "columns": [column_path],
                             },
                         },
@@ -845,7 +847,7 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{column_path} <= {maximum}",
+                                "expression": f"{normalized_column} <= {maximum}",
                                 "columns": [column_path],
                             },
                         },
@@ -890,13 +892,15 @@ class DataContractRulesGenerator(DQEngineBase):
         if min_length is None and max_length is None:
             return []
 
+        normalized_column = normalize_column_expr(column_path)
+
         if min_length is not None and max_length is not None and min_length == max_length:
             return [
                 {
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({column_path}) = {min_length}",
+                            "expression": f"LENGTH({normalized_column}) = {min_length}",
                             "columns": [column_path],
                         },
                     },
@@ -916,7 +920,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({column_path}) >= {min_length} AND LENGTH({column_path}) <= {max_length}",
+                            "expression": f"LENGTH({normalized_column}) >= {min_length} AND LENGTH({normalized_column}) <= {max_length}",
                             "columns": [column_path],
                         },
                     },
@@ -936,7 +940,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({column_path}) >= {min_length}",
+                            "expression": f"LENGTH({normalized_column}) >= {min_length}",
                             "columns": [column_path],
                         },
                     },
@@ -956,7 +960,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({column_path}) <= {max_length}",
+                            "expression": f"LENGTH({normalized_column}) <= {max_length}",
                             "columns": [column_path],
                         },
                     },
