@@ -9,9 +9,11 @@ legacy ``error_summary`` shape.
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, create_autospec
 
 import pytest
+from pyspark.errors import AnalysisException
+from pyspark.sql import DataFrame
 
 # The runner lives in ``app/tasks/src``, which is a separate uv project.
 # Add it to sys.path so we can import it without depending on
@@ -804,3 +806,101 @@ class TestBuildEvaluatedRowsMetric:
         assert expr.count("count(case when (region = 'EU'\n) then 1 end)") == 2
         assert "'\"a_is_null\"'" in expr
         assert "'\"b_is_null\"'" in expr
+
+    def test_subquery_filter_is_skipped(self, evaluated_rows_module, caplog):
+        flt = "x IN (SELECT id FROM t)"
+        with caplog.at_level("WARNING"):
+            assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("sub", flt)]) is None
+        assert "subquery" in caplog.text
+        assert flt not in caplog.text
+
+    def test_select_inside_string_literal_is_not_a_subquery(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "note = 'select me'")])
+        assert expr is not None
+        assert "note = 'select me'" in expr
+
+    def test_subquery_check_skipped_but_others_kept(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric(
+            [self._row_check("sub", "x in (select id from t)"), self._row_check("ok", "a > 0")]
+        )
+        assert expr is not None
+        assert "'\"ok\"'" in expr
+        assert "'\"sub\"'" not in expr
+
+
+# ---------------------------------------------------------------------------
+# with_evaluated_rows_metric — attach the metric only when Spark can analyse it
+# ---------------------------------------------------------------------------
+
+
+_FILTERED_CHECK = {
+    "name": "eu_not_null",
+    "criticality": "error",
+    "filter": "region = 'EU'",
+    "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+}
+
+
+class TestWithEvaluatedRowsMetric:
+    def test_appends_metric_when_expression_analyses(self, evaluated_rows_module):
+        df = create_autospec(DataFrame, instance=True)
+        metrics = evaluated_rows_module.with_evaluated_rows_metric(df, [_FILTERED_CHECK], ["sum(x) as s"])
+        assert metrics[0] == "sum(x) as s"
+        assert len(metrics) == 2
+        assert metrics[1].endswith(" as check_evaluated_rows")
+        df.agg.assert_called_once()
+
+    def test_drops_metric_when_analysis_fails(self, evaluated_rows_module, caplog):
+        df = create_autospec(DataFrame, instance=True)
+        aggregated = MagicMock()
+        type(aggregated).schema = PropertyMock(side_effect=AnalysisException("cannot resolve"))
+        df.agg.return_value = aggregated
+        with caplog.at_level("WARNING"):
+            metrics = evaluated_rows_module.with_evaluated_rows_metric(df, [_FILTERED_CHECK], ["sum(x) as s"])
+        assert metrics == ["sum(x) as s"]
+        assert "could not be analysed" in caplog.text
+        assert "region = 'EU'" not in caplog.text
+
+    def test_no_filtered_checks_leaves_metrics_untouched(self, evaluated_rows_module):
+        df = create_autospec(DataFrame, instance=True)
+        unfiltered = {k: v for k, v in _FILTERED_CHECK.items() if k != "filter"}
+        assert evaluated_rows_module.with_evaluated_rows_metric(df, [unfiltered], []) == []
+        df.agg.assert_not_called()
+
+
+class _StopAtAnalysis(Exception):
+    """Raised from the mocked analysis step to end the run at a known point."""
+
+
+class TestScheduledRunEvaluatedRows:
+    def test_scheduled_run_analyses_evaluated_rows_metric_on_source(self, runner_module):
+        # Scope-config schedules run through the scheduled path; the metric must be built
+        # and analysed against the source DataFrame there too, not only on manual runs.
+        spark = MagicMock()
+        source_df = spark.table.return_value
+        type(source_df.agg.return_value).schema = PropertyMock(side_effect=_StopAtAnalysis)
+        config = {"checks": [_FILTERED_CHECK], "source_table_fqn": "c.s.t"}
+        with pytest.raises(_StopAtAnalysis):
+            runner_module._run_scheduled(spark, MagicMock(), "c.s.t", config, "c", "s", "run1", "user")
+        source_df.agg.assert_called_once()
+        assert "check_evaluated_rows" in str(source_df.agg.call_args.args[0])
+
+
+class TestPersistedMetricCounts:
+    def test_evaluated_rows_metric_counts_as_builtin(self, runner_module, caplog):
+        observed = {"input_row_count": 10, "check_evaluated_rows": '[{"check_name":"c","evaluated_count":4}]'}
+        with caplog.at_level("INFO", logger="dqx_task_runner"):
+            runner_module._persist_observed_metrics(
+                spark=MagicMock(),
+                observed=observed,
+                run_id="run1",
+                run_name="dqx_app_scheduled",
+                input_location=None,
+                quarantine_location=None,
+                checks_location=None,
+                rule_set_fingerprint=None,
+                user_metadata=None,
+                result_catalog="c",
+                result_schema="s",
+            )
+        assert "builtin=2, custom=0" in caplog.text

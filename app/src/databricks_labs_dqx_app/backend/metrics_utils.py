@@ -75,7 +75,8 @@ def _parse_evaluated_counts(raw: Any) -> dict[str, int]:
 
     Tolerant of an absent or corrupt payload (empty map) and of malformed
     entries (skipped), so a bad value only drops the evaluated count — the
-    check then falls back to the table's input rows.
+    check then falls back to the table's input rows. A check listed more than
+    once keeps its largest count, matching the score view's MAX.
     """
     if not raw:
         return {}
@@ -91,7 +92,8 @@ def _parse_evaluated_counts(raw: Any) -> dict[str, int]:
             continue
         count = safe_int(item.get("evaluated_count"))
         if count is not None:
-            out[str(item["check_name"])] = count
+            name = str(item["check_name"])
+            out[name] = max(count, out.get(name, count))
     return out
 
 

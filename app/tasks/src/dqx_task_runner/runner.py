@@ -23,12 +23,21 @@ from typing import Any, cast
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
+from dqx_task_runner.evaluated_rows import EVALUATED_ROWS_METRIC, with_evaluated_rows_metric
+
 logger = logging.getLogger("dqx_task_runner")
 
 # Names of the spec-defined built-in metrics produced by ``DQMetricsObserver``.
 # Anything not in this set is treated as a custom metric and persisted as-is.
 _BUILTIN_METRIC_NAMES = frozenset(
-    {"input_row_count", "error_row_count", "warning_row_count", "valid_row_count", "check_metrics"}
+    {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+        EVALUATED_ROWS_METRIC,
+    }
 )
 
 # Hard ceiling on rows persisted to ``dq_quarantine_records`` for cross-table
@@ -553,26 +562,22 @@ def _run_dryrun(
 
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-    from dqx_task_runner.evaluated_rows import build_evaluated_rows_metric
 
     fingerprint = _compute_fingerprint(checks)
-
-    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
-    evaluated_rows_metric = build_evaluated_rows_metric(checks)
-    observer_metrics = [*custom_metrics, evaluated_rows_metric] if evaluated_rows_metric else custom_metrics
-
-    observer = DQMetricsObserver(
-        name=_observer_run_name(run_type),
-        custom_metrics=observer_metrics or None,
-        id_overwrite=run_id,
-    )
-    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     # ``sample_size = 0`` is the UI convention for "All rows" — skip
     # ``.limit`` for it (passing 0 would short-circuit to an empty DataFrame).
     df = _read_view_with_retry(spark, view_fqn)
     if sample_size:
         df = df.limit(sample_size)
+
+    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
+    observer = DQMetricsObserver(
+        name=_observer_run_name(run_type),
+        custom_metrics=with_evaluated_rows_metric(df, checks, custom_metrics) or None,
+        id_overwrite=run_id,
+    )
+    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
     # ``apply_checks_by_metadata_and_split`` returns ``(valid, invalid)``
     # when no observer is attached and ``(valid, invalid, observation)``
     # when one is. We always construct the engine with ``observer=...``
@@ -1190,14 +1195,14 @@ def _run_scheduled(
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
     fingerprint = _compute_fingerprint(checks)
+    df = _read_view_with_retry(spark, view_fqn)
+    # Built from the checks (not user-entered), so it bypasses ``_validate_custom_metrics``.
     observer = DQMetricsObserver(
         name=_observer_run_name("scheduled"),
-        custom_metrics=custom_metrics or None,
+        custom_metrics=with_evaluated_rows_metric(df, checks, custom_metrics) or None,
         id_overwrite=run_id,
     )
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
-
-    df = _read_view_with_retry(spark, view_fqn)
     # See narrowing rationale on the dryrun call site — DQX returns the
     # 3-tuple shape iff the engine was constructed with an observer,
     # which we always do here.

@@ -115,6 +115,13 @@ class TestParseCheckMetrics:
         assert by_name["filtered"].evaluated_count == 100
         assert by_name["unfiltered"].evaluated_count is None
 
+    def test_duplicate_evaluated_entries_keep_the_max(self, metrics_utils_module):
+        # Matches the score view's MAX(evaluated_count) per check, whatever the entry order.
+        raw = json.dumps([{"check_name": "dup", "error_count": 1, "warning_count": 0}])
+        for entries in ([40, 100, 70], [100, 40]):
+            evaluated = json.dumps([{"check_name": "dup", "evaluated_count": n} for n in entries])
+            assert metrics_utils_module.parse_check_metrics(raw, evaluated)[0].evaluated_count == 100
+
     def test_evaluated_count_absent_by_default(self, metrics_utils_module):
         out = metrics_utils_module.parse_check_metrics(json.dumps([{"check_name": "x", "error_count": 1}]))
         assert out[0].evaluated_count is None
