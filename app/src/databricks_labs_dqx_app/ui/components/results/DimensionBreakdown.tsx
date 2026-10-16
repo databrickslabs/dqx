@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
 import { BreachIcon } from "./BreachIcon";
-import { formatTableTestsFailed } from "./testCounts";
+import { combineTestCounts } from "./testCounts";
 
 /**
  * Client-side page slice for the breakdown table. Without *pageSize* the
@@ -333,15 +333,12 @@ export function DimensionBreakdown({
                 // facet filter): render it dimmed + thinner so it reads as
                 // out-of-scope, not a live result.
                 const isMuted = r.label != null && mutedSet.has(r.label);
-                const tableTests = formatTableTestsFailed(
-                  t,
-                  r.table_failed_tests,
-                  r.table_total_tests,
-                  { short: true },
-                );
-                // A row with only dataset checks has no row tests: dash the
-                // failure count rather than showing a misleading 0.
-                const noRowTests = !!tableTests && !(r.total_tests && r.total_tests > 0);
+                const tests = combineTestCounts({
+                  failedTests: r.failed_tests,
+                  totalTests: r.total_tests,
+                  tableFailedTests: r.table_failed_tests,
+                  tableTotalTests: r.table_total_tests,
+                });
                 return (
                   <tr
                     key={i}
@@ -390,24 +387,10 @@ export function DimensionBreakdown({
                         : (r.rule_count == null ? "—" : r.rule_count)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {noRowTests || (r.pass_rate == null && r.failed_tests == null)
-                        ? "—"
-                        : (r.failed_tests ?? 0)}
-                      {tableTests && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="block text-[10px] text-muted-foreground">
-                              {tableTests}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            {formatTableTestsFailed(t, r.table_failed_tests, r.table_total_tests)}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
+                      {tests.failed ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {r.total_tests == null ? "—" : r.total_tests}
+                      {tests.total ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {r.pass_rate == null

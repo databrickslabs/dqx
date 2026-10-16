@@ -1,13 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { formatTableTestsFailed, formatTestCounts } from "./testCounts";
+import { combineTestCounts, formatTestCounts } from "./testCounts";
 
 // Stand-in for i18next's t: resolves the English strings so the assertions
 // read like the rendered UI.
 const EN: Record<string, string> = {
   "resultsUi.rowTestsPassed": "{{passed}} / {{total}} row tests passed",
   "resultsUi.tableTestsPassed": "{{passed}} / {{total}} table tests passed",
-  "resultsUi.tableTestsFailed": "{{failed}} / {{total}} table tests failed",
-  "resultsUi.tableTestsFailedShort": "{{failed}} / {{total}} table tests",
 };
 const t = (key: string, options: Record<string, string>) =>
   (EN[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name: string) => options[name] ?? "");
@@ -71,20 +69,25 @@ describe("formatTestCounts", () => {
   });
 });
 
-describe("formatTableTestsFailed (breakdown-row indicator)", () => {
-  it("renders failed / total table tests when the row has dataset checks", () => {
-    expect(formatTableTestsFailed(t, 1, 2)).toBe("1 / 2 table tests failed");
-    expect(formatTableTestsFailed(t, null, 2)).toBe("0 / 2 table tests failed");
+describe("combineTestCounts (drilldown rows)", () => {
+  it("adds table tests to row tests", () => {
+    expect(
+      combineTestCounts({ failedTests: 2, totalTests: 8, tableFailedTests: 0, tableTotalTests: 1 }),
+    ).toEqual({ failed: 2, total: 9 });
   });
 
-  it("has a short form that fits a narrow table cell", () => {
-    expect(formatTableTestsFailed(t, 1, 2, { short: true })).toBe("1 / 2 table tests");
+  it("counts a table-only row as tests", () => {
+    expect(
+      combineTestCounts({ failedTests: null, totalTests: null, tableFailedTests: 0, tableTotalTests: 1 }),
+    ).toEqual({ failed: 0, total: 1 });
   });
 
-  it("returns an empty string when the row has no table tests", () => {
-    expect(formatTableTestsFailed(t, 0, 0)).toBe("");
-    expect(formatTableTestsFailed(t, null, null)).toBe("");
-    expect(formatTableTestsFailed(t, undefined, undefined)).toBe("");
-    expect(formatTableTestsFailed(t, 0, 0, { short: true })).toBe("");
+  it("passes row-only counts through", () => {
+    expect(combineTestCounts({ failedTests: 3, totalTests: 10 })).toEqual({ failed: 3, total: 10 });
+  });
+
+  it("returns nulls when nothing was tested", () => {
+    expect(combineTestCounts({ failedTests: 0, totalTests: 0 })).toEqual({ failed: null, total: null });
+    expect(combineTestCounts({})).toEqual({ failed: null, total: null });
   });
 });

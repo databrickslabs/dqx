@@ -1,6 +1,7 @@
 // Pure copy helpers for the row/table test split. Row tests are row-level
 // checks over the rows each check evaluated; table tests are dataset-level
-// checks, one test each. The two are never summed together.
+// checks, one test each. Score boxes show the two separately; drilldown
+// tables add them together (combineTestCounts).
 
 /** The slice of i18next's *t* these helpers need (kept narrow so tests can
  *  pass a plain function). */
@@ -39,20 +40,12 @@ export function formatTestCounts(t: Translate, counts: TestCounts): string {
 }
 
 /**
- * Per-row indicator for breakdown tables ("1 / 2 table tests failed"; the
- * *short* form "1 / 2 table tests" fits under the row-failure count), shown only
- * when the row has dataset checks; "" otherwise.
+ * Drilldown-table counts: table-level checks count as tests (one each), so a
+ * row's failed / total tests are the row-level and table-level counts added
+ * together. Both are null when nothing was tested.
  */
-export function formatTableTestsFailed(
-  t: Translate,
-  tableFailedTests: number | null | undefined,
-  tableTotalTests: number | null | undefined,
-  { short = false }: { short?: boolean } = {},
-): string {
-  const total = tableTotalTests ?? 0;
-  if (total <= 0) return "";
-  return t(short ? "resultsUi.tableTestsFailedShort" : "resultsUi.tableTestsFailed", {
-    failed: (tableFailedTests ?? 0).toLocaleString(),
-    total: total.toLocaleString(),
-  });
+export function combineTestCounts(counts: TestCounts): { failed: number | null; total: number | null } {
+  const total = (counts.totalTests ?? 0) + (counts.tableTotalTests ?? 0);
+  if (total <= 0) return { failed: null, total: null };
+  return { failed: (counts.failedTests ?? 0) + (counts.tableFailedTests ?? 0), total };
 }
