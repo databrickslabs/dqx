@@ -73,8 +73,6 @@ def _table_row(
     total_tests: str | None = None,
     score_computed_at: str | None = None,
     version_state_json: str | None = None,
-    table_failed_tests: str | None = None,
-    table_total_tests: str | None = None,
 ) -> list[str]:
     # ``schedule_kind`` (B2-52) is at index 13;
     # ``owner_display_name`` at index 14;
@@ -109,8 +107,6 @@ def _table_row(
         total_tests,  # 20
         score_computed_at,  # 21
         version_state_json,  # 22
-        table_failed_tests,  # 23
-        table_total_tests,  # 24
     ]
 
 
@@ -447,8 +443,6 @@ class TestListMonitoredTables:
                     failed_tests="12",
                     total_tests="1000",
                     score_computed_at="2026-07-10T00:00:00",
-                    table_failed_tests="1",
-                    table_total_tests="3",
                 )
             ],
             [["b1", "2"]],  # grouped applied-rule counts
@@ -464,8 +458,6 @@ class TestListMonitoredTables:
         assert summary.score == 0.9876
         assert summary.failed_tests == 12
         assert summary.total_tests == 1000
-        assert summary.table_failed_tests == 1
-        assert summary.table_total_tests == 3
         assert summary.score_computed_at == "2026-07-10T00:00:00"
 
     def test_list_aggregates_dimension_and_severity_tags(self, svc, sql):

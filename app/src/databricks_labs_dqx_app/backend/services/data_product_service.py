@@ -140,8 +140,6 @@ class DataProductMemberDetail:
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
-    table_failed_tests: int | None = None
-    table_total_tests: int | None = None
     score_computed_at: str | None = None
 
 
@@ -162,8 +160,6 @@ class DataProductDetail:
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
-    table_failed_tests: int | None = None
-    table_total_tests: int | None = None
     score_computed_at: str | None = None
 
 
@@ -968,8 +964,6 @@ class DataProductService:
                     score=summary.score,
                     failed_tests=summary.failed_tests,
                     total_tests=summary.total_tests,
-                    table_failed_tests=summary.table_failed_tests,
-                    table_total_tests=summary.table_total_tests,
                     score_computed_at=summary.score_computed_at,
                 )
             )
@@ -989,8 +983,6 @@ class DataProductService:
             score=cached.score,
             failed_tests=cached.failed_tests,
             total_tests=cached.total_tests,
-            table_failed_tests=cached.table_failed_tests,
-            table_total_tests=cached.table_total_tests,
             score_computed_at=cached.computed_at,
         )
 
@@ -1208,8 +1200,7 @@ class DataProductService:
         score_computed_at = self._sql.ts_text("sc.computed_at")
         return (
             f"SELECT {self._select_cols('p.')}, "
-            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at, "
-            f"sc.table_failed_tests, sc.table_total_tests "
+            f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at "
             f"FROM {self._products_table} p "
             f"LEFT JOIN {self._score_cache_table} sc "
             f"ON sc.scope_type = 'product' AND sc.scope_key = p.product_id"
@@ -1222,20 +1213,14 @@ class DataProductService:
         if not rows:
             return None
         row = rows[0]
-        return self._row_to_product(row), self._parse_score_cells(row)
+        # Base cols end at schedule_sample_size (row[16]); score cols at row[17..20].
+        return self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])
 
     def _fetch_products_with_scores(self) -> list[tuple[DataProduct, CachedScore]]:
         sql = f"{self._score_joined_select()} ORDER BY p.updated_at DESC"  # noqa: S608
         rows = self._sql.query(sql)
-        return [(self._row_to_product(row), self._parse_score_cells(row)) for row in rows]
-
-    @staticmethod
-    def _parse_score_cells(row: list[str]) -> CachedScore:
-        # Base cols end at schedule_sample_size (row[16]); score cols at row[17..20],
-        # then the table-level test counts at row[21..22].
-        return parse_cached_score(
-            row[17], row[18], row[19], row[20], table_failed_tests=row[21], table_total_tests=row[22]
-        )
+        # Base cols end at schedule_sample_size (row[16]); score cols at row[17..20].
+        return [(self._row_to_product(row), parse_cached_score(row[17], row[18], row[19], row[20])) for row in rows]
 
     def _row_to_product(self, row: list[str]) -> DataProduct:
         return DataProduct(

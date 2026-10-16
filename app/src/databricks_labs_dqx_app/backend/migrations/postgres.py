@@ -697,8 +697,6 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  score         DOUBLE PRECISION,"
             "  failed_tests  BIGINT,"
             "  total_tests   BIGINT,"
-            "  table_failed_tests BIGINT,"
-            "  table_total_tests  BIGINT,"
             "  latest_run_id TEXT,"
             "  run_time      TIMESTAMPTZ,"
             "  computed_at   TIMESTAMPTZ,"
@@ -717,8 +715,6 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  score         DOUBLE PRECISION NOT NULL,"
             "  failed_tests  BIGINT,"
             "  total_tests   BIGINT,"
-            "  table_failed_tests BIGINT,"
-            "  table_total_tests  BIGINT,"
             "  run_time      TIMESTAMPTZ,"
             "  computed_at   TIMESTAMPTZ NOT NULL,"
             "  CONSTRAINT chk_dq_score_history_scope_type "
@@ -816,16 +812,6 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_schedule_runs ADD CONSTRAINT chk_dq_schedule_runs_status "
             "CHECK (status IS NULL OR status IN "
             "('pending','success','partial_failure','failed','skipped'));"
-        ),
-    ),
-    PgMigration(
-        version=5,
-        description="Table-level test counts on the score cache and history",
-        sql=(
-            f"ALTER TABLE {_S}.dq_score_cache ADD COLUMN IF NOT EXISTS table_failed_tests BIGINT;"
-            f"ALTER TABLE {_S}.dq_score_cache ADD COLUMN IF NOT EXISTS table_total_tests BIGINT;"
-            f"ALTER TABLE {_S}.dq_score_history ADD COLUMN IF NOT EXISTS table_failed_tests BIGINT;"
-            f"ALTER TABLE {_S}.dq_score_history ADD COLUMN IF NOT EXISTS table_total_tests BIGINT;"
         ),
     ),
 ]

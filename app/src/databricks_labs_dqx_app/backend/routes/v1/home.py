@@ -110,8 +110,6 @@ def get_home_stats(
         score=cached.score if cached else None,
         failed_tests=cached.failed_tests if cached else None,
         total_tests=cached.total_tests if cached else None,
-        table_failed_tests=cached.table_failed_tests if cached else None,
-        table_total_tests=cached.table_total_tests if cached else None,
         computed_at=cached.computed_at if cached else None,
         score_trend=trend,
         score_delta=score_delta,

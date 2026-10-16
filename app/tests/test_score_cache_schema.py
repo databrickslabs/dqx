@@ -12,8 +12,6 @@ _SCORE_COLS = (
     "score",
     "failed_tests",
     "total_tests",
-    "table_failed_tests",
-    "table_total_tests",
     "latest_run_id",
     "run_time",
     "computed_at",
@@ -25,8 +23,6 @@ _HISTORY_COLS = (
     "score",
     "failed_tests",
     "total_tests",
-    "table_failed_tests",
-    "table_total_tests",
     "run_time",
     "computed_at",
 )

@@ -157,8 +157,6 @@ class MonitoredTableSummary:
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
-    table_failed_tests: int | None = None
-    table_total_tests: int | None = None
     score_computed_at: str | None = None
     # Distinct dimension / severity tags across the binding's applied rules
     # (effective severity honours per-application ``severity_override``).
@@ -451,8 +449,7 @@ class MonitoredTableService:
         sql = (
             f"SELECT {self._build_select_cols('mt.')}, "
             f"sc.score, sc.failed_tests, sc.total_tests, {score_computed_at} AS score_computed_at, "
-            f"{state_json_text} AS version_state_json, "
-            f"sc.table_failed_tests, sc.table_total_tests "
+            f"{state_json_text} AS version_state_json "
             f"FROM {self._table} mt "
             f"LEFT JOIN {self._score_cache_table} sc "
             f"ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
@@ -465,13 +462,11 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         # Base columns end with schedule_sample_size (index 17), so the
         # score-cache LEFT-JOIN columns follow at 18..21, and the
-        # version_state_json at 22, and the table-level test counts at 23..24.
+        # version_state_json at 22.
         tables = [
             (
                 self._row_to_table(row),
-                parse_cached_score(
-                    row[18], row[19], row[20], row[21], table_failed_tests=row[23], table_total_tests=row[24]
-                ),
+                parse_cached_score(row[18], row[19], row[20], row[21]),
                 _parse_snapshot_check_count(row[22]),
             )
             for row in rows
@@ -502,8 +497,6 @@ class MonitoredTableService:
                 score=cached.score,
                 failed_tests=cached.failed_tests,
                 total_tests=cached.total_tests,
-                table_failed_tests=cached.table_failed_tests,
-                table_total_tests=cached.table_total_tests,
                 score_computed_at=cached.computed_at,
                 dimensions=tag_facets.get(t.binding_id, empty_facets)[0],
                 severities=tag_facets.get(t.binding_id, empty_facets)[1],

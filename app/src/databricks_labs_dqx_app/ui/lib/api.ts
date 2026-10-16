@@ -1197,25 +1197,9 @@ export type DataProductMemberOutPinnedVersion = number | null;
  */
 export type DataProductMemberOutScore = number | null;
 
-/**
- * Failed row-level tests
- */
 export type DataProductMemberOutFailedTests = number | null;
 
-/**
- * Row-level tests (evaluated rows x row checks)
- */
 export type DataProductMemberOutTotalTests = number | null;
-
-/**
- * Failed table-level checks
- */
-export type DataProductMemberOutTableFailedTests = number | null;
-
-/**
- * Table-level checks, one test each
- */
-export type DataProductMemberOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -1244,14 +1228,8 @@ export interface DataProductMemberOut {
   runnable: boolean;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: DataProductMemberOutScore;
-  /** Failed row-level tests */
   failed_tests?: DataProductMemberOutFailedTests;
-  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: DataProductMemberOutTotalTests;
-  /** Failed table-level checks */
-  table_failed_tests?: DataProductMemberOutTableFailedTests;
-  /** Table-level checks, one test each */
-  table_total_tests?: DataProductMemberOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: DataProductMemberOutScoreComputedAt;
 }
@@ -1312,25 +1290,9 @@ export type DataProductOutLastRunAt = string | null;
  */
 export type DataProductOutScore = number | null;
 
-/**
- * Failed row-level tests
- */
 export type DataProductOutFailedTests = number | null;
 
-/**
- * Row-level tests (evaluated rows x row checks)
- */
 export type DataProductOutTotalTests = number | null;
-
-/**
- * Failed table-level checks
- */
-export type DataProductOutTableFailedTests = number | null;
-
-/**
- * Table-level checks, one test each
- */
-export type DataProductOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -1374,14 +1336,8 @@ export interface DataProductOut {
   last_run_at?: DataProductOutLastRunAt;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: DataProductOutScore;
-  /** Failed row-level tests */
   failed_tests?: DataProductOutFailedTests;
-  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: DataProductOutTotalTests;
-  /** Failed table-level checks */
-  table_failed_tests?: DataProductOutTableFailedTests;
-  /** Table-level checks, one test each */
-  table_total_tests?: DataProductOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: DataProductOutScoreComputedAt;
   created_by?: DataProductOutCreatedBy;
@@ -2157,10 +2113,6 @@ export type HomeStatsOutFailedTests = number | null;
 
 export type HomeStatsOutTotalTests = number | null;
 
-export type HomeStatsOutTableFailedTests = number | null;
-
-export type HomeStatsOutTableTotalTests = number | null;
-
 export type HomeStatsOutComputedAt = string | null;
 
 export type HomeStatsOutScoreDelta = number | null;
@@ -2188,8 +2140,6 @@ export interface HomeStatsOut {
   score?: HomeStatsOutScore;
   failed_tests?: HomeStatsOutFailedTests;
   total_tests?: HomeStatsOutTotalTests;
-  table_failed_tests?: HomeStatsOutTableFailedTests;
-  table_total_tests?: HomeStatsOutTableTotalTests;
   computed_at?: HomeStatsOutComputedAt;
   score_trend?: ScoreTrendPointOut[];
   score_delta?: HomeStatsOutScoreDelta;
@@ -2754,25 +2704,9 @@ export interface MonitoredTableReviewOut {
  */
 export type MonitoredTableSummaryOutScore = number | null;
 
-/**
- * Failed row-level tests
- */
 export type MonitoredTableSummaryOutFailedTests = number | null;
 
-/**
- * Row-level tests (evaluated rows x row checks)
- */
 export type MonitoredTableSummaryOutTotalTests = number | null;
-
-/**
- * Failed table-level checks
- */
-export type MonitoredTableSummaryOutTableFailedTests = number | null;
-
-/**
- * Table-level checks, one test each
- */
-export type MonitoredTableSummaryOutTableTotalTests = number | null;
 
 /**
  * When the cached score was last recomputed
@@ -2793,14 +2727,8 @@ export interface MonitoredTableSummaryOut {
   check_count?: number;
   /** Cached DQ score in [0, 1]; None = never computed */
   score?: MonitoredTableSummaryOutScore;
-  /** Failed row-level tests */
   failed_tests?: MonitoredTableSummaryOutFailedTests;
-  /** Row-level tests (evaluated rows x row checks) */
   total_tests?: MonitoredTableSummaryOutTotalTests;
-  /** Failed table-level checks */
-  table_failed_tests?: MonitoredTableSummaryOutTableFailedTests;
-  /** Table-level checks, one test each */
-  table_total_tests?: MonitoredTableSummaryOutTableTotalTests;
   /** When the cached score was last recomputed */
   score_computed_at?: MonitoredTableSummaryOutScoreComputedAt;
   /** Distinct quality-dimension tags across applied rules. */

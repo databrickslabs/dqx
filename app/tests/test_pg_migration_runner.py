@@ -171,16 +171,6 @@ _ADD_CONSTRAINT_RE = re.compile(
 )
 
 
-class TestTableTestCountsMigration:
-    def test_adds_both_columns_to_cache_and_history_idempotently(self):
-        migration = next(m for m in PG_MIGRATIONS if m.version == 5)
-        stmts = _statements(" ".join(migration.sql.split()))
-        assert len(stmts) == 4
-        for table in ("dq_score_cache", "dq_score_history"):
-            for column in ("table_failed_tests", "table_total_tests"):
-                assert f"ALTER TABLE {{schema}}.{table} ADD COLUMN IF NOT EXISTS {column} BIGINT" in stmts
-
-
 class TestBaselineCatalogue:
     """v1 is the full schema as CREATE TABLE; later migrations upgrade existing installs.
 

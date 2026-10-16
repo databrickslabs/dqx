@@ -92,8 +92,6 @@ class TestHomeStats:
                 score=0.9134,
                 failed_tests=42,
                 total_tests=500,
-                table_failed_tests=2,
-                table_total_tests=9,
                 computed_at="2026-07-10 09:00:00",
             )
         }
@@ -108,8 +106,6 @@ class TestHomeStats:
             "score": 0.9134,
             "failed_tests": 42,
             "total_tests": 500,
-            "table_failed_tests": 2,
-            "table_total_tests": 9,
             "computed_at": "2026-07-10 09:00:00",
             "score_trend": [],
             "score_delta": None,
@@ -129,8 +125,6 @@ class TestHomeStats:
         assert body["score"] is None
         assert body["failed_tests"] is None
         assert body["total_tests"] is None
-        assert body["table_failed_tests"] is None
-        assert body["table_total_tests"] is None
         assert body["computed_at"] is None
 
     def test_cached_row_with_null_score_still_serves_computed_at(self, client, score_cache_mock):

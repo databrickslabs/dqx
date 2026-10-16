@@ -72,8 +72,6 @@ def _measure_row(
     score: str | None = "0.98765",
     failed_tests: str | None = "12",
     total_tests: str | None = "1000",
-    table_failed_tests: str | None = "1",
-    table_total_tests: str | None = "4",
 ) -> dict[str, str | None]:
     """One batched-recompute result row, Statement-Execution shaped (strings)."""
     return {
@@ -83,8 +81,6 @@ def _measure_row(
         "score": score,
         "failed_tests": failed_tests,
         "total_tests": total_tests,
-        "table_failed_tests": table_failed_tests,
-        "table_total_tests": table_total_tests,
     }
 
 
@@ -107,8 +103,6 @@ class TestRefreshForTables:
         assert f"input_location IN ('{FQN_A}', '{FQN_B}')" in stmt
         assert "run_mode = 'published'" in stmt
         assert "MEASURE(score)" in stmt
-        assert "MEASURE(table_failed_tests) AS table_failed_tests" in stmt
-        assert "MEASURE(table_total_tests) AS table_total_tests" in stmt
         assert "QUALIFY ROW_NUMBER() OVER (PARTITION BY input_location ORDER BY run_time DESC) = 1" in stmt
 
     def test_upserts_one_table_row_per_fqn(self, svc, oltp, warehouse):
@@ -119,8 +113,6 @@ class TestRefreshForTables:
         assert values["score"] == 0.9877  # rounded to 4 places
         assert values["failed_tests"] == 12
         assert values["total_tests"] == 1000
-        assert values["table_failed_tests"] == 1
-        assert values["table_total_tests"] == 4
         assert values["latest_run_id"] == "r1"
         run_time = values["run_time"]
         assert isinstance(run_time, RawSql)
@@ -139,8 +131,6 @@ class TestRefreshForTables:
         assert values["score"] is None
         assert values["failed_tests"] is None
         assert values["total_tests"] is None
-        assert values["table_failed_tests"] is None
-        assert values["table_total_tests"] is None
         assert values["latest_run_id"] is None
         assert values["run_time"] is None
         assert isinstance(values["computed_at"], RawSql)
@@ -186,42 +176,6 @@ class TestRefreshProduct:
         assert values["total_tests"] == 20
         assert values["latest_run_id"] is None
         assert values["run_time"] is None
-
-    def test_sums_table_level_test_counts_across_members(self, svc, oltp):
-        oltp.query_dicts.return_value = [
-            {
-                "score": "0.75",
-                "failed_tests": "5",
-                "total_tests": "20",
-                "table_failed_tests": "2",
-                "table_total_tests": "6",
-            }
-        ]
-        svc.refresh_product("p1")
-        stmt = oltp.query_dicts.call_args[0][0]
-        assert "SUM(sc.table_failed_tests) AS table_failed_tests" in stmt
-        assert "SUM(sc.table_total_tests) AS table_total_tests" in stmt
-        values = _upsert_by_key(oltp)[("product", "p1")]
-        assert values["table_failed_tests"] == 2
-        assert values["table_total_tests"] == 6
-
-    def test_global_sums_table_level_test_counts(self, svc, oltp):
-        oltp.query_dicts.return_value = [
-            {
-                "score": "0.9",
-                "failed_tests": "1",
-                "total_tests": "10",
-                "table_failed_tests": "3",
-                "table_total_tests": "8",
-            }
-        ]
-        svc.refresh_global()
-        stmt = oltp.query_dicts.call_args[0][0]
-        assert "SUM(sc.table_failed_tests) AS table_failed_tests" in stmt
-        assert "SUM(sc.table_total_tests) AS table_total_tests" in stmt
-        values = _upsert_by_key(oltp)[("global", GLOBAL_SCOPE_KEY)]
-        assert values["table_failed_tests"] == 3
-        assert values["table_total_tests"] == 8
 
     def test_product_with_no_scored_members_gets_null_score_row(self, svc, oltp):
         oltp.query_dicts.return_value = [{"score": None, "failed_tests": None, "total_tests": None}]
@@ -310,8 +264,6 @@ class TestGetMany:
                 "score": "0.9",
                 "failed_tests": "3",
                 "total_tests": "30",
-                "table_failed_tests": "1",
-                "table_total_tests": "2",
                 "latest_run_id": "r9",
                 "run_time": "2026-07-10 08:00:00",
                 "computed_at": "2026-07-10 08:01:00",
@@ -323,8 +275,6 @@ class TestGetMany:
                 score=0.9,
                 failed_tests=3,
                 total_tests=30,
-                table_failed_tests=1,
-                table_total_tests=2,
                 latest_run_id="r9",
                 run_time="2026-07-10 08:00:00",
                 computed_at="2026-07-10 08:01:00",
@@ -343,11 +293,6 @@ class TestParseCachedScore:
     def test_coerces_statement_execution_strings(self):
         cached = parse_cached_score("0.5", "1", "2", "2026-07-10T00:00:00")
         assert cached == CachedScore(score=0.5, failed_tests=1, total_tests=2, computed_at="2026-07-10T00:00:00")
-
-    def test_parses_table_level_counts(self):
-        cached = parse_cached_score("0.5", "1", "2", None, table_failed_tests="3", table_total_tests="4")
-        assert cached.table_failed_tests == 3
-        assert cached.table_total_tests == 4
 
     def test_all_none_yields_empty_cached_score(self):
         assert parse_cached_score(None, None, None, None) == CachedScore()
@@ -393,7 +338,6 @@ class TestScoreHistoryAppend:
         assert "0.9123" in stmt
         assert " 7," in stmt
         assert " 70," in stmt
-        assert "table_failed_tests, table_total_tests" in stmt
         assert "now()" in stmt
 
     def test_table_refresh_appends_history_with_run_time(self, svc, oltp, warehouse):

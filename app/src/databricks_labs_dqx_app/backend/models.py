@@ -1169,10 +1169,8 @@ class MonitoredTableSummaryOut(BaseModel):
     applied_rule_count: int = 0
     check_count: int = 0
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
-    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
-    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
-    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    failed_tests: int | None = None
+    total_tests: int | None = None
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     dimensions: list[str] = Field(
         default_factory=list,
@@ -1199,8 +1197,6 @@ class MonitoredTableSummaryOut(BaseModel):
             score=summary.score,
             failed_tests=summary.failed_tests,
             total_tests=summary.total_tests,
-            table_failed_tests=summary.table_failed_tests,
-            table_total_tests=summary.table_total_tests,
             score_computed_at=summary.score_computed_at,
             dimensions=list(summary.dimensions),
             severities=list(summary.severities),
@@ -1930,10 +1926,8 @@ class DataProductMemberOut(BaseModel):
     checks_count: int
     runnable: bool = Field(description="binding status == 'approved' AND binding_version > 0")
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
-    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
-    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
-    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    failed_tests: int | None = None
+    total_tests: int | None = None
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
 
     @classmethod
@@ -1951,8 +1945,6 @@ class DataProductMemberOut(BaseModel):
             score=member.score,
             failed_tests=member.failed_tests,
             total_tests=member.total_tests,
-            table_failed_tests=member.table_failed_tests,
-            table_total_tests=member.table_total_tests,
             score_computed_at=member.score_computed_at,
         )
 
@@ -1994,10 +1986,8 @@ class DataProductOut(BaseModel):
     # (P3.4): the cached unweighted mean of member tables' latest published
     # scores. All None when the product has never been scored.
     score: float | None = Field(default=None, description="Cached DQ score in [0, 1]; None = never computed")
-    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
-    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
-    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
-    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    failed_tests: int | None = None
+    total_tests: int | None = None
     score_computed_at: str | None = Field(default=None, description="When the cached score was last recomputed")
     created_by: str | None = None
     created_at: str | None = None
@@ -2029,8 +2019,6 @@ class DataProductOut(BaseModel):
             score=detail.score,
             failed_tests=detail.failed_tests,
             total_tests=detail.total_tests,
-            table_failed_tests=detail.table_failed_tests,
-            table_total_tests=detail.table_total_tests,
             score_computed_at=detail.score_computed_at,
             created_by=product.created_by,
             created_at=product.created_at.isoformat() if product.created_at else None,
@@ -2542,8 +2530,6 @@ class HomeStatsOut(BaseModel):
     score: float | None = None
     failed_tests: int | None = None
     total_tests: int | None = None
-    table_failed_tests: int | None = None
-    table_total_tests: int | None = None
     computed_at: str | None = None
     score_trend: list[ScoreTrendPointOut] = Field(default_factory=list)
     score_delta: float | None = None
