@@ -2990,7 +2990,7 @@
     "versionMarker": "v{{version}}",
     "overallSeries": "Complessivo",
     "averageSeries": "Media",
-    "countInfo": "Una <b>regola</b> è una logica riutilizzabile. Un <b>controllo</b> è quando una regola viene applicata a una colonna o a un insieme di colonne. Un <b>test</b> è quando un controllo viene eseguito su una riga o su una tabella.<br/>Il <b>punteggio complessivo</b> è la media della % di test superati di ciascuna regola.",
+    "countInfo": "Una <b>regola</b> è una logica riutilizzabile.<br/>Un <b>controllo</b> è quando una regola viene applicata a una colonna o a un insieme di colonne.<br/>Un <b>test</b> è quando un controllo viene eseguito su una riga o su una tabella.<br/><br/>Il <b>punteggio complessivo</b> è la media della % di test superati di ciascuna regola.",
     "loadFailed": "Impossibile caricare i risultati.",
     "tryAgain": "Riprova",
     "drilldownScopeAria": "Ambito del drill-down",

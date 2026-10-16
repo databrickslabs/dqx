@@ -2990,7 +2990,7 @@
     "versionMarker": "v{{version}}",
     "overallSeries": "Global",
     "averageSeries": "Moyenne",
-    "countInfo": "Une <b>règle</b> est une logique réutilisable. Un <b>contrôle</b> correspond à l'application d'une règle à une colonne ou à un ensemble de colonnes. Un <b>test</b> correspond à l'exécution d'un contrôle sur une ligne ou sur une table.<br/>Le <b>score global</b> est la moyenne du % de tests réussis de chaque règle.",
+    "countInfo": "Une <b>règle</b> est une logique réutilisable.<br/>Un <b>contrôle</b> correspond à l'application d'une règle à une colonne ou à un ensemble de colonnes.<br/>Un <b>test</b> correspond à l'exécution d'un contrôle sur une ligne ou sur une table.<br/><br/>Le <b>score global</b> est la moyenne du % de tests réussis de chaque règle.",
     "loadFailed": "Impossible de charger les résultats.",
     "tryAgain": "Réessayer",
     "drilldownScopeAria": "Périmètre de l'analyse détaillée",

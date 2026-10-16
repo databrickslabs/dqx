@@ -2990,7 +2990,7 @@
     "versionMarker": "v{{version}}",
     "overallSeries": "General",
     "averageSeries": "Promedio",
-    "countInfo": "Una <b>regla</b> es una lógica reutilizable. Una <b>comprobación</b> es cuando una regla se aplica a una columna o conjunto de columnas. Una <b>prueba</b> es cuando una comprobación se ejecuta sobre una fila o una tabla.<br/>La <b>puntuación general</b> es el promedio del % de pruebas superadas de cada regla.",
+    "countInfo": "Una <b>regla</b> es una lógica reutilizable.<br/>Una <b>comprobación</b> es cuando una regla se aplica a una columna o conjunto de columnas.<br/>Una <b>prueba</b> es cuando una comprobación se ejecuta sobre una fila o una tabla.<br/><br/>La <b>puntuación general</b> es el promedio del % de pruebas superadas de cada regla.",
     "loadFailed": "No se pudieron cargar los resultados.",
     "tryAgain": "Intentar de nuevo",
     "drilldownScopeAria": "Ámbito del desglose",

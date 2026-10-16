@@ -2990,7 +2990,7 @@
     "versionMarker": "v{{version}}",
     "overallSeries": "Overall",
     "averageSeries": "Average",
-    "countInfo": "A <b>rule</b> is a piece of reusable logic. A <b>check</b> is when a rule gets applied to a column/set of columns. A <b>test</b> is when a check runs against a row/table.<br/>The <b>overall score</b> is an average of each rule's % of passing tests.",
+    "countInfo": "A <b>rule</b> is a piece of reusable logic.<br/>A <b>check</b> is when a rule gets applied to a column/set of columns.<br/>A <b>test</b> is when a check runs against a row/table.<br/><br/>The <b>overall score</b> is an average of each rule's % of passing tests.",
     "loadFailed": "Couldn't load results.",
     "tryAgain": "Try again",
     "drilldownScopeAria": "Drilldown scope",
