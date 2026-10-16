@@ -445,10 +445,11 @@ class ScoreViewService:
             "        THEN CASE WHEN s.error_count + s.warning_count > 0 THEN 0.0 ELSE 1.0 END\n"
             # A row check whose filter matched nothing is unscorable.
             "      WHEN s.evaluated_row_count IS NULL OR s.evaluated_row_count <= 0 THEN CAST(NULL AS DOUBLE)\n"
-            "      ELSE 1.0 - TRY_DIVIDE(\n"
+            # Clamped at zero: a check can report more failures than evaluated rows.
+            "      ELSE GREATEST(0.0, 1.0 - TRY_DIVIDE(\n"
             "        s.error_count + s.warning_count,\n"
             "        s.evaluated_row_count\n"
-            "      )\n"
+            "      ))\n"
             "    END AS check_score\n"
             "  FROM shaped s\n"
             ")\n"

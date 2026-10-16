@@ -423,6 +423,11 @@ class TestBreakdowns:
         out = compute_entity_results(rows, ResultFacets())
         assert out.by_rule[0].pass_threshold is None
 
+    def test_check_score_clamped_at_zero_when_failures_exceed_evaluated_rows(self):
+        rows = [make_row("c1", failed=150, total=100, rule_id="rule-1")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].pass_rate == pytest.approx(0.0)
+
     def test_pass_rate_none_when_no_tests(self):
         rows = [make_row("c1", failed=0, total=None)]
         out = compute_entity_results(rows, ResultFacets())

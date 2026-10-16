@@ -279,8 +279,10 @@ class TestShapingViewDdl:
         ddl = svc.shaping_view_ddl()
         # A filter that matched nothing leaves the check unscorable.
         assert "WHEN s.evaluated_row_count IS NULL OR s.evaluated_row_count <= 0 THEN CAST(NULL AS DOUBLE)" in ddl
+        # Clamped at zero: a check can report more failures than evaluated rows.
         assert (
-            "1.0 - TRY_DIVIDE(\n        s.error_count + s.warning_count,\n        s.evaluated_row_count\n      )" in ddl
+            "ELSE GREATEST(0.0, 1.0 - TRY_DIVIDE(\n        s.error_count + s.warning_count,\n"
+            "        s.evaluated_row_count\n      ))" in ddl
         )
 
     def test_dataset_check_score_keeps_the_table_row_guard(self, svc):
@@ -587,7 +589,7 @@ def _simulate_measure_path(
         elif evaluated_rows <= 0:
             continue
         else:
-            check_score = 1.0 - failures / evaluated_rows
+            check_score = max(0.0, 1.0 - failures / evaluated_rows)
         rule_key = (check_rule_ids or {}).get(metric.check_name, metric.check_name)
         rules.setdefault(rule_key, []).append(check_score)
     per_rule = [sum(check_scores) / len(check_scores) for check_scores in rules.values()]

@@ -341,7 +341,7 @@ class _GroupAcc:
             if row.check_granularity == "dataset":
                 check_score = 0.0 if row.failed > 0 else 1.0
             else:
-                check_score = 1.0 - row.failed / row.total
+                check_score = max(0.0, 1.0 - row.failed / row.total)
             instance = (row.table_fqn, row.run_id, _rule_key(row))
             score_sum, count = self.rule_check_scores.get(instance, (0.0, 0))
             self.rule_check_scores[instance] = (score_sum + check_score, count + 1)
