@@ -564,6 +564,10 @@ class Materializer:
 
         Raises:
             MaterializationError: *binding_id* does not exist.
+            InvalidMergeColumnsError: an applied rule's merge columns resolve to
+                no columns. Raised only after every other applied rule is
+                materialized and orphans are cleaned up; the bad rule's existing
+                rows are left untouched.
         """
         detail = self._monitored_tables.get(binding_id)
         if detail is None:
@@ -572,16 +576,24 @@ class Materializer:
         auto_upgrade = self._app_settings.get_auto_upgrade_without_approval()
         written_ids: set[str] = set()
         applied_ids: set[str] = set()
+        merge_columns_error: InvalidMergeColumnsError | None = None
 
         for summary in detail.applied_rules:
             applied = summary.applied_rule
             if not applied.id:
                 continue
             applied_ids.add(applied.id)
-            expected_ids = self._materialize_applied_rule(detail.table.table_fqn, applied, auto_upgrade)
+            try:
+                expected_ids = self._materialize_applied_rule(detail.table.table_fqn, applied, auto_upgrade)
+            except InvalidMergeColumnsError as e:
+                # Finish the rest of the binding first, then fail the submit.
+                merge_columns_error = merge_columns_error or e
+                continue
             written_ids.update(expected_ids)
 
         self._cleanup_orphans(applied_ids=applied_ids, written_ids=written_ids)
+        if merge_columns_error is not None:
+            raise merge_columns_error
         return sorted(written_ids)
 
     def _resolve_registry(
@@ -1114,7 +1126,8 @@ class Materializer:
                 self.materialize_binding(binding_id)
             except MaterializationError:
                 logger.warning("Skipping re-materialization for missing binding %s", binding_id, exc_info=True)
-            except InvalidMergeColumnsError:
-                # Don't fail the rule's approval; the table's own submit reports it.
-                logger.warning("Skipping re-materialization of binding %s", binding_id, exc_info=True)
+            except InvalidMergeColumnsError as e:
+                # The rest of the binding was materialized; only that rule's check
+                # was skipped. Don't fail the approval; the table's submit reports it.
+                logger.warning(f"Binding {binding_id} re-materialized without one check: {e}")
         return binding_ids

@@ -99,8 +99,9 @@ def registry_rule_to_check_dict(rule: RegistryRule, app_settings: AppSettingsSer
                 slot_names = {slot.name for slot in definition.slots}
                 names = [col.strip() for col in merge_columns if isinstance(col, str) and col.strip()]
                 exported = list(dict.fromkeys(f"{{{{{name}}}}}" if name in slot_names else name for name in names))
-                if exported:
-                    arguments["merge_columns"] = exported
+                # Nothing usable left: keep the entries as stored rather than drop them,
+                # which would turn the check dataset-level.
+                arguments["merge_columns"] = exported or merge_columns
         else:
             function_name = "sql_expression"
             predicate = body.get("predicate")

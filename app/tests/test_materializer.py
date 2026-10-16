@@ -1601,9 +1601,13 @@ class TestAllGroupsFailRenderIsNonDestructive:
 
 
 class TestUnresolvableMergeColumnsFailTheSubmit:
-    """Merge columns that resolve to nothing must fail the submit, not drop the check."""
+    """Merge columns that resolve to nothing must fail the submit, not drop the check.
 
-    def test_materialize_binding_raises(self, materializer, registry, monitored_tables):
+    The binding applies the bad sql_query rule "r1" first, then the native rule "good".
+    """
+
+    @pytest.fixture(autouse=True)
+    def bad_then_good_binding(self, registry, monitored_tables):
         definition = RuleDefinition.model_validate(
             {
                 "body": {
@@ -1614,20 +1618,47 @@ class TestUnresolvableMergeColumnsFailTheSubmit:
                 "parameters": [],
             }
         )
-        applied = AppliedRule(
-            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"cols": " , "}], mapping_hash="h"
+        bad = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"cols": " , "}], mapping_hash="h")
+        good = AppliedRule(
+            id="ar-good", binding_id="b1", rule_id="good", column_mapping=[{"column": "id"}], mapping_hash="h"
         )
-        monitored_tables.get.return_value = _detail(applied)
-        registry.get_rule.return_value = RegistryRule(
-            rule_id="r1", mode="sql", status="approved", version=1, polarity="pass", definition=definition
+        table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="draft")
+        monitored_tables.get.return_value = MonitoredTableDetail(
+            table=table, applied_rules=[AppliedRuleSummary(applied_rule=bad), AppliedRuleSummary(applied_rule=good)]
         )
-        registry.get_version.return_value = RuleVersion(
-            rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={}
+        rules = {
+            "r1": RegistryRule(
+                rule_id="r1", mode="sql", status="approved", version=1, polarity="pass", definition=definition
+            ),
+            "good": _published_rule(rule_id="good"),
+        }
+        registry.get_rule.side_effect = rules.get
+        registry.get_version.side_effect = lambda rule_id, _version: (
+            _version_snapshot(rule_id="good")
+            if rule_id == "good"
+            else RuleVersion(rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={})
         )
-        with pytest.raises(InvalidMergeColumnsError, match="resolved to no columns"):
+
+    @staticmethod
+    def _inserted_row_ids(sql) -> list[str]:
+        inserts = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("INSERT")]
+        return [row_id for row_id in ("ar1-0", "ar-good-0") if any(f"'{row_id}'" in i for i in inserts)]
+
+    def test_submit_raises_after_materializing_the_rest_of_the_binding(self, materializer, sql):
+        with pytest.raises(InvalidMergeColumnsError, match="Rule r1: its merge columns resolved to no columns"):
             materializer.materialize_binding("b1")
-        # A draft render still skips the check, as for any other render failure.
-        assert materializer.render_binding_checks("b1") == []
+        assert self._inserted_row_ids(sql) == ["ar-good-0"]
+        # Orphan cleanup still ran for the binding.
+        assert any("applied_rule_id NOT IN" in c.args[0] for c in sql.query.call_args_list)
+
+    def test_approving_another_rule_still_reaches_the_table(self, materializer, sql):
+        sql.query.side_effect = lambda sql_text: [["b1"]] if "dq_applied_rules" in sql_text else []
+        assert materializer.rematerialize_for_rule("good") == ["b1"]
+        assert self._inserted_row_ids(sql) == ["ar-good-0"]
+
+    def test_a_draft_render_skips_only_the_bad_check(self, materializer):
+        checks = materializer.render_binding_checks("b1")
+        assert [c["user_metadata"]["registry_rule_id"] for c in checks] == ["good"]
 
 
 class TestRematerializeForRule:
