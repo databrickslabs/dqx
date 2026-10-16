@@ -395,6 +395,49 @@ class TestCreateRule:
 
 
 class TestUpdateDraft:
+    def test_switching_to_a_native_function_without_negate_clears_polarity(self, svc, sql):
+        """The editor sends polarity null for such a function, which reads as "not
+        supplied"; the stale value from the SQL rule must not be kept."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="sql",
+            status="draft",
+            version=0,
+            polarity="pass",
+            definition=RuleDefinition.model_validate(
+                {"body": {"predicate": "{{column}} IS NOT NULL"}, "slots": _native_definition().slots}
+            ),
+        )
+        sql.query.return_value = [_row_for(draft)]
+        not_in_list = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["x"]}},
+                "slots": _native_definition().slots,
+                "parameters": [],
+            }
+        )
+        updated = svc.update_draft("r1", user_email="alice@x", mode="dqx_native", definition=not_in_list)
+        assert updated.polarity is None
+
+    def test_a_native_function_with_negate_keeps_its_polarity(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        regex = RuleDefinition.model_validate(
+            {
+                "body": {"function": "regex_match", "arguments": {"column": "{{column}}"}},
+                "slots": _native_definition().slots,
+                "parameters": [],
+            }
+        )
+        draft = RegistryRule(
+            rule_id="r1", mode="dqx_native", status="draft", version=0, polarity="fail", definition=regex
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft("r1", user_email="alice@x", definition=regex)
+        assert updated.polarity == "fail"
+
     def test_updates_draft_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 

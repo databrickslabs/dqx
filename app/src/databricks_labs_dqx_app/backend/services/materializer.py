@@ -54,19 +54,16 @@ of the auto-upgrade setting — pins only exempt an application from
 *version* upgrades, not from re-approval after an intentional edit.
 """
 
-import inspect
 import json
 import logging
 from collections.abc import Mapping
-from functools import lru_cache
 from typing import Any
-
-from databricks.labs.dqx.checks_resolver import resolve_check_function
 
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.utils import is_sql_query_safe
 
+from databricks_labs_dqx_app.backend.check_function_resolver import supports_negate
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DIMENSION_KEY,
     RESERVED_MAPPED_COLUMNS_KEY,
@@ -333,8 +330,16 @@ def render_check(
         # so this leaves those untouched — no spurious ``negate`` key. A stored
         # polarity on a function that has no ``negate`` (e.g. one saved before
         # its function changed) is ignored: DQX rejects the unknown argument.
-        if version.polarity is not None and _accepts_negate(function):
-            arguments["negate"] = version.polarity == "fail"
+        if version.polarity is not None:
+            if supports_negate(function):
+                arguments["negate"] = version.polarity == "fail"
+            elif version.polarity == "fail":
+                # Dropping a stale "pass" is harmless (negate=False is the default),
+                # but dropping "fail" runs the check the opposite way from the rule.
+                logger.warning(
+                    f"Rule {registry_rule_id} v{registry_version} stores polarity 'fail', but {function} "
+                    "has no negate argument; the check runs without negation."
+                )
         check_inner: dict[str, Any] = {"function": function, "arguments": arguments}
     elif mode in ("sql", "lowcode"):
         negate = version.polarity == "fail"
@@ -1069,24 +1074,3 @@ class Materializer:
             except MaterializationError:
                 logger.warning("Skipping re-materialization for missing binding %s", binding_id, exc_info=True)
         return binding_ids
-
-
-@lru_cache(maxsize=256)
-def _accepts_negate(function: str) -> bool:
-    """Whether the DQX check *function* takes a ``negate`` argument.
-
-    A function DQX can't resolve here (a custom check, an optional module
-    that isn't installed) keeps the stored polarity — DQX reports the real
-    problem when the check runs.
-    """
-    try:
-        func = resolve_check_function(function, fail_on_missing=False)
-    except Exception:
-        logger.debug("Could not resolve check function %s", function, exc_info=True)
-        return True
-    if func is None:
-        return True
-    try:
-        return "negate" in inspect.signature(func).parameters
-    except (TypeError, ValueError):
-        return True

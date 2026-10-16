@@ -600,6 +600,31 @@ class TestRenderCheckNativeNegate:
         )
         assert check["check"]["arguments"] == {"column": "leadproduct", "forbidden": ["Canada"]}
 
+    def test_a_stale_fail_polarity_is_dropped_with_a_warning(self, caplog):
+        """Dropping "fail" runs the check un-negated, so it must not happen silently."""
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["Canada"]}},
+                "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, polarity="fail", user_metadata={})
+        with caplog.at_level("WARNING"):
+            check, _ = render_check(
+                mode="dqx_native",
+                version=version,
+                group={"column": "leadproduct"},
+                effective_severity="Critical",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
+            )
+        assert "negate" not in check["check"]["arguments"]
+        assert "Rule r1 v1 stores polarity 'fail', but is_not_in_list has no negate argument" in caplog.text
+
 
 class TestRenderCheckSqlMode:
     def _sql_definition(self, body: dict, slot_name: str = "column") -> RuleDefinition:
