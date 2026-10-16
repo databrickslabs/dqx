@@ -150,6 +150,21 @@ def test_diagnose_splits_row_and_table_tests_over_evaluated_rows() -> None:
     assert "AS curr_table_failed_tests" in sql and "AS prev_table_failed_tests" in sql
 
 
+@pytest.mark.parametrize(
+    "question", ["Why did my DQ score change since the last run?", "Why has my score by dimension changed?"]
+)
+def test_diagnose_previous_run_differs_in_row_or_table_tests_null_safely(question: str) -> None:
+    # The prior run to compare against is the newest one whose row tests OR table tests
+    # differ. Null-safe, so a dataset-only table (NULL row tests) and a table-test-only
+    # change still find their previous run.
+    by_q = {e["question"][0]: e for e in gs._curated_sqls(CATALOG, SCHEMA)}
+    sql = " ".join("".join(by_q[question]["sql"]).split())
+    for measure in ("failed_tests", "total_tests", "table_failed_tests", "table_total_tests"):
+        assert f"AS {measure}" in sql.split("cur_ts AS")[0], measure  # run_totals carries it
+        assert f"{measure} IS DISTINCT FROM (SELECT {measure} FROM cur_total)" in sql, measure
+    assert "failed_tests <>" not in sql.split("cur AS")[0]
+
+
 def test_score_objects_describe_evaluated_rows() -> None:
     space = build()
     results = next(t for t in space["data_sources"]["tables"] if t["identifier"] == RESULTS_FQN)

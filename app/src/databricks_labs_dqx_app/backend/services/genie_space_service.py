@@ -288,6 +288,32 @@ def _lines(sql: str) -> list[str]:
     return [ln + "\n" if i < len(raw) - 1 else ln for i, ln in enumerate(raw)]
 
 
+# Shared by the diagnose queries, after a run_totals CTE (run_ts plus the four test
+# measures per published run). The comparison run is the newest earlier run whose row
+# tests OR table tests differ, falling back to the run just before. IS DISTINCT FROM is
+# null-safe: a dataset-only table has NULL row tests, and a change confined to table
+# tests must still count as a difference.
+_PREV_DIFFERING_RUN_CTES = (
+    "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
+    "cur_total AS (\n"
+    "  SELECT failed_tests, total_tests, table_failed_tests, table_total_tests\n"
+    "  FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
+    "),\n"
+    "prev_ts AS (\n"
+    "  SELECT COALESCE(\n"
+    "    (SELECT MAX(run_ts) FROM run_totals\n"
+    "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
+    "       AND (failed_tests IS DISTINCT FROM (SELECT failed_tests FROM cur_total)\n"
+    "         OR total_tests IS DISTINCT FROM (SELECT total_tests FROM cur_total)\n"
+    "         OR table_failed_tests IS DISTINCT FROM (SELECT table_failed_tests FROM cur_total)\n"
+    "         OR table_total_tests IS DISTINCT FROM (SELECT table_total_tests FROM cur_total))),\n"
+    "    (SELECT MAX(run_ts) FROM run_totals\n"
+    "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
+    "  ) AS run_ts\n"
+    "),\n"
+)
+
+
 def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     """Curated (question, SQL) examples — one per pre-canned chip question.
 
@@ -512,8 +538,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     #
     # Look-back: the two NEWEST runs are very often identical, so a naive
     # newest-vs-second-newest comparison shows no change. Instead `cur` is
-    # the latest run and `prev` the most recent PRIOR run whose table-level
-    # failed_tests actually DIFFERS, falling back to the immediately-prior
+    # the latest run and `prev` the most recent PRIOR run whose row or table
+    # test counts actually DIFFER, falling back to the immediately-prior
     # run so the grid stays non-empty and Genie can say "no change over the
     # available history".
     #
@@ -542,23 +568,16 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WITH run_totals AS (\n"
         "  SELECT `run_time` AS run_ts,\n"
         "         SUM(`error_count` + `warning_count`)\n"
-        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
-        "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
-        "cur_total AS (\n"
-        "  SELECT failed_tests FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
-        "),\n"
-        "prev_ts AS (\n"
-        "  SELECT COALESCE(\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
-        "       AND failed_tests <> (SELECT failed_tests FROM cur_total)),\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
-        "  ) AS run_ts\n"
-        "),\n"
+        f"{_PREV_DIFFERING_RUN_CTES}"
         "cur AS (\n"
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
         "         MAX(`rule_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
@@ -665,23 +684,14 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
 
     dim_diagnose = (
         "WITH run_totals AS (\n"
-        "  SELECT `run_time` AS run_ts, MEASURE(`failed_tests`) AS failed_tests\n"
+        "  SELECT `run_time` AS run_ts, MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
-        "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
-        "cur_total AS (\n"
-        "  SELECT failed_tests FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
-        "),\n"
-        "prev_ts AS (\n"
-        "  SELECT COALESCE(\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
-        "       AND failed_tests <> (SELECT failed_tests FROM cur_total)),\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
-        "  ) AS run_ts\n"
-        "),\n"
+        f"{_PREV_DIFFERING_RUN_CTES}"
         "cur AS (\n"
         "  SELECT `dimension` AS dim, MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
