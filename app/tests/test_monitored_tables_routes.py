@@ -75,7 +75,7 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     MappingIncompleteError,
     RuleNotPublishedError,
 )
-from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
+from databricks_labs_dqx_app.backend.services.materializer import InvalidMergeColumnsError, MaterializationError
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
 from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagRuleSuggestion
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -1346,6 +1346,22 @@ class TestSubmitMonitoredTable:
                 **_submit_mt_extra(),
             )
         assert excinfo.value.status_code == 404
+
+    def test_unresolvable_merge_columns_raise_422(self):
+        materializer = MagicMock()
+        materializer.materialize_binding.side_effect = InvalidMergeColumnsError(
+            "The rule's merge columns resolved to no columns"
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            submit_monitored_table(
+                "b1",
+                monitored_tables_svc=MagicMock(),
+                materializer=materializer,
+                rules_catalog=MagicMock(),
+                obo_ws=_mock_obo_ws(),
+                **_submit_mt_extra(),
+            )
+        assert excinfo.value.status_code == 422
 
 
 class TestListMonitoredTableVersions:

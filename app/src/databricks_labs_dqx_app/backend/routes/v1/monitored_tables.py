@@ -112,7 +112,11 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
 )
 from databricks_labs_dqx_app.backend.run_config_store import RunConfigError, RunConfigStagingError
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
-from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
+from databricks_labs_dqx_app.backend.services.materializer import (
+    InvalidMergeColumnsError,
+    MaterializationError,
+    Materializer,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     DuplicateMonitoredTableError,
@@ -1452,6 +1456,8 @@ def submit_monitored_table(
         raise
     except DraftRunRequiredError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except InvalidMergeColumnsError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except MaterializationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:

@@ -98,6 +98,15 @@ class MaterializationError(RuntimeError):
     """Raised by :meth:`Materializer.materialize_binding` for an unknown *binding_id*."""
 
 
+class InvalidMergeColumnsError(ValueError):
+    """A ``sql_query`` rule's merge columns resolve to no columns for a mapping group."""
+
+
+def _slot_columns(value: str) -> list[str]:
+    """The columns in a ``many`` slot's comma-separated mapping, stripped, empty ones dropped."""
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
 def _substitute_value(value: Any, group: ColumnMappingGroup, slots: list[RuleSlot]) -> Any:
     """Substitute ``{{slot}}`` placeholder(s) inside a single ``body.arguments`` value.
 
@@ -124,8 +133,8 @@ def _substitute_value(value: Any, group: ColumnMappingGroup, slots: list[RuleSlo
         mapped = group[slot.name]
         if slot.cardinality == "many":
             if value == placeholder:
-                return [c.strip() for c in mapped.split(",") if c.strip()]
-            replacement = ", ".join(c.strip() for c in mapped.split(",") if c.strip())
+                return _slot_columns(mapped)
+            replacement = ", ".join(_slot_columns(mapped))
         else:
             replacement = mapped
         value = value.replace(placeholder, replacement)
@@ -191,7 +200,7 @@ def _substitute_arguments(
                 continue
             mapped = group.get(slot.name, "")
             if slot.cardinality == "many":
-                filter_only_columns.update(c.strip() for c in mapped.split(",") if c.strip())
+                filter_only_columns.update(_slot_columns(mapped))
             elif mapped.strip():
                 filter_only_columns.add(mapped.strip())
         if filter_only_columns:
@@ -210,7 +219,7 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
             raise ValueError(f"Mapping group is missing slot '{slot.name}'")
         value = group[slot.name]
         if slot.cardinality == "many":
-            replacement = ", ".join(c.strip() for c in value.split(",") if c.strip())
+            replacement = ", ".join(_slot_columns(value))
         else:
             replacement = value
         result = result.replace(f"{{{{{slot.name}}}}}", replacement)
@@ -238,7 +247,7 @@ def _substitute_merge_column(column: str, group: ColumnMappingGroup, slots: list
         raise ValueError(f"Mapping group is missing slot '{slot.name}'")
     value = group[slot.name]
     if slot.cardinality == "many":
-        return [c.strip() for c in value.split(",") if c.strip()]
+        return _slot_columns(value)
     return [value.strip()]
 
 
@@ -265,7 +274,7 @@ def _mapped_columns(group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[st
         if not value:
             continue
         if slot.cardinality == "many":
-            mapped = [c.strip() for c in value.split(",") if c.strip()]
+            mapped = _slot_columns(value)
         else:
             mapped = [value.strip()] if value.strip() else []
         for col in mapped:
@@ -383,7 +392,10 @@ def render_check(
                     )
                 )
                 if not resolved_columns:
-                    raise ValueError("The rule's merge columns resolved to no columns")
+                    raise InvalidMergeColumnsError(
+                        f"Rule {registry_rule_id}: its merge columns resolved to no columns. "
+                        "Map every slot used in 'Merge results back on' to a column."
+                    )
                 arguments["merge_columns"] = resolved_columns
             for param in definition.parameters:
                 if param.value is not None:
@@ -621,8 +633,13 @@ class Materializer:
         *,
         rules: Mapping[str, RegistryRule] | None = None,
         versions: Mapping[tuple[str, int], RuleVersion] | None = None,
+        strict: bool = False,
     ) -> list[tuple[str, str, dict[str, Any]]] | None:
         """Resolve + render an applied rule's mapping groups WITHOUT writing anything.
+
+        A group that fails to render is logged and skipped. With *strict*
+        (materialization), :class:`InvalidMergeColumnsError` is raised instead,
+        so the submit fails rather than dropping the check.
 
         The single shared rendering path used by both
         :meth:`_materialize_applied_rule` (which then upserts the rows) and
@@ -695,7 +712,9 @@ class Materializer:
                     row_filter=applied.row_filter,
                     pass_threshold=applied.pass_threshold,
                 )
-            except (ValueError, UnsafeSqlQueryError):
+            except (ValueError, UnsafeSqlQueryError) as e:
+                if strict and isinstance(e, InvalidMergeColumnsError):
+                    raise
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
                 continue
             if multi_column:
@@ -705,7 +724,7 @@ class Materializer:
         return rendered
 
     def _materialize_applied_rule(self, table_fqn: str, applied: AppliedRule, auto_upgrade: bool) -> set[str]:
-        rendered = self._iter_rendered_checks(table_fqn, applied)
+        rendered = self._iter_rendered_checks(table_fqn, applied, strict=True)
         if rendered is None:
             return set()
 
@@ -1095,4 +1114,7 @@ class Materializer:
                 self.materialize_binding(binding_id)
             except MaterializationError:
                 logger.warning("Skipping re-materialization for missing binding %s", binding_id, exc_info=True)
+            except InvalidMergeColumnsError:
+                # Don't fail the rule's approval; the table's own submit reports it.
+                logger.warning("Skipping re-materialization of binding %s", binding_id, exc_info=True)
         return binding_ids

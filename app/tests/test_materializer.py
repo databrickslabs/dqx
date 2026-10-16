@@ -31,9 +31,9 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.materializer import (
+    InvalidMergeColumnsError,
     MaterializationError,
     Materializer,
-    _substitute_merge_column,
     render_check,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -701,9 +701,8 @@ class TestRenderCheckSqlMode:
         assert self._render_query_merge(["{{ lead_id }}"]) == ["{{ lead_id }}"]
 
     def test_a_merge_column_for_an_unmapped_slot_raises(self):
-        definition = self._sql_definition({"sql_query": "SELECT 1", "merge_columns": ["lead_id"]}, slot_name="lead_id")
         with pytest.raises(ValueError, match="missing slot 'lead_id'"):
-            _substitute_merge_column("lead_id", {}, definition.slots)
+            self._render_query_merge(["lead_id"], group={})
 
     def test_a_literal_merge_column_named_like_a_slot_maps_to_the_slot(self):
         """Documented legacy fallback: bare slot names win over same-named columns."""
@@ -1599,6 +1598,36 @@ class TestAllGroupsFailRenderIsNonDestructive:
         materializer.materialize_binding("b1")
         delete_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("DELETE")]
         assert any("'ar1-0'" in c for c in delete_calls)
+
+
+class TestUnresolvableMergeColumnsFailTheSubmit:
+    """Merge columns that resolve to nothing must fail the submit, not drop the check."""
+
+    def test_materialize_binding_raises(self, materializer, registry, monitored_tables):
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "sql_query": "SELECT {{cols}}, TRUE AS condition FROM {{input_view}}",
+                    "merge_columns": ["{{cols}}"],
+                },
+                "slots": [{"name": "cols", "family": "any", "position": 0, "cardinality": "many"}],
+                "parameters": [],
+            }
+        )
+        applied = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"cols": " , "}], mapping_hash="h"
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = RegistryRule(
+            rule_id="r1", mode="sql", status="approved", version=1, polarity="pass", definition=definition
+        )
+        registry.get_version.return_value = RuleVersion(
+            rule_id="r1", version=1, definition=definition, polarity="pass", user_metadata={}
+        )
+        with pytest.raises(InvalidMergeColumnsError, match="resolved to no columns"):
+            materializer.materialize_binding("b1")
+        # A draft render still skips the check, as for any other render failure.
+        assert materializer.render_binding_checks("b1") == []
 
 
 class TestRematerializeForRule:
