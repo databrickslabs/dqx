@@ -659,19 +659,18 @@ class TestRenderCheckSqlMode:
         )
         return check["check"]["arguments"]["merge_columns"]
 
-    def test_a_merge_column_saved_as_the_bare_slot_name_maps_to_the_column(self):
-        """Older rules saved merge keys as bare slot names; they must reach DQX as
-        the table's column, or the run fails on an unresolved column."""
-        assert self._render_query_merge(["lead_id"]) == ["leadId"]
+    def test_a_bare_slot_name_is_a_literal_column_not_the_slot(self):
+        """Only ``{{slot}}`` names a slot; anything else is taken literally."""
+        assert self._render_query_merge(["lead_id"]) == ["lead_id"]
 
     def test_merge_columns_as_placeholders_or_real_columns_are_unchanged(self):
         assert self._render_query_merge(["{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
 
-    def test_a_many_slot_merge_column_splits_into_columns_bare_or_braced(self):
-        for merge_columns in (["cols"], ["{{cols}}"]):
-            assert self._render_query_merge(
-                merge_columns, slot_name="cols", cardinality="many", group={"cols": "a, b"}
-            ) == ["a", "b"]
+    def test_a_many_slot_merge_column_splits_into_columns(self):
+        assert self._render_query_merge(["{{cols}}"], slot_name="cols", cardinality="many", group={"cols": "a, b"}) == [
+            "a",
+            "b",
+        ]
 
     def test_a_many_slot_merge_column_drops_empty_items(self):
         assert self._render_query_merge(
@@ -694,7 +693,7 @@ class TestRenderCheckSqlMode:
             self._render_query_merge(["  "])
 
     def test_duplicate_merge_columns_are_deduplicated_in_order(self):
-        assert self._render_query_merge(["lead_id", "{{lead_id}}", "pacode"]) == ["leadId", "pacode"]
+        assert self._render_query_merge(["{{lead_id}}", " {{lead_id}} ", "pacode", "pacode"]) == ["leadId", "pacode"]
 
     def test_a_placeholder_with_inner_spaces_is_not_a_slot(self):
         """Matches _substitute_text, which only replaces an exact ``{{name}}``."""
@@ -702,11 +701,14 @@ class TestRenderCheckSqlMode:
 
     def test_a_merge_column_for_an_unmapped_slot_raises(self):
         with pytest.raises(ValueError, match="missing slot 'lead_id'"):
-            self._render_query_merge(["lead_id"], group={})
+            self._render_query_merge(["{{lead_id}}"], group={})
 
-    def test_a_literal_merge_column_named_like_a_slot_maps_to_the_slot(self):
-        """Documented legacy fallback: bare slot names win over same-named columns."""
-        assert self._render_query_merge(["lead_id"], group={"lead_id": "other_col"}) == ["other_col"]
+    def test_a_literal_column_named_like_a_slot_is_kept(self):
+        """A real column that shares a slot's name must not be swapped for the slot's column."""
+        assert self._render_query_merge(["lead_id", "{{lead_id}}"], group={"lead_id": "other_col"}) == [
+            "lead_id",
+            "other_col",
+        ]
 
     def test_joined_table_is_named_in_the_query_and_binds_nothing(self):
         """A cross-table rule names the table it joins in its own SQL.

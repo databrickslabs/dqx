@@ -114,11 +114,11 @@ class TestRegistryRuleToCheckDict:
             user_metadata={},
         )
 
-    def test_sql_query_bare_slot_merge_columns_export_as_placeholders(self):
-        """Bare slot names (as older rules saved them) must match ``{{slot}}`` in the query."""
+    def test_sql_query_merge_columns_export_as_stored_stripped_and_deduplicated(self):
+        """``{{slot}}`` and literal columns are exported as written; a bare slot name stays literal."""
         rule = self._sql_query_rule({"merge_columns": ["lead_id", "{{lead_id}}", " lead_id ", "pacode", " "]})
         check = registry_rule_to_check_dict(rule, _app_settings_stub())
-        assert check["check"]["arguments"]["merge_columns"] == ["{{lead_id}}", "pacode"]
+        assert check["check"]["arguments"]["merge_columns"] == ["lead_id", "{{lead_id}}", "pacode"]
 
     def test_sql_query_non_string_merge_columns_are_skipped(self):
         rule = self._sql_query_rule({"merge_columns": [{"col": "x"}, ["y"], "pacode"]})

@@ -229,18 +229,14 @@ def _substitute_text(text: str, group: ColumnMappingGroup, slots: list[RuleSlot]
 def _substitute_merge_column(column: str, group: ColumnMappingGroup, slots: list[RuleSlot]) -> list[str]:
     """The real column(s) a ``sql_query`` merge column names.
 
-    New rules save ``{{lead_id}}``, which resolves to the slot's mapped
-    column(s); a ``many`` slot yields one entry per column. A bare ``lead_id``
-    resolves the same way as a legacy fallback for rules saved with bare slot
-    names, so a literal column that shares a slot's name maps to the slot.
-    Like :func:`_substitute_text`, only an exact ``{{name}}`` is a slot
-    (``{{ lead_id }}`` is not). Anything else is a literal column or
+    An exact ``{{lead_id}}`` resolves to the slot's mapped column(s); a
+    ``many`` slot yields one entry per column. Like :func:`_substitute_text`,
+    only an exact ``{{name}}`` is a slot (``{{ lead_id }}`` is not). Anything
+    else, including a bare ``lead_id``, is taken literally as a column or
     expression, with any ``{{slot}}`` inside substituted.
     """
     name = column.strip()
-    if name.startswith("{{") and name.endswith("}}"):
-        name = name[2:-2]
-    slot = next((s for s in slots if s.name == name), None)
+    slot = next((s for s in slots if name == f"{{{{{s.name}}}}}"), None)
     if slot is None:
         return [_substitute_text(column, group, slots).strip()]
     if slot.name not in group:
@@ -379,8 +375,8 @@ def render_check(
             # A low-code advanced (group-by) rule folds its group-by columns
             # into ``body.merge_columns`` so the ``sql_query`` check joins the
             # per-group violation result back onto the source rows (row-level
-            # semantics). Each entry is a ``{{slot}}`` reference, a bare slot
-            # name, or a literal column (see _substitute_merge_column).
+            # semantics). Each entry is a ``{{slot}}`` reference or a literal
+            # column (see _substitute_merge_column).
             merge_columns = body.get("merge_columns")
             if isinstance(merge_columns, list) and merge_columns:
                 resolved_columns = list(
