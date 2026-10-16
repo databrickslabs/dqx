@@ -924,6 +924,26 @@ export interface ClusterOut {
   state: string;
 }
 
+export type CollectionChangeOutBeforeItem = { [key: string]: unknown };
+
+export type CollectionChangeOutAfterItem = { [key: string]: unknown };
+
+/**
+ * The collection's settings, or one member, compared between two sides of its changes.
+ */
+export interface CollectionChangeOut {
+  /** 'settings' for the collection's settings, else the member's binding id */
+  key: string;
+  /** The member's table; empty for the settings */
+  name: string;
+  /** added | removed | modified | unchanged */
+  status: string;
+  /** The base side (empty when added) */
+  before?: CollectionChangeOutBeforeItem[];
+  /** The target side (empty when removed) */
+  after?: CollectionChangeOutAfterItem[];
+}
+
 export type ColumnOutComment = string | null;
 
 export interface ColumnOut {
@@ -1180,6 +1200,42 @@ export interface CustomMetricsOut {
 }
 
 /**
+ * None = the current members
+ */
+export type DataProductChangesOutTargetVersion = number | null;
+
+/**
+ * Items per status
+ */
+export type DataProductChangesOutCounts = {[key: string]: number};
+
+/**
+ * A collection's changes between two sides — backs the View changes dialog.
+
+The base is an approved version (0 = nothing approved yet); the target is
+an approved version, or the current members (``target_version`` None).
+Settings are the name, description and owner; each member is its table
+and version pin.
+ */
+export interface DataProductChangesOut {
+  product_id: string;
+  /** The version scheduled runs use (0 = none) */
+  approved_version: number;
+  /** The collection has changes not yet approved */
+  has_pending_changes: boolean;
+  base_version: number;
+  /** None = the current members */
+  target_version?: DataProductChangesOutTargetVersion;
+  /** False when a compared version was approved before collections recorded their versions */
+  base_recorded: boolean;
+  /** Items per status */
+  counts?: DataProductChangesOutCounts;
+  /** Recorded versions, newest first */
+  versions?: DataProductVersionOut[];
+  changes?: CollectionChangeOut[];
+}
+
+/**
  * None = follow latest approved
  */
 export type DataProductMemberOutPinnedVersion = number | null;
@@ -1339,42 +1395,6 @@ export interface DataProductOut {
 }
 
 /**
- * Recoverable prior/proposed state for a Table Space pending approval.
-
-NOTE (documented limitation): the app does not persist a per-version
-snapshot of a Table Space's membership/definition, so there is no true
-"previous product version" to diff against. What is recoverable is the
-CURRENT proposed definition — the members being approved and each
-member's governed (frozen) checks. The UI presents this with a note that
-no prior product snapshot exists, rather than fabricating a diff.
- */
-export interface DataProductReviewChangesOut {
-  product_id: string;
-  name: string;
-  version: number;
-  members?: DataProductReviewMemberOut[];
-}
-
-export type DataProductReviewMemberOutPinnedVersion = number | null;
-
-export type DataProductReviewMemberOutChecksItem = { [key: string]: unknown };
-
-/**
- * One member of a Table Space under review, with its governed checks.
-
-Table Spaces have no per-version snapshot store, so the only prior state
-recoverable for a review diff is each member binding's currently frozen
-(pinned, else latest-approved) rule set. Backs ``getDataProductReviewChanges``.
- */
-export interface DataProductReviewMemberOut {
-  binding_id: string;
-  table_fqn: string;
-  pinned_version?: DataProductReviewMemberOutPinnedVersion;
-  binding_version?: number;
-  checks?: DataProductReviewMemberOutChecksItem[];
-}
-
-/**
  * None for draft-source submissions
  */
 export type DataProductRunSubmissionOutBindingVersion = number | null;
@@ -1390,6 +1410,19 @@ export interface DataProductRunSubmissionOut {
   view_fqn: string;
   /** None for draft-source submissions */
   binding_version?: DataProductRunSubmissionOutBindingVersion;
+}
+
+export type DataProductVersionOutCreatedBy = string | null;
+
+export type DataProductVersionOutCreatedAt = string | null;
+
+/**
+ * One recorded, approved version of a collection.
+ */
+export interface DataProductVersionOut {
+  version: number;
+  created_by?: DataProductVersionOutCreatedBy;
+  created_at?: DataProductVersionOutCreatedAt;
 }
 
 export interface DefaultPassThresholdIn {
@@ -2510,11 +2543,44 @@ export interface ModelServicesOut {
 }
 
 /**
+ * None = the proposed rules
+ */
+export type MonitoredTableChangesOutTargetVersion = number | null;
+
+/**
+ * Rules per status
+ */
+export type MonitoredTableChangesOutCounts = {[key: string]: number};
+
+/**
+ * A monitored table's changes between two sides, per rule — backs the View changes dialog.
+
+The base is a frozen version (0 = nothing approved yet); the target is a
+frozen version, or the proposed rules (``target_version`` None): the
+table's current applied rules, rendered as a run would render them.
+ */
+export interface MonitoredTableChangesOut {
+  binding_id: string;
+  /** The version scheduled runs and Run now use (0 = none) */
+  approved_version: number;
+  /** The proposed rules differ from the approved version */
+  has_pending_changes: boolean;
+  base_version: number;
+  /** None = the proposed rules */
+  target_version?: MonitoredTableChangesOutTargetVersion;
+  /** Rules per status */
+  counts?: MonitoredTableChangesOutCounts;
+  changes?: RuleChangeOut[];
+}
+
+/**
  * A monitored table plus its applied rules, for ``getMonitoredTable``.
  */
 export interface MonitoredTableDetailOut {
   table: MonitoredTableOut;
   applied_rules?: AppliedRuleOut[];
+  /** The table's applied rules differ from its approved version (a rule added or removed, or a mapping, severity override, pass threshold, tag or version pin changed). Runs keep using the approved version until the table is submitted and approved. */
+  unapproved_rule_changes?: boolean;
 }
 
 export type MonitoredTableOutOwner = string | null;
@@ -3613,6 +3679,25 @@ export interface RuleCatalogEntryOut {
   created_at?: RuleCatalogEntryOutCreatedAt;
   updated_by?: RuleCatalogEntryOutUpdatedBy;
   updated_at?: RuleCatalogEntryOutUpdatedAt;
+}
+
+export type RuleChangeOutBeforeItem = { [key: string]: unknown };
+
+export type RuleChangeOutAfterItem = { [key: string]: unknown };
+
+/**
+ * One applied rule compared between two sides of a monitored table's changes.
+ */
+export interface RuleChangeOut {
+  /** Applied-rule id the checks on both sides are matched by */
+  key: string;
+  rule_name: string;
+  /** added | removed | modified | unchanged */
+  status: string;
+  /** The rule's checks on the base side */
+  before?: RuleChangeOutBeforeItem[];
+  /** The rule's checks on the target side */
+  after?: RuleChangeOutAfterItem[];
 }
 
 export type RuleDefinitionBody = { [key: string]: unknown };
@@ -5593,6 +5678,17 @@ rule_id?: string | null;
 
 export type DeleteMonitoredTable200 = {[key: string]: string};
 
+export type GetMonitoredTableChangesParams = {
+/**
+ * Base version (0 = nothing approved)
+ */
+base?: number | null;
+/**
+ * Target version; omit for the proposed rules
+ */
+target?: number | null;
+};
+
 export type RemoveAppliedRule200 = {[key: string]: string};
 
 export type SubmitMonitoredTableBody = LifecycleRationaleIn | null;
@@ -5782,6 +5878,17 @@ limit?: number;
 };
 
 export type DeleteDataProduct200 = {[key: string]: string};
+
+export type GetDataProductChangesParams = {
+/**
+ * Base version (0 = nothing approved)
+ */
+base?: number | null;
+/**
+ * Target version; omit for the current members
+ */
+target?: number | null;
+};
 
 export type SubmitDataProductBody = LifecycleRationaleIn | null;
 
@@ -17812,6 +17919,173 @@ export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType
 
 
 /**
+ * Compare a monitored table's rules between two sides, per rule (added / removed / modified / unchanged).
+
+With no *base* or *target*: when the table has changes not yet approved
+(a draft, a pending review, or a saved edit to an approved table) this
+compares the approved version with the proposed rules; otherwise the
+latest version with the one before it. *target* omitted with a *base*
+compares that version with the proposed rules.
+ * @summary Get Monitored Table Changes
+ */
+export const getMonitoredTableChanges = (
+    bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableChangesOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/${bindingId}/changes`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getGetMonitoredTableChangesQueryKey = (bindingId?: string,
+    params?: GetMonitoredTableChangesParams,) => {
+    return [
+    `/api/v1/monitored-tables/${bindingId}/changes`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetMonitoredTableChangesQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableChangesQueryKey(bindingId,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableChanges>>> = ({ signal }) => getMonitoredTableChanges(bindingId,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableChangesQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableChanges>>>
+export type GetMonitoredTableChangesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params: undefined |  GetMonitoredTableChangesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>,
+          TError,
+          Awaited<ReturnType<typeof getMonitoredTableChanges>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Changes
+ */
+
+export function useGetMonitoredTableChanges<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableChangesQueryOptions(bindingId,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetMonitoredTableChangesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoredTableChangesQueryKey(bindingId,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoredTableChanges>>> = ({ signal }) => getMonitoredTableChanges(bindingId,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMonitoredTableChangesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoredTableChanges>>>
+export type GetMonitoredTableChangesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params: undefined |  GetMonitoredTableChangesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Monitored Table Changes
+ */
+
+export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string,
+    params?: GetMonitoredTableChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getMonitoredTableChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMonitoredTableChangesSuspenseQueryOptions(bindingId,params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Return the frozen ``checks_json`` for a specific monitored-table version.
 
 Complements ``listMonitoredTableVersions`` (metadata only): this is the
@@ -26151,92 +26425,98 @@ export const useDeleteDataProduct = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Return the recoverable prior/proposed state for a Table Space under review.
+ * Compare a collection between two sides: its settings, then each member (added / removed / modified / unchanged).
 
-Table Spaces have no per-version snapshot store, so there is no true
-"previous product version" to diff against (documented limitation). What
-is recoverable is the CURRENT proposed definition — the members being
-approved and each member's frozen (pinned, else latest-approved) checks.
-The Drafts & Review popout shows this with a note that no prior product
-snapshot exists, rather than fabricating a diff.
- * @summary Get Data Product Review Changes
+With no *base* or *target*: a collection with changes not yet approved
+compares its approved version with its current members; otherwise its
+latest version with the one before it.
+ * @summary Get Data Product Changes
  */
-export const getDataProductReviewChanges = (
-    productId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<DataProductReviewChangesOut>> => {
+export const getDataProductChanges = (
+    productId: string,
+    params?: GetDataProductChangesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductChangesOut>> => {
     
     
     return axios.default.get(
-      `/api/v1/data-products/${productId}/review-changes`,options
+      `/api/v1/data-products/${productId}/changes`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
 
 
-export const getGetDataProductReviewChangesQueryKey = (productId?: string,) => {
+export const getGetDataProductChangesQueryKey = (productId?: string,
+    params?: GetDataProductChangesParams,) => {
     return [
-    `/api/v1/data-products/${productId}/review-changes`
+    `/api/v1/data-products/${productId}/changes`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetDataProductReviewChangesQueryOptions = <TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetDataProductChangesQueryOptions = <TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetDataProductReviewChangesQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getGetDataProductChangesQueryKey(productId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProductReviewChanges>>> = ({ signal }) => getDataProductReviewChanges(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProductChanges>>> = ({ signal }) => getDataProductChanges(productId,params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type GetDataProductReviewChangesQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProductReviewChanges>>>
-export type GetDataProductReviewChangesQueryError = AxiosError<HTTPValidationError>
+export type GetDataProductChangesQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProductChanges>>>
+export type GetDataProductChangesQueryError = AxiosError<HTTPValidationError>
 
 
-export function useGetDataProductReviewChanges<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>> & Pick<
+export function useGetDataProductChanges<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params: undefined |  GetDataProductChangesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getDataProductReviewChanges>>,
+          Awaited<ReturnType<typeof getDataProductChanges>>,
           TError,
-          Awaited<ReturnType<typeof getDataProductReviewChanges>>
+          Awaited<ReturnType<typeof getDataProductChanges>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDataProductReviewChanges<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>> & Pick<
+export function useGetDataProductChanges<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getDataProductReviewChanges>>,
+          Awaited<ReturnType<typeof getDataProductChanges>>,
           TError,
-          Awaited<ReturnType<typeof getDataProductReviewChanges>>
+          Awaited<ReturnType<typeof getDataProductChanges>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDataProductReviewChanges<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChanges<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary Get Data Product Review Changes
+ * @summary Get Data Product Changes
  */
 
-export function useGetDataProductReviewChanges<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChanges<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetDataProductReviewChangesQueryOptions(productId,options)
+  const queryOptions = getGetDataProductChangesQueryOptions(productId,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -26248,50 +26528,55 @@ export function useGetDataProductReviewChanges<TData = Awaited<ReturnType<typeof
 
 
 
-export const getGetDataProductReviewChangesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetDataProductChangesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetDataProductReviewChangesQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getGetDataProductChangesQueryKey(productId,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProductReviewChanges>>> = ({ signal }) => getDataProductReviewChanges(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDataProductChanges>>> = ({ signal }) => getDataProductChanges(productId,params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type GetDataProductReviewChangesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProductReviewChanges>>>
-export type GetDataProductReviewChangesSuspenseQueryError = AxiosError<HTTPValidationError>
+export type GetDataProductChangesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getDataProductChanges>>>
+export type GetDataProductChangesSuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useGetDataProductReviewChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params: undefined |  GetDataProductChangesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDataProductReviewChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDataProductReviewChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary Get Data Product Review Changes
+ * @summary Get Data Product Changes
  */
 
-export function useGetDataProductReviewChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductReviewChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useGetDataProductChangesSuspense<TData = Awaited<ReturnType<typeof getDataProductChanges>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string,
+    params?: GetDataProductChangesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDataProductChanges>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetDataProductReviewChangesSuspenseQueryOptions(productId,options)
+  const queryOptions = getGetDataProductChangesSuspenseQueryOptions(productId,params,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

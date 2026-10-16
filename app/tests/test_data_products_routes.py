@@ -8,7 +8,6 @@ writes, `run_rules` / Admin+Author gate for run) without going through
 middleware.
 """
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,8 +37,11 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
+    CollectionChange,
+    DataProductChanges,
     DataProductDetail,
     DataProductRunResult,
+    DataProductVersion,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
     NoRunnableMembersError,
@@ -633,46 +635,55 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
-# getDataProductReviewChanges — Table Space change-diff backing
+# getDataProductChanges — View changes for a collection
 # ---------------------------------------------------------------------------
 
 
-class TestReviewChanges:
-    def test_review_changes_is_viewer_plus(self):
-        roles = _route_required_roles("getDataProductReviewChanges")
-        assert UserRole.VIEWER in roles
+class TestChanges:
+    @staticmethod
+    def _result(**overrides):
+        values = {
+            "approved_version": 2,
+            "has_pending_changes": True,
+            "base_version": 2,
+            "target_version": None,
+            "base_recorded": True,
+            "versions": [DataProductVersion(version=2, state={}, created_by="bob@x", created_at="2026-10-01")],
+            "changes": [
+                CollectionChange(
+                    key="settings", name="", status="unchanged", before=[{"name": "x"}], after=[{"name": "x"}]
+                ),
+                CollectionChange(
+                    key="b2", name="c.s.items", status="added", after=[{"table": "c.s.items", "version": "latest"}]
+                ),
+            ],
+        }
+        values.update(overrides)
+        return DataProductChanges(**values)
+
+    def test_changes_is_viewer_plus(self):
+        assert UserRole.VIEWER in _route_required_roles("getDataProductChanges")
+
+    def test_returns_counts_versions_and_changes(self):
+        svc = MagicMock()
+        svc.changes.return_value = self._result()
+        out = dp_routes.get_data_product_changes("p1", svc, base=None, target=None)
+        svc.changes.assert_called_once_with("p1", None, None)
+        assert out.counts == {"added": 1, "removed": 0, "modified": 0, "unchanged": 1}
+        assert [v.version for v in out.versions] == [2]
+        assert out.changes[1].key == "b2" and out.changes[1].status == "added"
+        assert out.has_pending_changes and out.base_recorded
 
     def test_404_when_missing(self):
         svc = MagicMock()
-        svc.get.return_value = None
-        version_svc = MagicMock()
+        svc.changes.side_effect = LookupError("nope")
         with pytest.raises(HTTPException) as exc:
-            dp_routes.get_data_product_review_changes("nope", svc, version_svc)
+            dp_routes.get_data_product_changes("nope", svc, base=None, target=None)
         assert exc.value.status_code == 404
 
-    def test_resolves_frozen_checks_per_member(self):
-        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2)
-        detail = DataProductDetail(product=_product(product_id="p1", name="Orders", version=3))
-        detail.members = [member]  # type: ignore[attr-defined]
+    def test_400_for_a_version_that_does_not_exist(self):
         svc = MagicMock()
-        svc.get.return_value = detail
-        version_svc = MagicMock()
-        version_svc.get_checks.return_value = [{"check": {"function": "is_not_null"}}]
-        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
-        assert out.product_id == "p1"
-        assert out.version == 3
-        assert len(out.members) == 1
-        assert out.members[0].checks == [{"check": {"function": "is_not_null"}}]
-        # pinned_version None -> effective = binding_version (2)
-        version_svc.get_checks.assert_called_once_with("b1", 2)
-
-    def test_no_prior_snapshot_when_binding_never_approved(self):
-        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0)
-        detail = DataProductDetail(product=_product(product_id="p1"))
-        detail.members = [member]  # type: ignore[attr-defined]
-        svc = MagicMock()
-        svc.get.return_value = detail
-        version_svc = MagicMock()
-        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
-        assert out.members[0].checks == []
-        version_svc.get_checks.assert_not_called()
+        svc.changes.side_effect = ValueError("Version 9 doesn't exist (latest is 2)")
+        with pytest.raises(HTTPException) as exc:
+            dp_routes.get_data_product_changes("p1", svc, base=None, target=9)
+        assert exc.value.status_code == 400

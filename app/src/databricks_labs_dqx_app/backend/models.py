@@ -1135,6 +1135,33 @@ class MonitoredTableVersionOut(BaseModel):
         )
 
 
+class RuleChangeOut(BaseModel):
+    """One applied rule compared between two sides of a monitored table's changes."""
+
+    key: str = Field(description="Applied-rule id the checks on both sides are matched by")
+    rule_name: str
+    status: str = Field(description="added | removed | modified | unchanged")
+    before: list[dict[str, Any]] = Field(default_factory=list, description="The rule's checks on the base side")
+    after: list[dict[str, Any]] = Field(default_factory=list, description="The rule's checks on the target side")
+
+
+class MonitoredTableChangesOut(BaseModel):
+    """A monitored table's changes between two sides, per rule — backs the View changes dialog.
+
+    The base is a frozen version (0 = nothing approved yet); the target is a
+    frozen version, or the proposed rules (``target_version`` None): the
+    table's current applied rules, rendered as a run would render them.
+    """
+
+    binding_id: str
+    approved_version: int = Field(description="The version scheduled runs and Run now use (0 = none)")
+    has_pending_changes: bool = Field(description="The proposed rules differ from the approved version")
+    base_version: int
+    target_version: int | None = Field(default=None, description="None = the proposed rules")
+    counts: dict[str, int] = Field(default_factory=dict, description="Rules per status")
+    changes: list[RuleChangeOut] = Field(default_factory=list)
+
+
 class MonitoredTableVersionChecksOut(BaseModel):
     """Frozen ``checks_json`` for one monitored-table version snapshot.
 
@@ -1209,12 +1236,23 @@ class MonitoredTableDetailOut(BaseModel):
 
     table: MonitoredTableOut
     applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+    unapproved_rule_changes: bool = Field(
+        default=False,
+        description=(
+            "The table's applied rules differ from its approved version (a rule added or removed, or a mapping, "
+            "severity override, pass threshold, tag or version pin changed). Runs keep using the approved "
+            "version until the table is submitted and approved."
+        ),
+    )
 
     @classmethod
-    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+    def from_domain(
+        cls, detail: MonitoredTableDetail, *, unapproved_rule_changes: bool = False
+    ) -> "MonitoredTableDetailOut":
         return cls(
             table=MonitoredTableOut.from_domain(detail.table),
             applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+            unapproved_rule_changes=unapproved_rule_changes,
         )
 
 
@@ -2027,36 +2065,44 @@ class DataProductOut(BaseModel):
         )
 
 
-class DataProductReviewMemberOut(BaseModel):
-    """One member of a Table Space under review, with its governed checks.
+class CollectionChangeOut(BaseModel):
+    """The collection's settings, or one member, compared between two sides of its changes."""
 
-    Table Spaces have no per-version snapshot store, so the only prior state
-    recoverable for a review diff is each member binding's currently frozen
-    (pinned, else latest-approved) rule set. Backs ``getDataProductReviewChanges``.
-    """
-
-    binding_id: str
-    table_fqn: str
-    pinned_version: int | None = None
-    binding_version: int = 0
-    checks: list[dict[str, Any]] = Field(default_factory=list)
+    key: str = Field(description="'settings' for the collection's settings, else the member's binding id")
+    name: str = Field(description="The member's table; empty for the settings")
+    status: str = Field(description="added | removed | modified | unchanged")
+    before: list[dict[str, Any]] = Field(default_factory=list, description="The base side (empty when added)")
+    after: list[dict[str, Any]] = Field(default_factory=list, description="The target side (empty when removed)")
 
 
-class DataProductReviewChangesOut(BaseModel):
-    """Recoverable prior/proposed state for a Table Space pending approval.
+class DataProductVersionOut(BaseModel):
+    """One recorded, approved version of a collection."""
 
-    NOTE (documented limitation): the app does not persist a per-version
-    snapshot of a Table Space's membership/definition, so there is no true
-    "previous product version" to diff against. What is recoverable is the
-    CURRENT proposed definition — the members being approved and each
-    member's governed (frozen) checks. The UI presents this with a note that
-    no prior product snapshot exists, rather than fabricating a diff.
+    version: int
+    created_by: str | None = None
+    created_at: str | None = None
+
+
+class DataProductChangesOut(BaseModel):
+    """A collection's changes between two sides — backs the View changes dialog.
+
+    The base is an approved version (0 = nothing approved yet); the target is
+    an approved version, or the current members (``target_version`` None).
+    Settings are the name, description and owner; each member is its table
+    and version pin.
     """
 
     product_id: str
-    name: str
-    version: int
-    members: list[DataProductReviewMemberOut] = Field(default_factory=list)
+    approved_version: int = Field(description="The version scheduled runs use (0 = none)")
+    has_pending_changes: bool = Field(description="The collection has changes not yet approved")
+    base_version: int
+    target_version: int | None = Field(default=None, description="None = the current members")
+    base_recorded: bool = Field(
+        description="False when a compared version was approved before collections recorded their versions"
+    )
+    counts: dict[str, int] = Field(default_factory=dict, description="Items per status")
+    versions: list[DataProductVersionOut] = Field(default_factory=list, description="Recorded versions, newest first")
+    changes: list[CollectionChangeOut] = Field(default_factory=list)
 
 
 class DataProductRunSubmissionOut(BaseModel):

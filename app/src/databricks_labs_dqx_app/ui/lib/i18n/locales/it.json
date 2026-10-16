@@ -1124,20 +1124,7 @@
     "tableSpaceApproveBody": "Approvare \"{{name}}\" e pubblicare le modifiche in attesa.",
     "tableSpacesEmptyState": "Nessuna raccolta in attesa di approvazione.",
     "diff": {
-      "title": "Rivedi le modifiche",
-      "viewChanges": "Vedi modifiche",
-      "previous": "Precedente",
-      "proposed": "Proposto",
-      "proposedDefinition": "Definizione proposta",
-      "proposedMembers": "Membri proposti",
-      "versionLabel": "Versione {{version}}",
-      "empty": "Nessun controllo.",
-      "loadFailed": "Impossibile caricare le modifiche.",
-      "rrNoPrior": "Questa regola non ha ancora una versione pubblicata: viene mostrata la definizione proposta in revisione.",
-      "mtFirstApproval": "Questa tabella non è mai stata approvata, quindi non esiste ancora una versione congelata da confrontare. Verrà congelata come v1 al momento dell'approvazione.",
-      "mtNoPrior": "Questa è la prima versione congelata della tabella: non esiste una versione precedente da confrontare.",
-      "tsNoSnapshot": "Le raccolte non conservano snapshot per versione, quindi non esiste una versione precedente da confrontare. Vengono mostrati i membri proposti attuali e i relativi controlli.",
-      "ruleNoPrior": "Nessuna modifica registrata in precedenza per questa regola: viene mostrata la definizione corrente."
+      "viewChanges": "Vedi modifiche"
     }
   },
   "rulesSingleTable": {
@@ -3278,5 +3265,46 @@
     "pickCollectionDescription": "Scegli la raccolta eseguita da questa pianificazione. Tutte le sue tabelle vengono eseguite secondo la pianificazione.",
     "pickCollectionSearch": "Cerca raccolte",
     "pickCollectionEmpty": "Nessuna raccolta corrisponde."
+  },
+  "tableChanges": {
+    "pendingTitle": "Modifiche non ancora approvate",
+    "historyTitle": "Cronologia versioni",
+    "pendingTab": "Modifiche in sospeso",
+    "historyTab": "Cronologia versioni",
+    "compare": "Confronta",
+    "to": "con",
+    "nothing": "niente (prima approvazione)",
+    "runsNow": "in uso",
+    "pendingCompare": "v{{version}} approvata → proposta",
+    "countRemoved": "− {{count}} rimosse",
+    "countAdded": "+ {{count}} aggiunte",
+    "countModified": "~ {{count}} modificate",
+    "countUnchanged": "{{count}} invariate",
+    "showUnchanged": "Mostra invariate",
+    "layout": "Layout",
+    "unified": "Unificato",
+    "split": "Affiancato",
+    "noChanges": "Nessuna regola modificata.",
+    "loadFailed": "Impossibile caricare le modifiche.",
+    "neverApproved": "Questa tabella non è mai stata approvata: non ci sono ancora versioni da confrontare.",
+    "neverApprovedShort": "Niente di approvato: le esecuzioni pianificate iniziano dopo la prima approvazione.",
+    "runsUse": "Le esecuzioni pianificate ed «Esegui ora» usano la v{{version}} approvata finché le modifiche non vengono approvate.",
+    "pendingCompareFirst": "Niente di approvato → proposto",
+    "noChangesItem": "Nessuna modifica.",
+    "noChangesCollection": "Nulla è cambiato.",
+    "collectionSettings": "Impostazioni della raccolta",
+    "ruleNeverApproved": "Questa regola non è mai stata approvata, quindi non ci sono ancora versioni da confrontare.",
+    "ruleNeverApprovedShort": "Niente di approvato: le tabelle usano questa regola dopo la sua prima approvazione.",
+    "ruleRunsUse": "Le tabelle usano la v{{version}} approvata di questa regola finché le modifiche non vengono approvate.",
+    "collectionNeverApproved": "Questa raccolta non è mai stata approvata, quindi non ci sono ancora versioni da confrontare.",
+    "collectionRunsUse": "Le esecuzioni pianificate usano la v{{version}} approvata finché le modifiche non vengono approvate.",
+    "notRecordedPending": "La v{{version}} è stata approvata prima che le raccolte registrassero le loro versioni, quindi ogni membro attuale appare come aggiunto.",
+    "notRecordedHistory": "Queste versioni sono state approvate prima che le raccolte registrassero le loro versioni, quindi non si possono confrontare. Le versioni approvate da ora in poi sì.",
+    "status": {
+      "added": "Aggiunta",
+      "removed": "Rimossa",
+      "modified": "Modificata",
+      "unchanged": "Invariata"
+    }
   }
 }

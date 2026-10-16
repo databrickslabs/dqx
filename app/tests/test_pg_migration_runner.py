@@ -186,6 +186,7 @@ class TestBaselineCatalogue:
         assert PG_MIGRATIONS[0].version == 1
 
     def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+        baseline = _statements(_baseline())
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
                 assert (
@@ -193,7 +194,20 @@ class TestBaselineCatalogue:
                     or _DROP_TABLE_RE.fullmatch(stmt)
                     or _DROP_CONSTRAINT_RE.fullmatch(stmt)
                     or _ADD_CONSTRAINT_RE.fullmatch(stmt)
-                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
+                    or stmt in baseline
+                ), (
+                    f"v{m.version}: not an ADD COLUMN, DROP TABLE, CHECK constraint rewrite or baseline statement: {stmt[:120]}"
+                )
+
+    def test_a_table_added_later_is_created_exactly_as_the_baseline_creates_it(self):
+        # A later migration may create a table only by repeating the
+        # baseline's own CREATE TABLE / CREATE INDEX statements, so the
+        # baseline stays the single description of the schema.
+        baseline = _statements(_baseline())
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                if stmt.startswith(("CREATE TABLE", "CREATE INDEX")):
+                    assert stmt in baseline, f"v{m.version}: {stmt[:120]} is not in the baseline"
 
     def test_dropped_tables_are_not_in_the_baseline(self):
         for m in PG_MIGRATIONS[1:]:
@@ -211,9 +225,9 @@ class TestBaselineCatalogue:
                 table, column, definition = match.groups()
                 create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
                 assert create is not None, f"v{m.version}: {table} is not created by the baseline"
-                assert (
-                    f" {column} {definition}," in f" {create.group(1)},"
-                ), f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+                assert f" {column} {definition}," in f" {create.group(1)},", (
+                    f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+                )
 
     def test_every_statement_creates_a_table_index_or_view(self):
         # The baseline is CREATE TABLE / CREATE INDEX plus the single
@@ -466,9 +480,9 @@ class TestMigrationsInjection:
         assert 9001 in bound_versions
         assert 9002 in bound_versions
         production_versions = {m.version for m in PG_MIGRATIONS}
-        assert not (
-            set(bound_versions) & production_versions
-        ), f"Injected runner leaked production-catalogue versions: {set(bound_versions) & production_versions}"
+        assert not (set(bound_versions) & production_versions), (
+            f"Injected runner leaked production-catalogue versions: {set(bound_versions) & production_versions}"
+        )
 
     def test_injected_list_is_snapshotted_defensively(self):
         """Mutating the caller's list after construction must not move the runner's view.

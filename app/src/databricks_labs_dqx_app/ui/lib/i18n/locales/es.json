@@ -1124,20 +1124,7 @@
     "tableSpaceApproveBody": "Aprobar \"{{name}}\" y publicar sus cambios pendientes.",
     "tableSpacesEmptyState": "No hay colecciones pendientes de aprobación.",
     "diff": {
-      "title": "Revisar cambios",
-      "viewChanges": "Ver cambios",
-      "previous": "Anterior",
-      "proposed": "Propuesto",
-      "proposedDefinition": "Definición propuesta",
-      "proposedMembers": "Miembros propuestos",
-      "versionLabel": "Versión {{version}}",
-      "empty": "Sin comprobaciones.",
-      "loadFailed": "No se pudieron cargar los cambios.",
-      "rrNoPrior": "Esta regla aún no tiene ninguna versión publicada; se muestra la definición propuesta en revisión.",
-      "mtFirstApproval": "Esta tabla nunca se ha aprobado, por lo que aún no hay una versión congelada para comparar. Se congelará como v1 al aprobarla.",
-      "mtNoPrior": "Esta es la primera versión congelada de la tabla; no hay una versión anterior para comparar.",
-      "tsNoSnapshot": "Las colecciones no guardan instantáneas por versión, por lo que no hay una versión anterior para comparar. Se muestran los miembros propuestos actuales y sus comprobaciones.",
-      "ruleNoPrior": "No hay ningún cambio registrado anterior para esta regla; se muestra su definición actual."
+      "viewChanges": "Ver cambios"
     }
   },
   "rulesSingleTable": {
@@ -3278,5 +3265,46 @@
     "pickCollectionDescription": "Elige la colección que ejecuta esta programación. Todas sus tablas se ejecutan según la programación.",
     "pickCollectionSearch": "Buscar colecciones",
     "pickCollectionEmpty": "Ninguna colección coincide."
+  },
+  "tableChanges": {
+    "pendingTitle": "Cambios aún no aprobados",
+    "historyTitle": "Historial de versiones",
+    "pendingTab": "Cambios pendientes",
+    "historyTab": "Historial de versiones",
+    "compare": "Comparar",
+    "to": "con",
+    "nothing": "nada (primera aprobación)",
+    "runsNow": "en uso",
+    "pendingCompare": "v{{version}} aprobada → propuesta",
+    "countRemoved": "− {{count}} eliminada(s)",
+    "countAdded": "+ {{count}} añadida(s)",
+    "countModified": "~ {{count}} modificada(s)",
+    "countUnchanged": "{{count}} sin cambios",
+    "showUnchanged": "Mostrar sin cambios",
+    "layout": "Diseño",
+    "unified": "Unificado",
+    "split": "Lado a lado",
+    "noChanges": "Ninguna regla cambió.",
+    "loadFailed": "No se pudieron cargar los cambios.",
+    "neverApproved": "Esta tabla nunca se ha aprobado, así que aún no hay versiones que comparar.",
+    "neverApprovedShort": "Nada aprobado aún: las ejecuciones programadas empiezan tras la primera aprobación.",
+    "runsUse": "Las ejecuciones programadas y «Ejecutar ahora» usan la v{{version}} aprobada hasta que se aprueben los cambios.",
+    "pendingCompareFirst": "Nada aprobado → propuesto",
+    "noChangesItem": "Sin cambios.",
+    "noChangesCollection": "Nada cambió.",
+    "collectionSettings": "Configuración de la colección",
+    "ruleNeverApproved": "Esta regla nunca se ha aprobado, así que aún no hay versiones que comparar.",
+    "ruleNeverApprovedShort": "Nada aprobado: las tablas usan esta regla tras su primera aprobación.",
+    "ruleRunsUse": "Las tablas usan la v{{version}} aprobada de esta regla hasta que se aprueben los cambios.",
+    "collectionNeverApproved": "Esta colección nunca se ha aprobado, así que aún no hay versiones que comparar.",
+    "collectionRunsUse": "Las ejecuciones programadas usan la v{{version}} aprobada hasta que se aprueben los cambios.",
+    "notRecordedPending": "La v{{version}} se aprobó antes de que las colecciones registraran sus versiones, así que cada miembro actual aparece como añadido.",
+    "notRecordedHistory": "Estas versiones se aprobaron antes de que las colecciones registraran sus versiones, así que no se pueden comparar. Las versiones aprobadas a partir de ahora sí.",
+    "status": {
+      "added": "Añadida",
+      "removed": "Eliminada",
+      "modified": "Modificada",
+      "unchanged": "Sin cambios"
+    }
   }
 }
