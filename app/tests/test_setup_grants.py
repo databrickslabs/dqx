@@ -1,0 +1,177 @@
+"""UC privilege inspection with effective-permission and SHOW GRANTS fallback."""
+
+from unittest.mock import create_autospec
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import (
+    EffectivePermissionsList,
+    EffectivePrivilege,
+    EffectivePrivilegeAssignment,
+    Privilege,
+)
+
+from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+
+def test_effective_permissions_are_used_when_readable() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(
+        privilege_assignments=[
+            EffectivePrivilegeAssignment(
+                principal="data-team", privileges=[EffectivePrivilege(privilege=Privilege.USE_SCHEMA)]
+            )
+        ]
+    )
+
+    privileges = GrantInspector(workspace).privileges("SCHEMA", "main.studio_tmp", "data-team")
+
+    assert privileges == frozenset({"USE_SCHEMA"})
+
+
+def test_show_grants_fallback_reads_direct_group_grants() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+    reader = create_autospec(SqlExecutor, instance=True)
+    reader.query_dicts.return_value = [{"Principal": "data-team", "ActionType": "USE SCHEMA"}]
+
+    privileges = GrantInspector(workspace, reader).privileges(
+        "SCHEMA", "main.studio_tmp", "data-team", required=frozenset({"USE_SCHEMA"})
+    )
+
+    assert privileges is not None and "USE_SCHEMA" in privileges
+
+
+def test_uninspectable_grants_return_none() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+
+    assert GrantInspector(workspace).privileges("SCHEMA", "main.studio_tmp", "data-team") is None
+
+
+def test_all_privileges_implies_every_privilege() -> None:
+    assert has_privilege(frozenset({"ALL_PRIVILEGES"}), "MODIFY") is True
+    assert has_privilege(frozenset({"SELECT"}), "MODIFY") is False
+
+
+_SP_APPLICATION_ID = "11111111-2222-3333-4444-555555555555"
+
+
+def _fallback_inspector(rows: list[dict[str, str]]) -> tuple[GrantInspector, WorkspaceClient]:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+    workspace.service_principals.list.return_value = []
+    reader = create_autospec(SqlExecutor, instance=True)
+    reader.query_dicts.return_value = rows
+    return GrantInspector(workspace, reader), workspace
+
+
+def test_show_grants_group_without_direct_grant_is_inspectable_as_empty() -> None:
+    inspector, workspace = _fallback_inspector([{"Principal": "someone-else", "ActionType": "USE CATALOG"}])
+
+    privileges = inspector.privileges("CATALOG", "main", "larry_test", required=frozenset({"USE_CATALOG"}))
+
+    assert privileges == frozenset()
+    workspace.service_principals.list.assert_not_called()
+
+
+def test_show_grants_group_with_direct_grant_returns_it() -> None:
+    inspector, _ = _fallback_inspector(
+        [
+            {"Principal": "larry_test", "ActionType": "USE CATALOG"},
+            {"Principal": "someone-else", "ActionType": "ALL PRIVILEGES"},
+        ]
+    )
+
+    privileges = inspector.privileges("CATALOG", "main", "larry_test", required=frozenset({"USE_CATALOG"}))
+
+    assert privileges == frozenset({"USE_CATALOG"})
+
+
+def test_show_grants_service_principal_with_no_lookup_match_is_uninspectable() -> None:
+    inspector, workspace = _fallback_inspector([{"Principal": "someone-else", "ActionType": "USE CATALOG"}])
+
+    privileges = inspector.privileges("CATALOG", "main", _SP_APPLICATION_ID, required=frozenset({"USE_CATALOG"}))
+
+    assert privileges is None
+    workspace.service_principals.list.assert_called_once()
+
+
+def test_show_grants_account_users_grant_covers_every_principal() -> None:
+    """account users contains everyone, so its grant satisfies any audience group."""
+    inspector, workspace = _fallback_inspector([{"Principal": "account users", "ActionType": "USE CATALOG"}])
+
+    privileges = inspector.privileges("CATALOG", "main", "data-team", required=frozenset({"USE_CATALOG"}))
+
+    assert privileges is not None and has_privilege(privileges, "USE_CATALOG")
+    workspace.service_principals.list.assert_not_called()
+
+
+def test_effective_permissions_count_grants_inherited_from_account_users() -> None:
+    """The effective-permissions API lists account users grants for a group; they count."""
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(
+        privilege_assignments=[
+            EffectivePrivilegeAssignment(
+                principal="account users", privileges=[EffectivePrivilege(privilege=Privilege.USE_CATALOG)]
+            )
+        ]
+    )
+
+    privileges = GrantInspector(workspace).privileges("CATALOG", "main", "data-team")
+
+    assert privileges is not None and has_privilege(privileges, "USE_CATALOG")
+
+
+def _effective(*assignments: EffectivePrivilegeAssignment) -> GrantInspector:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.return_value = EffectivePermissionsList(privilege_assignments=list(assignments))
+    return GrantInspector(workspace)
+
+
+def test_direct_privileges_ignore_group_and_inherited_grants() -> None:
+    """Ownership-like checks only count what was granted to the principal on the securable itself."""
+    inspector = _effective(
+        EffectivePrivilegeAssignment(
+            principal="account users", privileges=[EffectivePrivilege(privilege=Privilege.MANAGE)]
+        ),
+        EffectivePrivilegeAssignment(
+            principal=_SP_APPLICATION_ID,
+            privileges=[
+                EffectivePrivilege(privilege=Privilege.USE_SCHEMA),
+                EffectivePrivilege(privilege=Privilege.MANAGE, inherited_from_name="main"),
+            ],
+        ),
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"USE_SCHEMA"})
+
+
+def test_direct_privileges_return_a_direct_manage_grant() -> None:
+    inspector = _effective(
+        EffectivePrivilegeAssignment(
+            principal=_SP_APPLICATION_ID, privileges=[EffectivePrivilege(privilege=Privilege.MANAGE)]
+        )
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"MANAGE"})
+
+
+def test_direct_privileges_fallback_ignores_account_users_and_catalog_rows() -> None:
+    inspector, workspace = _fallback_inspector(
+        [
+            {"Principal": "account users", "ActionType": "MANAGE", "ObjectType": "SCHEMA"},
+            {"Principal": _SP_APPLICATION_ID, "ActionType": "MANAGE", "ObjectType": "CATALOG"},
+            {"Principal": _SP_APPLICATION_ID, "ActionType": "USE SCHEMA", "ObjectType": "SCHEMA"},
+        ]
+    )
+
+    assert inspector.direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) == frozenset({"USE_SCHEMA"})
+    workspace.service_principals.list.assert_not_called()
+
+
+def test_direct_privileges_are_none_when_uninspectable() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.grants.get_effective.side_effect = PermissionError("denied")
+
+    assert GrantInspector(workspace).direct_privileges("SCHEMA", "main.dqx_studio", _SP_APPLICATION_ID) is None

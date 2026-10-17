@@ -2132,6 +2132,41 @@
       }
     },
     {
+      "group": null,
+      "name": "test_benchmark_has_num_decimal_places",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_num_decimal_places",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.34818305499993585,
+        "max": 0.35256328100058454,
+        "mean": 0.350851611666864,
+        "stddev": 0.0023416489874722004,
+        "rounds": 3,
+        "median": 0.3518084990000716,
+        "iqr": 0.003285169500486518,
+        "q1": 0.3490894159999698,
+        "q3": 0.3523745855004563,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.34818305499993585,
+        "hd15iqr": 0.35256328100058454,
+        "ops": 2.850207799385875,
+        "total": 1.052554835000592,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_has_valid_json_schema",
       "name": "test_benchmark_has_valid_json_schema",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_json_schema",

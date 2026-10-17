@@ -7,6 +7,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import PermissionDenied
 from databricks.sdk.service.catalog import (
     CatalogInfo,
+    CatalogType,
     CatalogsAPI,
     EffectivePermissionsList,
     EffectivePrivilege,
@@ -34,9 +35,11 @@ from databricks.sdk.service.sql import (
 
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
+    PrivilegeInspectionError,
     ScheduleGrantService,
     StatementFailedError,
     WarehouseUnavailableError,
+    inspection_failure_detail,
     manage_block_detail,
 )
 
@@ -209,7 +212,7 @@ def test_unresolved_caller_is_unknown(service: ScheduleGrantService, obo: Worksp
 
 
 @pytest.mark.parametrize("missing_principal", ["app-sp", "runner-sp"])
-@pytest.mark.parametrize("kind,privilege", [("catalog", "USE CATALOG"), ("schema", "USE SCHEMA")])
+@pytest.mark.parametrize("kind,privilege", [("catalog", "USE_CATALOG"), ("schema", "USE_SCHEMA")])
 def test_missing_source_parent_blocks_even_table_owner(
     service: ScheduleGrantService,
     obo: WorkspaceClient,
@@ -248,6 +251,7 @@ def test_parent_inspection_unknown_blocks_owner(
     obo.statement_execution.execute_statement.return_value = sql_response(StatementState.FAILED)
     result = service.preflight([FQN, "cat.sch.other"])
     assert all(r.access_unverified and not r.can_manage for r in result)
+    assert all(r.unverified_reason == "permissions" for r in result)
     assert sp.grants.get_effective.call_count == 1
     sp.catalogs.get.assert_called_once_with("cat")
     obo.catalogs.get.assert_called_once_with("cat")
@@ -444,16 +448,11 @@ def test_parent_cache_separates_securables_and_principals(
         (True, False),
         (True, False),
     ]
+    assert result[0].manage_holders == result[1].manage_holders == []
     assert (
-        result[0].manage_holders
-        == result[1].manage_holders
-        == [
-            {
-                "principal": "runner-sp",
-                "type": "service_principal",
-                "remediation": "GRANT USE SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
-            }
-        ]
+        [g["remediation"] for g in result[0].missing_grants]
+        == [g["remediation"] for g in result[1].missing_grants]
+        == ["GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;"]
     )
     assert sp.grants.get_effective.call_count == 10
 
@@ -575,3 +574,158 @@ def test_readable_app_cannot_bypass_missing_parent(
     assert not service.can_schedule(FQN)
     with pytest.raises(CannotManageError):
         service.grant_select_to_schedulers(FQN)
+
+
+def _named_service_principals(sp: WorkspaceClient, names: dict[str, str]) -> None:
+    sp.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], display_name=names.get(filter.split('"')[1]), groups=[])]
+    )
+
+
+def test_builtin_sample_tables_need_no_grant(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.catalogs.get.return_value = CatalogInfo(name="samples", catalog_type=CatalogType.SYSTEM_CATALOG)
+    fqn = "samples.bakehouse.sales_customers"
+    result = service.preflight([fqn])
+    assert [(r.can_manage, r.access_unverified, r.missing_grants) for r in result] == [(True, False, [])]
+    assert service.grant_select_to_schedulers(fqn) == []
+    obo.statement_execution.execute_statement.assert_not_called()
+    sp.grants.get_effective.assert_not_called()
+
+
+@pytest.mark.parametrize("catalog_lookup", ["managed", "unreadable"])
+def test_catalog_named_samples_is_checked_like_any_other(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, catalog_lookup: str
+) -> None:
+    if catalog_lookup == "managed":
+        sp.catalogs.get.return_value = CatalogInfo(name="samples", catalog_type=CatalogType.MANAGED_CATALOG)
+    else:
+        sp.catalogs.get.side_effect = PermissionDenied("no access")
+    result = service.preflight(["samples.hr.salaries"])[0]
+    assert not result.can_manage
+    assert any(
+        c.kwargs["statement"].startswith("SHOW GRANTS")
+        for c in obo.statement_execution.execute_statement.call_args_list
+    )
+
+
+def test_missing_parent_grants_are_reported_with_display_names(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    _named_service_principals(sp, {"app-sp": "dqx-studio app", "runner-sp": "dqx-task-runner-sp"})
+
+    result = service.preflight([FQN])[0]
+
+    assert not result.can_manage
+    assert not result.access_unverified
+    assert result.manage_holders == []
+    assert [
+        (g["display_name"], g["privilege"], g["securable_type"], g["securable"], g["remediation"])
+        for g in result.missing_grants
+    ] == [
+        ("dqx-studio app", "USE_CATALOG", "CATALOG", "cat", "GRANT USE_CATALOG ON CATALOG `cat` TO `app-sp`;"),
+        ("dqx-studio app", "USE_SCHEMA", "SCHEMA", "cat.sch", "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `app-sp`;"),
+        ("dqx-task-runner-sp", "USE_CATALOG", "CATALOG", "cat", "GRANT USE_CATALOG ON CATALOG `cat` TO `runner-sp`;"),
+        (
+            "dqx-task-runner-sp",
+            "USE_SCHEMA",
+            "SCHEMA",
+            "cat.sch",
+            "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;",
+        ),
+    ]
+
+
+def test_preflight_names_service_principal_holders_without_extra_scim_calls(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp_id = "37f263d6-1794-4873-8347-1f919b834fff"
+    _named_service_principals(sp, {sp_id: "dqx-task-runner-sp"})
+    obo.statement_execution.execute_statement.return_value = sql_response(rows=[[sp_id, "MANAGE", "TABLE", FQN]])
+    holders = service.preflight([FQN])[0].manage_holders
+    assert holders == [{"principal": sp_id, "type": "service_principal", "display_name": "dqx-task-runner-sp"}]
+    assert sp.service_principals.list.call_count == 1
+
+
+def test_save_path_never_looks_up_display_names(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    assert not service.can_schedule(FQN)
+    with pytest.raises(CannotManageError):
+        service.grant_select_precleared(FQN)
+    sp.service_principals.list.assert_not_called()
+
+
+def test_scheduler_membership_and_display_name_share_one_lookup(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    # Parent grants unreadable via REST and SQL, parents owned by a group: membership is
+    # resolved for both scheduler principals, then reused for the display names.
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(principal, [])
+    sp.catalogs.get.return_value = CatalogInfo(owner="other-group")
+    sp.schemas.get.return_value = SchemaInfo(owner="other-group")
+    _named_service_principals(sp, {"app-sp": "dqx-studio app", "runner-sp": "dqx-task-runner-sp"})
+    result = service.preflight([FQN])[0]
+    assert {g["display_name"] for g in result.missing_grants} == {"dqx-studio app", "dqx-task-runner-sp"}
+    assert sp.service_principals.list.call_count == 2
+
+
+def test_unreadable_service_principal_name_falls_back_to_id(service: ScheduleGrantService, sp: WorkspaceClient) -> None:
+    sp.service_principals.list.side_effect = PermissionDenied("no SCIM")
+    assert service.service_principal_name("runner-sp") == "runner-sp"
+
+
+@pytest.mark.parametrize(
+    "outcome,reason",
+    [
+        (sql_response(StatementState.CANCELED), "warehouse"),
+        (RuntimeError("503 TEMPORARILY_UNAVAILABLE"), "warehouse"),
+        (sql_response(StatementState.FAILED), "permissions"),
+        (PermissionDenied("no READ METADATA"), "permissions"),
+    ],
+)
+def test_unverified_reason_separates_warehouse_from_permissions(
+    service: ScheduleGrantService, obo: WorkspaceClient, outcome: object, reason: str
+) -> None:
+    if isinstance(outcome, Exception):
+        obo.statement_execution.execute_statement.side_effect = outcome
+    else:
+        obo.statement_execution.execute_statement.return_value = outcome
+    result = service.preflight([FQN])[0]
+    assert result.access_unverified
+    assert not result.can_manage
+    assert result.unverified_reason == reason
+
+
+def test_unresolvable_task_runner_is_a_configuration_problem(
+    service: ScheduleGrantService, sp: WorkspaceClient
+) -> None:
+    sp.jobs.get.side_effect = RuntimeError("job not found")
+    result = service.preflight([FQN, "cat.sch.other"])
+    assert [(r.access_unverified, r.unverified_reason) for r in result] == [(True, "configuration")] * 2
+
+
+def test_cold_warehouse_is_not_waited_out_again_for_each_table(
+    service: ScheduleGrantService, obo: WorkspaceClient
+) -> None:
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.CANCELED)
+    result = service.preflight([FQN, "cat.sch.other", "cat.sch.third"])
+    assert [r.unverified_reason for r in result] == ["warehouse"] * 3
+    assert obo.statement_execution.execute_statement.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (WarehouseUnavailableError("cold"), "starting up"),
+        (PrivilegeInspectionError("unreadable"), "owner"),
+        (PrivilegeInspectionError("no runner", reason="configuration"), "administrator"),
+    ],
+)
+def test_inspection_failure_detail_names_who_can_fix_it(error: WarehouseUnavailableError, expected: str) -> None:
+    assert expected in inspection_failure_detail(error)

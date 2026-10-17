@@ -26,6 +26,71 @@
         }
       })();
     </script>
+    <script>
+      // dqx-branding-bootstrap
+      // Apply the cached company theme before React mounts so the loading screen
+      // is already themed. Token names must match THEMABLE_TOKENS in
+      // lib/branding/derive.ts and the selectors must match lib/branding/css.ts
+      // (both enforced by index-html-bootstrap.test.ts); any invalid entry
+      // discards the whole cache. A cached DQX Default applies nothing.
+      (function (win) {
+        try {
+          var raw = win.localStorage.getItem("dqx.branding.v1");
+          if (!raw) return;
+          var s = JSON.parse(raw);
+          var ALLOWED = [
+            "--header",
+            "--header-foreground",
+            "--background",
+            "--card",
+            "--popover",
+            "--foreground",
+            "--card-foreground",
+            "--popover-foreground",
+            "--muted-foreground",
+            "--primary",
+            "--primary-foreground",
+            "--ring",
+            "--accent",
+            "--accent-foreground",
+            "--secondary",
+            "--secondary-foreground",
+            "--muted",
+            "--border",
+            "--input",
+            "--sidebar",
+            "--sidebar-foreground",
+            "--sidebar-accent",
+            "--sidebar-accent-foreground",
+            "--sidebar-border",
+            "--sidebar-primary",
+            "--sidebar-primary-foreground",
+            "--sidebar-ring",
+          ];
+          var HEX = /^#[0-9A-Fa-f]{6}$/;
+          var build = function (sel, map) {
+            if (!map || typeof map !== "object") return null;
+            var body = "";
+            for (var k in map) {
+              if (!Object.prototype.hasOwnProperty.call(map, k)) continue;
+              var v = map[k];
+              if (ALLOWED.indexOf(k) === -1 || typeof v !== "string" || !HEX.test(v)) return null;
+              body += k + ":" + v + ";";
+            }
+            return body ? sel + "{" + body + "}" : "";
+          };
+          var light = build("html:root:not(.dark)", s && s.overrides && s.overrides.light);
+          var dark = build("html.dark", s && s.overrides && s.overrides.dark);
+          if (light === null || dark === null) return;
+          var css = light + dark;
+          if (!css) return;
+          var el = win.document.createElement("style");
+          el.id = "dqx-branding";
+          el.textContent = css;
+          win.document.head.appendChild(el);
+        } catch (e) {}
+      })(window);
+    </script>
   </head>
   <body>
     <div id="root"></div>

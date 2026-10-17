@@ -53,7 +53,7 @@ def quote_view_principal(principal: str) -> str:
     including the supplied identity in the error.
 
     Args:
-        principal: Direct Jobs run-as identity or app service principal.
+        principal: App service principal (cleanup grantee).
 
     Returns:
         The validated principal as a single backtick-quoted identifier.
@@ -148,36 +148,40 @@ class ViewService:
         self,
         sql: SqlExecutor,
         sp_sql: SqlExecutor | None = None,
-        runner_principal: str = "",
         cleanup_principal: str = "",
     ) -> None:
         """Keep creation under OBO and grant cleanup rights to the app identity.
 
+        The task-runner service principal is not granted per view; it reads
+        views through schema-level ``SELECT`` on the temporary schema.
+
         Args:
             sql: OBO executor; the creating user remains the view owner.
             sp_sql: App executor used as a fallback when dropping views.
-            runner_principal: Actual Jobs run-as identity, resolved by the caller.
             cleanup_principal: App service principal application ID. Receives
                 MANAGE on each view so orphan cleanup does not require ownership
-                of the schema. Both identities are required before creation.
+                of the schema. Required before creation.
         """
         self._sql = sql
         self._sp_sql = sp_sql
-        self._runner_principal = runner_principal
         self._cleanup_principal = cleanup_principal
 
-    def _grant_permissions(self, view_name: str, runner: str, cleanup: str) -> None:
+    def _grant_permissions(self, view_name: str, cleanup: str) -> None:
+        """Grant the app identity MANAGE on the view; drop the view and raise on failure.
+
+        No runner grant is issued: the runner reads any view in the temporary
+        schema through schema-level ``SELECT``.
+        """
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         quoted_view = quote_fqn(view_name)
         try:
             self._sql.execute(f"GRANT MANAGE ON VIEW {quoted_view} TO {cleanup}")
-            self._sql.execute(f"GRANT SELECT ON VIEW {quoted_view} TO {runner}")
         except Exception:
             self.drop_view(view_name)
             raise RuntimeError(
                 "Cannot configure temporary view permissions. View cleanup was attempted; "
-                "verify the runner and app principals and the creating user's grant authority."
+                "verify the app principal and the creating user's grant authority."
             ) from None
 
     def _ensure_schema(self) -> None:
@@ -245,7 +249,6 @@ class ViewService:
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, validate_fqn
 
         validate_fqn(source_table_fqn)
-        runner = quote_view_principal(self._runner_principal)
         cleanup = quote_view_principal(self._cleanup_principal)
         self._ensure_schema()
 
@@ -261,7 +264,7 @@ class ViewService:
         logger.info("Creating view %s from %s", view_name, source_table_fqn)
         self._sql.execute(sql)
 
-        self._grant_permissions(view_name, runner, cleanup)
+        self._grant_permissions(view_name, cleanup)
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")
@@ -297,7 +300,6 @@ class ViewService:
 
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
-        runner = quote_view_principal(self._runner_principal)
         cleanup = quote_view_principal(self._cleanup_principal)
         self._ensure_schema()
 
@@ -309,7 +311,7 @@ class ViewService:
         logger.info("Creating SQL-check view %s", view_name)
         self._sql.execute(sql)
 
-        self._grant_permissions(view_name, runner, cleanup)
+        self._grant_permissions(view_name, cleanup)
 
         if not self._view_exists(view_name):
             raise RuntimeError(f"View creation succeeded but view not found: {view_name}")

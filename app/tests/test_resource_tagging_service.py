@@ -4,7 +4,7 @@ import pytest
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import EntityTagAssignment
 
-from databricks_labs_dqx_app.backend.demo.manifest import SOURCE_SCHEMA
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.migrations import ANALYTICAL_TABLE_NAMES
 from databricks_labs_dqx_app.backend.services import resource_tagging_service
 from databricks_labs_dqx_app.backend.services.entitlement_service import (
@@ -38,6 +38,8 @@ def _resources() -> ActiveResources:
         job_id=None,
         tmp_schema="studio_tmp",
         genie_schema="genie",
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
 
@@ -121,7 +123,7 @@ def test_startup_targets_respect_bundle_boundary() -> None:
     assert TagTarget("schemas", "main.studio") not in marketplace_targets
     assert TagTarget("volumes", "main.studio.wheels") not in marketplace_targets
     assert TagTarget("schemas", "main.studio") in bundle_targets
-    assert TagTarget("schemas", "main.dqx_studio_demo") in bundle_targets
+    assert TagTarget("schemas", "main.studio_demo") in bundle_targets
     assert TagTarget("volumes", "main.studio.wheels") in bundle_targets
 
     expected_main_tables = set(ANALYTICAL_TABLE_NAMES) | {"dq_migrations", ENTITLEMENTS_TABLE_NAME}
@@ -151,7 +153,7 @@ def test_metadata_dimension_targets_include_only_replaced_dimension_tables() -> 
 
 
 def test_demo_targets_include_source_schema_tables() -> None:
-    targets = demo_tag_targets("main", SOURCE_SCHEMA, ("orders", "customers"))
+    targets = demo_tag_targets("main", "dqx_studio_demo", ("orders", "customers"))
     assert targets == (
         TagTarget("schemas", "main.dqx_studio_demo"),
         TagTarget("tables", "main.dqx_studio_demo.customers"),

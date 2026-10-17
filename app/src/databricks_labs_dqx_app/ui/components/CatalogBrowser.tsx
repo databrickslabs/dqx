@@ -307,7 +307,7 @@ export function CatalogBrowser({
                       checked={isSelected}
                       onChange={() => !isItemDisabled && toggleTable(tbl.name)}
                       disabled={isItemDisabled}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <span className="truncate font-mono text-xs">{tbl.name}</span>
                   </label>
