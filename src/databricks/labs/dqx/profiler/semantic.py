@@ -30,7 +30,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -134,7 +134,8 @@ class DQProfileContext(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    df: DataFrame
+    # SkipValidation: Spark Connect DataFrames fail Pydantic's isinstance check against `pyspark.sql.DataFrame`.
+    df: SkipValidation[DataFrame]
     column_name: str
     column_type: DataType
     metrics: Mapping[str, Any] = Field(default_factory=dict)
