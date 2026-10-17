@@ -109,6 +109,12 @@ function HealthBadge({ row }: { row: ScheduleOverviewOut }) {
           {t("schedules.partial")}
         </Badge>
       );
+    case "skipped":
+      return (
+        <Badge variant="outline" className="text-[10px] border-slate-400 text-slate-600">
+          {t("schedules.skipped")}
+        </Badge>
+      );
     case "active":
       return (
         <Badge variant="outline" className="text-[10px] border-emerald-500 text-emerald-600">

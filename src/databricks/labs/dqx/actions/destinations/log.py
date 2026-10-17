@@ -91,6 +91,13 @@ class DQLogAlertDestination(AlertDestination):
         if message.user_metadata:
             metadata = ", ".join(f"{key}={value}" for key, value in message.user_metadata.items())
             rendered += f" | metadata: {metadata}"
+        if message.extras:
+            extras_text = ", ".join(
+                f"{producer}.{key}={value}"
+                for producer, payload in message.extras.items()
+                for key, value in payload.items()
+            )
+            rendered += f" | extras: {extras_text}"
         logger.log(self._LEVELS[self.level], sanitize_for_log(rendered))
 
 

@@ -3214,6 +3214,7 @@
     "failing": "Attention requise",
     "failed": "Échec",
     "partial": "Échec partiel",
+    "skipped": "Ignorée",
     "name": "Planification",
     "type": "Type",
     "cadence": "Fréquence",
