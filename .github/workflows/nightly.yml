@@ -67,11 +67,13 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
+        id: integration
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -84,9 +86,11 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish integration test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -124,9 +128,11 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run integration tests on serverless cluster
+        id: integration
         uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -140,9 +146,11 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish serverless integration test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -177,10 +185,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -197,9 +207,11 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish anomaly test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -234,10 +246,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -255,9 +269,11 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish serverless anomaly test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -626,7 +642,12 @@ jobs:
           # The run fails if performance degrades by more than 25%.
           # Tests are run sequentially to reduce variability.
           # Do at least 3 rounds to get more stable results.
-          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
+          # Anomaly benchmarks are deselected here: --benchmark-compare-fail applies to the whole
+          # invocation and cannot be scoped per test, and those benchmarks are dominated by MLflow
+          # and Unity Catalog control-plane latency, so they would trip a 25% mean gate on variance
+          # alone. They still produce a baseline in the step above; only the timing comparison skips
+          # them. Their detection quality is gated by assertions in tests/integration_anomaly/.
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 -m "not anomaly" \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:25% \

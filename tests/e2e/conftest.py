@@ -1,4 +1,7 @@
+import json
 import logging
+from collections.abc import Callable, Generator, MutableMapping
+from io import BytesIO
 import os
 import subprocess
 import time
@@ -8,8 +11,32 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import OperationFailed
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.jobs import NotebookTask, Task, TerminationTypeType, Run
+from databricks.sdk.service.jobs import (
+    Job,
+    JobSettings,
+    NotebookTask,
+    PerformanceTarget,
+    Task,
+    TerminationTypeType,
+    Run,
+)
 from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode, Kind
+
+from databricks.sdk.service.catalog import SchemaInfo, VolumeInfo
+from databricks.sdk.service.ml import CreateExperimentResponse
+from databricks.labs.blueprint.paths import WorkspacePath
+from databricks.labs.pytester.fixtures.baseline import factory
+
+from tests.anomaly_resources import drop_registered_model
+from tests.anomaly_e2e import (
+    PACKAGED_MODEL_CONFIGS,
+    packaged_model_suffixes,
+    AnomalyModelCleanup,
+    PackagedAnomalyCase,
+    packaged_anomaly_tasks,
+    wheel_manifest,
+)
+from tests.constants import TEST_CATALOG
 
 logger = logging.getLogger(__name__)
 logging.getLogger("tests").setLevel("DEBUG")
@@ -209,3 +236,114 @@ def run_job_and_validate(
             time.sleep(min(2**attempt, 30))
     assert last_error is not None  # loop ran at least once
     raise last_error
+
+
+@pytest.fixture(scope="session")
+def anomaly_wheel() -> tuple[Path, dict[str, object]]:
+    """Build once, or verify the exact wheel supplied by the calling CI job."""
+    repository = Path(__file__).resolve().parents[2]
+    supplied = os.environ.get("DQX_PREBUILT_WHEEL")
+    if supplied:
+        wheel = Path(supplied).resolve(strict=True)
+    else:
+        completed = subprocess.run(["make", "build"], cwd=repository, capture_output=True, check=False)
+        if completed.returncode:
+            raise AssertionError("The packaged anomaly wheel build failed")
+        wheels = list((repository / "dist").glob("databricks_labs_dqx-*.whl"))
+        if len(wheels) != 1:
+            raise AssertionError("Expected exactly one freshly built DQX wheel")
+        wheel = wheels[0]
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    return wheel, wheel_manifest(wheel, repository, revision)
+
+
+@pytest.fixture
+def packaged_anomaly_schema(make_schema: Callable[..., SchemaInfo]) -> SchemaInfo:
+    """Own the registry schema until model cleanup has completed."""
+    return make_schema(catalog_name=TEST_CATALOG)
+
+
+@pytest.fixture
+def make_anomaly_model_intent(
+    ws: WorkspaceClient, packaged_anomaly_schema: SchemaInfo
+) -> Generator[Callable[..., AnomalyModelCleanup], None, None]:
+    """Register model cleanup before training can partially create a model."""
+
+    def create(suffix: str = "distributed_model") -> AnomalyModelCleanup:
+        assert packaged_anomaly_schema.full_name
+        return AnomalyModelCleanup(f"{packaged_anomaly_schema.full_name}.{suffix}")
+
+    failures: list[str] = []
+
+    def remove(model: AnomalyModelCleanup) -> None:
+        failures.extend(drop_registered_model(ws, model.full_name))
+
+    yield from factory("anomaly model cleanup intent", create, remove)
+    if failures:
+        raise AssertionError(
+            f"Packaged anomaly model cleanup failed in {len(failures)} operations "
+            f"({', '.join(sorted(set(failures)))}); owned schema requires inspection"
+        )
+
+
+@pytest.fixture
+def packaged_anomaly_case(
+    ws: WorkspaceClient,
+    debug_env: MutableMapping[str, str],
+    anomaly_wheel: tuple[Path, dict[str, object]],
+    packaged_anomaly_schema: SchemaInfo,
+    make_volume: Callable[..., VolumeInfo],
+    make_experiment: Callable[..., CreateExperimentResponse],
+    make_anomaly_model_intent: Callable[..., AnomalyModelCleanup],
+    make_notebook: Callable[..., WorkspacePath],
+    make_job: Callable[..., Job],
+) -> PackagedAnomalyCase:
+    """Upload one immutable wheel and register every resource before the run."""
+    wheel, manifest = anomaly_wheel
+    volume = make_volume(catalog_name=packaged_anomaly_schema.catalog_name, schema_name=packaged_anomaly_schema.name)
+    assert volume.catalog_name and volume.schema_name and volume.name
+    directory = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}"
+    remote_wheel = f"{directory}/{wheel.name}"
+    with wheel.open("rb") as content:
+        ws.files.upload(remote_wheel, content, overwrite=False)
+    manifest_path = f"{directory}/manifest.json"
+    ws.files.upload(manifest_path, BytesIO(json.dumps(manifest).encode()), overwrite=False)
+    experiment = make_experiment()
+    assert experiment.experiment_id
+    # Each ensemble member is a separate registered model. Own all names before
+    # submitting training, including models a partially failed task may create.
+    for suffix in packaged_model_suffixes():
+        make_anomaly_model_intent(suffix=suffix)
+    parameters = {
+        "wheel_path": remote_wheel,
+        "manifest_path": manifest_path,
+        "wheel_sha256": str(manifest["wheel_sha256"]),
+        "source_revision": str(manifest["revision"]),
+        "model_name": f"{packaged_anomaly_schema.full_name}.distributed_model",
+        "model_configs": json.dumps(PACKAGED_MODEL_CONFIGS),
+        "registry_table": f"{packaged_anomaly_schema.full_name}.registry",
+        "experiment_id": experiment.experiment_id,
+    }
+    notebook_path = Path(__file__).parent / "notebooks" / "anomaly_distributed_scoring_notebook.py"
+    with notebook_path.open("rb") as content:
+        notebook = make_notebook(content=content, format=ImportFormat.SOURCE)
+    serverless = bool(debug_env.get("DATABRICKS_SERVERLESS_COMPUTE_ID"))
+    tasks = packaged_anomaly_tasks(
+        notebook.as_fuse().as_posix(), parameters, serverless=serverless, cluster_id=ws.config.cluster_id
+    )
+    job = make_job(tasks=tasks)
+    assert job.job_id is not None
+    ws.jobs.update(
+        job_id=job.job_id,
+        new_settings=JobSettings(
+            timeout_seconds=3600,
+            performance_target=PerformanceTarget.STANDARD if serverless else None,
+        ),
+    )
+    return PackagedAnomalyCase(
+        job.job_id,
+        str(manifest["wheel_sha256"]),
+        str(manifest["revision"]),
+        serverless,
+        None if serverless else ws.config.cluster_id,
+    )

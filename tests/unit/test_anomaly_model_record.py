@@ -10,7 +10,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     ModelIdentity,
     TrainingMetadata,
     FeatureEngineering,
-    SegmentationConfig,
+    GroupingConfig,
 )
 
 
@@ -30,17 +30,15 @@ def test_anomaly_model_record_creation_with_defaults():
             training_time=datetime(2024, 1, 1, 12, 0, 0),
         ),
         features=FeatureEngineering(),
-        segmentation=SegmentationConfig(),
+        grouping=GroupingConfig(),
     )
 
     assert record.identity.model_name == "test_model"
     assert record.identity.model_uri == "models:/test_model/1"
     assert record.identity.status == "active"  # Default
     assert record.features.mode == "spark"  # Default
-    assert record.segmentation.is_global_model is True  # Default
     assert record.training.metrics is None  # Default
-    assert record.segmentation.segment_by is None  # Default
-    assert record.segmentation.segment_values is None  # Default
+    assert record.grouping.baseline_by is None  # Default
 
 
 def test_anomaly_model_record_with_all_fields():
@@ -71,24 +69,20 @@ def test_anomaly_model_record_with_all_fields():
             column_types={"amount": "numeric", "quantity": "numeric", "discount": "numeric"},
             feature_metadata='{"engineered_features": ["amount_scaled", "quantity_scaled"]}',
         ),
-        segmentation=SegmentationConfig(
-            segment_by=["region"],
-            segment_values={"region": "US"},
-            is_global_model=False,
+        grouping=GroupingConfig(
+            baseline_by=["region"],
         ),
     )
 
     assert record.identity.model_name == "segmented_model"
     assert record.identity.status == "archived"
     assert record.features.mode == "sklearn"
-    assert record.segmentation.is_global_model is False
     assert len(record.training.metrics) == 2
     assert record.training.metrics["precision"] == 0.85
     assert len(record.training.baseline_stats) == 2
     assert record.training.baseline_stats["amount"]["mean"] == 150.0
     assert len(record.features.feature_importance) == 3
-    assert record.segmentation.segment_by == ["region"]
-    assert record.segmentation.segment_values == {"region": "US"}
+    assert record.grouping.baseline_by == ["region"]
     assert record.features.column_types["amount"] == "numeric"
     assert "engineered_features" in record.features.feature_metadata
 
@@ -190,38 +184,6 @@ def test_convert_decimals_preserves_non_decimal_types():
     assert result["list_value"] == [1, 2, 3]
 
 
-def test_anomaly_model_record_to_dict():
-    """Test converting AnomalyModelRecord to dictionary."""
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name="test_model",
-            model_uri="models:/test_model/1",
-            algorithm="IsolationForest",
-            mlflow_run_id="run123",
-        ),
-        training=TrainingMetadata(
-            columns=["col1", "col2"],
-            hyperparameters={"contamination": "0.1"},
-            training_rows=1000,
-            training_time=datetime(2024, 1, 1, 12, 0, 0),
-            metrics={"precision": 0.85},
-        ),
-        features=FeatureEngineering(),
-        segmentation=SegmentationConfig(),
-    )
-
-    record_dict = record.__dict__
-
-    assert isinstance(record_dict, dict)
-    assert record_dict["identity"].model_name == "test_model"
-    assert record_dict["identity"].model_uri == "models:/test_model/1"
-    assert record_dict["training"].columns == ["col1", "col2"]
-    assert record_dict["identity"].algorithm == "IsolationForest"
-    assert record_dict["training"].training_rows == 1000
-    assert "hyperparameters" in record_dict["training"].__dict__
-    assert "metrics" in record_dict["training"].__dict__
-
-
 def test_anomaly_model_record_defaults_for_optional_fields():
     """Test that optional fields have correct None defaults."""
     record = AnomalyModelRecord(
@@ -235,10 +197,10 @@ def test_anomaly_model_record_defaults_for_optional_fields():
             columns=["col1"],
             hyperparameters={},
             training_rows=100,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
         ),
         features=FeatureEngineering(),
-        segmentation=SegmentationConfig(),
+        grouping=GroupingConfig(),
     )
 
     # These should all be None by default
@@ -246,8 +208,7 @@ def test_anomaly_model_record_defaults_for_optional_fields():
     assert record.training.baseline_stats is None
     assert record.features.feature_importance is None
     assert record.features.temporal_config is None
-    assert record.segmentation.segment_by is None
-    assert record.segmentation.segment_values is None
+    assert record.grouping.baseline_by is None
     assert record.features.column_types is None
     assert record.features.feature_metadata is None
 
@@ -265,12 +226,12 @@ def test_anomaly_model_record_with_empty_collections():
             columns=[],  # Empty list
             hyperparameters={},  # Empty dict
             training_rows=0,
-            training_time=datetime.now(),
+            training_time=datetime(2024, 1, 1),
             metrics={},  # Empty dict
             baseline_stats={},  # Empty dict
         ),
         features=FeatureEngineering(),
-        segmentation=SegmentationConfig(),
+        grouping=GroupingConfig(),
     )
 
     assert not record.training.columns

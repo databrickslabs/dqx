@@ -23,16 +23,24 @@ from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import DoubleType, IntegerType, StructField, StructType
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
 
+from databricks.labs.dqx.anomaly.segment_utils import (
+    BASELINE_KEY_COLUMN,
+    allocate_baseline_key_column,
+    with_baseline_key,
+)
+from databricks.labs.dqx.anomaly.feature_prep import collect_feature_matrix
+from databricks.labs.dqx.anomaly.group_config import MIN_ROWS_PER_BASELINE_GROUP
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
     apply_feature_engineering,
-    reconstruct_column_infos,
+    apply_feature_engineering_from_metadata,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.anomaly.types import ScoreCalibration
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +48,25 @@ DEFAULT_SAMPLE_FRACTION = 0.3
 DEFAULT_TRAIN_RATIO = 0.8
 SCORE_QUANTILE_PROBS = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]
 SCORE_QUANTILE_KEYS = ["p00", "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "p100"]
+
+
+def _with_basis_columns(
+    columns: list[str], baseline_by: list[str] | None, baseline_over_time: str | None = None
+) -> list[str]:
+    """Union *columns* with the comparison bases, preserving order and dropping duplicates.
+
+    A basis column has to survive the narrowing select even though it is never a feature: the grouping
+    columns build the group key, and the time column is the axis an expected level is fitted along. Both
+    are projected away again by ``apply_feature_engineering``.
+
+    Group columns are not features, but they must survive every narrowing ``select`` on the way
+    to feature engineering, or the group-relative transform has nothing to compute a baseline
+    from. Feature engineering drops them again before the sklearn pipeline sees anything.
+    """
+    extra = [*(baseline_by or []), *([baseline_over_time] if baseline_over_time else [])]
+    if not extra:
+        return columns
+    return list(dict.fromkeys([*columns, *extra]))
 
 
 def sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
@@ -54,10 +81,13 @@ def sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple
         Tuple of (sampled DataFrame, row count, truncated flag)
     """
     fraction = params.sample_fraction if params.sample_fraction is not None else DEFAULT_SAMPLE_FRACTION
+    columns = _with_basis_columns(columns, params.baseline_by, params.baseline_over_time)
     missing_cols = [c for c in columns if c not in df.columns]
     if missing_cols:
         raise InvalidParameterError(f"Columns not found in DataFrame: {missing_cols}")
-    sampled = df.select(*columns).sample(withReplacement=False, fraction=fraction, seed=42)
+    sampled = df.select(*[F.col(quote_column_name(name)) for name in columns]).sample(
+        withReplacement=False, fraction=fraction, seed=42
+    )
     if params.max_rows:
         sampled = sampled.limit(params.max_rows)
     count = sampled.count()
@@ -92,7 +122,14 @@ def prepare_training_features(
         max_engineered_features=fe_config.max_engineered_features,
     )
 
-    feature_df = train_df.select(*feature_columns)
+    # Group columns ride along for the relative transform but are never classified as features:
+    # analyze_columns sees only feature_columns.
+    feature_df = train_df.select(
+        *[
+            F.col(quote_column_name(name))
+            for name in _with_basis_columns(feature_columns, params.baseline_by, params.baseline_over_time)
+        ]
+    )
     column_infos, _ = classifier.analyze_columns(feature_df, feature_columns)
 
     engineered_df, feature_metadata = apply_feature_engineering(
@@ -100,17 +137,35 @@ def prepare_training_features(
         column_infos,
         categorical_cardinality_threshold=fe_config.categorical_cardinality_threshold,
         frequency_maps=None,
+        baseline_by=params.baseline_by,
+        baseline_over_time=params.baseline_over_time,
     )
 
-    train_pandas = engineered_df.toPandas()
+    # Project to the feature list explicitly. The engineered frame also carries the baseline key
+    # column, which is a grouping record rather than a feature: ``fit_sklearn_model`` fits the
+    # pipeline on every column of this frame, so a passthrough reaching here would be trained on
+    # and would land in the inferred MLflow signature.
+    train_pandas = collect_feature_matrix(engineered_df, feature_metadata.engineered_feature_names)
     return train_pandas, feature_metadata
 
 
 def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tuple[Pipeline, dict[str, Any]]:
-    """Train sklearn IsolationForest pipeline on pre-engineered pandas DataFrame.
+    """Train the IsolationForest pipeline on pre-engineered pandas features.
+
+    No feature scaling. ``RobustScaler`` used to sit in front of the forest, and it could not have
+    made any difference: it is an affine per-feature transform, and Isolation Forest splits on
+    per-feature thresholds drawn uniformly between each feature's min and max, so the induced
+    partitions are identical either way. Measured across five ADBench datasets, PR-AUC with and
+    without it agreed to four decimal places -- covertype 0.0572/0.0572, mnist 0.2740/0.2740, cardio
+    0.5766/0.5766, shuttle 0.9789/0.9789, fraud 0.1926/0.1926. It cost a fit and a transform on every
+    training run and every scoring pass, and shipped inside every pickled artifact.
+
+    The single-step ``Pipeline`` is kept deliberately: ``named_steps["model"]`` is how the SHAP
+    explainer reaches the tree model, and it leaves somewhere for a transform that genuinely does
+    something to go later.
 
     Returns:
-        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - pipeline: sklearn Pipeline wrapping the fitted IsolationForest
         - hyperparams: Model configuration for MLflow tracking
     """
     algo_cfg = params.algorithm_config or IsolationForestConfig()
@@ -125,7 +180,7 @@ def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tupl
         n_jobs=-1,
     )
 
-    pipeline = Pipeline([('scaler', RobustScaler()), ('model', iso_forest)])
+    pipeline = Pipeline([('model', iso_forest)])
     pipeline.fit(train_pandas)
 
     hyperparams: dict[str, Any] = {
@@ -133,7 +188,7 @@ def fit_sklearn_model(train_pandas: pd.DataFrame, params: AnomalyParams) -> tupl
         "num_trees": algo_cfg.num_trees,
         "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
-        "feature_scaling": "RobustScaler",
+        "feature_scaling": "none",
     }
 
     return pipeline, hyperparams
@@ -147,7 +202,7 @@ def fit_isolation_forest(
     Feature engineering runs on Spark, then the model trains on the driver.
 
     Returns:
-        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - pipeline: sklearn Pipeline wrapping the fitted IsolationForest
         - hyperparams: Model configuration for MLflow tracking
         - feature_metadata: Transformation metadata for distributed scoring
     """
@@ -164,14 +219,18 @@ def score_with_model(
     Feature engineering is applied in Spark before the pandas UDF.
     This enables distributed inference across the Spark cluster.
     """
-    column_infos = reconstruct_column_infos(feature_metadata)
-
-    engineered_df, updated_metadata = apply_feature_engineering(
-        df.select(*feature_cols),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    key_column = allocate_baseline_key_column([*df.columns, *feature_metadata.engineered_feature_names])
+    engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
+        df.select(
+            *[
+                F.col(quote_column_name(name))
+                for name in _with_basis_columns(
+                    feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time
+                )
+            ]
+        ),
+        feature_metadata,
+        baseline_key_col=key_column,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -197,8 +256,13 @@ def score_with_model(
 
         return pd.DataFrame({"anomaly_score": scores, "prediction": predictions})
 
-    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    result = engineered_df.withColumn(
+        "_scores", predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
+    )
+    # Calibration needs scores and group identity, not another copy of the features. Selecting
+    # only these outputs also permits a real training feature named anomaly_score or prediction.
+    grouping = [F.col(quote_column_name(key_column)).alias(BASELINE_KEY_COLUMN)] if feature_metadata.baseline_by else []
+    result = result.select(*grouping, "_scores.anomaly_score", "_scores.prediction")
 
     return result
 
@@ -207,14 +271,18 @@ def score_with_ensemble_models(
     models: list[Pipeline], df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
 ) -> DataFrame:
     """Score DataFrame using an ensemble of models and return mean scores."""
-    column_infos = reconstruct_column_infos(feature_metadata)
-
-    engineered_df, updated_metadata = apply_feature_engineering(
-        df.select(*feature_cols),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    key_column = allocate_baseline_key_column([*df.columns, *feature_metadata.engineered_feature_names])
+    engineered_df, updated_metadata = apply_feature_engineering_from_metadata(
+        df.select(
+            *[
+                F.col(quote_column_name(name))
+                for name in _with_basis_columns(
+                    feature_cols, feature_metadata.baseline_by, feature_metadata.baseline_over_time
+                )
+            ]
+        ),
+        feature_metadata,
+        baseline_key_col=key_column,
     )
 
     engineered_feature_cols = updated_metadata.engineered_feature_names
@@ -236,8 +304,11 @@ def score_with_ensemble_models(
         mean_scores = np.mean(np.vstack(scores_list), axis=0)
         return pd.DataFrame({"anomaly_score": mean_scores})
 
-    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-    result = result.select("*", "_scores.anomaly_score").drop("_scores")
+    result = engineered_df.withColumn(
+        "_scores", predict_udf(*[col(quote_column_name(c)) for c in engineered_feature_cols])
+    )
+    grouping = [F.col(quote_column_name(key_column)).alias(BASELINE_KEY_COLUMN)] if feature_metadata.baseline_by else []
+    result = result.select(*grouping, "_scores.anomaly_score")
 
     return result
 
@@ -246,8 +317,8 @@ def compute_validation_metrics(
     model: Pipeline, val_df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
 ) -> dict[str, float]:
     """Compute validation metrics and distribution statistics."""
-    if val_df.count() == 0:
-        return {"validation_rows": 0}
+    if not val_df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
+        return {"validation_rows": 0.0}
 
     scored = score_with_model(model, val_df, feature_cols, feature_metadata)
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
@@ -263,7 +334,7 @@ def compute_validation_metrics(
     if stats is None:
         raise ComputationError("Failed to compute validation statistics")
     metrics = {
-        "validation_rows": val_count,
+        "validation_rows": float(val_count),
         "score_mean": stats["mean"] or 0.0,
         "score_std": stats["std"] or 0.0,
         "score_skewness": stats["skewness"] or 0.0,
@@ -279,30 +350,99 @@ def compute_validation_metrics(
 
 def compute_score_quantiles(
     model: Pipeline, df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
-) -> dict[str, float]:
-    """Compute score quantiles from the training score distribution."""
-    if df.count() == 0:
-        return {}
+) -> ScoreCalibration:
+    """Return global and grouped training calibration without changing feature metadata."""
+    if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
+        return ScoreCalibration({}, {}, ())
 
     scored = score_with_model(model, df, feature_cols, feature_metadata)
-    scores_df = scored.select(F.col("anomaly_score").alias("score"))
-    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
-
-    return dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False))
+    return _quantiles_from_scored(scored, feature_metadata)
 
 
 def compute_score_quantiles_ensemble(
     models: list[Pipeline], df: DataFrame, feature_cols: list[str], feature_metadata: SparkFeatureMetadata
-) -> dict[str, float]:
-    """Compute score quantiles using ensemble mean scores."""
-    if df.count() == 0:
-        return {}
+) -> ScoreCalibration:
+    """Return calibration of ensemble mean scores without changing feature metadata."""
+    if not df.take(1):  # emptiness only — take(1) avoids a full-frame count scan
+        return ScoreCalibration({}, {}, ())
 
     scored = score_with_ensemble_models(models, df, feature_cols, feature_metadata)
-    scores_df = scored.select(F.col("anomaly_score").alias("score"))
-    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
+    return _quantiles_from_scored(scored, feature_metadata)
 
-    return dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False))
+
+#: How precisely the severity quantiles are estimated. Load-bearing since the severity tail takes its decay
+#: rate from (q99 - q95): `approxQuantile` may return the value at any rank within this much of the one
+#: requested, so at 0.01 a reported "p99" could be the true p100, and measured on an Isolation Forest
+#: ensemble that moved the alert rate at threshold 98 from 2.25% to 0.65% against the 2% requested. At 0.001
+#: the reported p99 is between ranks 98.9 and 99.1. Paid once, at training time, for one double column.
+SEVERITY_QUANTILE_RELATIVE_ERROR = 0.001
+
+
+def _quantiles_from_scored(scored: DataFrame, feature_metadata: SparkFeatureMetadata) -> ScoreCalibration:
+    """Derive global and per-group calibration as an explicit result.
+
+    Note the cost: for a grouped model this walks the scored frame twice, and since ``.cache()``
+    is unavailable on serverless the scoring UDF runs for each walk. Paid at training time only,
+    and only when ``baseline_by`` is set — an ungrouped model behaves exactly as before.
+    """
+    scores_df = scored.select(F.col("anomaly_score").alias("score"))
+    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, SEVERITY_QUANTILE_RELATIVE_ERROR)
+
+    grouped = compute_baseline_score_quantiles(scored, feature_metadata.baseline_by, key_column=BASELINE_KEY_COLUMN)
+    return ScoreCalibration(
+        global_quantiles=dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False)),
+        group_quantiles=grouped.group_quantiles,
+        known_group_keys=grouped.known_group_keys,
+    )
+
+
+def compute_baseline_score_quantiles(
+    scored_df: DataFrame, baseline_by: list[str], *, key_column: str | None = None
+) -> ScoreCalibration:
+    """Compute the score quantiles of each group from an already-scored DataFrame.
+
+    Takes scores rather than a model so the training set is scored once and reused for both the
+    global and the per-group calibration.
+
+    ``percentile_approx`` in one ``groupBy`` rather than ``approxQuantile`` per group: the latter
+    is a driver-side call and would mean one Spark job per group, which is the cost pattern this
+    whole change exists to avoid.
+
+    Args:
+        scored_df: Raw grouping columns with scores, or the output of a DQX scoring function.
+        baseline_by: Source columns defining the comparison groups.
+        key_column: Explicitly owned key supplied by a scoring function after it removed the raw
+            grouping columns. When omitted, compute a new key from the source grouping columns.
+    """
+    if not baseline_by:
+        return ScoreCalibration({}, {}, ())
+
+    # Accuracy stated rather than left to the default, so the per-group calibration cannot drift away from
+    # the global one above. `percentile_approx` expresses it as 1/relativeError.
+    accuracy = int(round(1.0 / SEVERITY_QUANTILE_RELATIVE_ERROR))
+    score = F.col("anomaly_score")
+    usable_score = F.when(score.isNotNull() & ~F.isnan(score) & (F.abs(score) < F.lit(float("inf"))), score)
+    quantile_exprs = [
+        F.percentile_approx(usable_score, prob, accuracy).alias(key)
+        for prob, key in zip(SCORE_QUANTILE_PROBS, SCORE_QUANTILE_KEYS, strict=True)
+    ]
+    if key_column is None:
+        key_column = allocate_baseline_key_column(scored_df.columns)
+        scored_df = with_baseline_key(scored_df, baseline_by, key_column=key_column)
+    grouped = scored_df.groupBy(F.col(quote_column_name(key_column))).agg(
+        *quantile_exprs, F.count(usable_score).alias("__dqx_usable_scores")
+    )
+
+    result: dict[str, dict[str, float]] = {}
+    known_group_keys: list[str] = []
+    for row in grouped.collect():
+        known_group_keys.append(row[key_column])
+        quantiles = {key: float(row[key]) for key in SCORE_QUANTILE_KEYS if row[key] is not None}
+        # A group missing any quantile cannot be interpolated over, so it is left out entirely
+        # and falls back to the global calibration rather than being half-calibrated.
+        if row["__dqx_usable_scores"] >= MIN_ROWS_PER_BASELINE_GROUP and len(quantiles) == len(SCORE_QUANTILE_KEYS):
+            result[row[key_column]] = quantiles
+    return ScoreCalibration({}, result, tuple(sorted(known_group_keys)))
 
 
 def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict[str, dict[str, float]]:
@@ -329,7 +469,11 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
     # mean/std/min/max of every column, and one multi-column approxQuantile — instead of
     # two separate actions (full table scans) per column.
     def _col_expr(col_name: str) -> Column:
-        return F.col(col_name).cast("double") if col_types[col_name] == "boolean" else F.col(col_name)
+        return (
+            F.col(quote_column_name(col_name)).cast("double")
+            if col_types[col_name] == "boolean"
+            else F.col(quote_column_name(col_name))
+        )
 
     agg_exprs = []
     for i, col_name in enumerate(eligible):
@@ -347,7 +491,7 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
         raise ComputationError(f"Failed to compute stats for {eligible}")
 
     casted_df = train_df.select(*[_col_expr(c).alias(c) for c in eligible])
-    all_quantiles = casted_df.approxQuantile(eligible, [0.25, 0.5, 0.75], 0.01)
+    all_quantiles = casted_df.approxQuantile([quote_column_name(name) for name in eligible], [0.25, 0.5, 0.75], 0.01)
 
     baseline_stats = {}
     for i, col_name in enumerate(eligible):
@@ -397,22 +541,22 @@ def aggregate_ensemble_metrics(all_metrics: list[dict[str, float]]) -> dict[str,
 def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatureMetadata) -> pd.DataFrame:
     """Prepare engineered pandas DataFrame from Spark DataFrame.
 
-    Applies feature engineering transformations and collects to pandas.
-    Used for MLflow signature inference.
+    Applies feature engineering transformations, projects to the columns the model was fitted on, and
+    collects to pandas. Used for MLflow signature inference.
+
+    The projection is load-bearing. Feature engineering deliberately preserves columns it did not
+    produce -- the group key among them, because the group-relative transform needs it at scoring time --
+    so the engineered frame is wider than the feature list. Handing that frame to ``model.predict`` for
+    signature inference passes the estimator a string column it was never fitted on, which fails for any
+    grouped model on the single-model path (``profile="correlation"``, or ``ensemble_size=1``). The default
+    three-model ensemble registers by URI and never comes through here, which is why this was invisible.
 
     Args:
         train_df: Training Spark DataFrame
         feature_metadata: Feature engineering metadata from training
 
     Returns:
-        Pandas DataFrame with engineered features
+        Pandas DataFrame holding exactly the engineered feature columns, in their persisted order
     """
-    column_infos_reconstructed = reconstruct_column_infos(feature_metadata)
-    engineered_train_df, _ = apply_feature_engineering(
-        train_df,
-        column_infos_reconstructed,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
-    )
-    return engineered_train_df.toPandas()
+    engineered_train_df, _ = apply_feature_engineering_from_metadata(train_df, feature_metadata)
+    return collect_feature_matrix(engineered_train_df, feature_metadata.engineered_feature_names)

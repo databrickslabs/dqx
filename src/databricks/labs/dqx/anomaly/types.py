@@ -43,6 +43,15 @@ class MLflowSignature(Protocol):
 
 
 @dataclass(frozen=True)
+class ScoreCalibration:
+    """Explicit training calibration, independent of feature transformation metadata."""
+
+    global_quantiles: dict[str, float]
+    group_quantiles: dict[str, dict[str, float]]
+    known_group_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TrainingResult:
     """Result of single model training."""
 
@@ -50,7 +59,7 @@ class TrainingResult:
     run_id: str | None
     hyperparams: dict[str, Any]
     validation_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     feature_metadata: SparkFeatureMetadata
     ensemble_size: int
     algorithm: str
@@ -64,13 +73,18 @@ class EnsembleTrainingResult:
     models: list[Pipeline]
     hyperparams: dict[str, Any]
     aggregated_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     feature_metadata: SparkFeatureMetadata
 
 
 @dataclass(frozen=True)
 class AnomalyTrainingContext:
-    """Context containing all inputs needed for training."""
+    """Context containing all inputs needed for training.
+
+    ``baseline_by`` names the columns each metric is judged against, and ``baseline_over_time`` the
+    column it is judged along. Both are expressed as features on a single model, so neither the group
+    count nor the length of history ever decides how many models are trained.
+    """
 
     spark: SparkSession
     df: DataFrame
@@ -78,16 +92,24 @@ class AnomalyTrainingContext:
     model_name: str
     registry_table: str
     columns: list[str]
-    segment_by: list[str] | None
     params: AnomalyParams
-    expected_anomaly_rate: float
     exclude_columns: list[str] | None
     auto_discovery_used: bool
+    baseline_by: list[str] | None = None
+    # Which kind of data the user says this is, which selects the detector. None means "distribution",
+    # i.e. exactly the behaviour that predates this option. Appended last:
+    # a defaulted field cannot precede a non-defaulted one, and appending also keeps positional
+    # construction stable for anything building this directly.
+    profile: str | None = None
+    # The time column each metric's expected level is fitted along. Appended for the same reason as
+    # *profile*: defaulted fields follow non-defaulted ones, and appending keeps positional
+    # construction stable for anything building this directly.
+    baseline_over_time: str | None = None
 
 
 @dataclass(frozen=True)
 class TrainingArtifacts:
-    """Artifacts produced by training a single model or segment."""
+    """Artifacts produced by training a model."""
 
     model_name: str
     model_uri: str
@@ -97,7 +119,6 @@ class TrainingArtifacts:
     hyperparams: dict[str, Any]
     training_rows: int
     validation_metrics: dict[str, float]
-    score_quantiles: dict[str, float]
+    calibration: ScoreCalibration
     baseline_stats: dict[str, dict[str, float]]
     algorithm: str
-    segment_values: dict[str, Any] | None = None

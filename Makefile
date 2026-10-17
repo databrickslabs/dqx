@@ -73,8 +73,8 @@ e2e: ## Run end-to-end tests (long timeout, requires Databricks workspace auth)
 perf: ## Run performance benchmarks (long timeout)
 	$(UV_TEST) --timeout 600 --cov --cov-report=xml tests/perf/
 
-anomaly: ## Run anomaly integration tests (long timeout, with reruns)
-	$(UV_RUN) pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5
+anomaly: ## Run anomaly integration tests (no test retries; override TEST_WORKERS as needed)
+	$(UV_TEST) tests/integration_anomaly/ -v --timeout 1200
 
 # The integration test's deploy (ci_deploy.sh -> bundle deploy) builds the runner wheel with
 # `uv build ./runner` from inside mcp-server/, so the global *relative* UV_BUILD_CONSTRAINT
@@ -93,16 +93,8 @@ coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
 	open htmlcov/index.html
 
-combine-coverage: ## Combine xdist worker coverage data into coverage-combined.xml
-	# pytest-cov combines xdist worker files at session end, so there may be
-	# no parallel .coverage.* files left for `coverage combine` to merge.
-	# Tolerate that — the single .coverage file is still usable for the XML
-	# conversion. Leading `-` makes `make` ignore combine's non-zero exit.
-	-$(UV_RUN) coverage combine
-	# Fail loudly if the test run produced no coverage data.
-	@test -f .coverage || { echo "ERROR: no .coverage data found after test run"; exit 1; }
-	$(UV_RUN) coverage xml -o coverage-combined.xml
-	$(UV_RUN) coverage erase
+combine-coverage: ## Merge existing and process coverage into XML
+	$(UV_RUN) python -m tests.coverage_support
 
 ##@ Documentation
 
@@ -111,6 +103,7 @@ docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 
 docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
 	$(UV_RUN) --group docs pydoc-markdown
+	$(UV_RUN) python docs/dqx/check_generated_api.py
 	yarn --cwd docs/dqx test
 	yarn --cwd docs/dqx build
 
@@ -475,8 +468,10 @@ lock-mcp-dependencies: ## Regenerate mcp-server/uv.lock
 lock-dependencies: export UV_FROZEN := 0
 lock-dependencies: ## Regenerate top-level uv.lock and .build-constraints.txt
 	uv lock --exclude-newer "7 days"
+	# NO_COLOR is not cosmetic here: uv colours the "# via <pkg>" annotations, and those escape
+	# sequences land in the committed file, which has already needed cleaning up once on this branch.
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
-	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
+	  NO_COLOR=1 uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt
 	# Normalize the lock so contributors inside Databricks (private proxy) and outside (public PyPI)
 	# produce an identical file. A proxy mirrors PyPI with identical paths, so rewrite the registry

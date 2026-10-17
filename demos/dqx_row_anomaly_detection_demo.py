@@ -25,7 +25,7 @@
 # MAGIC
 # MAGIC **Why row anomaly detection**
 # MAGIC - Learns "normal" from data
-# MAGIC - Flags deviations without manual rules and thresholds
+# MAGIC - Learns a multi-column comparison; use a severity threshold to choose which rows to flag
 # MAGIC - Complements rule-based checks rather than replacing them
 # MAGIC
 # MAGIC **Known vs Unknown Issues**
@@ -35,7 +35,7 @@
 # MAGIC **Data Quality Monitoring (DQM) vs DQX Row Anomaly detection**
 # MAGIC - **[Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection)**: uses table‑level signals such as row counts and commit patterns.
 # MAGIC - **DQX Anomaly**: look for row‑level patterns within the data (per‑record anomalies with explanations).
-# MAGIC - DQM and DQX each provide distinct capabilities. Together, they complement one another to deliver comprehensive coverage across the full spectrum of data quality checks.
+# MAGIC - Use table-level monitoring and row-level checks together to investigate different classes of data quality issues.
 # MAGIC
 
 # COMMAND ----------
@@ -65,9 +65,9 @@
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
 if dbutils.widgets.get("test_library_ref") != "":
-    %pip install 'databricks-labs-dqx[anomaly] @ {dbutils.widgets.get("test_library_ref")}'
+    %pip install 'databricks-labs-dqx[anomaly] @ {dbutils.widgets.get("test_library_ref")}' --quiet
 else:
-    %pip install databricks-labs-dqx[anomaly]
+    %pip install databricks-labs-dqx[anomaly] --quiet
 
 %restart_python
 
@@ -80,6 +80,18 @@ default_schema = "default"
 # Configure widgets for catalog and schema
 dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
 dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
+
+# COMMAND ----------
+# DBTITLE 1,Keep the output readable
+
+# MLflow prints these straight to stderr rather than through its logger, so raising its log level does
+# not reach them. Each is a documented switch. Turned off here so this walkthrough's output shows what
+# DQX did rather than six model URLs per training run; leave them on in your own work if the links help.
+import os
+
+os.environ["MLFLOW_PRINT_MODEL_URLS_ON_CREATION"] = "false"   # "View Logged Model at: ..."
+os.environ["MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT"] = "true"  # "View run ... at: ..."
+os.environ["_MLFLOW_ENABLE_UC_TRACE_UPSELL"] = "false"         # the Unity Catalog trace-migration notice
 
 # COMMAND ----------
 
@@ -184,7 +196,7 @@ schema = StructType([
 df_train = spark.createDataFrame(historical_data, schema)
 
 print("📊 Sample of sales transactions:")
-display(df_train.orderBy("date"))
+display(df_train.orderBy("date", "transaction_id"))
 
 total_train = df_train.count()
 print(f"\n✅ Generated {total_train} historical transactions (for training)")
@@ -253,9 +265,8 @@ display(
     .filter(F.col("identity.model_name").contains(model_name_auto))
     .select(
         "identity.model_name",
-        "training.columns", 
-        "segmentation.segment_by",
-        "segmentation.segment_values",
+        "training.columns",
+        "grouping.baseline_by",
         "training.training_rows",
         "training.training_time",
         "identity.status"
@@ -268,6 +279,20 @@ print("\n💡 DQX auto-discovered patterns and registered a model for scoring.")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### About that warning
+# MAGIC
+# MAGIC Auto-discovery picked `date` as a feature, and DQX warned about it. That warning is worth reading
+# MAGIC rather than scrolling past: a timestamp in `columns` becomes seven cyclical calendar features, which
+# MAGIC is what you want when *when* something happened carries meaning, and is noise otherwise. The warning
+# MAGIC names both escapes — `exclude_columns=['date']` to drop it, or `baseline_over_time='date'` to use it
+# MAGIC as a time axis instead.
+# MAGIC
+# MAGIC It is left in here so the quickstart shows what auto-discovery actually does with your schema. On
+# MAGIC this dataset it costs little, because the injected anomalies are large. See
+# MAGIC [Comparing against time](https://databrickslabs.github.io/dqx/docs/guide/row_anomaly_detection/tuning#comparing-against-time)
+# MAGIC for how to choose, and the `dqx_row_anomaly_distribution_transactions` demo for a dataset where it
+# MAGIC changes the answer.
+# MAGIC
 # MAGIC ### Optional: View Models in the UI
 # MAGIC
 # MAGIC Your models are stored in Unity Catalog and registered within MLflow.
@@ -277,11 +302,11 @@ print("\n💡 DQX auto-discovered patterns and registered a model for scoring.")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Section 3: Generate new data containing some anomalies
+# MAGIC ### Section 3: Generate an independent scoring batch containing some anomalies
 # MAGIC
 
 # COMMAND ----------
-# DBTITLE 1,Generate new data containing Anomalies
+# DBTITLE 1,Generate an independent scoring batch containing anomalies
 
 def inject_anomalies_and_dq_issues(
     base_rows: list[tuple],
@@ -298,6 +323,7 @@ def inject_anomalies_and_dq_issues(
         transaction_id, date, amount, quantity, category, region = row
         transaction_id = f"NEW{idx:06d}"
         is_synthetic_anomaly = False
+        negative_amount_injected = False
 
         dq_roll = random.random()
         if dq_roll < dq_null_amount_rate:
@@ -306,6 +332,7 @@ def inject_anomalies_and_dq_issues(
             quantity = None
         elif dq_roll < dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate:
             amount = -abs(amount)
+            negative_amount_injected = True
         elif random.random() < anomaly_rate:
             is_synthetic_anomaly = True
             anomaly_type = random.choices(
@@ -330,7 +357,7 @@ def inject_anomalies_and_dq_issues(
                 quantity = int(quantity * random.uniform(10, 18))
                 date = date.replace(hour=random.choice([2, 3, 4, 22, 23]))
 
-        if amount is not None:
+        if amount is not None and not negative_amount_injected:
             amount = max(10, min(10000, amount))
         if quantity is not None:
             quantity = max(1, min(150, quantity))
@@ -338,7 +365,7 @@ def inject_anomalies_and_dq_issues(
         rows.append((transaction_id, date, amount, quantity, category, region, is_synthetic_anomaly))
     return rows
 
-print("🔄 Generating new data with injected anomalies...\n")
+print("🔄 Generating an independent scoring batch with injected anomalies...\n")
 
 new_rows = 1000
 anomaly_rate = 0.02
@@ -347,6 +374,7 @@ dq_null_quantity_rate = 0.005
 dq_negative_amount_rate = 0.005
 dq_issue_rate = dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate
 
+# Independent synthetic scoring rows from the same historical window; this is not a future holdout.
 new_data_base = generate_historical_sales_data(num_rows=new_rows)
 new_data = inject_anomalies_and_dq_issues(
     base_rows=new_data_base,
@@ -368,29 +396,29 @@ new_schema = StructType([
 
 df_new = spark.createDataFrame(new_data, new_schema)
 
-print("📊 Sample of new data:")
-display(df_new.orderBy("date"))
+print("📊 Sample of the independent scoring batch:")
+display(df_new.orderBy("date", "transaction_id"))
 
 total_new = df_new.count()
-print(f"\n✅ Generated {total_new} NEW transactions")
+print(f"\n✅ Generated {total_new} independent scoring transactions")
 print(f"   Injected anomalies: ~{int(total_new * anomaly_rate)} ({anomaly_rate*100:.0f}%)")
 print(f"   Injected rule issues: ~{int(total_new * dq_issue_rate)} ({dq_issue_rate*100:.1f}%)")
 
 new_table = f"{catalog}.{schema_name}.sales_transactions_new"
 df_new.write.mode("overwrite").saveAsTable(new_table)
-print(f"✅ New data saved to: {new_table}")
+print(f"✅ Independent scoring batch saved to: {new_table}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Section 4: Apply checks including row anomaly detection
 # MAGIC
-# MAGIC Now apply row anomaly detection + rule-based checks to the **new data**.
+# MAGIC Now apply row anomaly detection + rule-based checks to the **independent scoring batch**.
 
 # COMMAND ----------
 # DBTITLE 1,Apply quality checks
 
-print("🔍 Applying quality checks to new data...\n")
+print("🔍 Applying quality checks to the independent scoring batch...\n")
 
 # Define all quality checks, use default criticality="error"
 checks_combined = [
@@ -416,9 +444,9 @@ df_valid, df_quarantine = dq_engine.apply_checks_and_split(df_new, checks_combin
 display(df_quarantine)
 
 print("\n💡 Summary:")
-print("   • We trained on historical data and applied checks on new data.")
-print("   • Default threshold 95 flags the top 5% most unusual records.")
-print("   • Threshold is a percentile cutoff — tune it based on your data and alert tolerance.")
+print("   • We trained on historical data and applied checks to an independent scoring batch from the same window.")
+print("   • Default threshold 95 flags rows above the 95th percentile of training severity.")
+print("   • The share flagged in another batch can differ; tune the cutoff based on alert tolerance.")
 
 # COMMAND ----------
 
@@ -439,9 +467,14 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # COMMAND ----------
 # DBTITLE 1,Review Results
 
-df_quarantine = df_quarantine.filter(
-    F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly") == True
-)
+anomaly = F.col("_dq_info").getItem(0).getField("anomaly")
+is_anomaly = F.coalesce(anomaly.getField("is_anomaly"), F.lit(False))
+# Keep the complete quarantine result for investigation. This separate view contains only anomaly flags,
+# while the union below retains every source row, including rule-only failures and duplicate IDs.
+df_scored = df_valid.unionByName(df_quarantine, allowMissingColumns=True)
+assert df_new.exceptAll(df_scored.select(*df_new.columns)).count() == 0
+assert df_scored.select(*df_new.columns).exceptAll(df_new).count() == 0
+df_anomaly_only = df_scored.filter(is_anomaly)
 score_col = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
 severity_col = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
 percentile_band = (
@@ -450,33 +483,59 @@ percentile_band = (
     .when(severity_col >= 90, F.lit("p90-95 (top 10%)"))
     .otherwise(F.lit("<p90 (bottom 90%)"))
 )
-total_scored = df_new.count()
-anomalies_count = df_quarantine.count()
+total_scored = df_scored.count()
+anomalies_count = df_anomaly_only.count()
+rule_only_failures = df_quarantine.filter(~is_anomaly).count()
+unscored_count = df_scored.filter(score_col.isNull()).count()
+assert unscored_count == 0
 
 print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
 print(f"   Total new transactions: {total_new}")
 print(f"   Anomalies found: {anomalies_count} ({(anomalies_count / total_new) * 100:.1f}%)")
+print(f"   Rule-only quarantine rows: {rule_only_failures}")
+print(f"   Rows without a score (for example, unseen groups): {unscored_count}")
 print("ℹ️  Each record receives a severity percentile.")
 print("   The percentile threshold decides whether a record is flagged as anomalous.")
 print("   Even records that are not flagged still get severity for analysis.")
 print("   Higher percentile = more severe relative to training data.")
 
-# Sanity check: did we catch the injected anomalies?
-# Since we used split, we union the valid and quarantine dataset to get all records for analysis
-df_scored = df_valid.unionByName(df_quarantine, allowMissingColumns=True)
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Read model metrics separately from data quality failures
+# MAGIC
+# MAGIC The `is_synthetic_anomaly` label marks only the planted **model** anomalies. Rows with a null
+# MAGIC amount, null quantity, or negative amount are deliberate DQ faults, so they keep that label set to
+# MAGIC `false`. The explicit rule-only quarantine count above reports DQ-fault rows that are not also model
+# MAGIC flagged. The confusion matrix is relative to planted model anomalies: its `FP` count includes
+# MAGIC injected null/negative fault rows that the model also flags, so it is not proof that every model flag
+# MAGIC is wrong.
+
+# COMMAND ----------
+
+# Sanity check: did we catch the injected anomalies? These are row counts, so duplicate transaction IDs
+# remain in the evaluation rather than being silently deduplicated.
 synthetic_total = df_scored.filter(F.col("is_synthetic_anomaly") == True).count()
 synthetic_caught = df_scored.filter(
     (F.col("is_synthetic_anomaly") == True)
-    & (F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly") == True)
+    & is_anomaly
 ).count()
+true_positive = df_scored.filter((F.col("is_synthetic_anomaly") == True) & is_anomaly).count()
+false_positive = df_scored.filter((F.col("is_synthetic_anomaly") == False) & is_anomaly).count()
+false_negative = df_scored.filter((F.col("is_synthetic_anomaly") == True) & ~is_anomaly).count()
+true_negative = df_scored.filter((F.col("is_synthetic_anomaly") == False) & ~is_anomaly).count()
 if synthetic_total > 0:
     recall = synthetic_caught / synthetic_total * 100
     print(f"\n✅ Synthetic anomalies injected: {synthetic_total}")
     print(f"   Synthetic anomalies caught: {synthetic_caught} ({recall:.1f}% recall)")
+print(
+    f"   Row confusion counts: TP={true_positive}, FP={false_positive}, "
+    f"FN={false_negative}, TN={true_negative}"
+)
 print(f"\n🔝 Top 10 anomalies:\n")
 
-display(df_quarantine.orderBy(severity_col.desc()).select(
+display(df_anomaly_only.orderBy(severity_col.desc(), F.col("transaction_id").asc()).select(
     "transaction_id", "date", "amount", "quantity", "category", "region",
     F.round(severity_col, 1).alias("severity_percentile"),
     F.round(score_col, 3).alias("anomaly_score"),
@@ -493,8 +552,8 @@ display(df_quarantine.orderBy(severity_col.desc()).select(
 # MAGIC `_dq_info[0].anomaly.ai_explanation` (a plain-language `narrative`, `business_impact`,
 # MAGIC `action`, and the deterministic `top_features` pattern). The LLM call runs **inside Spark**
 # MAGIC via the SQL `ai_query` function against a Databricks Model Serving endpoint — no extra
-# MAGIC dependency, and rows are grouped so the model is called **once per group** (capped by
-# MAGIC `max_groups`). This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS
+# MAGIC dependency, and rows are grouped to bound explanation work with `max_groups`. The exact number
+# MAGIC of endpoint requests depends on Spark execution and retries. This requires **Databricks serverless compute or Databricks Runtime 15.4 LTS
 # MAGIC or above** (where `ai_query` is available). If `ai_query` is unavailable or no endpoint is
 # MAGIC reachable, explanations are skipped with a warning and scoring still completes.
 # MAGIC
@@ -514,7 +573,7 @@ checks_with_ai = [
             # "enable_ai_explanation": False,                       # turn explanations off
             # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},  # override endpoint
             # "redact_columns": ["region"],                         # keep sensitive names out of the prompt
-            # "max_groups": 500,                                    # cap on LLM calls per run
+            # "max_groups": 500,                                    # bound eligible explanation groups per run
         },
     )
 ]
@@ -526,14 +585,14 @@ explanation = anomaly.getField("ai_explanation")
 print("🤖 Top anomalies with AI explanations:\n")
 display(
     df_ai.filter(anomaly.getField("is_anomaly") == True)
-    .orderBy(anomaly.getField("severity_percentile").desc())
+    .orderBy(anomaly.getField("severity_percentile").desc(), F.col("transaction_id").asc())
     .select(
         "transaction_id",
         "amount",
         "quantity",
         F.round(anomaly.getField("severity_percentile"), 1).alias("severity_percentile"),
         explanation.getField("top_features").alias("top_features"),
-        explanation.getField("narrative").alias("why_flagged"),
+        F.substring(explanation.getField("narrative"), 1, 240).alias("why_flagged"),
         explanation.getField("business_impact").alias("business_impact"),
         explanation.getField("action").alias("suggested_action"),
     )
@@ -552,7 +611,7 @@ display(
 # DBTITLE 1,Threshold Tradeoffs
 
 print("📌 Summary:")
-print("   • Default threshold = 95 (top 5%).")
+print("   • Default threshold = 95 (above the 95th percentile of training severity; not a fixed batch share).")
 print("   • Raise it to reduce alerts; lower it to catch more.")
 print("   • The right setting depends on your data distribution and risk tolerance.")
 
@@ -602,12 +661,17 @@ for threshold in thresholds:
     print(f"   {threshold:>3d}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
 
 print("\n💡 Start at 95, then explore thresholds on your data to balance noise vs. missed anomalies.")
+print("   Read the threshold as an alert budget rather than a confidence score: 95 means 'above the 95th")
+print("   percentile of training severity'. This batch may flag more or fewer rows, so use the sweep to")
+print("   choose an alert workload. A row at severity 97 is in the top 3% most unusual; it is not 97% likely to be bad.")
 
 # COMMAND ----------
 # DBTITLE 1,Tuning the Threshold
 
 # Borderline slice (optional)
-borderline = df_scored.filter((severity_col >= 90) & (severity_col < 95)).orderBy(severity_col.desc())
+borderline = df_scored.filter((severity_col >= 90) & (severity_col < 95)).orderBy(
+    severity_col.desc(), F.col("transaction_id").asc()
+)
 print(f"\nBorderline (90-<95) examples: {borderline.count()}")
 display(borderline.select(
     "transaction_id", "amount", "quantity",
@@ -626,7 +690,7 @@ display(borderline.select(
 # MAGIC
 # MAGIC We will train a model with specific columns. While applying the row anomaly detection check, only the columns the model was trained on will be used.
 # MAGIC
-# MAGIC This is important in production when you need strict feature control. By default, all supported columns are used.
+# MAGIC This is important in production when you need strict feature control. When columns are omitted, DQX discovers up to ten suitable feature columns and may select grouping columns.
 
 # COMMAND ----------
 # DBTITLE 1,Training with Manual Column Selection
@@ -662,16 +726,16 @@ checks_manual = [
     )
 ]
 
-df_valid, df_quarantine_manual = dq_engine.apply_checks_and_split(df_new, checks_manual)
+df_manual_valid, df_quarantine_manual = dq_engine.apply_checks_and_split(df_new, checks_manual)
 
 print(f"⚠️  Manual model found {df_quarantine_manual.count()} anomalies")
-print(f"   (Auto model found {df_quarantine.count()} anomalies)")
+print(f"   (Auto model found {df_anomaly_only.count()} anomalies)")
 print(f"\n🔝 Top 5 anomalies from manual model:\n")
 
 
 _dq_info_severity = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
 _dq_info_score = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
-display(df_quarantine_manual.orderBy(_dq_info_severity.desc()).select(
+display(df_quarantine_manual.orderBy(_dq_info_severity.desc(), F.col("transaction_id").asc()).select(
     "transaction_id", "amount", "quantity", "date",
     F.round(_dq_info_severity, 1).alias("severity_percentile"),
     F.round(_dq_info_score, 3).alias("score")
@@ -691,7 +755,7 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC ### Advanced Options (Reference)
 # MAGIC
 # MAGIC **Scoring options (`has_no_row_anomalies`):**
-# MAGIC - `threshold` (float, 0–100): percentile cutoff (default 95)
+# MAGIC - `threshold` (float, finite value in [0, 100)): percentile cutoff (default 95)
 # MAGIC - `enable_contributions` (bool): feature contributions in `_dq_info[0].anomaly`
 # MAGIC - `enable_confidence_std` (bool): confidence estimate (std dev across ensemble)
 # MAGIC - `drift_threshold` (float): drift detection sensitivity
@@ -699,10 +763,12 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC **Training options (`AnomalyEngine.train` / `AnomalyParams`):**
 # MAGIC - `columns` (list[str]): explicit feature list (disables auto‑discovery)
-# MAGIC - `segment_by` (list[str]): explicit segmentation columns
+# MAGIC - `baseline_by` (list[str]): columns naming the group each metric is judged against
+# MAGIC - `baseline_over_time` (str): a timestamp column used as the *axis* each metric is measured along,
+# MAGIC   rather than as calendar features
 # MAGIC - `sample_fraction`, `max_rows`: training sample controls
 # MAGIC - `ensemble_size`: number of models in the ensemble
-# MAGIC - `expected_anomaly_rate`: expected anomaly rate for calibration
+# MAGIC - `profile` (str): which detector decides a row is unusual, `"distribution"` (default) or `"correlation"`
 # MAGIC
 # MAGIC These are optional — the demo uses defaults for simplicity.
 # MAGIC
@@ -733,7 +799,10 @@ print("\n🎯 Top Anomalies with Explanations:\n")
 # Filter by _errors column (standard DQX pattern) to get flagged anomalies
 anomalies_explained = df_with_contrib.filter(
     F.size(F.col("_errors")) > 0
-).orderBy(F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc()).limit(5)
+).orderBy(
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc(),
+    F.col("transaction_id").asc(),
+).limit(5)
 
 _dq_severity = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
 _dq_score = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
@@ -768,34 +837,47 @@ anomalies_flattened = anomalies_explained.select(
     F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
 )
 
-top_anomaly = anomalies_flattened.first()
+top_anomaly = anomalies_flattened.orderBy(
+    F.col("severity_percentile").desc(), F.col("transaction_id").asc()
+).first()
 
-print(f"Transaction ID: {top_anomaly['transaction_id']}")
-print(f"Severity Percentile: {top_anomaly['severity_percentile']:.1f}")
-print(f"Anomaly Score (raw): {top_anomaly['score']:.3f}")
-print(f"\nTransaction Details:")
-print(f"   Amount: ${top_anomaly['amount']:.2f}")
-print(f"   Quantity: {top_anomaly['quantity']}")
-print(f"   Date: {top_anomaly['date']}")
-print(f"\nFeature Contributions:")
-
-contributions = top_anomaly['contributions']
-if contributions:
-    # Sort by contribution value
-    sorted_contrib = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
-    for feature, value in sorted_contrib[:3]:  # Top 3
-        print(f"   {feature}: {abs(value):.1f}% contribution")
-    
-    print(f"\n🎯 Investigation Tip:")
-    top_feature = sorted_contrib[0][0]
-    if "amount" in top_feature:
-        print(f"   → Check for pricing errors or incorrect price feeds")
-    elif "quantity" in top_feature:
-        print(f"   → Investigate bulk order or inventory issue")
-    elif "date" in top_feature or "hour" in top_feature:
-        print(f"   → Review transaction timing - off-hours activity?")
+if top_anomaly is None:
+    print("No anomaly with contributions is available for the optional detailed example.")
 else:
-    print("   (No detailed contributions available)")
+    print(f"Transaction ID: {top_anomaly['transaction_id']}")
+    severity = top_anomaly['severity_percentile']
+    score = top_anomaly['score']
+    amount = top_anomaly['amount']
+    print(f"Severity Percentile: {severity:.1f}" if severity is not None else "Severity Percentile: null")
+    print(f"Anomaly Score (raw): {score:.3f}" if score is not None else "Anomaly Score (raw): null")
+    print(f"\nTransaction Details:")
+    print(f"   Amount: ${amount:.2f}" if amount is not None else "   Amount: null")
+    print(f"   Quantity: {top_anomaly['quantity']}")
+    print(f"   Date: {top_anomaly['date']}")
+    print(f"\nFeature Contributions:")
+
+    contributions = top_anomaly['contributions']
+    visible_contrib = (
+        [(feature, value) for feature, value in contributions.items() if value is not None and value > 0]
+        if contributions
+        else []
+    )
+    if visible_contrib:
+        # Sort by contribution value, then feature name for deterministic ties.
+        sorted_contrib = sorted(visible_contrib, key=lambda item: (-item[1], item[0]))
+        for feature, value in sorted_contrib[:3]:  # Top 3
+            print(f"   {feature}: {value:.1f}% contribution")
+
+        print(f"\n🎯 Investigation Tip:")
+        top_feature = sorted_contrib[0][0]
+        if "amount" in top_feature:
+            print(f"   → Check for pricing errors or incorrect price feeds")
+        elif "quantity" in top_feature:
+            print(f"   → Investigate bulk order or inventory issue")
+        elif "date" in top_feature or "hour" in top_feature:
+            print(f"   → Review transaction timing - off-hours activity?")
+    else:
+        print("   (No detailed contributions available)")
 
 # COMMAND ----------
 
@@ -819,16 +901,19 @@ else:
 # MAGIC )
 # MAGIC
 # MAGIC checks = [
-# MAGIC     has_no_row_anomalies(
-# MAGIC         model_name="your_catalog.your_schema.your_model_name",
-# MAGIC         registry_table="your_catalog.your_schema.dqx_anomaly_models",
+# MAGIC     DQDatasetRule(
+# MAGIC         check_func=has_no_row_anomalies,
+# MAGIC         check_func_kwargs={
+# MAGIC             "model_name": "your_catalog.your_schema.your_model_name",
+# MAGIC             "registry_table": "your_catalog.your_schema.dqx_anomaly_models",
+# MAGIC         },
 # MAGIC     )
 # MAGIC ]
 # MAGIC df_scored = dq_engine.apply_checks(your_df, checks)
 # MAGIC ```
 # MAGIC
 # MAGIC **Optional next steps:**
-# MAGIC - Add segmentation (`segment_by` option for training), drift detection, and scheduled scoring.
+# MAGIC - Add grouping (`baseline_by`), a time baseline (`baseline_over_time`), drift detection, and scheduled scoring.
 # MAGIC - Automate retraining and alerting.
 
 # COMMAND ----------

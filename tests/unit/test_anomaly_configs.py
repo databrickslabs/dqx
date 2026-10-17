@@ -1,11 +1,22 @@
 """Unit tests for anomaly detection configuration classes."""
 
+from collections.abc import Callable
+
+from pydantic import TypeAdapter, ValidationError
+from pydantic.json_schema import JsonSchemaMode
+import pytest
+from databricks.labs.blueprint.installation import JsonValue, MockInstallation
+
 from databricks.labs.dqx.config import (
     AnomalyConfig,
     AnomalyParams,
     FeatureEngineeringConfig,
+    InputConfig,
     IsolationForestConfig,
+    RunConfig,
+    WorkspaceConfig,
 )
+from databricks.labs.dqx.errors import InvalidConfigError
 
 # ============================================================================
 # IsolationForestConfig Tests
@@ -15,7 +26,9 @@ from databricks.labs.dqx.config import (
 def test_isolation_forest_config_defaults():
     """Test IsolationForestConfig with default values."""
     cfg = IsolationForestConfig()
-    assert cfg.contamination is None
+    # 0.02 rather than None since `expected_anomaly_rate` was removed: that parameter existed only to
+    # fill this field when unset, and defaulted to 0.02, so the effective default is unchanged.
+    assert cfg.contamination == 0.02
     assert cfg.num_trees == 200
     assert cfg.random_seed == 42
 
@@ -192,21 +205,51 @@ def test_anomaly_config_defaults():
     """Test AnomalyConfig defaults."""
     cfg = AnomalyConfig()
     assert cfg.columns is None
-    assert cfg.segment_by is None
+    assert cfg.baseline_by is None
     assert cfg.model_name is None
     assert cfg.registry_table is None
+    assert cfg.profile is None
+    assert cfg.baseline_over_time is None
 
 
-def test_anomaly_config_with_columns_and_segments():
-    """Test AnomalyConfig with custom columns and segmentation."""
+def test_anomaly_config_carries_the_profile():
+    """The detector choice has to survive a round trip through run-config YAML.
+
+    Without it the choice is reachable only from the Python API, so a scheduled retrain silently falls
+    back to the distribution default and produces a different model from the one the user trained by hand.
+    """
+    cfg = AnomalyConfig(columns=["a"], profile="correlation")
+    assert cfg.profile == "correlation"
+
+
+def test_anomaly_config_omitting_profile_keeps_the_distribution_default():
+    """A run config written before *profile* existed must still load, and train as it always did.
+
+    ``None`` rather than the literal ``"distribution"`` so the default lives in one place, next to the
+    detector resolution, rather than being duplicated into every persisted config.
+    """
+    cfg = AnomalyConfig(columns=["a"])
+    assert cfg.profile is None
+
+
+@pytest.mark.parametrize("legacy_value", [[], ["region"], "region", 1, True, {"region": "north"}])
+def test_anomaly_config_rejects_direct_legacy_segment_by(legacy_value: JsonValue) -> None:
+    """A removed setting gets the same migration error in direct Python construction."""
+    with pytest.raises(InvalidConfigError, match="segment_by.*baseline_by"):
+        constructor: Callable[..., AnomalyConfig] = AnomalyConfig
+        constructor(segment_by=legacy_value)
+
+
+def test_anomaly_config_with_columns_and_baseline():
+    """Test AnomalyConfig with custom columns and a baseline grouping."""
     cfg = AnomalyConfig(
         columns=["a", "b"],
-        segment_by=["region"],
+        baseline_by=["region"],
         model_name="demo_model",
         registry_table="main.default.dqx_anomaly_models",
     )
     assert cfg.columns == ["a", "b"]
-    assert cfg.segment_by == ["region"]
+    assert cfg.baseline_by == ["region"]
     assert cfg.model_name == "demo_model"
     assert cfg.registry_table == "main.default.dqx_anomaly_models"
 
@@ -242,10 +285,9 @@ def test_feature_engineering_config_defaults():
     """Test FeatureEngineeringConfig with default values."""
     cfg = FeatureEngineeringConfig()
 
-    # Check defaults exist
-    assert hasattr(cfg, "categorical_cardinality_threshold")
-    assert hasattr(cfg, "max_input_columns")
-    assert hasattr(cfg, "max_engineered_features")
+    assert cfg.categorical_cardinality_threshold == 20
+    assert cfg.max_input_columns == 25
+    assert cfg.max_engineered_features == 50
 
 
 def test_feature_engineering_config_custom_thresholds():
@@ -313,3 +355,180 @@ def test_feature_engineering_config_with_algo_config():
     assert params.algorithm_config.num_trees == 250
     assert feature_config.categorical_cardinality_threshold == 15
     assert feature_config.max_input_columns == 12
+
+
+def test_anomaly_config_survives_a_real_yaml_round_trip():
+    """Save and load through an installation, not just construct the dataclass.
+
+    The two tests above assert that `AnomalyConfig` *holds* a profile, which is not the same claim as
+    "a run config can express it". The workflow reads its configuration back out of the installation, so
+    a field that the serializer dropped would leave a scheduled retrain silently training the default
+    while the YAML on disk said otherwise. `MockInstallation` exercises that path with no workspace.
+    """
+    installation = MockInstallation()
+    installation.save(
+        WorkspaceConfig(
+            run_configs=[
+                RunConfig(
+                    name="fleet",
+                    input_config=InputConfig(location="catalog.schema.telemetry"),
+                    anomaly_config=AnomalyConfig(
+                        columns=["spindle_load", "motor_current"],
+                        model_name="catalog.schema.fleet_monitor",
+                        registry_table="catalog.schema.dqx_anomaly_models",
+                        baseline_by=["machine_id"],
+                        profile="correlation",
+                        baseline_over_time="reading_ts",
+                    ),
+                )
+            ]
+        )
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("fleet").anomaly_config
+
+    assert loaded is not None
+    assert loaded.columns == ["spindle_load", "motor_current"]
+    assert loaded.baseline_by == ["machine_id"]
+    assert loaded.profile == "correlation"
+    assert loaded.baseline_over_time == "reading_ts"
+
+
+def test_an_installation_written_before_these_fields_existed_still_loads():
+    """The backwards-compatibility guarantee, against a payload rather than against a constructor.
+
+    An installed run config predates every field this release added. Loading it must produce a config that
+    trains exactly what it trained before, which means all three arrive as None rather than raising on an
+    absent key.
+    """
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "input_config": {"location": "catalog.schema.orders"},
+                        "anomaly_config": {
+                            "columns": ["amount", "quantity"],
+                            "model_name": "catalog.schema.orders_monitor",
+                            "registry_table": "catalog.schema.dqx_anomaly_models",
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("orders").anomaly_config
+
+    assert loaded is not None
+    assert loaded.columns == ["amount", "quantity"]
+    assert loaded.baseline_by is None
+    assert loaded.profile is None
+    assert loaded.baseline_over_time is None
+
+
+def test_an_installation_with_null_legacy_segment_by_still_loads() -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "anomaly_config": {"columns": ["amount"], "segment_by": None},
+                    }
+                ],
+            }
+        }
+    )
+
+    loaded = installation.load(WorkspaceConfig).get_run_config("orders").anomaly_config
+    assert loaded is not None
+    assert loaded.columns == ["amount"]
+
+
+@pytest.mark.parametrize("legacy_value", [[], ["region"], "region", 1, True, {"region": "north"}])
+def test_an_installation_rejects_non_null_legacy_segment_by(legacy_value: JsonValue) -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {"name": "orders", "anomaly_config": {"columns": ["amount"], "segment_by": legacy_value}},
+                ],
+            }
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="segment_by.*baseline_by"):
+        installation.load(WorkspaceConfig)
+
+
+def test_an_installation_rejects_mixed_legacy_and_pooled_grouping() -> None:
+    installation = MockInstallation(
+        {
+            "config.yml": {
+                "__version__": 1,
+                "run_configs": [
+                    {
+                        "name": "orders",
+                        "anomaly_config": {
+                            "columns": ["amount"],
+                            "baseline_by": ["region"],
+                            "segment_by": ["region"],
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    with pytest.raises(InvalidConfigError, match="separate model per segment.*one pooled model"):
+        installation.load(WorkspaceConfig)
+
+
+def test_workspace_config_round_trip_omits_legacy_segment_by() -> None:
+    config = WorkspaceConfig(
+        run_configs=[
+            RunConfig(
+                input_config=InputConfig(location="catalog.schema.orders", options={"segment_by": "preserve"}),
+                anomaly_config=AnomalyConfig(columns=["amount"]),
+            )
+        ]
+    )
+    serialized = config.as_dict()
+    assert "segment_by" not in serialized["run_configs"][0]["anomaly_config"]
+    assert serialized["run_configs"][0]["input_config"]["options"]["segment_by"] == "preserve"
+
+    installation = MockInstallation()
+    installation.save(config)
+    saved = installation.load(WorkspaceConfig).get_run_config().anomaly_config
+    assert saved is not None
+    assert saved.columns == ["amount"]
+
+
+def test_workspace_config_type_adapter_accepts_null_legacy_marker_and_omits_it_on_dump() -> None:
+    adapter = TypeAdapter(WorkspaceConfig)
+    loaded = adapter.validate_python({"run_configs": [{"anomaly_config": {"columns": ["amount"], "segment_by": None}}]})
+
+    assert loaded.run_configs[0].anomaly_config == AnomalyConfig(columns=["amount"])
+    dumped = adapter.dump_python(
+        WorkspaceConfig(run_configs=[RunConfig(anomaly_config=AnomalyConfig())]), exclude_none=True
+    )
+    assert "segment_by" not in dumped["run_configs"][0]["anomaly_config"]
+
+
+def test_workspace_config_type_adapter_rejects_legacy_marker_with_migration_message() -> None:
+    adapter = TypeAdapter(WorkspaceConfig)
+
+    with pytest.raises(ValidationError, match="separate model per segment.*one pooled model"):
+        adapter.validate_python({"run_configs": [{"anomaly_config": {"segment_by": ["region"]}}]})
+
+
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+def test_workspace_config_type_adapter_exposes_legacy_marker_as_null_in_json_schema(mode: JsonSchemaMode) -> None:
+    schema = TypeAdapter(WorkspaceConfig).json_schema(mode=mode)
+    segment_by = schema["$defs"]["AnomalyConfig"]["properties"]["segment_by"]
+    assert segment_by["type"] == "null"

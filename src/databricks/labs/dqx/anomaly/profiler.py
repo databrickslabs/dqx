@@ -6,7 +6,9 @@ anomaly detection using on-the-fly heuristics.
 """
 
 import logging
+import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +27,16 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+# The sampling defaults live with sampling. profiler does not otherwise depend on core, and core does
+# not import profiler, so this direction adds no cycle.
+from databricks.labs.dqx.anomaly.core import DEFAULT_SAMPLE_FRACTION, DEFAULT_TRAIN_RATIO
+from databricks.labs.dqx.anomaly.group_config import (
+    MAX_BASELINE_COLUMN_CARDINALITY,
+    MAX_BASELINE_GROUPS,
+    MIN_ROWS_PER_BASELINE_GROUP,
+)
 from databricks.labs.dqx.profiling_utils import compute_exact_distinct_counts, compute_null_and_distinct_counts
+from databricks.labs.dqx.utils import quote_column_name, sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +54,20 @@ class AnomalyProfile:
     unsupported_columns: list[str] | None = None  # NEW: columns that cannot be used
 
 
-def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
+def auto_discover_columns(
+    df: DataFrame,
+    *,
+    baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+    max_rows: int | None = None,
+) -> AnomalyProfile:
     """
-    Auto-discover columns and segments for row anomaly detection.
+    Auto-discover feature columns and a baseline grouping for row anomaly detection.
 
-    Analyzes the DataFrame using on-the-fly heuristics to recommend
-    suitable columns and segmentation strategy.
+    Analyzes the DataFrame using on-the-fly heuristics to recommend suitable columns and a grouping
+    to condition on.
 
     Column selection criteria:
     - Numeric types (int, long, float, double, decimal)
@@ -56,20 +75,27 @@ def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     - null_rate < 50%
     - Exclude: timestamps, IDs (detected by name patterns)
 
-    Segment selection criteria:
-    - Categorical types (string, int with low cardinality)
-    - Distinct values: 2-50 (inclusive)
+    Baseline grouping criteria (see *select_baseline_columns*):
+    - Categorical types (string, int) with 2-50 distinct values
     - null_rate < 10%
-    - At least 1000 rows per segment (warn if violated)
+    - Projected support of at least MIN_ROWS_PER_BASELINE_GROUP rows per resulting group
 
     Args:
         df: DataFrame to analyze.
+        baseline_by: Declared grouping, or None to discover a grouping. An empty list keeps the
+            pooled comparison and leaves otherwise eligible categorical columns as features.
+        baseline_over_time: Declared time axis, retained in the input but excluded from features.
+        sample_fraction: Training sample fraction; None uses the training default.
+        train_ratio: Fraction of the sample used to fit; None uses the training default.
+        max_rows: Optional cap on the sample before the training split.
 
     Returns:
         AnomalyProfile with recommendations and warnings.
     """
     warnings: list[str] = []
-    return _auto_discover_heuristic(df, warnings)
+    return _auto_discover_heuristic(
+        df, warnings, baseline_by, baseline_over_time, sample_fraction, train_ratio, max_rows
+    )
 
 
 def _compute_numeric_stats_batched(df: DataFrame, column_names: list[str]) -> dict[str, dict[str, float]]:
@@ -78,8 +104,8 @@ def _compute_numeric_stats_batched(df: DataFrame, column_names: list[str]) -> di
         return {}
     agg_exprs = []
     for col_name in column_names:
-        agg_exprs.append(F.mean(F.col(col_name)).alias(f"{col_name}__mean"))
-        agg_exprs.append(F.stddev(F.col(col_name)).alias(f"{col_name}__std"))
+        agg_exprs.append(F.mean(F.col(quote_column_name(col_name))).alias(f"{col_name}__mean"))
+        agg_exprs.append(F.stddev(F.col(quote_column_name(col_name))).alias(f"{col_name}__std"))
     row = df.agg(*agg_exprs).first()
     if row is None:
         return {}
@@ -103,8 +129,8 @@ def _analyze_numeric_column(
         std = mean_std.get("std") or 0.0
     else:
         stats_row = df.select(
-            F.mean(F.col(col_name)).alias("mean"),
-            F.stddev(F.col(col_name)).alias("std"),
+            F.mean(F.col(quote_column_name(col_name))).alias("mean"),
+            F.stddev(F.col(quote_column_name(col_name))).alias("std"),
         ).first()
         if stats_row is None:
             return None, None
@@ -196,22 +222,6 @@ def _select_top_columns(
     return recommended_columns, column_types
 
 
-def _validate_and_add_segment_column(
-    df: DataFrame,
-    col_name: str,
-    warnings: list[str],
-) -> bool:
-    """Validate minimum segment size and add warnings if needed. Returns True if column should be added."""
-    min_segment_size_row = df.groupBy(col_name).count().select(F.min("count").alias("min_count")).first()
-    min_segment_size = min_segment_size_row["min_count"] if min_segment_size_row else None
-    if min_segment_size is not None and min_segment_size < 1000:
-        warnings.append(
-            f"Segment column '{col_name}' has segments with <1000 rows (min: {min_segment_size}), "
-            "models may be unreliable."
-        )
-    return True
-
-
 def _check_high_cardinality_warning(
     field: Any,
     col_name: str,
@@ -222,57 +232,234 @@ def _check_high_cardinality_warning(
     if isinstance(field.dataType, StringType) and "id" not in col_name.lower():
         warnings.append(
             f"Column '{col_name}' has {distinct_count} distinct values, "
-            "excluding from auto-selection (too high cardinality for segmentation)."
+            "excluding from auto-selection (too high cardinality for a baseline grouping)."
         )
 
 
-def _calculate_total_segments(
-    recommended_segments: list[str],
-    warnings: list[str],
+def _is_grouping_candidate(
+    distinct_count: int,
     *,
+    null_rate: float,
+    is_id_column: bool,
     total_count: int,
-    distinct_counts: dict[str, int],
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+) -> bool:
+    """Whether a column may be *considered* as a baseline grouping.
+
+    Identifier-like names and columns more than 10% null are rejected: a grouping keyed on something
+    nearly unique or frequently missing is not a peer group. The row requirement is only what a
+    median needs, since there is one model regardless of how many groups result.
+    """
+    return (
+        2 <= distinct_count <= MAX_BASELINE_COLUMN_CARDINALITY
+        and null_rate < 0.1
+        and not is_id_column
+        and (total_count / distinct_count) >= effective_min_rows_per_group(sample_fraction, train_ratio)
+    )
+
+
+def effective_min_rows_per_group(
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+    *,
+    total_count: int | None = None,
+    max_rows: int | None = None,
 ) -> int:
-    """Calculate total segment combinations and add warning if too many."""
-    if not recommended_segments:
-        return 1
+    """Full-table support projected to retain MIN_ROWS_PER_BASELINE_GROUP training rows.
 
-    segment_count = 1
-    for col in recommended_segments:
-        distinct_count = distinct_counts[col]
-        segment_count *= distinct_count
+    Sampling, splitting, and a cap can retain fewer rows in an individual group than this projection.
+    Fitted medians and calibration therefore check their actual usable support independently.
+    """
+    fraction = sample_fraction if sample_fraction is not None else DEFAULT_SAMPLE_FRACTION
+    if max_rows is not None and total_count:
+        fraction = min(fraction, max_rows / total_count)
+    retained = fraction * (train_ratio if train_ratio is not None else DEFAULT_TRAIN_RATIO)
+    if retained <= 0.0 or retained >= 1.0:
+        return MIN_ROWS_PER_BASELINE_GROUP
+    return int(math.ceil(MIN_ROWS_PER_BASELINE_GROUP / retained))
 
-    # Warn if segments are too granular relative to data size
-    avg_rows_per_segment = total_count / segment_count if segment_count > 0 else 0
 
-    if segment_count > 50:
-        warnings.append(
-            f"Detected {segment_count} total segments, training may be slow. "
-            "Consider filtering or using coarser segmentation."
+def select_baseline_columns(
+    candidates: list[tuple[str, int, float]],
+    total_count: int,
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+    *,
+    max_rows: int | None = None,
+    group_support: Callable[[list[str]], tuple[int, int]] | None = None,
+) -> list[str]:
+    """Choose a grouping for baseline conditioning, given candidates ordered by cardinality.
+
+    Uses actual joint group counts and minimum support when *group_support* is supplied; otherwise it
+    estimates a balanced Cartesian grouping from the candidate cardinalities. Frame-based discovery
+    always supplies measured support. Sampling-adjusted support is an estimate, not a guarantee.
+    The total group count stays within what is sensible to persist and broadcast. That is the whole
+    constraint: there is one model regardless of group count, so breadth costs nothing at training
+    time and buys a tighter baseline.
+
+    Deliberately *not* the segmented policy of taking a single lowest-cardinality column. On a
+    dataset grouped by country x event_type x product, that policy selected 3 groups out of 90 and
+    conditioning barely engaged. Cardinality-ascending order makes the choice deterministic and
+    spends the row budget on the coarsest dimensions first, so the grouping degrades gracefully on
+    smaller tables instead of picking one arbitrary fine dimension.
+    """
+    selected: list[str] = []
+    groups = 1
+    minimum = effective_min_rows_per_group(sample_fraction, train_ratio, total_count=total_count, max_rows=max_rows)
+    for name, distinct_count, _rows_per_group in candidates:
+        if distinct_count > MAX_BASELINE_COLUMN_CARDINALITY:
+            continue
+        prospective, smallest_group = (
+            group_support([*selected, name])
+            if group_support is not None
+            else (groups * int(distinct_count), total_count // (groups * int(distinct_count)))
         )
-    elif avg_rows_per_segment < 100:
-        warnings.append(
-            f"Detected {segment_count} segments with only ~{int(avg_rows_per_segment)} rows per segment on average. "
-            f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_count})."
-        )
+        if prospective > MAX_BASELINE_GROUPS:
+            continue
+        if smallest_group < minimum:
+            continue
+        selected.append(name)
+        groups = prospective
 
-    return segment_count
+    if selected:
+        # Neutral wording on purpose: this policy is shared by the path that applies a discovered
+        # grouping and the advisory path that only reports one, so it must not claim application.
+        logger.info(
+            f"Baseline grouping {[sanitize_for_logging(name) for name in selected]}: {groups} groups, "
+            f"~{int(total_count / groups)} rows/group (one model regardless of group count)"
+        )
+        skipped = [c[0] for c in candidates if c[0] not in selected]
+        if skipped:
+            logger.debug(
+                f"Not added to the baseline grouping (would leave under "
+                f"{minimum} rows/group before sampling, or exceed {MAX_BASELINE_GROUPS} "
+                f"groups): {[sanitize_for_logging(name) for name in skipped]}"
+            )
+    return selected
+
+
+def _measure_group_support(df: DataFrame, columns: list[str]) -> tuple[int, int]:
+    # Project to safe internal aliases so a source column named 'count' cannot collide with the
+    # aggregation output. Only two scalars reach the driver, even for a rejected wide grouping.
+    aliases = [f"__dqx_group_{index}" for index in range(len(columns))]
+    groups = (
+        df.select(*[F.col(quote_column_name(name)).alias(alias) for name, alias in zip(columns, aliases, strict=True)])
+        .groupBy(*aliases)
+        .count()
+    )
+    summary = groups.agg(F.count(F.lit(1)).alias("groups"), F.min("count").alias("smallest")).first()
+    if summary is None:
+        return 0, 0
+    return int(summary["groups"]), int(summary["smallest"] or 0)
+
+
+@dataclass(frozen=True)
+class BaselineSuggestion:
+    """A grouping the data would support, for advising a caller who did not ask for one."""
+
+    columns: list[str]
+    group_count: int
+    rows_per_group: int
+
+
+def suggest_baseline_columns(
+    df: DataFrame,
+    exclude: list[str],
+    *,
+    sample_fraction: float | None = None,
+    train_ratio: float | None = None,
+    max_rows: int | None = None,
+) -> BaselineSuggestion | None:
+    """Find a grouping the data would support, without selecting feature columns.
+
+    Deliberately narrower than *auto_discover_columns*: the grouping decision needs null rates
+    and distinct counts on the categorical columns only, so this skips the numeric mean/stddev
+    aggregation a full profile computes and would then throw away.
+
+    Used to *advise*, never to apply. A caller who named *columns* has decided what to measure, and
+    DQX does not add engineered features they did not ask for.
+
+    Args:
+        df: DataFrame to scan.
+        exclude: Columns the caller already named as features. A column cannot be both what is
+            measured and what it is measured against.
+        sample_fraction: Training sample fraction; None uses the training default.
+        train_ratio: Fraction of the sample used to fit; None uses the training default.
+        max_rows: Optional cap on the sample before the training split.
+
+    Returns:
+        The grouping and its shape, or None when the data supports none.
+    """
+    excluded = set(exclude)
+    categorical_types = (StringType, IntegerType)
+    categorical = [
+        f.name for f in df.schema.fields if isinstance(f.dataType, categorical_types) and f.name not in excluded
+    ]
+    if not categorical:
+        return None
+
+    total_count = df.count()
+    if total_count == 0:
+        return None
+    null_counts, distinct_counts = compute_null_and_distinct_counts(df, categorical, categorical, approx=True, rsd=0.05)
+    distinct_counts.update(compute_exact_distinct_counts(df, categorical))
+
+    id_pattern = re.compile(r"(?i)(id|key)$")
+    candidates = []
+    for name in categorical:
+        distinct_count = distinct_counts.get(name)
+        if distinct_count is None:
+            continue
+        if _is_grouping_candidate(
+            distinct_count,
+            null_rate=null_counts.get(name, 0) / total_count,
+            is_id_column=id_pattern.search(name) is not None,
+            total_count=total_count,
+            sample_fraction=sample_fraction,
+            train_ratio=train_ratio,
+        ):
+            candidates.append((name, distinct_count, total_count / distinct_count))
+
+    candidates.sort(key=lambda candidate: candidate[1])
+    selected = select_baseline_columns(
+        candidates,
+        total_count,
+        sample_fraction,
+        train_ratio,
+        max_rows=max_rows,
+        group_support=lambda names: _measure_group_support(df, names),
+    )
+    if not selected:
+        return None
+
+    group_count, _ = _measure_group_support(df, selected)
+    return BaselineSuggestion(
+        columns=selected,
+        group_count=group_count,
+        rows_per_group=int(total_count / group_count) if group_count else total_count,
+    )
 
 
 def _select_segment_columns(
     df: DataFrame,
     recommended_columns: list[str],
     column_types: dict[str, str],
-    id_pattern: "re.Pattern[str]",
+    id_pattern: re.Pattern[str],
     warnings: list[str],
     *,
     total_count: int,
     null_counts: dict[str, int],
     distinct_counts: dict[str, int],
+    sample_fraction: float | None,
+    train_ratio: float | None,
+    max_rows: int | None,
 ) -> tuple[list[str], int]:
-    """Identify and validate segment columns."""
-    recommended_segments = []
-    candidate_segments = []  # Track all viable candidates for user info
+    """Identify baseline grouping columns and count the groups they produce.
+
+    See *select_baseline_columns* for the policy.
+    """
+    candidate_segments = []
     categorical_types = (StringType, IntegerType)
     categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, categorical_types)]
 
@@ -285,59 +472,37 @@ def _select_segment_columns(
 
         # Compute distinct count and null rate
         distinct_count = distinct_counts.get(col_name)
-        null_count = null_counts.get(col_name, 0)
         if distinct_count is None:
-            distinct_row = df.select(F.countDistinct(col_name)).first()
+            distinct_row = df.select(F.countDistinct(F.col(quote_column_name(col_name)))).first()
             assert distinct_row is not None  # to satisfy linter
             distinct_count = distinct_row[0]
-        null_rate = null_count / total_count if total_count > 0 else 1.0
-        is_id_column = id_pattern.search(col_name) is not None
+        null_rate = null_counts.get(col_name, 0) / total_count if total_count > 0 else 1.0
 
-        # Check segment criteria: conservative for auto-discovery
-        # Only consider columns with 2-20 distinct values (not 50)
-        # Ensure at least 100 rows per segment on average
-        meets_segment_criteria = (
-            2 <= distinct_count <= 20  # More conservative upper bound
-            and null_rate < 0.1
-            and not is_id_column
-            and (total_count / distinct_count) >= 100  # At least 100 rows per segment
-        )
-        is_high_cardinality = distinct_count > 50
-
-        if meets_segment_criteria and _validate_and_add_segment_column(df, col_name, warnings):
+        if _is_grouping_candidate(
+            distinct_count,
+            null_rate=null_rate,
+            is_id_column=id_pattern.search(col_name) is not None,
+            total_count=total_count,
+            sample_fraction=sample_fraction,
+            train_ratio=train_ratio,
+        ):
             candidate_segments.append((col_name, distinct_count, total_count / distinct_count))
-        elif is_high_cardinality:
+        elif distinct_count > 50:
             _check_high_cardinality_warning(field, col_name, distinct_count, warnings)
 
-    # AUTO-DISCOVERY STRATEGY: Be conservative, prefer single segment column
-    # Sort candidates by: lowest cardinality first (fewer segments = more reliable)
+    # Cheapest granularity first, so the row budget is spent on coarse dimensions before fine ones
+    # and the grouping degrades gracefully on smaller tables.
     candidate_segments.sort(key=lambda x: x[1])  # Sort by distinct_count ascending
-
-    if candidate_segments:
-        # For auto-discovery, only select the FIRST (lowest cardinality) candidate
-        selected = candidate_segments[0]
-        recommended_segments.append(selected[0])
-
-        # Log helpful info about selection and alternatives
-        logger.info(
-            f"Auto-segmentation selected 1 column: [{selected[0]}] "
-            f"({int(selected[1])} segments, ~{int(selected[2])} rows/segment)"
-        )
-
-        # Suggest additional segmentation options if available
-        if len(candidate_segments) > 1:
-            other_options = ", ".join(
-                [f"{col} ({int(dc)} segments)" for col, dc, _ in candidate_segments[1:4]]  # Show up to 3 more
-            )
-            logger.info(
-                f"Consider additional segmentation for more granularity: "
-                f"segment_by=['{selected[0]}', <column>] where <column> could be: {other_options}"
-            )
-
-    # Calculate total segment combinations
-    segment_count = _calculate_total_segments(
-        recommended_segments, warnings, total_count=total_count, distinct_counts=distinct_counts
+    recommended_segments = select_baseline_columns(
+        candidate_segments,
+        total_count,
+        sample_fraction,
+        train_ratio,
+        max_rows=max_rows,
+        group_support=lambda names: _measure_group_support(df, names),
     )
+
+    segment_count = _measure_group_support(df, recommended_segments)[0] if recommended_segments else 1
     return recommended_segments, segment_count
 
 
@@ -435,13 +600,26 @@ def _compute_discovery_stats(df: DataFrame) -> tuple[dict[str, int], dict[str, i
     return null_counts, distinct_counts, numeric_stats, total_count
 
 
-def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfile:
+def _auto_discover_heuristic(
+    df: DataFrame,
+    warnings: list[str],
+    baseline_by: list[str] | None,
+    baseline_over_time: str | None,
+    sample_fraction: float | None,
+    train_ratio: float | None,
+    max_rows: int | None,
+) -> AnomalyProfile:
     """
     Auto-discover using on-the-fly heuristics with multi-type support.
 
     Args:
         df: DataFrame to analyze.
         warnings: List to accumulate warnings.
+        baseline_by: Declared grouping, or None to discover one. An empty list disables grouping.
+        baseline_over_time: Declared time axis to exclude from feature candidates.
+        sample_fraction: Training sample fraction; None uses the training default.
+        train_ratio: Fraction of the sample used to fit; None uses the training default.
+        max_rows: Optional cap on the sample before the training split.
 
     Returns:
         AnomalyProfile with recommendations (max 10 columns).
@@ -455,10 +633,9 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
 
     for field in df.schema.fields:
         col_name = field.name
-        col_type = field.dataType
 
         # Skip ID columns
-        if id_pattern.search(col_name):
+        if id_pattern.search(col_name) or col_name == baseline_over_time:
             continue
 
         null_count = null_counts.get(col_name, 0)
@@ -466,7 +643,7 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
 
         # Analyze by type and collect candidates
         _analyze_column_by_type(
-            col_type,
+            field.dataType,
             df,
             col_name,
             null_rate,
@@ -478,25 +655,37 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
             numeric_stats=numeric_stats,
         )
 
-    # Select top columns
-    max_columns = 10
-    recommended_columns, column_types = _select_top_columns(candidates, max_columns, warnings)
+    if baseline_by is None:
+        recommended_segments, segment_count = _select_segment_columns(
+            df,
+            [candidate[1] for candidate in candidates],
+            {candidate[1]: candidate[2] for candidate in candidates},
+            id_pattern,
+            warnings,
+            total_count=total_count,
+            null_counts=null_counts,
+            distinct_counts=distinct_counts,
+            sample_fraction=sample_fraction,
+            train_ratio=train_ratio,
+            max_rows=max_rows,
+        )
+    else:
+        recommended_segments = list(baseline_by)
+        segment_count = (
+            df.select(*[F.col(quote_column_name(name)) for name in recommended_segments]).distinct().count()
+            if recommended_segments
+            else 1
+        )
 
-    # Select segment columns
-    recommended_segments, segment_count = _select_segment_columns(
-        df,
-        recommended_columns,
-        column_types,
-        id_pattern,
-        warnings,
-        total_count=total_count,
-        null_counts=null_counts,
-        distinct_counts=distinct_counts,
+    # Resolve the comparison basis before the feature limit so a basis column cannot consume a
+    # feature slot. Explicit grouping also prevents unrelated suggested groups from disappearing.
+    feature_candidates = [candidate for candidate in candidates if candidate[1] not in recommended_segments]
+    recommended_columns, column_types = _select_top_columns(feature_candidates, 10, warnings)
+    # Grouping changes a column's role, not its analyzed type. Keep its type without expanding the
+    # metadata to unrelated feature candidates omitted by the feature limit.
+    column_types.update(
+        {candidate[1]: candidate[2] for candidate in candidates if candidate[1] in recommended_segments}
     )
-
-    # Remove segment columns from feature columns (they would be constant within each segment)
-    if recommended_segments:
-        recommended_columns = [col for col in recommended_columns if col not in recommended_segments]
 
     return AnomalyProfile(
         recommended_columns=recommended_columns,

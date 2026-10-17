@@ -3,24 +3,37 @@
 import logging
 import os
 import time
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
-import mlflow
-import mlflow.sklearn
+
 import mlflow.utils.rest_utils as mlflow_rest_utils
 import pytest
 import pyspark.sql.functions as F
 from mlflow.exceptions import RestException
+from pyspark.errors import PySparkException
 from pyspark.sql import DataFrame, SparkSession
+
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, InputConfig, IsolationForestConfig
+from databricks.labs.dqx.anomaly.core import fit_isolation_forest
+from databricks.labs.dqx.config import (
+    AnomalyConfig,
+    AnomalyParams,
+    InputConfig,
+    IsolationForestConfig,
+    LLMModelConfig,
+)
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.pytester.fixtures.baseline import factory
+from tests.anomaly_diagnostics import endpoint_unavailable_reason
+from tests import anomaly_resources
+from tests.anomaly_resources import drop_registered_models_in_schemas
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
+    DEFAULT_AI_QUERY_ENDPOINT,
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
@@ -34,14 +47,137 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
-# Process-scoped cache for MLflow experiment (one per xdist worker); lifecycle cleared by
-# _cleanup_mlflow_worker_experiment at session end. Not thread-safe.
-_MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
+
+# Bind the shared fixtures into this conftest module so pytest discovers them here.
+fixture_make_mlflow_experiment_resource = anomaly_resources.fixture_make_mlflow_experiment_resource
+fixture_mlflow_worker_experiment = anomaly_resources.fixture_mlflow_worker_experiment
+
+
+@pytest.fixture
+def scoring_contract_data(
+    spark: SparkSession,
+) -> Callable[[str], tuple[DataFrame, DataFrame, list[str], list[str], str | None]]:
+    """Provide deterministic mixed inputs for public driver/worker scoring contracts."""
+    start = datetime(2025, 1, 1)
+
+    def create(context: str) -> tuple[DataFrame, DataFrame, list[str], list[str], str | None]:
+        if context not in {"plain", "combined"}:
+            raise ValueError("Unknown scoring contract context")
+        training = spark.createDataFrame(
+            [
+                (
+                    100.0 + offset + 0.2 * index + ((index * 7) % 13 - 6),
+                    10.0 + 0.03 * index + ((index * 11) % 7 - 3) * 0.2,
+                    "open" if index % 3 else "closed",
+                    region,
+                    start + timedelta(hours=index),
+                )
+                for region, offset in (("North", 0.0), ("South", 200.0))
+                for index in range(200)
+            ],
+            "amount double, quantity double, status string, region string, event_time timestamp",
+        )
+        timestamp = start + timedelta(hours=100)
+        probes = [
+            (1, 119.0, 13.0, "open", "North", timestamp),
+            (2, 5000.0, 150.0, "open", "North", timestamp),
+            (2, 5000.0, 150.0, "open", "North", timestamp),
+            (3, None, 13.0, "open", "North", timestamp),
+            (4, 119.0, 13.0, "open", "Unseen", timestamp),
+            (5, 119.0, 13.0, "open", "North", None),
+            (6, 119.0, 13.0, "open", "North", start + timedelta(hours=400)),
+            (7, 119.0, 13.0, "open", "North", timestamp),
+            (8, 119.0, 13.0, "open", None, timestamp),
+        ]
+        payload = (0.42, 0.1, {"original": 0.2}, {"original basis": 0.3}, 12.0)
+        probe = spark.createDataFrame(
+            [(*row, *payload) for row in probes],
+            "probe_id int, amount double, quantity double, status string, region string, event_time timestamp, "
+            "anomaly_score double, anomaly_score_std double, anomaly_contributions map<string,double>, "
+            "anomaly_basis_contributions map<string,double>, severity_percentile double",
+        )
+        return (
+            training,
+            probe,
+            ["amount", "quantity", "status"],
+            ["region"] if context == "combined" else [],
+            "event_time" if context == "combined" else None,
+        )
+
+    return create
+
+
+@pytest.fixture
+def discovery_basis_df(spark):
+    """Two equally eligible groups make accidental implicit exclusions visible."""
+    start = datetime(2025, 1, 6)
+    return spark.createDataFrame(
+        [
+            (region, channel, float(i), start + timedelta(minutes=i))
+            for region in ("North", "South")
+            for channel in ("Store", "Online")
+            for i in range(200)
+        ],
+        "region string, channel string, amount double, event_time timestamp",
+    )
+
+
+@pytest.fixture
+def grouped_categorical_model(spark):
+    """A local fitted estimator with categorical-only features and a nullable comparison group."""
+    df = spark.createDataFrame(
+        [(region, "open" if i % 3 else "closed", i % 2 == 0) for region in ("North", None) for i in range(40)],
+        "region string, status string, enabled boolean",
+    )
+    params = AnomalyParams(baseline_by=["region"], algorithm_config=IsolationForestConfig(num_trees=10, random_seed=42))
+    model, _, metadata = fit_isolation_forest(df, ["status", "enabled"], params)
+    return df, model, metadata
 
 
 # -----------------------------------------------------------------------------
 # Helper functions (reusable across tests)
 # -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# ai_query (LLM) endpoint probing — shared by every test that needs a live endpoint
+# -----------------------------------------------------------------------------
+
+AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", DEFAULT_AI_QUERY_ENDPOINT)
+
+
+def ai_query_llm_config(endpoint: str) -> LLMModelConfig:
+    """LLMModelConfig pointing at a Model Serving endpoint reached through SQL ``ai_query``."""
+    return LLMModelConfig(model_name=endpoint)
+
+
+def ai_query_endpoint_available(session: SparkSession) -> tuple[bool, str | None]:
+    """Cheap probe — does ai_query against the configured endpoint succeed?
+
+    Known missing, denied, or temporarily unavailable endpoints produce a safe skip
+    reason. Unexpected SQL, schema, and execution failures propagate as test failures.
+    """
+    try:
+        session.sql(
+            f"SELECT ai_query('{AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
+            f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
+        ).collect()
+        return True, None
+    except PySparkException as exc:
+        reason = endpoint_unavailable_reason(exc.getErrorClass(), str(exc))
+        if reason is None:
+            raise
+        return False, reason
+
+
+@pytest.fixture
+def ai_query_endpoint(ws, spark):
+    """Skip the test when the workspace cannot reach the configured ai_query endpoint."""
+    assert ws.current_user.me() is not None  # fail-fast if workspace auth is broken
+    available, error = ai_query_endpoint_available(spark)
+    if not available:
+        pytest.skip(f"{error}; set DQX_AI_QUERY_TEST_ENDPOINT to use an available endpoint")
+    return AI_QUERY_TEST_ENDPOINT
 
 
 def qualify_model_name(model_name: str, registry_table: str) -> str:
@@ -138,8 +274,9 @@ def train_model_with_params(
     registry_table: str,
     columns: list[str],
     params: AnomalyParams,
-    segment_by: list[str] | None = None,
-    expected_anomaly_rate: float = 0.02,
+    baseline_by: list[str] | None = None,
+    baseline_over_time: str | None = None,
+    profile: str | None = None,
 ) -> str:
     """Train a model with internal params (test-only)."""
     return engine.train(
@@ -147,9 +284,10 @@ def train_model_with_params(
         columns=columns,
         model_name=model_name,
         registry_table=registry_table,
-        segment_by=segment_by,
+        baseline_by=baseline_by,
+        baseline_over_time=baseline_over_time,
         params=params,
-        expected_anomaly_rate=expected_anomaly_rate,
+        profile=profile,
     )
 
 
@@ -439,102 +577,6 @@ def anomaly_engine(ws, spark):
     return AnomalyEngine(ws, spark)
 
 
-def _delete_mlflow_experiment(experiment_id: str) -> None:
-    """Delete an MLflow experiment; log and ignore errors so teardown does not fail the run."""
-    try:
-        mlflow.delete_experiment(experiment_id)
-        msg = f"Deleted MLflow experiment {experiment_id}"
-        logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment {experiment_id}: {e}"
-        logger.warning(msg)
-
-
-def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
-    """Resolve experiment by name and delete; log and ignore errors."""
-    try:
-        exp = mlflow.get_experiment_by_name(experiment_path)
-        if exp is not None and getattr(exp, "experiment_id", None):
-            mlflow.delete_experiment(exp.experiment_id)
-            msg = f"Deleted MLflow experiment {experiment_path} (id={exp.experiment_id})"
-            logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
-        logger.warning(msg)
-
-
-@pytest.fixture(autouse=True)
-def _ensure_databricks_config_file(ws, tmp_path_factory):
-    """Ensure DATABRICKS_CONFIG_FILE points to a valid profile.
-
-    MLflow requires a Databricks config profile to exist even when using SDK auth.
-    If DATABRICKS_CONFIG_FILE is already set and the file exists, this is a no-op.
-    Otherwise, create a dummy profile with the real host from the workspace client.
-    """
-    config_file = os.environ.get("DATABRICKS_CONFIG_FILE")
-    if config_file and os.path.isfile(config_file):
-        return
-
-    profile_dir = tmp_path_factory.mktemp("databricks_config")
-    profile_path = profile_dir / "databricks_profile"
-    host = ws.config.host
-    profile_path.write_text(f"[DEFAULT]\nhost = {host}\ntoken = dummy\n")
-    os.environ["DATABRICKS_CONFIG_FILE"] = str(profile_path)
-
-
-@pytest.fixture
-def mlflow_worker_experiment(ws):
-    """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.
-    Cleanup is done by _cleanup_mlflow_worker_experiment at session end. Function-scoped so
-    we can depend on ws (pytester provides ws as function-scoped)."""
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
-        if not local_mlflow_db:
-            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-            local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
-        tracking_uri = f"sqlite:///{local_mlflow_db}"
-        os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
-        os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
-    registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_registry_uri(registry_uri)
-
-    cached_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
-    if cached_path is not None:
-        return (_MLFLOW_WORKER_EXPERIMENT_CACHE["id"], cached_path)
-
-    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-    user_name = ws.current_user.me().user_name
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    suffix = uuid4().hex[:8]
-    experiment_path = f"/Users/{user_name}/dqx_integration_tests_{worker_id}_{suffix}"
-    experiment = mlflow.set_experiment(experiment_path)
-    experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
-    logger.debug(f"Created MLflow experiment {experiment_path} (id={experiment_id})")
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = experiment_id
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = experiment_path
-    return (experiment_id, experiment_path)
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _cleanup_mlflow_worker_experiment():
-    """Clear MLflow experiment and cache at end of worker session."""
-    yield
-    experiment_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
-    if experiment_path is None:
-        return
-    experiment_id = _MLFLOW_WORKER_EXPERIMENT_CACHE["id"]
-    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
-    if experiment_id:
-        _delete_mlflow_experiment(experiment_id)
-    else:
-        _delete_mlflow_experiment_by_name(experiment_path)
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = None
-    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = None
-
-
 @pytest.fixture(autouse=True)
 def configure_mlflow_tracking(mlflow_worker_experiment):
     """Set MLflow experiment env for each test from the worker-scoped experiment fixture."""
@@ -543,34 +585,10 @@ def configure_mlflow_tracking(mlflow_worker_experiment):
     if experiment_id:
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
     os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
-    logger.debug(f"MLflow configured: experiment={experiment_path}")
 
 
-def _drop_registered_models_in_schema(ws, catalog_name: str, schema_name: str) -> None:
-    """Delete every UC registered model (and its versions) in a schema.
-
-    Anomaly training registers models inside the test schema. A forced schema delete does NOT
-    cascade registered models, so without this they (a) block the schema teardown and (b) pile up
-    toward the metastore registered-model quota across runs. Best-effort: logs and continues on
-    error (missing schema, permission, concurrent delete) so teardown never fails a test.
-    """
-    try:
-        models = list(ws.registered_models.list(catalog_name=catalog_name, schema_name=schema_name))
-    except Exception as exc:  # best-effort teardown
-        logger.warning(f"Could not list registered models in {catalog_name}.{schema_name}: {exc}")
-        return
-    for model in models:
-        try:
-            for version in ws.model_versions.list(full_name=model.full_name):
-                ws.model_versions.delete(full_name=model.full_name, version=version.version)
-            ws.registered_models.delete(full_name=model.full_name)
-            logger.debug(f"Deleted registered model {model.full_name}")
-        except Exception as exc:  # best-effort teardown
-            logger.warning(f"Could not delete registered model {model.full_name}: {exc}")
-
-
-@pytest.fixture
-def make_schema(make_schema, ws):
+@pytest.fixture(name="make_schema")
+def fixture_make_schema(make_schema, ws):
     """Wrap pytester's ``make_schema`` so registered models in each schema are dropped at teardown.
 
     Anomaly training registers UC models inside the test schema, and a forced schema delete does
@@ -590,8 +608,7 @@ def make_schema(make_schema, ws):
         return schema
 
     yield _make
-    for schema in created:
-        _drop_registered_models_in_schema(ws, schema.catalog_name, schema.name)
+    drop_registered_models_in_schemas(ws, [(schema.catalog_name, schema.name) for schema in created])
 
 
 @pytest.fixture
@@ -785,7 +802,7 @@ def quick_model_factory(ws, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 
-    Use when tests need specific training params (internal, e.g., AnomalyParams, segment_by).
+    Use when tests need specific training params (internal, e.g., AnomalyParams, profile).
     For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
 
     Returns a callable that accepts spark and training parameters.
@@ -797,9 +814,12 @@ def quick_model_factory(ws, make_random, make_schema):
         columns: list[str] | None = None,
         train_data: list[tuple] | None = None,
         params=None,
-        segment_by: list[str] | None = None,
         catalog: str = TEST_CATALOG,
         schema: str | None = None,
+        baseline_by: list[str] | None = None,
+        baseline_over_time: str | None = None,
+        train_schema: str | None = None,
+        profile: str | None = None,
     ):
         """
         Train a quick test model.
@@ -810,7 +830,12 @@ def quick_model_factory(ws, make_random, make_schema):
             columns (list[str] | None): Column names (default: ["amount", "quantity"])
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
             params (AnomalyParams | None): Internal training params (test-only)
-            segment_by (list[str] | None): Segment columns for segmented models
+            baseline_by (list[str] | None): Group columns for baseline-conditioned models
+            baseline_over_time (str | None): Time column each metric's expected level is fitted along
+            profile (str | None): Which detector to train ("distribution" / "correlation"); None means
+                the default, so existing callers keep the IsolationForest path untouched.
+            train_schema (str | None): Explicit DDL for train_data (needed when group columns
+                are not doubles)
             catalog (str): Catalog name
             schema (str | None): Schema name
 
@@ -835,8 +860,9 @@ def quick_model_factory(ws, make_random, make_schema):
         if train_data is None:
             train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
 
-        # Infer schema from columns
-        schema_str = ", ".join(f"{col} double" for col in columns)
+        # Infer schema from columns unless the caller gave explicit DDL (group columns are
+        # typically strings, which cannot be inferred from the feature column list)
+        schema_str = train_schema or ", ".join(f"{col} double" for col in columns)
         train_df = session.createDataFrame(train_data, schema_str)
 
         # Create engine with shared ws client
@@ -848,7 +874,9 @@ def quick_model_factory(ws, make_random, make_schema):
                 columns=columns,
                 model_name=model_name,
                 registry_table=registry_table,
-                segment_by=segment_by,
+                baseline_by=baseline_by,
+                baseline_over_time=baseline_over_time,
+                profile=profile,
             )
         else:
             full_model_name = train_model_with_params(
@@ -858,7 +886,9 @@ def quick_model_factory(ws, make_random, make_schema):
                 registry_table=registry_table,
                 columns=columns,
                 params=params,
-                segment_by=segment_by,
+                baseline_by=baseline_by,
+                baseline_over_time=baseline_over_time,
+                profile=profile,
             )
 
         return full_model_name, registry_table, columns

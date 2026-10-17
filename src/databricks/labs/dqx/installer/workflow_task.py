@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import ParamSpec, TypeVar, overload
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
@@ -10,6 +11,8 @@ from databricks.labs.dqx.config import WorkspaceConfig
 logger = logging.getLogger(__name__)
 
 _TASKS: dict[str, "Task"] = {}
+_TaskParameters = ParamSpec("_TaskParameters")
+_TaskReturn = TypeVar("_TaskReturn")
 
 
 @dataclass
@@ -65,9 +68,27 @@ class Workflow:
                 yield fn.__task__
 
 
+@overload
 def workflow_task(
-    fn=None, *, depends_on=None, job_cluster=Task.job_cluster, run_job_name: str | None = None
-) -> Callable[[Callable], Callable]:
+    fn: Callable[_TaskParameters, _TaskReturn],
+    *,
+    depends_on: list[Callable[..., object]] | None = None,
+    job_cluster: str | None = Task.job_cluster,
+    run_job_name: str | None = None,
+) -> Callable[_TaskParameters, _TaskReturn]: ...
+
+
+@overload
+def workflow_task(
+    fn: None = None,
+    *,
+    depends_on: list[Callable[..., object]] | None = None,
+    job_cluster: str | None = Task.job_cluster,
+    run_job_name: str | None = None,
+) -> Callable[[Callable[_TaskParameters, _TaskReturn]], Callable[_TaskParameters, _TaskReturn]]: ...
+
+
+def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster, run_job_name: str | None = None):
     """Decorator to register a task in a workflow."""
 
     def register(func):

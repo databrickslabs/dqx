@@ -174,8 +174,8 @@ anomaly_engine.train(
 )
 ```
 
-<Admonition type="info" title="Sampling doesn't hurt quality">
-Sampling doesn't hurt model quality if the sample is representative!
+<Admonition type="info" title="Sampling supports practical training">
+A representative sample can support practical training on large tables, but it is an estimate of the training distribution and does not guarantee model quality. Validate the scored results on data you understand.
 </Admonition>
 
 ---
@@ -191,7 +191,7 @@ Sampling doesn't hurt model quality if the sample is representative!
 has_no_row_anomalies(
   model_name=model_name,
   registry_table=registry_table,
-  enable_contributions=False,  # 10x faster, default is False
+  enable_contributions=False,  # 10x faster; the default is True
 )
 
 # Investigation: slower, with explanations
@@ -237,7 +237,11 @@ has_no_row_anomalies(
 clean_data = spark.table("orders").filter(
   F.col("order_date") >= F.current_date() - F.expr("INTERVAL 30 DAYS")
 )
-anomaly_engine.train(df=clean_data, ...)
+anomaly_engine.train(
+  df=clean_data,
+  model_name=model_name,
+  registry_table=registry_table,
+)
 ```
 
 ---
@@ -245,7 +249,7 @@ anomaly_engine.train(df=clean_data, ...)
 ### Q: No anomalies detected but I see unusual data
 
 **Likely causes**:
-1. Threshold too high (95 = only top 5%)
+1. Threshold too high (95 selects the upper training severity tail; it does not guarantee 5% of the scored batch)
 2. Unusual data was in training set: model learned it as "normal"
 
 **Solutions**:
@@ -259,7 +263,7 @@ has_no_row_anomalies(
 )
 ```
 
-**Option 2: Check severity percentiles** (even "normal" rows in the output have scores). For the full list of fields in `_dq_info` and `anomaly`, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
+**Option 2: Check severity percentiles** (even "normal" rows in the output have scores). For the full list of fields in `_dq_info` and `anomaly`, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection/tuning#schema-of-the-info-column-_dq_info).
 
 ```python
 import pyspark.sql.functions as F

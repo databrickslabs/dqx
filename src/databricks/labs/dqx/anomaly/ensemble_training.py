@@ -74,16 +74,16 @@ class EnsembleTrainer:
         train_pandas, feature_metadata = self._prepare_features(train_df, columns, base_params)
         models, hyperparams, signature = self._train_models(train_pandas, base_params, ensemble_size)
         all_metrics = self._compute_metrics(models, val_df, columns, feature_metadata)
-        model_uris = self._register_models(models, model_name, ensemble_size, hyperparams, all_metrics, signature)
         aggregated_metrics = aggregate_ensemble_metrics(all_metrics)
-        score_quantiles = compute_score_quantiles_ensemble(models, train_df, columns, feature_metadata)
+        calibration = compute_score_quantiles_ensemble(models, train_df, columns, feature_metadata)
+        model_uris = self._register_models(models, model_name, ensemble_size, hyperparams, all_metrics, signature)
 
         return EnsembleTrainingResult(
             model_uris=model_uris,
             models=models,
             hyperparams=hyperparams,
             aggregated_metrics=aggregated_metrics,
-            score_quantiles=score_quantiles,
+            calibration=calibration,
             feature_metadata=feature_metadata,
         )
 
@@ -148,23 +148,3 @@ class EnsembleTrainer:
             )
             model_uris.append(model_uri)
         return model_uris
-
-
-def train_ensemble(
-    train_df: DataFrame,
-    val_df: DataFrame,
-    columns: list[str],
-    params: AnomalyParams,
-    ensemble_size: int,
-    model_name: str,
-) -> tuple[list[str], dict[str, Any], dict[str, float], dict[str, float], SparkFeatureMetadata]:
-    """Train ensemble of models with different random seeds."""
-    trainer = EnsembleTrainer()
-    result = trainer.train(train_df, val_df, columns, params, ensemble_size, model_name)
-    return (
-        result.model_uris,
-        result.hyperparams,
-        result.aggregated_metrics,
-        result.score_quantiles,
-        result.feature_metadata,
-    )
