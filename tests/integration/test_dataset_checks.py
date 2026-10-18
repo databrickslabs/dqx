@@ -5390,9 +5390,7 @@ def test_is_unique_trim_strings_combinations(
     expected = {6, 7} if not composite or not nulls_distinct else set()
     if trim_strings:
         expected.update({0, 1, 2, 3})
-        if not composite:
-            expected.add(8)
-    elif not composite:
+    if not composite:
         expected.update({0, 8})
     if not nulls_distinct:
         expected.update({4, 5})
