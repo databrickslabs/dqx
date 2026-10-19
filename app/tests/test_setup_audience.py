@@ -3,7 +3,11 @@
 import pytest
 
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks_labs_dqx_app.backend.setup.audience import BuiltInAudienceGroupError, resolve_audience
+from databricks_labs_dqx_app.backend.setup.audience import (
+    AudienceGroupRequiredError,
+    BuiltInAudienceGroupError,
+    resolve_audience,
+)
 
 
 def test_dedicated_group_uses_same_principal_everywhere() -> None:
@@ -35,12 +39,23 @@ def test_builtin_groups_raise_a_dedicated_error(value: str) -> None:
         resolve_audience([value], "admins", allow_broad=True)
 
 
-@pytest.mark.parametrize("value", ["", "a`b", "x\ny"])
-def test_unsafe_groups_are_not_reported_as_builtin(value: str) -> None:
+@pytest.mark.parametrize("value", ["", "  "])
+def test_missing_group_raises_a_dedicated_error(value: str) -> None:
+    with pytest.raises(AudienceGroupRequiredError):
+        resolve_audience([value], "admins", allow_broad=True)
+
+
+def test_no_groups_raises_a_dedicated_error() -> None:
+    with pytest.raises(AudienceGroupRequiredError):
+        resolve_audience([], "admins", allow_broad=True)
+
+
+@pytest.mark.parametrize("value", ["a`b", "x\ny"])
+def test_unsafe_groups_are_not_reported_as_builtin_or_missing(value: str) -> None:
     with pytest.raises(InvalidParameterError) as error:
         resolve_audience([value], "admins", allow_broad=True)
 
-    assert not isinstance(error.value, BuiltInAudienceGroupError)
+    assert not isinstance(error.value, (BuiltInAudienceGroupError, AudienceGroupRequiredError))
 
 
 @pytest.mark.parametrize("value", ["account users", "admins", "", "a`b", "x\ny"])

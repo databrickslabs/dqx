@@ -24,10 +24,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_setup_admin,
     sanitize_setup_display,
 )
-from databricks_labs_dqx_app.backend.setup.audience import BuiltInAudienceGroupError
+from databricks_labs_dqx_app.backend.setup.audience import AudienceGroupRequiredError, BuiltInAudienceGroupError
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore, validate_choices
+from databricks_labs_dqx_app.backend.setup.storage import InvalidCatalogNameError
 from databricks_labs_dqx_app.backend.setup.models import (
-    SetupCatalogsResponse,
     SetupConfigurationRequest,
     SetupOverrideRequest,
     SetupReport,
@@ -93,25 +93,6 @@ def _group_exists(sp_ws: WorkspaceClient, group: str) -> bool:
     return any((match.display_name or "").casefold() == group.casefold() for match in matches)
 
 
-def _list_catalog_names(reader_ws: WorkspaceClient) -> tuple[str, ...]:
-    """Sorted, de-duplicated catalog names visible to the caller; SDK failures raise HTTP 502."""
-    try:
-        names = {catalog.name for catalog in reader_ws.catalogs.list() if catalog.name}
-    except DatabricksError as error:
-        logger.warning(f"Catalog listing for setup failed: {type(error).__name__}")
-        raise _error(status.HTTP_502_BAD_GATEWAY, "catalog_list_failed") from None
-    return tuple(sorted(names))
-
-
-@router.get("/catalogs", response_model=SetupCatalogsResponse, operation_id="listSetupCatalogs")
-async def list_setup_catalogs(
-    _access: Annotated[SetupAccess, require_setup_admin()],
-    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-) -> SetupCatalogsResponse:
-    """List the catalogs the setup administrator can see, to choose Studio's catalog."""
-    return SetupCatalogsResponse(catalogs=await asyncio.to_thread(_list_catalog_names, reader_ws))
-
-
 @router.post("/configuration", response_model=SetupReport, operation_id="configureSetup")
 async def configure_setup(
     body: SetupConfigurationRequest,
@@ -133,6 +114,10 @@ async def configure_setup(
         )
     except BuiltInAudienceGroupError as error:
         raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_builtin", str(error)) from None
+    except AudienceGroupRequiredError as error:
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_required", str(error)) from None
+    except InvalidCatalogNameError as error:
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "catalog_invalid", str(error)) from None
     except InvalidParameterError as error:
         raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "configuration_invalid", str(error)) from None
     choices = SetupChoices(catalog=storage.catalog, prefix=storage.schema, audience_group=audience.groups[0])

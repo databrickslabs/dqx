@@ -15,6 +15,10 @@ class BuiltInAudienceGroupError(InvalidParameterError):
     """Raised when a built-in group (*users*, *account users* or *admins*) is not allowed as the audience."""
 
 
+class AudienceGroupRequiredError(InvalidParameterError):
+    """Raised when no audience group name is given (empty or whitespace only)."""
+
+
 @dataclass(frozen=True)
 class StudioAudience:
     """Principals that receive Studio OBO prerequisites.
@@ -44,11 +48,14 @@ def resolve_audience(groups: Sequence[str], admin_group: str, *, allow_broad: bo
         The resolved audience.
 
     Raises:
+        AudienceGroupRequiredError: If a group name is empty or no group is given.
         BuiltInAudienceGroupError: If a group is built-in, or *users* is given when broad mode is not allowed.
         InvalidParameterError: If a group is unsafe or the groups are otherwise invalid.
     """
     cleaned: list[str] = []
     for value in groups:
+        if not value.strip():
+            raise AudienceGroupRequiredError("A Studio audience group is required.")
         group = _clean_group(value)
         if group.casefold() in {ACCOUNT_USERS, WORKSPACE_ADMINS}:
             raise BuiltInAudienceGroupError("The Studio audience must be a dedicated group or users.")
@@ -59,7 +66,7 @@ def resolve_audience(groups: Sequence[str], admin_group: str, *, allow_broad: bo
         if group.casefold() not in {existing.casefold() for existing in cleaned}:
             cleaned.append(group)
     if not cleaned:
-        raise InvalidParameterError("A Studio audience group is required.")
+        raise AudienceGroupRequiredError("A Studio audience group is required.")
     broad = BROAD_AUDIENCE in cleaned
     if broad and len(cleaned) > 1:
         raise InvalidParameterError("Broad audience mode cannot be combined with other groups.")

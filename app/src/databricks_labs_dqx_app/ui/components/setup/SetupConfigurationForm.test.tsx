@@ -99,6 +99,19 @@ describe("group copy", () => {
     );
   });
 
+  test.each([
+    ["catalog_invalid", en.setup.configuration.errors.catalog_invalid],
+    ["audience_group_required", en.setup.configuration.errors.audience_group_required],
+    ["configuration_invalid", en.setup.configuration.errors.configuration_invalid],
+  ])("shows its own message for %s", (code, message) => {
+    const html = renderForm({ errorCode: code });
+
+    expect(html).toContain(escapeHtml(message));
+    expect(html).not.toContain(
+      escapeHtml(en.setup.configuration.errors.default),
+    );
+  });
+
   test("no setup copy still calls the group an audience group", () => {
     expect(JSON.stringify(en.setup).toLowerCase()).not.toContain(
       "audience group",

@@ -53,9 +53,9 @@ def gated_app() -> tuple[FastAPI, SetupRuntime, list[str]]:
     def override() -> dict[str, str]:
         return {"state": runtime.report().state}
 
-    @app.get("/api/v1/setup/catalogs")
-    def setup_catalogs() -> dict[str, list[str]]:
-        return {"catalogs": []}
+    @app.get("/api/v1/discovery/catalogs")
+    def discovery_catalogs() -> list[dict[str, str]]:
+        return []
 
     @app.get("/api/v1/config/workspace-host")
     def workspace_host() -> dict[str, str]:
@@ -102,7 +102,7 @@ def test_gate_allows_exact_setup_authentication_and_health_routes(gated_client: 
     # Overriding a blocked step is how an administrator gets past it, so it must work before READY.
     assert gated_client.post("/api/v1/setup/override").status_code == 200
     # The configuration form lists catalogs before storage exists.
-    assert gated_client.get("/api/v1/setup/catalogs").status_code == 200
+    assert gated_client.get("/api/v1/discovery/catalogs").status_code == 200
     assert gated_client.get("/api/v1/config/workspace-host").status_code == 200
 
 

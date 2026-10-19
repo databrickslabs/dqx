@@ -3179,6 +3179,8 @@
       "errors": {
         "configuration_invalid": "Verifique o catálogo, o prefixo e o nome do grupo.",
         "audience_group_builtin": "Built-in groups such as \"users\", \"account users\" and \"admins\" can't be used. Choose a dedicated account group, for example dqx-users.",
+        "catalog_invalid": "Catalog names can't contain dots, backticks or backslashes. Pick a catalog from the list, or check the name you typed.",
+        "audience_group_required": "Enter the name of an existing account group.",
         "catalog_not_found": "O catálogo não existe ou você não tem acesso a ele.",
         "audience_group_not_found": "O grupo não existe neste workspace.",
         "configuration_locked": "O armazenamento já foi provisionado; a configuração não pode mais ser alterada.",

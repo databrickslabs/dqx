@@ -4603,13 +4603,6 @@ export const SetupActionId = {
 } as const;
 
 /**
- * Catalog names the setup administrator can see, for the configuration form.
- */
-export interface SetupCatalogsResponse {
-  catalogs?: string[];
-}
-
-/**
  * Administrator-submitted catalog, prefix and audience group (Marketplace path).
  */
 export interface SetupConfigurationRequest {
@@ -6522,153 +6515,6 @@ export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getS
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetSetupStatusSuspenseQueryOptions(options)
-
-  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-
-/**
- * List the catalogs the setup administrator can see, to choose Studio's catalog.
- * @summary List Setup Catalogs
- */
-export const listSetupCatalogs = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<SetupCatalogsResponse>> => {
-    
-    
-    return axios.default.get(
-      `/api/v1/setup/catalogs`,options
-    );
-  }
-
-
-
-
-export const getListSetupCatalogsQueryKey = () => {
-    return [
-    `/api/v1/setup/catalogs`
-    ] as const;
-    }
-
-    
-export const getListSetupCatalogsQueryOptions = <TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListSetupCatalogsQueryKey();
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupCatalogs>>> = ({ signal }) => listSetupCatalogs({ signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type ListSetupCatalogsQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupCatalogs>>>
-export type ListSetupCatalogsQueryError = AxiosError<HTTPValidationError>
-
-
-export function useListSetupCatalogs<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listSetupCatalogs>>,
-          TError,
-          Awaited<ReturnType<typeof listSetupCatalogs>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListSetupCatalogs<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listSetupCatalogs>>,
-          TError,
-          Awaited<ReturnType<typeof listSetupCatalogs>>
-        > , 'initialData'
-      >, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListSetupCatalogs<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary List Setup Catalogs
- */
-
-export function useListSetupCatalogs<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getListSetupCatalogsQueryOptions(options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-export const getListSetupCatalogsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListSetupCatalogsQueryKey();
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupCatalogs>>> = ({ signal }) => listSetupCatalogs({ signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type ListSetupCatalogsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupCatalogs>>>
-export type ListSetupCatalogsSuspenseQueryError = AxiosError<HTTPValidationError>
-
-
-export function useListSetupCatalogsSuspense<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListSetupCatalogsSuspense<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListSetupCatalogsSuspense<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary List Setup Catalogs
- */
-
-export function useListSetupCatalogsSuspense<TData = Awaited<ReturnType<typeof listSetupCatalogs>>, TError = AxiosError<HTTPValidationError>>(
-  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupCatalogs>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient 
- ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getListSetupCatalogsSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -12831,6 +12677,7 @@ export function useListAvailableRolesSuspense<TData = Awaited<ReturnType<typeof 
 
 
 /**
+ * List the catalogs the calling user can see; available before setup is ready.
  * @summary List Catalogs
  */
 export const listCatalogs = (

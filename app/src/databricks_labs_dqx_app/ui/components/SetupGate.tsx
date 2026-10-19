@@ -14,7 +14,7 @@ import {
   getSetupStatus,
   overrideSetupStep,
   reconcileSetup,
-  useListSetupCatalogs,
+  useListCatalogs,
   type SetupStepId,
 } from "@/lib/api";
 import {
@@ -123,7 +123,7 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
-  const catalogs = useListSetupCatalogs({
+  const catalogs = useListCatalogs({
     query: {
       enabled:
         !!setupStatus.data && configurationAdvertised(setupStatus.data.data),
@@ -172,7 +172,7 @@ export function SetupGate({ children }: SetupGateProps) {
       catalogList={setupCatalogList({
         isPending: catalogs.isPending,
         isError: catalogs.isError,
-        catalogs: catalogs.data?.data.catalogs,
+        catalogs: catalogs.data?.data.map((catalog) => catalog.name),
       })}
       onEditConfiguration={(editing) => {
         configuration.reset();

@@ -623,6 +623,20 @@ async def get_discovery_service(
     return DiscoveryService(ws=obo_ws, user_id=user_id, sql=obo_sql)
 
 
+async def get_catalog_discovery_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DiscoveryService:
+    """Create a DiscoveryService for catalog listing that needs only the OBO WorkspaceClient.
+
+    Unlike :func:`get_discovery_service` it builds no SQL executor, so it needs no
+    bound warehouse or storage and works before setup is ready (the setup form's
+    catalog picker). It still runs on-behalf-of the calling user, never as the app SP.
+    """
+    me = await asyncio.to_thread(obo_ws.current_user.me)
+    user_id = me.user_name or me.id or "unknown"
+    return DiscoveryService(ws=obo_ws, user_id=user_id)
+
+
 async def get_rule_suggester(
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
