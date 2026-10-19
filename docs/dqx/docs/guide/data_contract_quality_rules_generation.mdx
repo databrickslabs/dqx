@@ -554,7 +554,7 @@ This five-metric surface is intentionally closed: DQX does not plan to grow this
 Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
 
 <Admonition type="note" title="Where the ODCS spec is silent">
-Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX follows the interpretation already established by other ODCS-compliant tooling rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit, `mustBeBetween`/`mustNotBeBetween`'s bound inclusivity, and `invalidValues`'s combined-condition handling of `validValues` + `pattern`.
+Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX follows the interpretation already established by other ODCS-compliant tooling rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit and `invalidValues`'s combined-condition handling of `validValues` + `pattern`. Bound inclusivity for `mustBeBetween`/`mustNotBeBetween` is a different case — the spec is inconsistent rather than silent — and is covered under [Threshold Fields and the SQL Fallback](#threshold-fields-and-the-sql-fallback).
 </Admonition>
 
 ### Defining Metric Rules in ODCS v3.x Contracts
@@ -592,7 +592,7 @@ Every library metric is evaluated against the eight ODCS threshold fields: `must
 
 - **`mustBe: 0`** is special-cased for `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`: it maps onto a cheap **row-level** check (`is_not_null`, `is_not_in_list`, `is_in_list`/`regex_match`, or `is_unique`) that pinpoints the offending rows, rather than a dataset-level count.
 - **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`.
-- **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict-inequality or range equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check. For `mustBeBetween`/`mustNotBeBetween`, **both bounds are inclusive** — a value exactly equal to either bound counts as being "between" them. The ODCS spec doesn't settle this either way; DQX follows the interpretation already used by other ODCS-compliant tooling rather than picking its own reading.
+- **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict-inequality or range equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check. For `mustBeBetween`/`mustNotBeBetween`, **both bounds are inclusive** — a value exactly equal to either bound counts as being "between" them. The ODCS spec is inconsistent here: its operator table writes `mustBeBetween: [0, 100]` as `∈` (a closed interval), while a note calls it equivalent to `mustBeGreaterThan` + `mustBeLessThan`. DQX follows SQL `BETWEEN`, so `mustBeBetween: [0, 5]` passes a column with no nulls.
 - **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold falls back to `sql_query`, not just the four above. See [duplicateValues](#duplicatevalues) below for exactly what it counts.
 
 <Admonition type="note" title="No recognized threshold field">
@@ -1255,9 +1255,8 @@ pip install 'databricks-labs-dqx[datacontract]'
 - The data contract feature requires the `datacontract-cli` library which increases package size.
 - Text-based rule generation requires LLM dependencies and network access to the model endpoint.
 - Only ODCS v3.0.x format is currently supported (earlier versions are not supported).
-- Dataset-level quality checks must be defined as explicit DQX rules (custom quality checks).
+- Dataset-level checks beyond the `rowCount` and `duplicateValues` library metrics must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
 - `type: library` covers five metrics only (see [Metric Rule Generation](#metric-rule-generation)) and is not intended to grow into a general ODCS interpreter; use `type: custom` with `engine: dqx` for anything beyond simple row-count/null/duplicate/allowlist checks.
-- `type: library` entries are matched on the current `metric` field only; the deprecated ODCS 3.0.x `rule` key (superseded by `metric` in 3.1+) is not recognized, so a contract still authored against 3.0.x semantics needs its `rule` entries migrated to `metric` before DQX will map them.
 

@@ -4479,19 +4479,47 @@ class TestDataContractGeneratorLibraryRulesRegressions(LibraryMetricTestBase):
         assert rule["user_metadata"]["rule_type"] == "metric"
         assert rule["user_metadata"]["field"] == "email"
 
-    def test_single_quotes_are_backslash_escaped(self, generator):
-        """Spark concatenates 'O''Brien' into OBrien, so quotes are escaped as \\' instead."""
-        values = {"missingValues": ["O'Brien"]}
+    @pytest.mark.parametrize(
+        "metric, arguments, zero_argument",
+        [
+            ("missingValues", {"missingValues": ["O'Brien"]}, "forbidden"),
+            ("invalidValues", {"validValues": ["O'Brien"]}, "allowed"),
+        ],
+    )
+    def test_single_quotes_in_list_values_are_backslash_escaped(self, generator, metric, arguments, zero_argument):
+        """Spark concatenates 'O''Brien' into OBrien, so quotes are escaped as \\' on both renderings."""
         zero = self._generate(
-            generator, self._property_contract([{"metric": "missingValues", "mustBe": 0, "arguments": values}])
+            generator, self._property_contract([{"metric": metric, "mustBe": 0, "arguments": arguments}])
         )
         non_zero = self._single_rule(
-            generator, self._property_contract([{"metric": "missingValues", "mustBeLessThan": 5, "arguments": values}])
+            generator, self._property_contract([{"metric": metric, "mustBeLessThan": 5, "arguments": arguments}])
         )
 
-        forbidden = zero[1]["check"]["arguments"]["forbidden"]
-        assert forbidden == ["'O\\'Brien'"]
+        assert zero[-1]["check"]["arguments"][zero_argument] == ["'O\\'Brien'"]
         assert "IN ('O\\'Brien')" in non_zero["check"]["arguments"]["query"]
+
+    def test_single_quotes_in_a_pattern_are_backslash_escaped(self, generator):
+        """regex_match gets the raw pattern; the RLIKE rendering must decode to the same string."""
+        arguments = {"pattern": "^[A-Za-z' ]+$"}
+        zero = self._single_rule(
+            generator, self._property_contract([{"metric": "invalidValues", "mustBe": 0, "arguments": arguments}])
+        )
+        non_zero = self._single_rule(
+            generator,
+            self._property_contract([{"metric": "invalidValues", "mustBeLessThan": 5, "arguments": arguments}]),
+        )
+
+        assert zero["check"]["arguments"]["regex"] == "^[A-Za-z' ]+$"
+        assert "RLIKE '^[A-Za-z\\' ]+$'" in non_zero["check"]["arguments"]["query"]
+
+    def test_integer_too_large_for_sql_is_skipped_without_failing_the_contract(self, generator, caplog):
+        """math.isfinite raised OverflowError for a huge int, losing every rule in the contract."""
+        entries = [{"metric": "nullValues", "mustBe": 10**400}, {"metric": "nullValues", "mustBe": 0}]
+        with caplog.at_level(logging.WARNING):
+            rule = self._single_rule(generator, self._property_contract(entries))
+
+        assert rule["check"]["function"] == "is_not_null"
+        assert "'mustBe' must be a number" in caplog.text
 
     def test_library_rule_names_do_not_collide_with_existing_names(self, generator):
         """Suffixes skip names already used by explicit rules or other library rules."""

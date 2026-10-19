@@ -28,7 +28,12 @@ from dataclasses import dataclass, field
 
 from open_data_contract_standard.model import DataQuality, SchemaObject  # type: ignore
 
-from databricks.labs.dqx.utils import is_sql_query_safe, quote_column_name, sanitize_for_logging
+from databricks.labs.dqx.utils import (
+    escape_sql_string_literal,
+    is_sql_query_safe,
+    quote_column_name,
+    sanitize_for_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,7 @@ _VIOLATION_OPERATORS: dict[str, str] = {
 
 _UNITS: tuple[str, ...] = ("rows", "percent")
 _MAX_PATTERN_LENGTH = 200
+_MAX_SQL_INTEGER = 10**38
 _QUANTIFIER_PATTERN = re.compile(r"[*+?]|\{(\d+)(?:,(\d*))?\}")
 _INLINE_FLAGS_PATTERN = re.compile(r"\(\?[idmsuxU-]+([:)])")
 # Group syntax Python's re accepts but Java's regex engine (used by Spark) rejects.
@@ -111,18 +117,15 @@ def sql_literal(value: str | Number | bool) -> str:
     """Render a contract-supplied scalar as a SQL literal.
 
     Numbers stay unquoted so numeric columns compare numerically. Booleans become TRUE/FALSE (checked
-    before numbers, since *bool* is a subclass of *int*). Strings are single-quoted with backslashes
-    escaped first and then single quotes as *\\'*. Spark (with the default
-    *spark.sql.parser.escapedStringLiterals=false*) treats the backslash as an escape character, and
-    reads a doubled quote as two adjacent literals that are concatenated, so *'O''Brien'* would become
-    *OBrien*.
+    before numbers, since *bool* is a subclass of *int*). Strings are single-quoted and escaped with
+    *escape_sql_string_literal*, which escapes backslashes and single quotes as *\\'* (Spark does not
+    honour a doubled *''*).
     """
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)):
         return str(value)
-    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
-    return f"'{escaped}'"
+    return f"'{escape_sql_string_literal(str(value))}'"
 
 
 def in_list_literal(value: str | Number | bool) -> str | Number | bool:
@@ -134,11 +137,19 @@ def in_list_literal(value: str | Number | bool) -> str | Number | bool:
     return sql_literal(value) if isinstance(value, str) else value
 
 
-def _is_scalar(value: object) -> bool:
-    """Whether *value* can be rendered as a SQL literal. NaN and infinity have no SQL literal form."""
+def _is_sql_number(value: int | float) -> bool:
+    """Whether a number has a Spark SQL literal form: NaN and infinity have none, and an integer must fit
+    *DECIMAL(38)*. Checked without converting to float, which raises *OverflowError* for huge integers."""
     if isinstance(value, float):
         return math.isfinite(value)
-    return isinstance(value, (str, int, bool))
+    return abs(value) < _MAX_SQL_INTEGER
+
+
+def _is_scalar(value: object) -> bool:
+    """Whether *value* can be rendered as a SQL literal."""
+    if isinstance(value, (str, bool)):
+        return True
+    return isinstance(value, (int, float)) and _is_sql_number(value)
 
 
 def _as_number(value: object) -> Number | None:
@@ -156,7 +167,7 @@ def _as_number(value: object) -> Number | None:
         except ValueError:
             return None
         value = int(parsed) if parsed.is_integer() else parsed
-    if isinstance(value, (int, float)) and math.isfinite(value):
+    if isinstance(value, (int, float)) and _is_sql_number(value):
         return value
     return None
 
@@ -341,8 +352,9 @@ class _PatternScan:
 class Threshold:
     """One ODCS threshold field and its validated value.
 
-    Range bounds are inclusive on both ends. The ODCS spec text does not settle this; DQX follows
-    the interpretation used by other ODCS-compliant tooling.
+    Range bounds are inclusive on both ends, as in SQL *BETWEEN*. The ODCS spec is inconsistent here:
+    its operator table writes *mustBeBetween* as a closed interval, while a note calls it equivalent
+    to *mustBeGreaterThan* plus *mustBeLessThan*.
     """
 
     field: str
