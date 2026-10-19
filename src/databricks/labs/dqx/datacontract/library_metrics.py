@@ -190,8 +190,8 @@ def pattern_problem(pattern: str) -> str | None:
     - ReDoS: a repeated group (one-or-more, zero-or-more or a range quantifier) that itself contains a
       variable quantifier or an alternation, at any nesting depth, plus a 200-character cap. Such
       patterns can backtrack catastrophically on adversarial input.
-    - Python-only syntax that Java rejects: *(?P...)* named groups, *(?#...)* comments,
-      *(?(...)...)* conditionals and *{,n}* quantifiers.
+    - Python-only syntax that Java rejects: *(?P...)* named groups, inline comment groups,
+      conditional groups and range quantifiers with no lower bound.
     - Syntax errors: Java-only constructs (Unicode classes, possessive quantifiers, atomic groups,
       mid-pattern inline flags) are rewritten to Python equivalents and the result is compiled with
       *re*, so validation does not depend on the Python version.
