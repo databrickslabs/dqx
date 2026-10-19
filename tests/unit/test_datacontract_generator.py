@@ -4556,3 +4556,10 @@ class TestDataContractGeneratorLibraryRulesRegressions(LibraryMetricTestBase):
         assert rule["check"]["function"] == "is_not_null"
         assert rule["user_metadata"]["unit"] == "rows"
         assert "unrecognized unit 'percentage'" in caplog.text
+
+    @pytest.mark.parametrize("raw, expected", [("12345678901234567890", 12345678901234567890), ("2.5", 2.5)])
+    def test_numeric_string_threshold_keeps_its_exact_value(self, generator, raw, expected):
+        """A float round-trip turned "12345678901234567890" into 12345678901234567168."""
+        rule = self._single_rule(generator, self._schema_contract([{"metric": "rowCount", "mustBe": raw}]))
+
+        assert rule["check"]["arguments"]["limit"] == expected

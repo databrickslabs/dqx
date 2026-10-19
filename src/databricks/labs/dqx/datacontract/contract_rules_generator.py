@@ -251,11 +251,14 @@ class DataContractRulesGenerator(DQEngineBase):
         default_criticality: str,
     ) -> list[dict]:
         """Generate all rules from ODCS v3.x contract schemas."""
-        dq_rules = []
+        dq_rules: list[dict] = []
+        # Names of the rules generated so far, kept incrementally; library rule names are suffixed to stay unique.
+        taken_names: set[str] = set()
 
         # ODCS v3.x uses schema_ list instead of models dict
         for schema_obj in odcs.schema_ or []:
             schema_name = schema_obj.name or "unknown_schema"
+            schema_start = len(dq_rules)
 
             if generate_schema_validation:
                 schema_validation_rules = self._generate_schema_validation_rules_for_schema(
@@ -277,12 +280,9 @@ class DataContractRulesGenerator(DQEngineBase):
             dq_rules.extend(explicit_rules)
 
             if process_library_rules:
+                taken_names.update(rule["name"] for rule in dq_rules[schema_start:] if rule.get("name"))
                 library_rules = self._process_library_rules_for_schema(
-                    schema_obj,
-                    schema_name,
-                    odcs,
-                    default_criticality,
-                    {rule["name"] for rule in dq_rules if rule.get("name")},
+                    schema_obj, schema_name, odcs, default_criticality, taken_names
                 )
                 dq_rules.extend(library_rules)
 

@@ -162,14 +162,24 @@ def _as_number(value: object) -> Number | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, str):
-        try:
-            parsed = float(value)
-        except ValueError:
-            return None
-        value = int(parsed) if parsed.is_integer() else parsed
+        value = _parse_number(value)
     if isinstance(value, (int, float)) and _is_sql_number(value):
         return value
     return None
+
+
+def _parse_number(text: str) -> Number | None:
+    """Parse a numeric string, as an exact integer where possible (a float round-trip would change
+    large integers, e.g. "12345678901234567890")."""
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        parsed = float(text)
+    except ValueError:
+        return None
+    return int(parsed) if parsed.is_integer() and abs(parsed) < 2**53 else parsed
 
 
 def pattern_problem(pattern: str) -> str | None:
