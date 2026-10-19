@@ -1449,8 +1449,13 @@ class DataContractRulesGenerator(DQEngineBase):
         property_name: str | None,
         odcs: OpenDataContractStandard,
         quality_rule: DataQuality | None = None,
+        extra_metadata: dict[str, str] | None = None,
     ) -> dict:
-        """Build the final rule dictionary with metadata."""
+        """Build the final rule dictionary with metadata.
+
+        *extra_metadata* (e.g. the metric keys of a library rule, including its *rule_type*) is applied
+        last, so it overrides the defaults and any same-named custom property.
+        """
         user_metadata: dict = {
             "contract_id": odcs.id or "unknown",
             "contract_version": odcs.version or "unknown",
@@ -1461,6 +1466,7 @@ class DataContractRulesGenerator(DQEngineBase):
         if property_name:
             user_metadata["field"] = property_name
         user_metadata.update(self._quality_metadata(quality_rule))
+        user_metadata.update(extra_metadata or {})
 
         rule = {
             "check": check_dict,
@@ -1480,14 +1486,24 @@ class DataContractRulesGenerator(DQEngineBase):
     ) -> list[dict]:
         """Generate rules from the ODCS type: library quality metric entries of a schema.
 
-        The mapping itself lives in *library_metrics*; this only supplies contract provenance and the
-        per-entry row filter, so library rules honour a row_filter custom property like explicit rules do.
+        The mapping itself lives in *library_metrics*; each rule is assembled by *_build_rule_dict*, so
+        library rules get the same provenance, owner, row filter and customProperties handling as
+        explicit rules.
         """
-        provenance = {
-            "contract_id": odcs.id or "unknown",
-            "contract_version": odcs.version or "unknown",
-            "odcs_version": odcs.apiVersion or "unknown",
-            "schema": schema_name,
-        }
-        builder = LibraryMetricRulesBuilder(provenance, default_criticality, self._quality_row_filter)
-        return builder.build_for_schema(schema_obj, schema_name)
+
+        def build_rule(
+            check: dict, name: str, entry: DataQuality, property_name: str | None, metric_metadata: dict[str, str]
+        ) -> dict:
+            return self._build_rule_dict(
+                check,
+                name,
+                default_criticality,
+                self._quality_row_filter(entry),
+                schema_name,
+                property_name,
+                odcs,
+                entry,
+                extra_metadata=metric_metadata,
+            )
+
+        return LibraryMetricRulesBuilder(build_rule).build_for_schema(schema_obj, schema_name)

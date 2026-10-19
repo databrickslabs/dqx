@@ -4136,7 +4136,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
 
         assert rule["check"] == {
             "function": function,
-            "arguments": {"column": "(CASE WHEN email IS NULL THEN 1 END)", "aggr_type": "count", "limit": 5},
+            "arguments": {"column": "(CASE WHEN `email` IS NULL THEN 1 END)", "aggr_type": "count", "limit": 5},
         }
 
     def test_percent_unit_averages_an_indicator_column(self, generator):
@@ -4147,7 +4147,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
         assert rule["check"] == {
             "function": "is_aggr_not_greater_than",
             "arguments": {
-                "column": "(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END)",
+                "column": "(CASE WHEN `email` IS NULL THEN 100.0 ELSE 0.0 END)",
                 "aggr_type": "avg",
                 "limit": 5,
             },
@@ -4157,7 +4157,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
     def test_rows_fallback_counts_bad_rows_over_the_whole_view(self, generator, threshold_field, value, violation):
         rule = self._single_rule(generator, self._property_contract([{"metric": "nullValues", threshold_field: value}]))
 
-        measure = "COUNT(CASE WHEN email IS NULL THEN 1 END)"
+        measure = "COUNT(CASE WHEN `email` IS NULL THEN 1 END)"
         assert rule["check"]["arguments"] == {
             "query": f"SELECT {violation.replace('M', measure)} AS condition FROM {{{{ input_view }}}}",
             "condition_column": "condition",
@@ -4169,7 +4169,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
             generator, self._property_contract([{"metric": "nullValues", "mustBeLessThan": 5, "unit": "percent"}])
         )
 
-        measure = "COALESCE(AVG(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END), 0.0)"
+        measure = "COALESCE(AVG(CASE WHEN `email` IS NULL THEN 100.0 ELSE 0.0 END), 0.0)"
         assert rule["check"]["arguments"]["query"] == f"SELECT {measure} >= 5 AS condition FROM {{{{ input_view }}}}"
 
     def test_property_needing_quoting_is_backtick_quoted(self, generator):
@@ -4217,7 +4217,9 @@ class TestDataContractGeneratorLibraryRulesMissingValues(LibraryMetricTestBase):
         entry = {"metric": "missingValues", "mustBeLessOrEqualTo": 5, "arguments": {"missingValues": ["", "N/A"]}}
         rule = self._single_rule(generator, self._property_contract([entry]))
 
-        assert rule["check"]["arguments"]["column"] == "(CASE WHEN email IS NULL OR email IN ('', 'N/A') THEN 1 END)"
+        assert (
+            rule["check"]["arguments"]["column"] == "(CASE WHEN `email` IS NULL OR `email` IN ('', 'N/A') THEN 1 END)"
+        )
 
     @pytest.mark.parametrize(
         "arguments",
@@ -4265,7 +4267,7 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(LibraryMetricTestBase):
         rule = self._single_rule(generator, self._property_contract([entry]))
 
         assert rule["check"]["arguments"]["column"] == (
-            "(CASE WHEN email NOT IN ('a', 1) OR NOT (email RLIKE '^[a-z]$') THEN 1 END)"
+            "(CASE WHEN `email` NOT IN ('a', 1) OR NOT (`email` RLIKE '^[a-z]$') THEN 1 END)"
         )
 
     def test_backslashes_are_escaped_identically_on_both_renderings(self, generator):
@@ -4298,14 +4300,23 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(LibraryMetricTestBase):
         assert [rule["check"]["function"] for rule in rules] == ["sql_query", "sql_query"]
         assert "NOT IN ('INSERT', 'UPDATE', 'DELETE')" in rules[1]["check"]["arguments"]["query"]
 
-    @pytest.mark.parametrize("pattern", ["a" * 201, "(a+)+", "(a|a)*", "[unclosed"])
-    def test_unsafe_or_invalid_pattern_is_ignored_with_warning(self, generator, caplog, pattern):
+    @pytest.mark.parametrize(
+        "pattern, reason",
+        [
+            ("a" * 201, "failed the ReDoS safety guard"),
+            ("(a+)+", "failed the ReDoS safety guard"),
+            ("(a|a)*", "failed the ReDoS safety guard"),
+            ("[unclosed", "is not a valid Python regular expression"),
+            ("^\\p{L}+$", "is not a valid Python regular expression"),  # Java-only syntax is reported as such
+        ],
+    )
+    def test_unsafe_or_invalid_pattern_is_ignored_with_warning(self, generator, caplog, pattern, reason):
         entry = {"metric": "invalidValues", "mustBe": 0, "arguments": {"pattern": pattern}}
         with caplog.at_level(logging.WARNING):
             rules = self._generate(generator, self._property_contract([entry]))
 
         assert rules == []
-        assert "failed the ReDoS safety guard" in caplog.text
+        assert reason in caplog.text
         assert "has neither a usable 'arguments.validValues' list nor a usable 'arguments.pattern'" in caplog.text
 
     def test_missing_arguments_are_skipped_with_warning(self, generator, caplog):
@@ -4320,8 +4331,8 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(LibraryMetricTestBase
     """duplicateValues: distinct values (or key combinations) that recur."""
 
     _DUPLICATE_COUNT = (
-        "(SELECT COUNT(*) FROM (SELECT 1 FROM {{ input_view }} WHERE email IS NOT NULL "
-        "GROUP BY email HAVING COUNT(*) > 1) AS dqx_dup_groups)"
+        "(SELECT COUNT(*) FROM (SELECT 1 FROM {{ input_view }} WHERE `email` IS NOT NULL "
+        "GROUP BY `email` HAVING COUNT(*) > 1) AS dqx_dup_groups)"
     )
 
     def test_must_be_zero_generates_is_unique(self, generator):
@@ -4337,7 +4348,7 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(LibraryMetricTestBase
 
         assert rule["name"] == "orders_duplicateValues_mustBe"
         assert rule["check"] == {"function": "is_unique", "arguments": {"columns": ["order_id", "line_no"]}}
-        assert rule["user_metadata"]["fields"] == ["order_id", "line_no"]
+        assert rule["user_metadata"]["fields"] == '["order_id", "line_no"]'  # user_metadata is a string map
         assert "field" not in rule["user_metadata"]
 
     @pytest.mark.parametrize("threshold_field, value, violation", _FALLBACK_THRESHOLDS)
@@ -4374,3 +4385,70 @@ class TestDataContractGeneratorLibraryRulesDuplicateValues(LibraryMetricTestBase
 
         assert rules == []
         assert "'arguments.properties' must be a non-empty list of property name strings" in caplog.text
+
+
+class TestDataContractGeneratorLibraryRulesRegressions(LibraryMetricTestBase):
+    """Regressions for library-metric rules that were silently dropped, partial or missing metadata."""
+
+    def test_property_named_after_a_blocked_keyword_still_generates(self, generator):
+        """A bare keyword such as delete made is_sql_query_safe reject the query; quoting it keeps the rule."""
+        entry = {"metric": "missingValues", "mustBeLessThan": 5, "arguments": {"missingValues": [""]}}
+        rule = self._single_rule(generator, self._property_contract([entry], property_name="delete"))
+
+        assert rule["check"]["function"] == "sql_query"
+        assert "`delete` IS NULL" in rule["check"]["arguments"]["query"]
+
+    def test_every_threshold_field_set_on_an_entry_is_enforced(self, generator):
+        """A range given as two fields produces one rule per bound instead of dropping the second."""
+        entry = {"metric": "rowCount", "mustBeGreaterOrEqualTo": 10, "mustBeLessOrEqualTo": 1000}
+        rules = self._generate(generator, self._schema_contract([entry]))
+
+        assert [(rule["name"], rule["check"]["function"], rule["check"]["arguments"]["limit"]) for rule in rules] == [
+            ("orders_rowCount_mustBeGreaterOrEqualTo", "is_aggr_not_less_than", 10),
+            ("orders_rowCount_mustBeLessOrEqualTo", "is_aggr_not_greater_than", 1000),
+        ]
+
+    def test_an_invalid_threshold_field_does_not_drop_the_valid_ones(self, generator, caplog):
+        # mustBe is untyped on the ODCS model (the typed fields are validated by the model itself).
+        entry = {"metric": "rowCount", "mustBe": "ten", "mustBeLessOrEqualTo": 1000}
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._schema_contract([entry]))
+
+        assert [rule["name"] for rule in rules] == ["orders_rowCount_mustBeLessOrEqualTo"]
+        assert "'mustBe' must be a number" in caplog.text
+
+    def test_unrecognized_unit_warns_once_and_keeps_the_zero_check(self, generator, caplog):
+        """mustBe: 0 is unit-independent; the unit-dependent thresholds are skipped with a single warning."""
+        entry = {"metric": "nullValues", "mustBe": 0, "mustBeLessThan": 5, "mustBeLessOrEqualTo": 5, "unit": "pct"}
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._property_contract([entry]))
+
+        assert [rule["check"]["function"] for rule in rules] == ["is_not_null"]
+        assert caplog.text.count("unrecognized unit 'pct'") == 1
+        assert "skipping its thresholds other than mustBe: 0" in caplog.text
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    def test_non_finite_list_value_is_skipped_with_warning(self, generator, caplog, value):
+        """NaN/infinity have no SQL literal; rendered bare they made the check unresolvable on every row."""
+        entry = {"metric": "missingValues", "mustBeLessOrEqualTo": 5, "arguments": {"missingValues": [value, ""]}}
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate(generator, self._property_contract([entry]))
+
+        assert rules == []
+        assert "finite numbers, strings or booleans" in caplog.text
+
+    def test_owner_description_and_custom_properties_reach_library_rules(self, generator):
+        """Library rules carry the entry's owner, description and customProperties, like explicit rules."""
+        entry = {
+            "metric": "nullValues",
+            "mustBeLessOrEqualTo": 5,
+            "description": "Emails present",
+            "customProperties": [{"property": "owner", "value": "alice"}, {"property": "team", "value": "crm"}],
+        }
+        rule = self._single_rule(generator, self._property_contract([entry]))
+
+        assert rule["owner"] == "alice"
+        assert rule["user_metadata"]["team"] == "crm"
+        assert rule["user_metadata"]["description"] == "Emails present"
+        assert rule["user_metadata"]["rule_type"] == "metric"
+        assert rule["user_metadata"]["field"] == "email"

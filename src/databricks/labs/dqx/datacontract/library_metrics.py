@@ -18,6 +18,7 @@ The mapping is split into three parts so that each concern exists exactly once:
 The five-metric surface is intentionally closed; see the Data Contract guide.
 """
 
+import json
 import logging
 import math
 import re
@@ -28,11 +29,11 @@ from typing import Any
 
 from open_data_contract_standard.model import DataQuality, SchemaObject  # type: ignore
 
-from databricks.labs.dqx.utils import is_sql_query_safe, sanitize_for_logging
+from databricks.labs.dqx.utils import is_sql_query_safe, quote_column_name, sanitize_for_logging
 
 logger = logging.getLogger(__name__)
 
-# Threshold fields in resolution order: the first one set on an entry is used.
+# Recognized threshold fields, in rule order: each one set on an entry produces its own rule.
 THRESHOLD_FIELDS: tuple[str, ...] = (
     "mustBe",
     "mustNotBe",
@@ -66,7 +67,6 @@ _VIOLATION_OPERATORS: dict[str, str] = {
 }
 
 _UNITS: tuple[str, ...] = ("rows", "percent")
-_SAFE_SQL_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _MAX_PATTERN_LENGTH = 200
 _NESTED_QUANTIFIER_PATTERN = re.compile(r"\([^()]*[+*]\)[+*{]")
 _ALTERNATION_QUANTIFIER_PATTERN = re.compile(r"\([^()]*\|[^()]*\)[+*{]")
@@ -81,15 +81,13 @@ Number = int | float
 
 
 def sql_identifier(column_path: str) -> str:
-    """Quote a (possibly dotted) column path for interpolation into generated SQL.
+    """Back-quote each segment of a (possibly dotted) column path for interpolation into generated SQL.
 
-    Each segment that is not a bare identifier is backtick-quoted, with embedded backticks doubled.
-    Every input is quoted rather than rejected, so this never raises.
+    Every segment is quoted, plain names included: *is_sql_query_safe* ignores back-quoted identifiers,
+    so a property named after a blocked keyword (e.g. *delete*) is not mistaken for a SQL statement.
+    Quoting uses *quote_column_name*, which doubles embedded backticks, so this never raises.
     """
-    return ".".join(
-        segment if _SAFE_SQL_IDENTIFIER_PATTERN.match(segment) else f"`{segment.replace('`', '``')}`"
-        for segment in column_path.split(".")
-    )
+    return ".".join(quote_column_name(segment) for segment in column_path.split("."))
 
 
 def sql_literal(value: str | Number | bool) -> str:
@@ -119,7 +117,10 @@ def in_list_literal(value: str | Number | bool) -> str | Number | bool:
 
 
 def _is_scalar(value: object) -> bool:
-    return isinstance(value, (str, int, float, bool))
+    """Whether *value* can be rendered as a SQL literal. NaN and infinity have no SQL literal form."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, (str, int, bool))
 
 
 def _as_number(value: object) -> Number | None:
@@ -146,8 +147,12 @@ def _is_safe_pattern(pattern: str) -> bool:
     """Best-effort ReDoS guard for a contract-supplied regex (length cap, nested/alternation quantifiers)."""
     if len(pattern) > _MAX_PATTERN_LENGTH:
         return False
-    if _NESTED_QUANTIFIER_PATTERN.search(pattern) or _ALTERNATION_QUANTIFIER_PATTERN.search(pattern):
-        return False
+    return not (_NESTED_QUANTIFIER_PATTERN.search(pattern) or _ALTERNATION_QUANTIFIER_PATTERN.search(pattern))
+
+
+def _is_python_regex(pattern: str) -> bool:
+    """Whether *pattern* parses with Python's *re*. Spark runs it as a Java regex, so Java-only syntax
+    (e.g. *\\p{L}*) is rejected here even though Spark would accept it."""
     try:
         re.compile(pattern)
     except re.error:
@@ -190,12 +195,20 @@ class Threshold:
         return f"{measure_sql} {_VIOLATION_OPERATORS[self.field]} {self.value}"
 
 
-def resolve_threshold(entry: DataQuality, location: str, metric: str) -> Threshold | None:
-    """Resolve the first threshold field set on *entry*, warning and returning None if it is missing or invalid."""
+def resolve_thresholds(entry: DataQuality, location: str, metric: str) -> list[Threshold]:
+    """Resolve every threshold field set on *entry*, one *Threshold* per field.
+
+    An entry may set several fields to express a range (e.g. *mustBeGreaterOrEqualTo* plus
+    *mustBeLessOrEqualTo*); each is enforced by its own rule. An invalid field is warned about and
+    skipped without dropping the valid ones. Returns an empty list (with a warning) when no field is set.
+    """
+    thresholds: list[Threshold] = []
+    has_field = False
     for field_name in THRESHOLD_FIELDS:
         raw = getattr(entry, field_name)
         if raw is None:
             continue
+        has_field = True
         if field_name in _RANGE_THRESHOLD_FIELDS:
             bounds = _as_bounds(raw)
             if bounds is None:
@@ -205,20 +218,22 @@ def resolve_threshold(entry: DataQuality, location: str, metric: str) -> Thresho
                     f"'{field_name}' must be a list of two numbers, smallest first (got "
                     f"{sanitize_for_logging(repr(raw))})",
                 )
-                return None
-            return Threshold(field_name, bounds=bounds)
+                continue
+            thresholds.append(Threshold(field_name, bounds=bounds))
+            continue
         value = _as_number(raw)
         if value is None:
             _warn_skip(metric, location, f"'{field_name}' must be a number (got {sanitize_for_logging(repr(raw))})")
-            return None
-        return Threshold(field_name, value=value)
+            continue
+        thresholds.append(Threshold(field_name, value=value))
 
-    _warn_skip(
-        metric,
-        location,
-        f"has no recognized threshold field set ({', '.join(THRESHOLD_FIELDS)})",
-    )
-    return None
+    if not has_field:
+        _warn_skip(
+            metric,
+            location,
+            f"has no recognized threshold field set ({', '.join(THRESHOLD_FIELDS)})",
+        )
+    return thresholds
 
 
 def _as_bounds(raw: object) -> tuple[Number, Number] | None:
@@ -337,7 +352,7 @@ class MetricPlan:
 
     measure: Measure
     zero_checks: tuple[tuple[str, dict[str, Any]], ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -505,7 +520,14 @@ class InvalidValuesMetric(LibraryMetric):
         if not _is_safe_pattern(pattern):
             logger.warning(
                 f"'arguments.pattern' on {target.location} failed the ReDoS safety guard (200-character cap, "
-                "nested-quantifier check, alternation-quantifier check, or re.compile); ignoring it."
+                "nested-quantifier check or alternation-quantifier check); ignoring it."
+            )
+            return None
+        if not _is_python_regex(pattern):
+            logger.warning(
+                f"'arguments.pattern' on {target.location} is not a valid Python regular expression; ignoring it. "
+                "Contract patterns are validated with Python's re module, so Java-only syntax (e.g. \\p{L}) "
+                "is not supported."
             )
             return None
         return pattern
@@ -521,7 +543,7 @@ class DuplicateValuesMetric(LibraryMetric):
     def plan(self, entry: DataQuality, target: MetricTarget) -> MetricPlan | None:
         if target.property_name is not None:
             key_columns = [target.property_name]
-            metadata: dict[str, Any] = {}
+            metadata: dict[str, str] = {}
         else:
             properties = entry.arguments.get("properties") if isinstance(entry.arguments, dict) else None
             if (
@@ -535,8 +557,9 @@ class DuplicateValuesMetric(LibraryMetric):
                     "'arguments.properties' must be a non-empty list of property name strings",
                 )
                 return None
-            key_columns = properties
-            metadata = {"fields": key_columns}
+            key_columns = list(properties)
+            # user_metadata is a string map, so the key list is JSON-encoded (as _quality_metadata does).
+            metadata = {"fields": json.dumps(key_columns)}
         return MetricPlan(
             DuplicateValuesMeasure(tuple(key_columns)),
             zero_checks=(("", {"function": "is_unique", "arguments": {"columns": key_columns}}),),
@@ -567,7 +590,11 @@ def _read_scalar_list(
         and all(_is_scalar(item) or (allow_null and item is None) for item in value)
     )
     if not valid:
-        _warn_skip(metric, target.location, f"'arguments.{key}' must be a non-empty list of scalar values")
+        _warn_skip(
+            metric,
+            target.location,
+            f"'arguments.{key}' must be a non-empty list of scalar values (finite numbers, strings or booleans)",
+        )
         return None
     return value
 
@@ -592,26 +619,22 @@ def is_library_entry(entry: DataQuality) -> bool:
     return entry.type is None and (entry.metric is not None or entry.rule is not None)
 
 
+# Assembles the final rule dict: (check, name, entry, property name, metric metadata) -> rule.
+LibraryRuleFactory = Callable[[dict[str, Any], str, DataQuality, str | None, dict[str, str]], dict]
+
+
 class LibraryMetricRulesBuilder:
     """Builds DQX rule dicts from the ODCS library metric entries of one schema.
 
     Args:
-        provenance: Contract provenance merged into every rule's *user_metadata* (contract id and
-            version, ODCS version, schema name).
-        criticality: Criticality given to every generated rule.
-        row_filter_resolver: Returns the row filter an entry declares (e.g. via a *row_filter*
-            custom property), or None. The filter scopes the check to matching rows.
+        rule_factory: Assembles each final rule from its check, name, source entry, property name and
+            metric metadata. The contract generator supplies its own rule assembly here, so library
+            rules get the same provenance, owner, row filter and *customProperties* handling as
+            explicit rules.
     """
 
-    def __init__(
-        self,
-        provenance: dict[str, str],
-        criticality: str,
-        row_filter_resolver: Callable[[DataQuality], str | None],
-    ):
-        self._provenance = provenance
-        self._criticality = criticality
-        self._row_filter_resolver = row_filter_resolver
+    def __init__(self, rule_factory: LibraryRuleFactory):
+        self._rule_factory = rule_factory
 
     def build_for_schema(self, schema_obj: SchemaObject, schema_name: str) -> list[dict]:
         """Build rules for every library entry on the schema and its properties."""
@@ -646,38 +669,58 @@ class LibraryMetricRulesBuilder:
             _warn_skip(metric.name, target.location, f"is on a property; {metric.name} is a schema-level metric")
             return []
 
-        threshold = resolve_threshold(entry, target.location, metric.name)
-        if threshold is None:
+        thresholds = resolve_thresholds(entry, target.location, metric.name)
+        if not thresholds:
             return []
         plan = metric.plan(entry, target)
         if plan is None:
             return []
 
-        base_name = f"{target.subject}_{metric.name}_{threshold.field}"
-        metadata = self._metadata(entry, metric, target, threshold, plan)
-
         # mustBe: 0 uses the row-level core checks, which pinpoint the offending rows. It is
-        # unit-independent (zero rows and zero percent are the same fact), so unit is not validated.
-        if threshold.is_zero_must_be and plan.zero_checks:
+        # unit-independent (zero rows and zero percent are the same fact), so only the other
+        # thresholds need a recognized unit.
+        unit = entry.unit or "rows"
+        if unit not in metric.units and any(not self._uses_zero_checks(t, plan) for t in thresholds):
+            logger.warning(
+                f"type: library {metric.name} entry on {target.location} has unrecognized unit "
+                f"'{sanitize_for_logging(unit)}'; expected {' or '.join(metric.units)}; skipping its thresholds "
+                f"other than mustBe: 0."
+            )
+            thresholds = [t for t in thresholds if self._uses_zero_checks(t, plan)]
+
+        rules: list[dict] = []
+        for threshold in thresholds:
+            rules.extend(self._build_for_threshold(entry, metric, target, threshold, plan))
+        return rules
+
+    @staticmethod
+    def _uses_zero_checks(threshold: Threshold, plan: MetricPlan) -> bool:
+        return threshold.is_zero_must_be and bool(plan.zero_checks)
+
+    def _build_for_threshold(
+        self,
+        entry: DataQuality,
+        metric: LibraryMetric,
+        target: MetricTarget,
+        threshold: Threshold,
+        plan: MetricPlan,
+    ) -> list[dict]:
+        base_name = f"{target.subject}_{metric.name}_{threshold.field}"
+        metadata = self._metadata(entry, metric, threshold, plan)
+
+        if self._uses_zero_checks(threshold, plan):
             return [
-                self._rule(check, f"{base_name}_{suffix}" if suffix else base_name, metadata, entry)
+                self._rule_factory(
+                    check, f"{base_name}_{suffix}" if suffix else base_name, entry, target.property_name, metadata
+                )
                 for suffix, check in plan.zero_checks
             ]
 
-        unit = entry.unit or "rows"
-        if unit not in metric.units:
-            _warn_skip(
-                metric.name,
-                target.location,
-                f"has unrecognized unit '{sanitize_for_logging(unit)}'; expected {' or '.join(metric.units)}",
-            )
-            return []
-
-        check = self._threshold_check(plan.measure, unit, threshold)
+        check = self._threshold_check(plan.measure, entry.unit or "rows", threshold)
         if check is None:
             _warn_skip(metric.name, target.location, "produced a SQL query that failed the SQL safety check")
             return []
-        return [self._rule(check, base_name, metadata, entry)]
+        return [self._rule_factory(check, base_name, entry, target.property_name, metadata)]
 
     @staticmethod
     def _resolve_metric(entry: DataQuality, target: MetricTarget) -> LibraryMetric | None:
@@ -711,41 +754,21 @@ class LibraryMetricRulesBuilder:
             return None
         return {"function": "sql_query", "arguments": {"query": query, "condition_column": "condition"}}
 
-    def _metadata(
-        self,
-        entry: DataQuality,
-        metric: LibraryMetric,
-        target: MetricTarget,
-        threshold: Threshold,
-        plan: MetricPlan,
-    ) -> dict[str, Any]:
-        metadata: dict[str, Any] = {
-            **self._provenance,
+    @staticmethod
+    def _metadata(entry: DataQuality, metric: LibraryMetric, threshold: Threshold, plan: MetricPlan) -> dict[str, str]:
+        """Metric-specific *user_metadata*; provenance, *field* and *customProperties* come from the rule factory."""
+        metadata: dict[str, str] = {
             "rule_type": "metric",
             "metric": metric.name,
             "threshold_field": threshold.field,
             "unit": entry.unit or "rows",
             "dimension": entry.dimension or metric.default_dimension,
         }
-        if target.property_name is not None:
-            metadata["field"] = target.property_name
         metadata.update(plan.metadata)
         # ODCS defines no severity vocabulary, so it is recorded verbatim and never mapped to criticality.
         if entry.severity:
             metadata["severity"] = entry.severity
         return metadata
-
-    def _rule(self, check: dict[str, Any], name: str, metadata: dict[str, Any], entry: DataQuality) -> dict:
-        rule: dict[str, Any] = {
-            "check": check,
-            "name": name,
-            "criticality": self._criticality,
-            "user_metadata": dict(metadata),
-        }
-        row_filter = self._row_filter_resolver(entry)
-        if row_filter:
-            rule["filter"] = row_filter
-        return rule
 
 
 def _with_unique_names(rules: list[dict]) -> list[dict]:
