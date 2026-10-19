@@ -25,7 +25,6 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from open_data_contract_standard.model import DataQuality, SchemaObject  # type: ignore
 
@@ -68,8 +67,26 @@ _VIOLATION_OPERATORS: dict[str, str] = {
 
 _UNITS: tuple[str, ...] = ("rows", "percent")
 _MAX_PATTERN_LENGTH = 200
-_NESTED_QUANTIFIER_PATTERN = re.compile(r"\([^()]*[+*]\)[+*{]")
-_ALTERNATION_QUANTIFIER_PATTERN = re.compile(r"\([^()]*\|[^()]*\)[+*{]")
+_QUANTIFIER_PATTERN = re.compile(r"[*+?]|\{(\d+)(?:,(\d*))?\}")
+_INLINE_FLAGS_PATTERN = re.compile(r"\(\?[idmsuxU-]+([:)])")
+# Group syntax Python's re accepts but Java's regex engine (used by Spark) rejects.
+_PYTHON_ONLY_GROUP_PREFIXES: tuple[str, ...] = ("(?P", "(?#", "(?(")
+# Java group prefixes rewritten to a Python form with the same syntax rules (lookbehinds become plain
+# groups because Python, unlike Java, requires them to be fixed-width).
+_JAVA_GROUP_PREFIX_REWRITES: tuple[tuple[str, str], ...] = (
+    ("(?>", "(?:"),
+    ("(?<=", "(?:"),
+    ("(?<!", "(?:"),
+    ("(?<", "(?P<"),
+)
+# Java escapes with no Python equivalent; any single-character atom stands in for the syntax check.
+_JAVA_ONLY_ESCAPE_LETTERS = frozenset("hHRXGe")
+_PATTERN_TOO_LONG = f"is longer than {_MAX_PATTERN_LENGTH} characters"
+_PATTERN_REDOS_RISK = (
+    "repeats a group that contains a variable quantifier or alternation (catastrophic backtracking risk)"
+)
+_PATTERN_PYTHON_ONLY = "uses Python-only regex syntax; Spark evaluates patterns as Java regular expressions"
+_PATTERN_INVALID = "is not a valid regular expression"
 _INPUT_VIEW = "{{ input_view }}"
 
 Number = int | float
@@ -95,15 +112,16 @@ def sql_literal(value: str | Number | bool) -> str:
 
     Numbers stay unquoted so numeric columns compare numerically. Booleans become TRUE/FALSE (checked
     before numbers, since *bool* is a subclass of *int*). Strings are single-quoted with backslashes
-    doubled first and then single quotes: with Spark's default
-    *spark.sql.parser.escapedStringLiterals=false* an unescaped backslash would otherwise be consumed
-    as an escape character.
+    escaped first and then single quotes as *\\'*. Spark (with the default
+    *spark.sql.parser.escapedStringLiterals=false*) treats the backslash as an escape character, and
+    reads a doubled quote as two adjacent literals that are concatenated, so *'O''Brien'* would become
+    *OBrien*.
     """
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)):
         return str(value)
-    escaped = str(value).replace("\\", "\\\\").replace("'", "''")
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
 
 
@@ -143,21 +161,175 @@ def _as_number(value: object) -> Number | None:
     return None
 
 
-def _is_safe_pattern(pattern: str) -> bool:
-    """Best-effort ReDoS guard for a contract-supplied regex (length cap, nested/alternation quantifiers)."""
+def pattern_problem(pattern: str) -> str | None:
+    """Return why a contract-supplied regex is rejected, or None if it can be used.
+
+    Spark evaluates the pattern as a Java regular expression. A single scan checks three things:
+
+    - ReDoS: a repeated group (one-or-more, zero-or-more or a range quantifier) that itself contains a
+      variable quantifier or an alternation, at any nesting depth, plus a 200-character cap. Such
+      patterns can backtrack catastrophically on adversarial input.
+    - Python-only syntax that Java rejects: *(?P...)* named groups, *(?#...)* comments,
+      *(?(...)...)* conditionals and *{,n}* quantifiers.
+    - Syntax errors: Java-only constructs (Unicode classes, possessive quantifiers, atomic groups,
+      mid-pattern inline flags) are rewritten to Python equivalents and the result is compiled with
+      *re*, so validation does not depend on the Python version.
+    """
     if len(pattern) > _MAX_PATTERN_LENGTH:
-        return False
-    return not (_NESTED_QUANTIFIER_PATTERN.search(pattern) or _ALTERNATION_QUANTIFIER_PATTERN.search(pattern))
+        return _PATTERN_TOO_LONG
+    return _PatternScan(pattern).problem()
 
 
-def _is_python_regex(pattern: str) -> bool:
-    """Whether *pattern* parses with Python's *re*. Spark runs it as a Java regex, so Java-only syntax
-    (e.g. *\\p{L}*) is rejected here even though Spark would accept it."""
-    try:
-        re.compile(pattern)
-    except re.error:
-        return False
-    return True
+class _PatternScan:
+    """Single left-to-right scan of a Java regex for :func:*pattern_problem*."""
+
+    def __init__(self, pattern: str):
+        self._pattern = pattern
+        self._pos = 0
+        self._python: list[str] = []
+        # One flag per open group (the outermost entry is the whole pattern): whether the group
+        # contains a variable quantifier or an alternation.
+        self._groups: list[bool] = [False]
+
+    def problem(self) -> str | None:
+        while self._pos < len(self._pattern):
+            is_atom, varies_inside, problem = self._atom()
+            if problem is None and is_atom:
+                problem = self._quantifier(varies_inside)
+            if problem is not None:
+                return problem
+        if len(self._groups) != 1:
+            return _PATTERN_INVALID
+        try:
+            re.compile("".join(self._python))
+        except re.error:
+            return _PATTERN_INVALID
+        return None
+
+    def _emit(self, text: str, length: int) -> None:
+        self._python.append(text)
+        self._pos += length
+
+    def _atom(self) -> tuple[bool, bool, str | None]:
+        """Consume one token; return (is a quantifiable atom, a closed group that varies inside, problem)."""
+        char = self._pattern[self._pos]
+        if char == "\\":
+            self._escape()
+            return True, False, None
+        if char == "[":
+            return self._char_class()
+        if char == "(":
+            return False, False, self._open_group()
+        if char == ")":
+            if len(self._groups) == 1:
+                return False, False, _PATTERN_INVALID
+            varies_inside = self._groups.pop()
+            self._groups[-1] = self._groups[-1] or varies_inside
+            self._emit(")", 1)
+            return True, varies_inside, None
+        if char == "|":
+            self._groups[-1] = True
+            self._emit("|", 1)
+            return False, False, None
+        if char == "{":
+            # Java rejects a brace that does not form a quantifier.
+            return False, False, _PATTERN_INVALID
+        self._emit(char, 1)
+        return True, False, None
+
+    def _escape(self) -> None:
+        pattern, pos = self._pattern, self._pos
+        letter = pattern[pos + 1 : pos + 2]
+        if self._delimited_escape(letter):
+            return
+        if letter in {"p", "P", "c"} and pos + 2 < len(pattern) and pattern[pos + 2] != "{":
+            self._emit(".", 3)  # \pL, \cM
+        elif letter == "Q":
+            close = pattern.find("\\E", pos + 2)
+            literal_end = len(pattern) if close == -1 else close
+            consumed = (literal_end if close == -1 else literal_end + 2) - pos
+            self._emit(re.escape(pattern[pos + 2 : literal_end]), consumed)
+        elif letter == "z":
+            self._emit("\\Z", 2)
+        elif letter in _JAVA_ONLY_ESCAPE_LETTERS:
+            self._emit(".", 2)
+        else:
+            # Passed through; an unknown or incomplete escape fails re.compile.
+            self._emit(pattern[pos : pos + 2], 2 if letter else 1)
+
+    def _delimited_escape(self, letter: str) -> bool:
+        """Consume a Java *\\p{L}*, *\\x{1F600}* or *\\k<name>* escape as a stand-in atom, if present."""
+        pattern, pos = self._pattern, self._pos
+        opener = pattern[pos + 2 : pos + 3]
+        if letter not in {"p", "P", "x", "k"} or opener not in {"{", "<"}:
+            return False
+        close = pattern.find("}" if opener == "{" else ">", pos + 3)
+        if close == -1:
+            return False
+        self._emit(".", close + 1 - pos)
+        return True
+
+    def _char_class(self) -> tuple[bool, bool, str | None]:
+        self._emit("[", 1)
+        if self._pattern.startswith("^", self._pos):
+            self._emit("^", 1)
+        if self._pattern.startswith("]", self._pos):
+            self._emit("\\]", 1)
+        while self._pos < len(self._pattern):
+            char = self._pattern[self._pos]
+            if char == "]":
+                self._emit("]", 1)
+                return True, False, None
+            if char == "\\":
+                self._escape()
+            else:
+                self._emit("\\[" if char == "[" else char, 1)
+        return False, False, _PATTERN_INVALID
+
+    def _open_group(self) -> str | None:
+        if self._pattern.startswith(_PYTHON_ONLY_GROUP_PREFIXES, self._pos):
+            return _PATTERN_PYTHON_ONLY
+        flags = _INLINE_FLAGS_PATTERN.match(self._pattern, self._pos)
+        if flags is not None and flags.group(1) == ")":
+            # Java allows inline flags anywhere; Python 3.11+ only at the start. They do not affect syntax.
+            self._pos = flags.end()
+            return None
+        if flags is not None:
+            self._emit("(?:", flags.end() - self._pos)
+        else:
+            for java_prefix, python_prefix in _JAVA_GROUP_PREFIX_REWRITES:
+                if self._pattern.startswith(java_prefix, self._pos):
+                    self._emit(python_prefix, len(java_prefix))
+                    break
+            else:
+                self._emit("(", 1)
+        self._groups.append(False)
+        return None
+
+    def _quantifier(self, varies_inside: bool) -> str | None:
+        if self._pattern.startswith("{,", self._pos):
+            return _PATTERN_PYTHON_ONLY
+        match = _QUANTIFIER_PATTERN.match(self._pattern, self._pos)
+        if match is None:
+            return None
+        token, minimum, maximum = match.group(0), match.group(1), match.group(2)
+        if minimum is None:
+            repeats, varies = token != "?", True
+        elif maximum is None:
+            repeats, varies = int(minimum) > 1, False  # exact count {m}
+        else:
+            repeats = maximum == "" or int(maximum) > 1
+            varies = maximum == "" or int(maximum) != int(minimum)
+        if repeats and varies_inside:
+            return _PATTERN_REDOS_RISK
+        if varies:
+            self._groups[-1] = True
+        self._emit(token, match.end() - self._pos)
+        if self._pattern.startswith("?", self._pos):
+            self._emit("?", 1)  # lazy
+        elif self._pattern.startswith("+", self._pos):
+            self._pos += 1  # possessive: same syntax, but only Python 3.11+ accepts it
+        return None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -254,7 +426,7 @@ class Measure(ABC):
     """How a metric's value is computed, rendered for *is_aggr_** or for a *sql_query* fallback."""
 
     @abstractmethod
-    def aggregate_arguments(self, unit: str) -> dict[str, Any] | None:
+    def aggregate_arguments(self, unit: str) -> dict[str, object] | None:
         """*is_aggr_** arguments (without *limit*) computing the value, or None if not expressible."""
 
     @abstractmethod
@@ -266,7 +438,7 @@ class Measure(ABC):
 class RowCountMeasure(Measure):
     """Total number of rows in the (optionally filtered) dataset."""
 
-    def aggregate_arguments(self, unit: str) -> dict[str, Any] | None:
+    def aggregate_arguments(self, unit: str) -> dict[str, object] | None:
         return {"column": "*", "aggr_type": "count"}
 
     def condition_query(self, unit: str, threshold: Threshold) -> str:
@@ -285,7 +457,7 @@ class BadRowMeasure(Measure):
 
     predicate_sql: str
 
-    def aggregate_arguments(self, unit: str) -> dict[str, Any] | None:
+    def aggregate_arguments(self, unit: str) -> dict[str, object] | None:
         # Parenthesised so *normalize_column_expr* passes the indicator through as a SQL expression
         # instead of back-quoting it as a column name (operator-free SQL such as "x IS NULL" is
         # otherwise indistinguishable from a name containing spaces).
@@ -317,7 +489,7 @@ class DuplicateValuesMeasure(Measure):
 
     key_columns: tuple[str, ...]
 
-    def aggregate_arguments(self, unit: str) -> dict[str, Any] | None:
+    def aggregate_arguments(self, unit: str) -> dict[str, object] | None:
         return None
 
     def condition_query(self, unit: str, threshold: Threshold) -> str:
@@ -351,7 +523,7 @@ class MetricPlan:
     """
 
     measure: Measure
-    zero_checks: tuple[tuple[str, dict[str, Any]], ...] = ()
+    zero_checks: tuple[tuple[str, dict[str, object]], ...] = ()
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -434,7 +606,7 @@ class MissingValuesMetric(LibraryMetric):
 
         quoted = sql_identifier(column)
         predicate = f"{quoted} IS NULL"
-        zero_checks: list[tuple[str, dict[str, Any]]] = [
+        zero_checks: list[tuple[str, dict[str, object]]] = [
             ("null", {"function": "is_not_null", "arguments": {"column": column}})
         ]
         if non_null:
@@ -484,7 +656,7 @@ class InvalidValuesMetric(LibraryMetric):
         column = target.property_name or ""
         quoted = sql_identifier(column)
         clauses: list[str] = []
-        zero_checks: list[tuple[str, dict[str, Any]]] = []
+        zero_checks: list[tuple[str, dict[str, object]]] = []
         if valid_values is not None:
             clauses.append(f"{quoted} NOT IN ({', '.join(sql_literal(value) for value in valid_values)})")
             zero_checks.append(
@@ -507,7 +679,7 @@ class InvalidValuesMetric(LibraryMetric):
             )
         return MetricPlan(BadRowMeasure(" OR ".join(clauses)), zero_checks=tuple(zero_checks))
 
-    def _read_pattern(self, arguments: dict[str, Any], target: MetricTarget) -> str | None:
+    def _read_pattern(self, arguments: dict[str, object], target: MetricTarget) -> str | None:
         if "pattern" not in arguments:
             return None
         pattern = arguments["pattern"]
@@ -517,18 +689,9 @@ class InvalidValuesMetric(LibraryMetric):
                 "non-empty string; ignoring it."
             )
             return None
-        if not _is_safe_pattern(pattern):
-            logger.warning(
-                f"'arguments.pattern' on {target.location} failed the ReDoS safety guard (200-character cap, "
-                "nested-quantifier check or alternation-quantifier check); ignoring it."
-            )
-            return None
-        if not _is_python_regex(pattern):
-            logger.warning(
-                f"'arguments.pattern' on {target.location} is not a valid Python regular expression; ignoring it. "
-                "Contract patterns are validated with Python's re module, so Java-only syntax (e.g. \\p{L}) "
-                "is not supported."
-            )
+        problem = pattern_problem(pattern)
+        if problem is not None:
+            logger.warning(f"'arguments.pattern' on {target.location} {problem}; ignoring it.")
             return None
         return pattern
 
@@ -580,16 +743,15 @@ LIBRARY_METRICS: dict[str, LibraryMetric] = {
 
 
 def _read_scalar_list(
-    arguments: dict[str, Any] | None, key: str, target: MetricTarget, metric: str, *, allow_null: bool
+    arguments: dict[str, object] | None, key: str, target: MetricTarget, metric: str, *, allow_null: bool
 ) -> list | None:
     """Read a non-empty list of scalars from *arguments[key]*, warning and returning None otherwise."""
     value = arguments.get(key) if isinstance(arguments, dict) else None
-    valid = (
+    if not (
         isinstance(value, list)
         and len(value) > 0
         and all(_is_scalar(item) or (allow_null and item is None) for item in value)
-    )
-    if not valid:
+    ):
         _warn_skip(
             metric,
             target.location,
@@ -620,7 +782,7 @@ def is_library_entry(entry: DataQuality) -> bool:
 
 
 # Assembles the final rule dict: (check, name, entry, property name, metric metadata) -> rule.
-LibraryRuleFactory = Callable[[dict[str, Any], str, DataQuality, str | None, dict[str, str]], dict]
+LibraryRuleFactory = Callable[[dict[str, object], str, DataQuality, str | None, dict[str, str]], dict]
 
 
 class LibraryMetricRulesBuilder:
@@ -636,15 +798,25 @@ class LibraryMetricRulesBuilder:
     def __init__(self, rule_factory: LibraryRuleFactory):
         self._rule_factory = rule_factory
 
-    def build_for_schema(self, schema_obj: SchemaObject, schema_name: str) -> list[dict]:
-        """Build rules for every library entry on the schema and its properties."""
+    def build_for_schema(
+        self, schema_obj: SchemaObject, schema_name: str, taken_names: set[str] | None = None
+    ) -> list[dict]:
+        """Build rules for every library entry on the schema and its properties.
+
+        Args:
+            schema_obj: The ODCS schema object.
+            schema_name: The schema name, used in rule names and log messages.
+            taken_names: Names of rules already generated for the contract. Library rule names are
+                suffixed so they collide neither with these nor with each other; the set is updated
+                with the names used.
+        """
         rules: list[dict] = []
         for prop in schema_obj.properties or []:
             for entry in prop.quality or []:
                 rules.extend(self._build_safely(entry, MetricTarget(schema_name, prop.name)))
         for entry in schema_obj.quality or []:
             rules.extend(self._build_safely(entry, MetricTarget(schema_name, None)))
-        return _with_unique_names(rules)
+        return _with_unique_names(rules, set() if taken_names is None else taken_names)
 
     def _build_safely(self, entry: DataQuality, target: MetricTarget) -> list[dict]:
         if not is_library_entry(entry):
@@ -680,17 +852,19 @@ class LibraryMetricRulesBuilder:
         # unit-independent (zero rows and zero percent are the same fact), so only the other
         # thresholds need a recognized unit.
         unit = entry.unit or "rows"
-        if unit not in metric.units and any(not self._uses_zero_checks(t, plan) for t in thresholds):
+        if unit not in metric.units:
             logger.warning(
                 f"type: library {metric.name} entry on {target.location} has unrecognized unit "
                 f"'{sanitize_for_logging(unit)}'; expected {' or '.join(metric.units)}; skipping its thresholds "
                 f"other than mustBe: 0."
             )
             thresholds = [t for t in thresholds if self._uses_zero_checks(t, plan)]
+            # Zero rows and zero percent are the same fact; record the default rather than the bad value.
+            unit = "rows"
 
         rules: list[dict] = []
         for threshold in thresholds:
-            rules.extend(self._build_for_threshold(entry, metric, target, threshold, plan))
+            rules.extend(self._build_for_threshold(entry, metric, target, threshold, plan, unit))
         return rules
 
     @staticmethod
@@ -704,9 +878,10 @@ class LibraryMetricRulesBuilder:
         target: MetricTarget,
         threshold: Threshold,
         plan: MetricPlan,
+        unit: str,
     ) -> list[dict]:
         base_name = f"{target.subject}_{metric.name}_{threshold.field}"
-        metadata = self._metadata(entry, metric, threshold, plan)
+        metadata = self._metadata(entry, metric, threshold, plan, unit)
 
         if self._uses_zero_checks(threshold, plan):
             return [
@@ -716,7 +891,7 @@ class LibraryMetricRulesBuilder:
                 for suffix, check in plan.zero_checks
             ]
 
-        check = self._threshold_check(plan.measure, entry.unit or "rows", threshold)
+        check = self._threshold_check(plan.measure, unit, threshold)
         if check is None:
             _warn_skip(metric.name, target.location, "produced a SQL query that failed the SQL safety check")
             return []
@@ -741,7 +916,7 @@ class LibraryMetricRulesBuilder:
         return metric
 
     @staticmethod
-    def _threshold_check(measure: Measure, unit: str, threshold: Threshold) -> dict[str, Any] | None:
+    def _threshold_check(measure: Measure, unit: str, threshold: Threshold) -> dict[str, object] | None:
         """Render a non-zero threshold: an exact-fit is_aggr_* check where possible, else sql_query."""
         function = threshold.aggregate_function
         aggregate_arguments = measure.aggregate_arguments(unit)
@@ -755,14 +930,16 @@ class LibraryMetricRulesBuilder:
         return {"function": "sql_query", "arguments": {"query": query, "condition_column": "condition"}}
 
     @staticmethod
-    def _metadata(entry: DataQuality, metric: LibraryMetric, threshold: Threshold, plan: MetricPlan) -> dict[str, str]:
+    def _metadata(
+        entry: DataQuality, metric: LibraryMetric, threshold: Threshold, plan: MetricPlan, unit: str
+    ) -> dict[str, str]:
         """Metric-specific *user_metadata*; provenance, *field* and *customProperties* come from the rule factory."""
         metadata: dict[str, str] = {
             "rule_type": "metric",
             "metric": metric.name,
             "threshold_field": threshold.field,
-            "unit": entry.unit or "rows",
-            "dimension": entry.dimension or metric.default_dimension,
+            "unit": unit,
+            "dimension": (entry.dimension or "").strip() or metric.default_dimension,
         }
         metadata.update(plan.metadata)
         # ODCS defines no severity vocabulary, so it is recorded verbatim and never mapped to criticality.
@@ -771,12 +948,13 @@ class LibraryMetricRulesBuilder:
         return metadata
 
 
-def _with_unique_names(rules: list[dict]) -> list[dict]:
-    """Suffix repeated rule names (_2, _3, ...) so two entries with the same metric and threshold field stay distinct."""
-    seen: dict[str, int] = {}
+def _with_unique_names(rules: list[dict], taken_names: set[str]) -> list[dict]:
+    """Suffix rule names (_2, _3, ...) that are already taken, recording every name used in *taken_names*."""
     for rule in rules:
         name = rule["name"]
-        seen[name] = seen.get(name, 0) + 1
-        if seen[name] > 1:
-            rule["name"] = f"{name}_{seen[name]}"
+        suffix = 1
+        while rule["name"] in taken_names:
+            suffix += 1
+            rule["name"] = f"{name}_{suffix}"
+        taken_names.add(rule["name"])
     return rules

@@ -4303,11 +4303,19 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(LibraryMetricTestBase):
     @pytest.mark.parametrize(
         "pattern, reason",
         [
-            ("a" * 201, "failed the ReDoS safety guard"),
-            ("(a+)+", "failed the ReDoS safety guard"),
-            ("(a|a)*", "failed the ReDoS safety guard"),
-            ("[unclosed", "is not a valid Python regular expression"),
-            ("^\\p{L}+$", "is not a valid Python regular expression"),  # Java-only syntax is reported as such
+            ("a" * 201, "is longer than 200 characters"),
+            ("(a+)+", "catastrophic backtracking risk"),
+            ("(a|a)*", "catastrophic backtracking risk"),
+            # Nested repetition the previous single-level heuristic let through.
+            ("((a+))+", "catastrophic backtracking risk"),
+            ("(\\w+\\s?)+$", "catastrophic backtracking risk"),
+            ("(a{1,9})+", "catastrophic backtracking risk"),
+            ("[unclosed", "is not a valid regular expression"),
+            ("a{x}", "is not a valid regular expression"),
+            ("^\\p{L+$", "is not a valid regular expression"),  # unclosed Unicode class
+            # Python accepts these, but Spark's Java regex engine rejects them at apply time.
+            ("(?P<code>[A-Z]+)", "uses Python-only regex syntax"),
+            ("a{,3}", "uses Python-only regex syntax"),
         ],
     )
     def test_unsafe_or_invalid_pattern_is_ignored_with_warning(self, generator, caplog, pattern, reason):
@@ -4318,6 +4326,24 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(LibraryMetricTestBase):
         assert rules == []
         assert reason in caplog.text
         assert "has neither a usable 'arguments.validValues' list nor a usable 'arguments.pattern'" in caplog.text
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            "^\\p{L}+$",  # Unicode class
+            "^\\d++$",  # possessive quantifier (Python 3.11+ only)
+            "(?>ab)c",  # atomic group
+            "(?<year>\\d{4})-\\d{2}",  # Java named group
+            "a(?i)b",  # mid-pattern inline flag (Python 3.11+ rejects it)
+            "^(\\d{3})+$",  # exact-count repetition inside a repeated group cannot backtrack
+        ],
+    )
+    def test_java_regex_pattern_is_accepted(self, generator, pattern):
+        """Spark evaluates patterns as Java regex, so Java syntax is accepted on every Python version."""
+        entry = {"metric": "invalidValues", "mustBe": 0, "arguments": {"pattern": pattern}}
+        rule = self._single_rule(generator, self._property_contract([entry]))
+
+        assert rule["check"] == {"function": "regex_match", "arguments": {"column": "email", "regex": pattern}}
 
     def test_missing_arguments_are_skipped_with_warning(self, generator, caplog):
         with caplog.at_level(logging.WARNING):
@@ -4452,3 +4478,53 @@ class TestDataContractGeneratorLibraryRulesRegressions(LibraryMetricTestBase):
         assert rule["user_metadata"]["description"] == "Emails present"
         assert rule["user_metadata"]["rule_type"] == "metric"
         assert rule["user_metadata"]["field"] == "email"
+
+    def test_single_quotes_are_backslash_escaped(self, generator):
+        """Spark concatenates 'O''Brien' into OBrien, so quotes are escaped as \\' instead."""
+        values = {"missingValues": ["O'Brien"]}
+        zero = self._generate(
+            generator, self._property_contract([{"metric": "missingValues", "mustBe": 0, "arguments": values}])
+        )
+        non_zero = self._single_rule(
+            generator, self._property_contract([{"metric": "missingValues", "mustBeLessThan": 5, "arguments": values}])
+        )
+
+        forbidden = zero[1]["check"]["arguments"]["forbidden"]
+        assert forbidden == ["'O\\'Brien'"]
+        assert "IN ('O\\'Brien')" in non_zero["check"]["arguments"]["query"]
+
+    def test_library_rule_names_do_not_collide_with_existing_names(self, generator):
+        """Suffixes skip names already used by explicit rules or other library rules."""
+        explicit = {
+            "type": "custom",
+            "engine": "dqx",
+            "implementation": {
+                "name": "email_nullValues_mustBeLessOrEqualTo_2",
+                "check": {"function": "is_not_null", "arguments": {"column": "email"}},
+            },
+        }
+        library = {"metric": "nullValues", "mustBeLessOrEqualTo": 5}
+        rules = self._generate(generator, self._property_contract([explicit, library, library]))
+
+        assert [rule["name"] for rule in rules] == [
+            "email_nullValues_mustBeLessOrEqualTo_2",
+            "email_nullValues_mustBeLessOrEqualTo",
+            "email_nullValues_mustBeLessOrEqualTo_3",
+        ]
+
+    @pytest.mark.parametrize("dimension, expected", [("  validity ", "validity"), ("   ", "completeness")])
+    def test_dimension_is_stripped_and_blank_falls_back_to_the_default(self, generator, dimension, expected):
+        entry = {"metric": "nullValues", "mustBeLessOrEqualTo": 5, "dimension": dimension}
+        rule = self._single_rule(generator, self._property_contract([entry]))
+
+        assert rule["user_metadata"]["dimension"] == expected
+
+    def test_unrecognized_unit_on_a_zero_only_entry_is_reported(self, generator, caplog):
+        """The mustBe: 0 rule is kept, but the typo is still logged and not recorded as the unit."""
+        entry = {"metric": "nullValues", "mustBe": 0, "unit": "percentage"}
+        with caplog.at_level(logging.WARNING):
+            rule = self._single_rule(generator, self._property_contract([entry]))
+
+        assert rule["check"]["function"] == "is_not_null"
+        assert rule["user_metadata"]["unit"] == "rows"
+        assert "unrecognized unit 'percentage'" in caplog.text

@@ -708,7 +708,13 @@ A `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, or `mustNotBeBetween` 
 </Tabs>
 
 <Admonition type="warning" title="Pattern safety check">
-`arguments.pattern` is checked at generation time for patterns that could cause catastrophic regex backtracking (ReDoS). A pattern that fails this check is treated as absent — its own warning is logged, and the entry still proceeds using `validValues` alone if present. Keep patterns simple and avoid nested or alternation-heavy quantifiers. The pattern must also be a valid Python regular expression: Spark evaluates it as a Java regex, but it is validated with Python's `re` module first, so Java-only syntax such as `\p{L}` is reported as invalid and ignored the same way.
+`arguments.pattern` is a Java regular expression (Spark evaluates it with Java's regex engine) and is checked at generation time. A pattern that fails a check is treated as absent — its own warning is logged, and the entry still proceeds using `validValues` alone if present. A pattern is rejected when it:
+
+- Could cause catastrophic backtracking (ReDoS): it is longer than 200 characters, or it repeats (`+`, `*`, `{m,}`, `{m,n}`) a group that contains a variable quantifier or an alternation, at any nesting depth — e.g. `(a+)+`, `((a+))+`, `(\w+\s?)+` or `(a|ab)*`. Optional groups (`(a+)?`) and exact counts (`(\d{3})+`) are allowed.
+- Uses Python-only syntax that Java rejects: `(?P<name>...)` (write `(?<name>...)`), `(?#...)` comments, conditionals or `{,n}`.
+- Is not a valid regular expression, e.g. an unclosed group or class.
+
+Java syntax such as Unicode classes (`\p{L}`), possessive quantifiers (`\d++`), atomic groups and inline flags is accepted.
 </Admonition>
 
 ### duplicateValues
@@ -752,7 +758,7 @@ For a non-`mustBe: 0` threshold, `duplicateValues` counts the number of *distinc
 
 ### Rule Names and Row Filters
 
-Each library entry produces rules named `<property>_<metric>_<thresholdField>` (or `<schema>_<metric>_<thresholdField>` for schema-level entries), e.g. `email_nullValues_mustBeLessOrEqualTo`. Where `mustBe: 0` produces more than one row-level rule, each carries a suffix naming its part (`_null`/`_sentinel` for `missingValues`, `_allowed`/`_pattern` for `invalidValues`). Two entries that would still share a name, such as two `mustBeLessOrEqualTo` entries on the same property, get `_2`, `_3`, ... suffixes, so a range expressed as two entries never collides.
+Each library entry produces rules named `<property>_<metric>_<thresholdField>` (or `<schema>_<metric>_<thresholdField>` for schema-level entries), e.g. `email_nullValues_mustBeLessOrEqualTo`. Where `mustBe: 0` produces more than one row-level rule, each carries a suffix naming its part (`_null`/`_sentinel` for `missingValues`, `_allowed`/`_pattern` for `invalidValues`). Two entries that would still share a name, such as two `mustBeLessOrEqualTo` entries on the same property, get `_2`, `_3`, ... suffixes, so a range expressed as two entries never collides. Suffixes also skip names already used by other rules generated from the contract (for example an explicit rule), so every generated rule name is unique.
 
 A `row_filter` (or `rowFilter`) custom property on a library entry is honoured the same way as on an explicit rule: it is emitted as the rule's `filter`, so the metric is computed over, and reported on, the matching rows only.
 
@@ -771,7 +777,7 @@ DQX **warns and skips** an individual `type: library` entry — logging the reas
 
 - A missing or unrecognized `metric` name (the warning names all five supported metrics).
 - No recognized threshold field set (none of the eight `mustBe...`/`mustNotBe...` fields). A threshold field whose value is not a number is skipped on its own; the entry's other valid threshold fields still produce rules.
-- An unrecognized `unit` (anything other than `rows` or `percent`, or anything other than `rows` for `rowCount`). Only the entry's thresholds other than `mustBe: 0` are skipped, since `mustBe: 0` ignores the unit — see [Rows vs. Percent](#rows-vs-percent).
+- An unrecognized `unit` (anything other than `rows` or `percent`, or anything other than `rows` for `rowCount`). Only the entry's thresholds other than `mustBe: 0` are skipped, since `mustBe: 0` ignores the unit; the warning is still logged, and a kept `mustBe: 0` rule records `unit: rows` — see [Rows vs. Percent](#rows-vs-percent).
 - A schema-level entry for a property-only metric (`nullValues`, `missingValues`, `invalidValues`), or a property-level `rowCount` entry.
 - Malformed `arguments` — not a dict, a missing or wrong-typed key (e.g. `arguments.missingValues` not a list of scalar values, or containing `NaN`/infinity), or an empty list where a non-empty one is required.
 - For `invalidValues`, an entry with neither a usable `arguments.validValues` list nor a usable `arguments.pattern` string (after the pattern safety check, described above).
@@ -988,7 +994,7 @@ All generated rules include rich metadata that traces them back to the source co
 | `metric` | ODCS library metric name (`rule_type: "metric"` only) | `rowCount`, `nullValues`, `missingValues`, `invalidValues`, or `duplicateValues` |
 | `threshold_field` | ODCS threshold field that produced the check (`rule_type: "metric"` only) | `mustBe`, `mustBeGreaterOrEqualTo`, `mustBeBetween`, etc. |
 | `unit` | Threshold unit for the metric (`rule_type: "metric"` only) | `rows` (default) or `percent` |
-| `dimension` | Data quality dimension — the contract's own `dimension` if set, else the metric's ODCS default | `completeness`, `uniqueness`, or `conformity` |
+| `dimension` | Data quality dimension — the contract's own `dimension` (whitespace trimmed) if set and not blank, else the metric's ODCS default | `completeness`, `uniqueness`, or `conformity` |
 | `severity` | Contract's own `severity` value, recorded verbatim for audit only (never used to derive `criticality`); present only when the contract sets it | Any contract-defined string |
 
 This metadata enables:

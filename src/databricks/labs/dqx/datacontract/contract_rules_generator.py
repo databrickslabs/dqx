@@ -278,7 +278,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
             if process_library_rules:
                 library_rules = self._process_library_rules_for_schema(
-                    schema_obj, schema_name, odcs, default_criticality
+                    schema_obj,
+                    schema_name,
+                    odcs,
+                    default_criticality,
+                    {rule["name"] for rule in dq_rules if rule.get("name")},
                 )
                 dq_rules.extend(library_rules)
 
@@ -1482,13 +1486,19 @@ class DataContractRulesGenerator(DQEngineBase):
         return rule
 
     def _process_library_rules_for_schema(
-        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+        self,
+        schema_obj: SchemaObject,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+        taken_names: set[str],
     ) -> list[dict]:
         """Generate rules from the ODCS type: library quality metric entries of a schema.
 
         The mapping itself lives in *library_metrics*; each rule is assembled by *_build_rule_dict*, so
         library rules get the same provenance, owner, row filter and customProperties handling as
-        explicit rules.
+        explicit rules. Library rule names are suffixed where they would repeat a name in *taken_names*
+        (the rules already generated for the contract).
         """
 
         def build_rule(
@@ -1506,4 +1516,4 @@ class DataContractRulesGenerator(DQEngineBase):
                 extra_metadata=metric_metadata,
             )
 
-        return LibraryMetricRulesBuilder(build_rule).build_for_schema(schema_obj, schema_name)
+        return LibraryMetricRulesBuilder(build_rule).build_for_schema(schema_obj, schema_name, taken_names)
