@@ -26,7 +26,7 @@ import { getWorkspaceHostQueryKey } from "@/lib/api-custom";
 import { useTheme } from "@/components/layout/theme-provider";
 import en from "@/lib/i18n/locales/en.json";
 import { setupView } from "@/lib/setup-state";
-import type { SetupCatalogList } from "@/lib/setup-catalogs";
+import type { SetupOptionList } from "@/lib/setup-options";
 
 Object.defineProperty(globalThis, "__APP_NAME__", { value: "DQX Studio" });
 Object.defineProperty(globalThis, "localStorage", {
@@ -417,7 +417,7 @@ function renderWizard(
   {
     editingConfiguration = false,
     catalogList,
-  }: { editingConfiguration?: boolean; catalogList?: SetupCatalogList } = {},
+  }: { editingConfiguration?: boolean; catalogList?: SetupOptionList } = {},
 ): string {
   return renderSetup(
     <SetupWizard
@@ -441,7 +441,7 @@ describe("setup configuration", () => {
 
   test("the form picks the catalog from the listed catalogs", () => {
     const html = renderWizard(configurationStatus(true), {
-      catalogList: { status: "ready", catalogs: ["main"] },
+      catalogList: { status: "ready", options: ["main"] },
     });
     expect(html).toContain('role="combobox"');
     expect(html).not.toContain('name="catalog"');

@@ -24,7 +24,13 @@ from databricks_labs_dqx_app.backend.dependencies import (
     require_setup_admin,
     sanitize_setup_display,
 )
-from databricks_labs_dqx_app.backend.setup.audience import AudienceGroupRequiredError, BuiltInAudienceGroupError
+from databricks_labs_dqx_app.backend.setup.audience import (
+    ACCOUNT_USERS,
+    BROAD_AUDIENCE,
+    WORKSPACE_ADMINS,
+    AudienceGroupRequiredError,
+    BuiltInAudienceGroupError,
+)
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore, validate_choices
 from databricks_labs_dqx_app.backend.setup.errors import (
     AppServicePrincipalChosenError,
@@ -36,6 +42,7 @@ from databricks_labs_dqx_app.backend.setup.storage import InvalidCatalogNameErro
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupApplyGrantsResponse,
     SetupConfigurationRequest,
+    SetupGroupsResponse,
     SetupOverrideRequest,
     SetupReport,
     SetupStatusResponse,
@@ -103,6 +110,33 @@ def _group_exists(sp_ws: WorkspaceClient, group: str) -> bool:
         logger.warning(f"Group existence check failed: {type(error).__name__}")
         raise _error(status.HTTP_502_BAD_GATEWAY, "group_check_failed") from None
     return any((match.display_name or "").casefold() == group.casefold() for match in matches)
+
+
+MAX_LISTED_GROUPS = 1000
+_BUILT_IN_GROUP_NAMES = frozenset({BROAD_AUDIENCE, ACCOUNT_USERS, WORKSPACE_ADMINS})
+
+
+@router.get("/groups", response_model=SetupGroupsResponse, operation_id="listSetupGroups")
+async def list_setup_groups(
+    _access: Annotated[SetupAccess, require_setup_admin()],
+    config: Annotated[AppConfig, Depends(get_conf)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> SetupGroupsResponse:
+    """List workspace groups for the default user group picker, without the built-in ones.
+
+    Listed as the app, like the group existence check: no user token scope covers groups.
+    A deployment that supplies storage also supplies the group, so there is nothing to choose.
+    """
+    if config.has_deployment_storage:
+        raise _error(status.HTTP_409_CONFLICT, "configuration_managed_by_deployment")
+    try:
+        listed = await asyncio.to_thread(lambda: list(sp_ws.groups.list(attributes="id,displayName")))
+    except DatabricksError as error:
+        logger.warning(f"Group listing failed: {type(error).__name__}")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "group_list_failed") from None
+    names = {group.display_name for group in listed if group.display_name}
+    choosable = sorted(name for name in names if name.casefold() not in _BUILT_IN_GROUP_NAMES)
+    return SetupGroupsResponse(groups=tuple(choosable[:MAX_LISTED_GROUPS]))
 
 
 @router.post("/configuration", response_model=SetupReport, operation_id="configureSetup")

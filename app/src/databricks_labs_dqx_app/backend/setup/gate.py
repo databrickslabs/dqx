@@ -22,6 +22,8 @@ _ALLOWED_BEFORE_READY = frozenset(
         ("POST", "/api/v1/setup/override"),
         # The setup form's catalog picker lists catalogs as the signed-in user.
         ("GET", "/api/v1/discovery/catalogs"),
+        # The setup form's default user group picker lists the workspace's groups.
+        ("GET", "/api/v1/setup/groups"),
         # The task-runner step blocks setup until its service principal is picked, checked and applied.
         ("GET", "/api/v1/setup/task-runner/service-principals"),
         ("POST", "/api/v1/setup/task-runner/access"),

@@ -904,3 +904,60 @@ def test_run_as_maps_databricks_failures_to_codes_without_raw_text(
     assert response.status_code == status_code
     assert response.json()["detail"] == {"code": code}
     assert "internal detail" not in response.text
+
+
+_GROUPS_URL = "/api/v1/setup/groups"
+
+
+def test_group_listing_excludes_builtins_sorts_and_names_only(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [
+        SimpleNamespace(display_name=name)
+        for name in ["zeta", "Users", "data-team", "ACCOUNT USERS", "admins", "alpha", None]
+    ]
+
+    response = client.get(_GROUPS_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {"groups": ["alpha", "data-team", "zeta"]}
+    sp_ws.groups.list.assert_called_once_with(attributes="id,displayName")
+
+
+def test_group_listing_is_capped(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [SimpleNamespace(display_name=f"group-{index:05d}") for index in range(1500)]
+
+    groups = client.get(_GROUPS_URL).json()["groups"]
+
+    assert len(groups) == 1000
+    assert groups[0] == "group-00000"
+
+
+def test_group_listing_requires_setup_admin(client: TestClient, obo_ws: MagicMock, sp_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("data-team")
+
+    response = client.get(_GROUPS_URL)
+
+    assert response.status_code == 403
+    sp_ws.groups.list.assert_not_called()
+
+
+def test_group_listing_is_rejected_when_deployment_managed(client: TestClient, sp_ws: MagicMock) -> None:
+    app.dependency_overrides[get_conf] = lambda: AppConfig(admin_group="admins", catalog="main", warehouse_id="wh")
+
+    response = client.get(_GROUPS_URL)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "configuration_managed_by_deployment"
+    sp_ws.groups.list.assert_not_called()
+
+
+def test_group_listing_failure_hides_sdk_text(
+    client: TestClient, sp_ws: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    sp_ws.groups.list.side_effect = InternalError("secret-detail")
+
+    response = client.get(_GROUPS_URL)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": "group_list_failed"}
+    assert "secret-detail" not in response.text
+    assert "secret-detail" not in caplog.text

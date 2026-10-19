@@ -27,7 +27,7 @@ import {
   type SetupConfigurationValues,
 } from "@/components/setup/SetupConfigurationForm";
 import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
-import type { SetupCatalogList } from "@/lib/setup-catalogs";
+import type { SetupOptionList } from "@/lib/setup-options";
 import { GrantOutcomeNotice } from "@/components/setup/GrantOutcomeNotice";
 import { TaskRunnerSetup } from "@/components/setup/TaskRunnerSetup";
 import { grantStatementsSql, type StepGrantOutcome } from "@/lib/setup-grants";
@@ -45,7 +45,8 @@ type SetupWizardProps = {
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring?: boolean;
   configurationError?: string;
-  catalogList?: SetupCatalogList;
+  catalogList?: SetupOptionList;
+  groupList?: SetupOptionList;
   /** Opens (true) or closes (false) the form for changing saved choices. */
   onEditConfiguration?: (editing: boolean) => void;
   /** Runs a step's GRANT statements as the signed-in administrator. */
@@ -243,6 +244,7 @@ function StepCard({
   isConfiguring,
   configurationError,
   catalogList,
+  groupList,
   onEditConfiguration,
   onApplyGrants,
   applyingGrantsStepId,
@@ -262,7 +264,8 @@ function StepCard({
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring: boolean;
   configurationError?: string;
-  catalogList?: SetupCatalogList;
+  catalogList?: SetupOptionList;
+  groupList?: SetupOptionList;
   onEditConfiguration?: (editing: boolean) => void;
   onApplyGrants?: (stepId: SetupStep["id"]) => void;
   applyingGrantsStepId?: SetupStep["id"];
@@ -391,6 +394,7 @@ function StepCard({
                 errorCode={configurationError}
                 onSubmit={(values) => onConfigure?.(values)}
                 catalogList={catalogList}
+                groupList={groupList}
                 onCancel={
                   isEditingSaved && onEditConfiguration
                     ? () => onEditConfiguration(false)
@@ -491,6 +495,7 @@ export function SetupWizard({
   isConfiguring = false,
   configurationError,
   catalogList,
+  groupList,
   onEditConfiguration,
   onApplyGrants,
   applyingGrantsStepId,
@@ -582,6 +587,7 @@ export function SetupWizard({
               isConfiguring={isConfiguring}
               configurationError={configurationError}
               catalogList={catalogList}
+              groupList={groupList}
               onEditConfiguration={onEditConfiguration}
               onApplyGrants={onApplyGrants}
               applyingGrantsStepId={applyingGrantsStepId}

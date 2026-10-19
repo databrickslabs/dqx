@@ -16,6 +16,7 @@ import {
   reconcileSetup,
   useApplySetupStepGrants,
   useListCatalogs,
+  useListSetupGroups,
   type HTTPValidationError,
   type SetupApplyGrantsResponse,
   type SetupStatusResponse,
@@ -28,7 +29,7 @@ import {
   unacknowledgedWarnings,
   warningKey,
 } from "@/lib/setup-state";
-import { setupCatalogList } from "@/lib/setup-catalogs";
+import { setupOptionList } from "@/lib/setup-options";
 import {
   grantRequestFailure,
   grantRunOutcome,
@@ -161,6 +162,14 @@ export function SetupGate({ children }: SetupGateProps) {
       staleTime: 5 * 60_000,
     },
   });
+  const groups = useListSetupGroups({
+    query: {
+      enabled:
+        !!setupStatus.data && configurationAdvertised(setupStatus.data.data),
+      retry: false,
+      staleTime: 5 * 60_000,
+    },
+  });
   // While readiness is being checked, show the same "Loading DQX Studio" spinner
   // AuthGuard uses, so the check reads as one continuous load — no flash of the
   // "Checking Studio readiness" card, and no blank/black screen.
@@ -215,10 +224,15 @@ export function SetupGate({ children }: SetupGateProps) {
           ? (setupErrorCode(configuration.error) ?? "default")
           : undefined
       }
-      catalogList={setupCatalogList({
+      catalogList={setupOptionList({
         isPending: catalogs.isPending,
         isError: catalogs.isError,
-        catalogs: catalogs.data?.data.map((catalog) => catalog.name),
+        options: catalogs.data?.data.map((catalog) => catalog.name),
+      })}
+      groupList={setupOptionList({
+        isPending: groups.isPending,
+        isError: groups.isError,
+        options: groups.data?.data.groups,
       })}
       onEditConfiguration={(editing) => {
         configuration.reset();

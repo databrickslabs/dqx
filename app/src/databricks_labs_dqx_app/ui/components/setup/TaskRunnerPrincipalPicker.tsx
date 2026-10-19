@@ -30,7 +30,7 @@ type TaskRunnerPrincipalPickerProps = {
 
 /**
  * Searchable single-select picker of the workspace's service principals, following
- * SetupCatalogPicker. Searches by name or Application ID, and offers a typed
+ * SetupOptionPicker. Searches by name or Application ID, and offers a typed
  * Application ID as an option so a service principal the list doesn't show can
  * still be chosen.
  */

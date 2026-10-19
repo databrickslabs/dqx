@@ -1,81 +1,81 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  MAX_VISIBLE_CATALOGS,
-  catalogMatches,
-  setupCatalogList,
-} from "./setup-catalogs";
+  MAX_VISIBLE_OPTIONS,
+  optionMatches,
+  setupOptionList,
+} from "./setup-options";
 
-describe("setupCatalogList", () => {
+describe("setupOptionList", () => {
   test("is loading while the catalog list is pending", () => {
-    expect(setupCatalogList({ isPending: true, isError: false })).toEqual({
+    expect(setupOptionList({ isPending: true, isError: false })).toEqual({
       status: "loading",
     });
   });
 
   test("offers the listed catalogs once they load", () => {
     expect(
-      setupCatalogList({
+      setupOptionList({
         isPending: false,
         isError: false,
-        catalogs: ["main", "sales"],
+        options: ["main", "sales"],
       }),
-    ).toEqual({ status: "ready", catalogs: ["main", "sales"] });
+    ).toEqual({ status: "ready", options: ["main", "sales"] });
   });
 
   test("falls back to typing when listing fails", () => {
-    expect(setupCatalogList({ isPending: false, isError: true })).toEqual({
+    expect(setupOptionList({ isPending: false, isError: true })).toEqual({
       status: "unavailable",
     });
   });
 
   test("falls back to typing when no catalogs are visible", () => {
     expect(
-      setupCatalogList({ isPending: false, isError: false, catalogs: [] }),
+      setupOptionList({ isPending: false, isError: false, options: [] }),
     ).toEqual({ status: "unavailable" });
   });
 });
 
-describe("catalogMatches", () => {
+describe("optionMatches", () => {
   const catalogs = ["main", "sales_dev", "sales_prod", "hr"];
 
   test("lists every catalog when nothing is typed", () => {
-    expect(catalogMatches(catalogs, "")).toEqual({
+    expect(optionMatches(catalogs, "")).toEqual({
       matches: catalogs,
       typed: null,
     });
   });
 
   test("filters by a case-insensitive substring", () => {
-    expect(catalogMatches(catalogs, " SALES ").matches).toEqual([
+    expect(optionMatches(catalogs, " SALES ").matches).toEqual([
       "sales_dev",
       "sales_prod",
     ]);
   });
 
   test("offers a typed name that is not listed", () => {
-    expect(catalogMatches(catalogs, " finance ")).toEqual({
+    expect(optionMatches(catalogs, " finance ")).toEqual({
       matches: [],
       typed: "finance",
     });
   });
 
   test("offers a partial typed name alongside its matches", () => {
-    expect(catalogMatches(catalogs, "sales")).toEqual({
+    expect(optionMatches(catalogs, "sales")).toEqual({
       matches: ["sales_dev", "sales_prod"],
       typed: "sales",
     });
   });
 
   test("does not offer a typed name that matches a listed catalog", () => {
-    expect(catalogMatches(catalogs, "MAIN").typed).toBeNull();
+    expect(optionMatches(catalogs, "MAIN").typed).toBeNull();
   });
 
   test("keeps a huge list searchable by capping what is shown", () => {
     const many = Array.from({ length: 5000 }, (_, index) => `catalog_${index}`);
 
-    expect(catalogMatches(many, "").matches).toHaveLength(MAX_VISIBLE_CATALOGS);
-    expect(catalogMatches(many, "catalog_4999").matches).toEqual([
+    expect(optionMatches(many, "").matches).toHaveLength(MAX_VISIBLE_OPTIONS);
+    expect(optionMatches(many, "catalog_4999").matches).toEqual([
       "catalog_4999",
     ]);
   });

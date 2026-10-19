@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SetupCatalogPicker } from "@/components/setup/SetupCatalogPicker";
-import type { SetupCatalogList } from "@/lib/setup-catalogs";
+import { SetupOptionPicker } from "@/components/setup/SetupOptionPicker";
+import type { SetupOptionList } from "@/lib/setup-options";
 
 export type SetupConfigurationValues = {
   catalog: string;
@@ -20,12 +20,21 @@ type SetupConfigurationFormProps = {
   /** Previously saved choices to edit; empty fields fall back to the defaults. */
   initialValues?: Partial<SetupConfigurationValues>;
   /** Catalogs for the searchable picker; without a list the catalog is typed in. */
-  catalogList?: SetupCatalogList;
+  catalogList?: SetupOptionList;
+  /** Groups for the searchable picker; without a list the group is typed in. */
+  groupList?: SetupOptionList;
   /** Closes the form without saving, when changing previously saved choices. */
   onCancel?: () => void;
 };
 
 const FIELDS = ["catalog", "prefix", "audience_group"] as const;
+
+/** Copy key stem of the pickable fields: `<stem>Placeholder`, `<stem>Search`, `<stem>ListUnavailable`. */
+const PICKER_COPY = { catalog: "catalog", audience_group: "group" } as const;
+
+function optionsOf(list: SetupOptionList | null): string[] {
+  return list?.status === "ready" ? list.options : [];
+}
 
 export function SetupConfigurationForm({
   isSubmitting,
@@ -33,6 +42,7 @@ export function SetupConfigurationForm({
   onSubmit,
   initialValues,
   catalogList,
+  groupList,
   onCancel,
 }: SetupConfigurationFormProps) {
   const { t } = useTranslation();
@@ -45,8 +55,15 @@ export function SetupConfigurationForm({
     (key: keyof SetupConfigurationValues) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
       setValues((current) => ({ ...current, [key]: event.target.value }));
-  const pickerList =
-    catalogList && catalogList.status !== "unavailable" ? catalogList : null;
+  const lists = { catalog: catalogList, audience_group: groupList };
+  // The picker for a field whose list loads or is ready; null means a plain text input.
+  const pickerFor = (field: (typeof FIELDS)[number]) => {
+    const list = field === "prefix" ? undefined : lists[field];
+    return list && list.status !== "unavailable" ? list : null;
+  };
+  const choiceMissing = FIELDS.some(
+    (field) => !!pickerFor(field) && !values[field].trim(),
+  );
 
   return (
     <form
@@ -65,14 +82,17 @@ export function SetupConfigurationForm({
           <Label htmlFor={`setup-${field}`}>
             {t(`setup.configuration.${field}`)}
           </Label>
-          {field === "catalog" && pickerList ? (
-            <SetupCatalogPicker
-              id="setup-catalog"
-              value={values.catalog}
-              catalogs={pickerList.status === "ready" ? pickerList.catalogs : []}
-              isLoading={pickerList.status === "loading"}
-              onChange={(catalog) =>
-                setValues((current) => ({ ...current, catalog }))
+          {field !== "prefix" && pickerFor(field) ? (
+            <SetupOptionPicker
+              id={`setup-${field}`}
+              value={values[field]}
+              options={optionsOf(pickerFor(field))}
+              isLoading={pickerFor(field)?.status === "loading"}
+              placeholder={t(`setup.configuration.${PICKER_COPY[field]}Placeholder`)}
+              searchPlaceholder={t(`setup.configuration.${PICKER_COPY[field]}Search`)}
+              typedLabel={(name) => t("setup.configuration.useTyped", { name })}
+              onChange={(option) =>
+                setValues((current) => ({ ...current, [field]: option }))
               }
             />
           ) : (
@@ -88,9 +108,9 @@ export function SetupConfigurationForm({
           <p className="text-xs text-muted-foreground">
             {t(`setup.configuration.${field}Help`)}
           </p>
-          {field === "catalog" && catalogList?.status === "unavailable" && (
+          {field !== "prefix" && lists[field]?.status === "unavailable" && (
             <p className="text-xs text-muted-foreground">
-              {t("setup.configuration.catalogListUnavailable")}
+              {t(`setup.configuration.${PICKER_COPY[field]}ListUnavailable`)}
             </p>
           )}
         </div>
@@ -106,7 +126,7 @@ export function SetupConfigurationForm({
         <Button
           type="submit"
           size="sm"
-          disabled={isSubmitting || (!!pickerList && !values.catalog.trim())}
+          disabled={isSubmitting || choiceMissing}
         >
           {t("setup.configuration.submit")}
         </Button>

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,43 +14,50 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { catalogMatches } from "@/lib/setup-catalogs";
+import { optionMatches } from "@/lib/setup-options";
 import { cn } from "@/lib/utils";
 
-type SetupCatalogPickerProps = {
+type SetupOptionPickerProps = {
   id: string;
   value: string;
-  catalogs: readonly string[];
+  options: readonly string[];
+  /** Still listing: the admin can already type a name, the list fills in behind it. */
   isLoading: boolean;
-  onChange: (catalog: string) => void;
+  placeholder: string;
+  searchPlaceholder: string;
+  /** Text of the row that chooses the typed name when it isn't listed. */
+  typedLabel: (name: string) => string;
+  onChange: (option: string) => void;
 };
 
 /**
- * Searchable single-select catalog picker for the setup form. Follows the
- * single mode of MultiSelectPopover, and also offers the typed name as an
- * option so a catalog the list doesn't show can still be chosen.
+ * Searchable single-select picker for the setup form (catalogs, groups). Follows
+ * the single mode of MultiSelectPopover, and also offers the typed name as an
+ * option so a name the list doesn't show can still be chosen.
  */
-export function SetupCatalogPicker({
+export function SetupOptionPicker({
   id,
   value,
-  catalogs,
+  options,
   isLoading,
+  placeholder,
+  searchPlaceholder,
+  typedLabel,
   onChange,
-}: SetupCatalogPickerProps) {
-  const { t } = useTranslation();
+}: SetupOptionPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const { matches, typed } = useMemo(
-    () => catalogMatches(catalogs, search),
-    [catalogs, search],
+    () => optionMatches(options, search),
+    [options, search],
   );
 
   const close = () => {
     setOpen(false);
     setSearch("");
   };
-  const choose = (catalog: string) => {
-    onChange(catalog);
+  const choose = (option: string) => {
+    onChange(option);
     close();
   };
 
@@ -67,11 +73,11 @@ export function SetupCatalogPicker({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          disabled={isLoading}
+          aria-busy={isLoading}
           className="w-full justify-between font-normal"
         >
           <span className={cn("truncate", !value && "text-muted-foreground")}>
-            {value || t("setup.configuration.catalogPlaceholder")}
+            {value || placeholder}
           </span>
           {isLoading ? (
             <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
@@ -84,12 +90,12 @@ export function SetupCatalogPicker({
         className="flex max-h-(--radix-popover-content-available-height) w-[--radix-popover-trigger-width] flex-col overflow-hidden p-0"
         align="start"
       >
-        {/* Filtering happens in catalogMatches, so cmdk's own fuzzy scoring is off. */}
+        {/* Filtering happens in optionMatches, so cmdk's own fuzzy scoring is off. */}
         <Command shouldFilter={false} className="flex-1 min-h-0 overflow-hidden">
           <CommandInput
             value={search}
             onValueChange={setSearch}
-            placeholder={t("setup.configuration.catalogSearch")}
+            placeholder={searchPlaceholder}
             className="h-9 text-sm dark:bg-input/30"
           />
           <CommandList className="dq-scroll-visible min-h-0 max-h-[300px] flex-1 p-1">
@@ -97,19 +103,19 @@ export function SetupCatalogPicker({
               {typed && (
                 <CommandItem value={`typed:${typed}`} onSelect={() => choose(typed)}>
                   <span className="truncate text-sm" title={typed}>
-                    {t("setup.configuration.catalogUseTyped", { name: typed })}
+                    {typedLabel(typed)}
                   </span>
                 </CommandItem>
               )}
-              {matches.map((catalog) => (
+              {matches.map((option) => (
                 <CommandItem
-                  key={catalog}
-                  value={catalog}
-                  onSelect={() => choose(catalog)}
-                  className={cn(catalog === value && "bg-primary/10")}
+                  key={option}
+                  value={option}
+                  onSelect={() => choose(option)}
+                  className={cn(option === value && "bg-primary/10")}
                 >
-                  <span className="truncate text-sm" title={catalog}>
-                    {catalog}
+                  <span className="truncate text-sm" title={option}>
+                    {option}
                   </span>
                 </CommandItem>
               ))}

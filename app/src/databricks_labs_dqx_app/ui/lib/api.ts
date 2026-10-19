@@ -4715,6 +4715,13 @@ export interface SetupGrantFailure {
 }
 
 /**
+ * Display names of the workspace groups an administrator can choose as the default user group.
+ */
+export interface SetupGroupsResponse {
+  groups?: string[];
+}
+
+/**
  * Administrator confirmation that a step's requirement was met in a way Studio cannot see.
  */
 export interface SetupOverrideRequest {
@@ -6665,6 +6672,156 @@ export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getS
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetSetupStatusSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * List workspace groups for the default user group picker, without the built-in ones.
+
+Listed as the app, like the group existence check: no user token scope covers groups.
+A deployment that supplies storage also supplies the group, so there is nothing to choose.
+ * @summary List Setup Groups
+ */
+export const listSetupGroups = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupGroupsResponse>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/setup/groups`,options
+    );
+  }
+
+
+
+
+export const getListSetupGroupsQueryKey = () => {
+    return [
+    `/api/v1/setup/groups`
+    ] as const;
+    }
+
+    
+export const getListSetupGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSetupGroupsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupGroups>>> = ({ signal }) => listSetupGroups({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSetupGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupGroups>>>
+export type ListSetupGroupsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSetupGroups>>,
+          TError,
+          Awaited<ReturnType<typeof listSetupGroups>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSetupGroups>>,
+          TError,
+          Awaited<ReturnType<typeof listSetupGroups>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Setup Groups
+ */
+
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSetupGroupsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListSetupGroupsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSetupGroupsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupGroups>>> = ({ signal }) => listSetupGroups({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSetupGroupsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupGroups>>>
+export type ListSetupGroupsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Setup Groups
+ */
+
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSetupGroupsSuspenseQueryOptions(options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

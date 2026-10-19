@@ -61,6 +61,10 @@ def gated_app() -> tuple[FastAPI, SetupRuntime, list[str]]:
     def task_runner_principals() -> dict[str, str]:
         return {}
 
+    @app.get("/api/v1/setup/groups")
+    def setup_groups() -> dict[str, list[str]]:
+        return {"groups": []}
+
     @app.post("/api/v1/setup/task-runner/access")
     def task_runner_access() -> dict[str, str]:
         return {}
@@ -158,6 +162,11 @@ def test_gate_allows_choosing_the_task_runner_service_principal_before_ready(gat
     assert gated_client.post("/api/v1/setup/task-runner/run-as").status_code == 200
     assert gated_client.get("/api/v1/setup/task-runner/run-as").status_code == 503
     assert gated_client.post("/api/v1/setup/task-runner/service-principals").status_code == 503
+
+
+def test_gate_allows_listing_groups_for_the_setup_form_before_ready(gated_client: TestClient) -> None:
+    assert gated_client.get("/api/v1/setup/groups").status_code == 200
+    assert gated_client.post("/api/v1/setup/groups").status_code == 503
 
 
 def test_gate_keeps_static_ui_available(gated_client: TestClient) -> None:

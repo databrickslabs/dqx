@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { SetupConfigurationForm } from "./SetupConfigurationForm";
 import en from "@/lib/i18n/locales/en.json";
-import type { SetupCatalogList } from "@/lib/setup-catalogs";
+import type { SetupOptionList } from "@/lib/setup-options";
 
 const testI18n = i18next.createInstance();
 void testI18n.init({
@@ -33,7 +33,7 @@ function escapeHtml(text: string): string {
   return renderToStaticMarkup(<>{text}</>);
 }
 
-const READY: SetupCatalogList = { status: "ready", catalogs: ["main", "sales"] };
+const READY: SetupOptionList = { status: "ready", options: ["main", "sales"] };
 
 describe("catalog field", () => {
   test("is a searchable picker labelled by the catalog label when catalogs are listed", () => {
@@ -54,10 +54,13 @@ describe("catalog field", () => {
     expect(html).toContain(">finance<");
   });
 
-  test("is disabled while catalogs are loading", () => {
+  test("stays usable while catalogs are loading, so the name can be typed", () => {
     const html = renderForm({ catalogList: { status: "loading" } });
 
-    expect(html).toMatch(/<button[^>]*role="combobox"[^>]*disabled=""/);
+    expect(html).toMatch(/<button[^>]*id="setup-catalog"/);
+    expect(html).toMatch(/<button[^>]*role="combobox"/);
+    expect(html).not.toMatch(/<button[^>]*role="combobox"[^>]*disabled=""/);
+    expect(html).toContain('aria-busy="true"');
   });
 
   test("falls back to a text input when catalogs can't be listed", () => {
@@ -76,6 +79,54 @@ describe("catalog field", () => {
 
     expect(html).toContain('name="catalog"');
     expect(html).not.toContain('role="combobox"');
+  });
+});
+
+describe("default user group field", () => {
+  const GROUPS: SetupOptionList = { status: "ready", options: ["data-team", "ops"] };
+
+  test("is a searchable picker labelled by the group label when groups are listed", () => {
+    const html = renderForm({ groupList: GROUPS });
+
+    expect(html).toMatch(/<button[^>]*id="setup-audience_group"[^>]*role="combobox"|<button[^>]*role="combobox"[^>]*id="setup-audience_group"/);
+    expect(html).toContain('for="setup-audience_group"');
+    expect(html).not.toContain('name="audience_group"');
+    expect(html).toContain(en.setup.configuration.groupPlaceholder);
+    expect(html).toContain(escapeHtml(en.setup.configuration.audience_groupHelp));
+  });
+
+  test("shows the saved group on the picker", () => {
+    const html = renderForm({
+      groupList: GROUPS,
+      initialValues: { audience_group: "finance" },
+    });
+
+    expect(html).toContain(">finance<");
+  });
+
+  test("stays usable while groups are loading", () => {
+    const html = renderForm({ groupList: { status: "loading" } });
+
+    expect(html).toMatch(/<button[^>]*role="combobox"/);
+    expect(html).not.toMatch(/<button[^>]*role="combobox"[^>]*disabled=""/);
+  });
+
+  test.each([
+    ["unavailable", { status: "unavailable" } as SetupOptionList],
+    ["not provided", undefined],
+  ])("falls back to a text input when groups are %s", (_label, groupList) => {
+    const html = renderForm({ groupList });
+
+    expect(html).toContain('id="setup-audience_group"');
+    expect(html).toContain('name="audience_group"');
+    expect(html).not.toContain('id="setup-audience_group" role="combobox"');
+    expect(html).not.toMatch(/<button[^>]*id="setup-audience_group"/);
+  });
+
+  test("leaves the catalog picker alone when only groups are listed", () => {
+    const html = renderForm({ groupList: GROUPS });
+
+    expect(html).toContain('name="catalog"');
   });
 });
 

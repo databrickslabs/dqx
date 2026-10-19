@@ -146,6 +146,12 @@ class SetupConfigurationRequest(BaseModel):
     audience_group: str = Field(max_length=255)
 
 
+class SetupGroupsResponse(_ImmutableModel):
+    """Display names of the workspace groups an administrator can choose as the default user group."""
+
+    groups: tuple[str, ...] = ()
+
+
 class SetupOverrideRequest(BaseModel):
     """Administrator confirmation that a step's requirement was met in a way Studio cannot see."""
 
