@@ -72,7 +72,6 @@ TEST_CHECK_METRICS = [
 TEST_CHECK_METRICS_VALUE = json.dumps(TEST_CHECK_METRICS, separators=(",", ":"))
 
 
-
 ENRICHED_CHECKS = [
     {
         "name": "id_is_not_null",
