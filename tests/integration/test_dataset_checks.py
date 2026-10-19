@@ -5629,3 +5629,100 @@ def test_warning_sql_query_refers_to_error_results(ws, spark: SparkSession):
         2: (["value_is_null"], ["any_error"]),
         3: ([], ["valid_rows_with_large_value", "any_error"]),
     }
+    
+    
+@pytest.mark.parametrize("trim_strings", [False, True])
+@pytest.mark.parametrize("nulls_distinct", [False, True])
+@pytest.mark.parametrize("composite", [False, True])
+@pytest.mark.parametrize("use_expressions", [False, True])
+def test_is_unique_trim_strings_combinations(
+    spark: SparkSession,
+    trim_strings: bool,
+    nulls_distinct: bool,
+    composite: bool,
+    use_expressions: bool,
+):
+    rows = [
+        (0, "123", 1),
+        (1, " 123 ", 1),
+        (2, "", 2),
+        (3, "   ", 2),
+        (4, None, 3),
+        (5, None, 3),
+        (6, "other", None),
+        (7, "other", None),
+        (8, "123", 9),
+    ]
+    df = spark.createDataFrame(rows, "id: int, a: string, b: int")
+    names = ["a", "b"] if composite else ["a"]
+    columns = [F.col(name) for name in names] if use_expressions else names
+    condition, apply_method = is_unique(
+        columns,
+        nulls_distinct=nulls_distinct,
+        trim_strings=trim_strings,
+    )
+
+    actual = apply_method(df).select("id", "a", "b", condition.alias("violation"))
+    collected = actual.collect()
+    violations = {row.id for row in collected if row.violation is not None}
+
+    expected = {6, 7} if not composite or not nulls_distinct else set()
+    if trim_strings:
+        expected.update({0, 1, 2, 3})
+    if not composite:
+        expected.update({0, 8})
+    if not nulls_distinct:
+        expected.update({4, 5})
+
+    assert violations == expected
+    assert sorted((row.id, row.a, row.b) for row in collected) == rows
+
+
+def test_is_unique_trim_strings_default_preserves_spaces(spark: SparkSession):
+    df = spark.createDataFrame(
+        [("123",), (" 123 ",), ("",), ("   ",)],
+        "a: string",
+    )
+    condition, apply_method = is_unique(["a"])
+    actual = apply_method(df).select(condition.alias("violation"))
+    assert all(row.violation is None for row in actual.collect())
+
+
+def test_is_unique_trim_strings_with_row_filter(spark: SparkSession):
+    df = spark.createDataFrame(
+        [(0, "123", 1), (1, " 123 ", 1), (2, "123 ", 0), (3, "single", 1)],
+        "id: int, a: string, b: int",
+    )
+    condition, apply_method = is_unique(
+        ["a"],
+        row_filter="b = 1",
+        trim_strings=True,
+    )
+    actual = apply_method(df).select("id", condition.alias("violation"))
+    violations = {row.id: row.violation for row in actual.collect() if row.violation is not None}
+    assert set(violations) == {0, 1}
+    assert all("found 2 duplicates" in message for message in violations.values())
+
+
+@pytest.mark.parametrize("trim_strings", [False, True])
+def test_is_unique_trim_strings_with_lower_expression(
+    spark: SparkSession,
+    trim_strings: bool,
+):
+    df = spark.createDataFrame(
+        [(0, "ABC"), (1, " abc "), (2, "different")],
+        "id: int, a: string",
+    )
+    condition, apply_method = is_unique(
+        [F.lower(F.col("a"))],
+        trim_strings=trim_strings,
+    )
+    collected = apply_method(df).select("id", "a", condition.alias("violation")).collect()
+
+    violations = {row.id for row in collected if row.violation is not None}
+    assert violations == ({0, 1} if trim_strings else set())
+    assert sorted((row.id, row.a) for row in collected) == [
+        (0, "ABC"),
+        (1, " abc "),
+        (2, "different"),
+    ]

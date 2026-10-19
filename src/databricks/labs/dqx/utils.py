@@ -139,10 +139,19 @@ def _strip_literals_and_comments(match: "re.Match[str]") -> str:
     return "" if match.group("comment") is not None else " "
 
 
-_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+_SCALAR_VARIABLE_TYPES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bool,
+    Decimal,
+    datetime.date,
+    datetime.datetime,
+    datetime.time,
+)
 
 VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
-"""Supported scalar types for variable substitution values."""
+"""Supported scalar types for variable substitution into SQL / column expressions."""
 
 
 def get_column_name_or_alias(
@@ -305,6 +314,27 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
         return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
     return _normalize_leaf_value(val, allow_simple_expressions_only)
+
+
+def escape_sql_string_literal(value: str) -> str:
+    """Escape a string for inclusion in a single-quoted Spark SQL literal.
+
+    Spark's parser honours backslash escapes inside string literals by default
+    (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
+
+      * The backslash must be doubled, or the parser consumes it (e.g. a JSON-encoded *\\"*
+        collapses back to a bare *"*).
+      * The single quote must be escaped as *\\'*, not doubled as *''*. ANSI doubling is not
+        honoured in this mode: Spark reads *'it''s'* as two adjacent literals and concatenates
+        them, so the value becomes *its*.
+
+    Args:
+        value: The raw string.
+
+    Returns:
+        The escaped string, without the enclosing quotes.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def quote_column_name(name: str) -> str:
