@@ -271,9 +271,12 @@ class BadRowMeasure(Measure):
     predicate_sql: str
 
     def aggregate_arguments(self, unit: str) -> dict[str, Any] | None:
+        # Parenthesised so *normalize_column_expr* passes the indicator through as a SQL expression
+        # instead of back-quoting it as a column name (operator-free SQL such as "x IS NULL" is
+        # otherwise indistinguishable from a name containing spaces).
         if unit == "percent":
-            return {"column": f"CASE WHEN {self.predicate_sql} THEN 100.0 ELSE 0.0 END", "aggr_type": "avg"}
-        return {"column": f"CASE WHEN {self.predicate_sql} THEN 1 END", "aggr_type": "count"}
+            return {"column": f"(CASE WHEN {self.predicate_sql} THEN 100.0 ELSE 0.0 END)", "aggr_type": "avg"}
+        return {"column": f"(CASE WHEN {self.predicate_sql} THEN 1 END)", "aggr_type": "count"}
 
     def condition_query(self, unit: str, threshold: Threshold) -> str:
         if unit == "percent":

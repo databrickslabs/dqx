@@ -4136,7 +4136,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
 
         assert rule["check"] == {
             "function": function,
-            "arguments": {"column": "CASE WHEN email IS NULL THEN 1 END", "aggr_type": "count", "limit": 5},
+            "arguments": {"column": "(CASE WHEN email IS NULL THEN 1 END)", "aggr_type": "count", "limit": 5},
         }
 
     def test_percent_unit_averages_an_indicator_column(self, generator):
@@ -4146,7 +4146,11 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
 
         assert rule["check"] == {
             "function": "is_aggr_not_greater_than",
-            "arguments": {"column": "CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END", "aggr_type": "avg", "limit": 5},
+            "arguments": {
+                "column": "(CASE WHEN email IS NULL THEN 100.0 ELSE 0.0 END)",
+                "aggr_type": "avg",
+                "limit": 5,
+            },
         }
 
     @pytest.mark.parametrize("threshold_field, value, violation", _FALLBACK_THRESHOLDS)
@@ -4173,7 +4177,7 @@ class TestDataContractGeneratorLibraryRulesNullValues(LibraryMetricTestBase):
             generator, self._property_contract([{"metric": "nullValues", "mustNotBe": 1}], property_name="e-mail")
         )
 
-        assert rule["check"]["arguments"]["column"] == "CASE WHEN `e-mail` IS NULL THEN 1 END"
+        assert rule["check"]["arguments"]["column"] == "(CASE WHEN `e-mail` IS NULL THEN 1 END)"
 
     def test_schema_level_entry_is_skipped_with_warning(self, generator, caplog):
         with caplog.at_level(logging.WARNING):
@@ -4213,7 +4217,7 @@ class TestDataContractGeneratorLibraryRulesMissingValues(LibraryMetricTestBase):
         entry = {"metric": "missingValues", "mustBeLessOrEqualTo": 5, "arguments": {"missingValues": ["", "N/A"]}}
         rule = self._single_rule(generator, self._property_contract([entry]))
 
-        assert rule["check"]["arguments"]["column"] == "CASE WHEN email IS NULL OR email IN ('', 'N/A') THEN 1 END"
+        assert rule["check"]["arguments"]["column"] == "(CASE WHEN email IS NULL OR email IN ('', 'N/A') THEN 1 END)"
 
     @pytest.mark.parametrize(
         "arguments",
@@ -4261,7 +4265,7 @@ class TestDataContractGeneratorLibraryRulesInvalidValues(LibraryMetricTestBase):
         rule = self._single_rule(generator, self._property_contract([entry]))
 
         assert rule["check"]["arguments"]["column"] == (
-            "CASE WHEN email NOT IN ('a', 1) OR NOT (email RLIKE '^[a-z]$') THEN 1 END"
+            "(CASE WHEN email NOT IN ('a', 1) OR NOT (email RLIKE '^[a-z]$') THEN 1 END)"
         )
 
     def test_backslashes_are_escaped_identically_on_both_renderings(self, generator):
