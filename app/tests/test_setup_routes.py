@@ -383,6 +383,44 @@ def test_status_exposes_resolved_configuration(client: TestClient, orchestrator:
     assert response.json()["configuration"]["catalog"] == "main"
 
 
+_CATALOGS_URL = "/api/v1/setup/catalogs"
+
+
+def test_catalogs_lists_names_visible_to_the_administrator(client: TestClient, obo_ws: MagicMock) -> None:
+    obo_ws.catalogs.list.return_value = [
+        SimpleNamespace(name="sales"),
+        SimpleNamespace(name="main"),
+        SimpleNamespace(name=None),
+        SimpleNamespace(name="main"),
+    ]
+
+    response = client.get(_CATALOGS_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {"catalogs": ["main", "sales"]}
+
+
+def test_catalogs_require_setup_admin(client: TestClient, obo_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("data-team")
+
+    response = client.get(_CATALOGS_URL)
+
+    assert response.status_code == 403
+    obo_ws.catalogs.list.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [PermissionDenied("no"), InternalError("secret internal detail")])
+def test_catalogs_listing_failure_returns_a_code_without_sdk_text(
+    client: TestClient, obo_ws: MagicMock, error: Exception
+) -> None:
+    obo_ws.catalogs.list.side_effect = error
+
+    response = client.get(_CATALOGS_URL)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": "catalog_list_failed"}
+
+
 def test_configuration_requires_setup_admin(
     client: TestClient, obo_ws: MagicMock, sp_ws: MagicMock, orchestrator: MagicMock, settings: MemorySettings
 ) -> None:
@@ -396,8 +434,17 @@ def test_configuration_requires_setup_admin(
     orchestrator.reconcile.assert_not_awaited()
 
 
-def test_configuration_rejects_broad_audience(client: TestClient, settings: MemorySettings) -> None:
-    response = client.post(_CONFIG_URL, json={**_VALID, "audience_group": "users"})
+@pytest.mark.parametrize("group", ["users", "account users", "admins", "Account Users"])
+def test_configuration_rejects_builtin_audience_group(client: TestClient, settings: MemorySettings, group: str) -> None:
+    response = client.post(_CONFIG_URL, json={**_VALID, "audience_group": group})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "audience_group_builtin"
+    assert not settings.values
+
+
+def test_configuration_rejects_invalid_prefix(client: TestClient, settings: MemorySettings) -> None:
+    response = client.post(_CONFIG_URL, json={**_VALID, "prefix": "Bad-Prefix!"})
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "configuration_invalid"

@@ -11,6 +11,10 @@ ACCOUNT_USERS = "account users"
 WORKSPACE_ADMINS = "admins"
 
 
+class BuiltInAudienceGroupError(InvalidParameterError):
+    """Raised when a built-in group (*users*, *account users* or *admins*) is not allowed as the audience."""
+
+
 @dataclass(frozen=True)
 class StudioAudience:
     """Principals that receive Studio OBO prerequisites.
@@ -40,16 +44,17 @@ def resolve_audience(groups: Sequence[str], admin_group: str, *, allow_broad: bo
         The resolved audience.
 
     Raises:
-        InvalidParameterError: If a group is unsafe, built-in, or broad mode is not allowed.
+        BuiltInAudienceGroupError: If a group is built-in, or *users* is given when broad mode is not allowed.
+        InvalidParameterError: If a group is unsafe or the groups are otherwise invalid.
     """
     cleaned: list[str] = []
     for value in groups:
         group = _clean_group(value)
         if group.casefold() in {ACCOUNT_USERS, WORKSPACE_ADMINS}:
-            raise InvalidParameterError("The Studio audience must be a dedicated group or users.")
+            raise BuiltInAudienceGroupError("The Studio audience must be a dedicated group or users.")
         if group.casefold() == BROAD_AUDIENCE:
             if not allow_broad:
-                raise InvalidParameterError("Broad audience mode is only available for bundle deployments.")
+                raise BuiltInAudienceGroupError("Broad audience mode is only available for bundle deployments.")
             group = BROAD_AUDIENCE
         if group.casefold() not in {existing.casefold() for existing in cleaned}:
             cleaned.append(group)

@@ -121,6 +121,12 @@ class SetupConfigurationRequest(BaseModel):
     audience_group: str = Field(max_length=255)
 
 
+class SetupCatalogsResponse(_ImmutableModel):
+    """Catalog names the setup administrator can see, for the configuration form."""
+
+    catalogs: tuple[str, ...] = ()
+
+
 class SetupOverrideRequest(BaseModel):
     """Administrator confirmation that a step's requirement was met in a way Studio cannot see."""
 

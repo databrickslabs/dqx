@@ -62,6 +62,72 @@ describe("setupView", () => {
   });
 });
 
+function configurationReport(
+  state: SetupStep["state"],
+  actions: SetupActionId[] = ["configure"],
+): SetupReport {
+  return {
+    state: "setup_required",
+    current_step: "storage",
+    steps: [
+      { id: "configuration", state, actions },
+      {
+        id: "storage",
+        state: "action_required",
+        code: "storage_collision",
+        actions: ["verify_again"],
+      },
+    ],
+  };
+}
+
+describe("configuration form visibility", () => {
+  test("shows the form while the configuration step needs action", () => {
+    const view = setupView(status(configurationReport("action_required"), true));
+
+    expect(view.showConfigurationForm).toBe(true);
+    expect(view.canEditConfiguration).toBe(false);
+  });
+
+  // After a successful save the backend reports the step as passed and keeps
+  // advertising configure until storage is locked, so the choices stay editable.
+  test("hides the form after a successful save even though configure is still advertised", () => {
+    const view = setupView(status(configurationReport("passed"), true));
+
+    expect(view.showConfigurationForm).toBe(false);
+    expect(view.canEditConfiguration).toBe(true);
+  });
+
+  test("reopens the form when the administrator chooses to change saved choices", () => {
+    const view = setupView(
+      status(configurationReport("passed"), true),
+      new Set(),
+      true,
+    );
+
+    expect(view.showConfigurationForm).toBe(true);
+    expect(view.canEditConfiguration).toBe(false);
+  });
+
+  test("a locked configuration cannot be changed", () => {
+    const view = setupView(
+      status(configurationReport("passed", []), true),
+      new Set(),
+      true,
+    );
+
+    expect(view.showConfigurationForm).toBe(false);
+    expect(view.canEditConfiguration).toBe(false);
+  });
+
+  test("non-administrators can never change the configuration", () => {
+    const view = setupView(status(configurationReport("passed"), false));
+
+    expect(view.showConfigurationForm).toBe(false);
+    expect(view.canEditConfiguration).toBe(false);
+  });
+});
+
 function readyWithWarning(): SetupReport {
   return {
     state: "ready",

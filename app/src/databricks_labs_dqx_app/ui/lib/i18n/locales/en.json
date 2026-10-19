@@ -3110,11 +3110,11 @@
       "wheels": "Keeps the task runner on the same DQX and Studio code versions as the application.",
       "migrations": "Creates and upgrades the Delta and Lakebase tables required by this Studio version.",
       "activation": "Starts Studio APIs and background services only after every dependency is ready.",
-      "configuration": "The catalog, storage prefix and audience group that Studio uses for its data and access.",
+      "configuration": "The catalog, storage prefix and default user group that Studio uses for its data and access.",
       "storage": "Creates the Unity Catalog schemas and wheels volume that hold Studio state, temporary views and Genie-facing objects.",
-      "access": "Grants the audience group and administrators the workspace and data access they need to use Studio.",
+      "access": "Grants the default user group and administrators the workspace and data access they need to use Studio.",
       "ai": "Checks that Studio users can use the AI model behind rule suggestions. If they can't, AI features are turned off until access is fixed.",
-      "app_sharing": "Confirms that the audience group can open this app. Sharing is managed in the app permissions."
+      "app_sharing": "Confirms that the default user group can open this app. Sharing is managed in the app permissions."
     },
     "steps": {
       "identity": "Application identity",
@@ -3152,7 +3152,7 @@
       "description": "Only workspace admins or members of {{adminGroup}} can set up DQX Studio. Ask one of them to finish the steps below.",
       "signedInAs": "You're signed in as {{userName}}.",
       "adminsOnly": "Only workspace admins can set up DQX Studio. Ask one of them to finish the steps below.",
-      "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and audience group."
+      "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and default user group."
     },
     "warningsReview": {
       "title": "Studio setup finished with warnings",
@@ -3164,17 +3164,23 @@
     "configuration": {
       "catalog": "Catalog",
       "catalogHelp": "An existing Unity Catalog catalog. Studio creates its schemas here.",
+      "catalogPlaceholder": "Choose a catalog",
+      "catalogSearch": "Search or type a catalog name",
+      "catalogUseTyped": "Use \"{{name}}\"",
+      "catalogListUnavailable": "Studio couldn't list the catalogs you can see. Type the catalog name instead.",
       "prefix": "Storage prefix",
       "prefixHelp": "Lower-case letters, digits and underscores. Schemas: <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
-      "audience_group": "Audience group",
-      "audience_groupHelp": "An existing account group assigned to this workspace. Members can use Studio; roles are assigned separately.",
+      "audience_group": "Default user group",
+      "audience_groupHelp": "An existing account group (for example, dqx-users) for the users allowed to use Studio. Roles are assigned separately. To create a group, go to Settings → Identity and access → Groups.",
       "schemas": "Schemas",
       "submit": "Save and continue",
+      "edit": "Change",
       "broadAudience": "Broad audience: all workspace users",
       "errors": {
-        "configuration_invalid": "Check the catalog, prefix and group name.",
+        "configuration_invalid": "Use lower-case letters, digits and underscores for the prefix, and a group name without backticks.",
+        "audience_group_builtin": "Built-in groups such as \"users\", \"account users\" and \"admins\" can't be used. Choose a dedicated account group, for example dqx-users.",
         "catalog_not_found": "The catalog does not exist or you cannot access it.",
-        "audience_group_not_found": "The group does not exist in this workspace.",
+        "audience_group_not_found": "Studio couldn't find this group in this workspace. Check the name, or create it under Settings → Identity and access → Groups.",
         "configuration_locked": "Storage is already provisioned; the configuration can no longer change.",
         "configuration_managed_by_deployment": "This configuration is managed by the deployment.",
         "catalog_check_failed": "The catalog could not be verified. Try again.",

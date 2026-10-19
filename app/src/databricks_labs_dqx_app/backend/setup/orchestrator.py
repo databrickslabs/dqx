@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 _STEP_ORDER = tuple(SetupStepId)
 _BLOCKING_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.FAILED})
 _OVERRIDE_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.WARNING})
-_CONFIGURED_SUMMARY = "Studio's catalog, storage prefix and audience group are set."
+_CONFIGURED_SUMMARY = "Studio's catalog, storage prefix and default user group are set."
 _OVERRIDDEN_SUMMARY = "An administrator confirmed this is set up, so Studio is continuing without checking it."
 ReaderSqlFactory = Callable[[ActiveResources], SqlExecutor | None]
 _SOURCE_VIEWS: dict[ConfigurationSource, Literal["deployment", "saved", "none"]] = {
@@ -556,7 +556,7 @@ class SetupOrchestrator:
             return None, _failed(
                 SetupStepId.CONFIGURATION,
                 "configuration_resolution_failed",
-                "Studio couldn't read its catalog, storage prefix and audience group settings.",
+                "Studio couldn't read its catalog, storage prefix and default user group settings.",
             )
         self._resolved = resolved
         try:
@@ -575,7 +575,7 @@ class SetupOrchestrator:
                 id=SetupStepId.CONFIGURATION,
                 state=StepState.ACTION_REQUIRED,
                 code=resolved.error,
-                summary="The Studio catalog, storage prefix or audience group isn't valid.",
+                summary="The Studio catalog, storage prefix or default user group isn't valid.",
                 actions=(SetupActionId.CONFIGURE,) if resolved.source != ConfigurationSource.DEPLOYMENT else (),
             )
         if resolved.storage is None or resolved.audience is None:
@@ -583,7 +583,7 @@ class SetupOrchestrator:
                 id=SetupStepId.CONFIGURATION,
                 state=StepState.ACTION_REQUIRED,
                 code="configuration_required",
-                summary="Choose the catalog, storage prefix and audience group for DQX Studio.",
+                summary="Choose the catalog, storage prefix and default user group for DQX Studio.",
                 actions=(SetupActionId.CONFIGURE,),
             )
         resources = build_active_resources(self.bootstrap, resolved.storage, resolved.audience)

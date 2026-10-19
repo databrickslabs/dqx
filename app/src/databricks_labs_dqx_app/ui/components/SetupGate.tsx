@@ -14,13 +14,16 @@ import {
   getSetupStatus,
   overrideSetupStep,
   reconcileSetup,
+  useListSetupCatalogs,
   type SetupStepId,
 } from "@/lib/api";
 import {
+  configurationAdvertised,
   setupView,
   unacknowledgedWarnings,
   warningKey,
 } from "@/lib/setup-state";
+import { setupCatalogList } from "@/lib/setup-catalogs";
 import {
   acknowledgeWarnings,
   readAcknowledgedWarnings,
@@ -95,8 +98,11 @@ export function SetupGate({ children }: SetupGateProps) {
       overrideSetupStep({ step_id: stepId }),
     onSettled: () => invalidateSetupStatus(queryClient),
   });
+  const [editingConfiguration, setEditingConfiguration] = useState(false);
   const configuration = useMutation({
     mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
+    // A successful save closes the form; the saved summary shows instead.
+    onSuccess: () => setEditingConfiguration(false),
     onSettled: () => invalidateSetupStatus(queryClient),
   });
   const setupStatus = useQuery({
@@ -117,13 +123,25 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
+  const catalogs = useListSetupCatalogs({
+    query: {
+      enabled:
+        !!setupStatus.data && configurationAdvertised(setupStatus.data.data),
+      retry: false,
+      staleTime: 5 * 60_000,
+    },
+  });
   // While readiness is being checked, show the same "Loading DQX Studio" spinner
   // AuthGuard uses, so the check reads as one continuous load — no flash of the
   // "Checking Studio readiness" card, and no blank/black screen.
   if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
-  const view = setupView(setupStatus.data.data, acknowledged);
+  const view = setupView(
+    setupStatus.data.data,
+    acknowledged,
+    editingConfiguration,
+  );
   if (view.kind === "ready") return <>{children}</>;
 
   const onAcknowledgeWarnings = () =>
@@ -151,6 +169,15 @@ export function SetupGate({ children }: SetupGateProps) {
           ? (configurationErrorCode(configuration.error) ?? "default")
           : undefined
       }
+      catalogList={setupCatalogList({
+        isPending: catalogs.isPending,
+        isError: catalogs.isError,
+        catalogs: catalogs.data?.data.catalogs,
+      })}
+      onEditConfiguration={(editing) => {
+        configuration.reset();
+        setEditingConfiguration(editing);
+      }}
     />
   );
 }

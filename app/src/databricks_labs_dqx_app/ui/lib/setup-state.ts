@@ -23,6 +23,8 @@ export type SetupViewModel = {
   taskRunnerJobId: number | null;
   configuration: SetupConfigurationView | null;
   showConfigurationForm: boolean;
+  /** Saved choices can still change, but the form stays closed until the administrator asks. */
+  canEditConfiguration: boolean;
 };
 
 /** Key identifying a warning for acknowledgement: its diagnostic code, else its step. */
@@ -40,6 +42,20 @@ export function unacknowledgedWarnings(
   );
 }
 
+/** The configuration step, when the caller manages setup and the backend offers the form. */
+function configurableStep(status: SetupStatusResponse): SetupStep | undefined {
+  if (!status.can_manage) return undefined;
+  return status.report.steps.find(
+    (step) =>
+      step.id === "configuration" && step.actions?.includes("configure"),
+  );
+}
+
+/** Whether the caller may open the configuration form, now or by choosing to change it. */
+export function configurationAdvertised(status: SetupStatusResponse): boolean {
+  return configurableStep(status) !== undefined;
+}
+
 /**
  * Translate the server-published setup status into a UI state without
  * inferring any remediation actions on the client's behalf.
@@ -47,10 +63,15 @@ export function unacknowledgedWarnings(
  * A ready report whose warnings an administrator has not acknowledged yet is a
  * "review": the administrator sees the warnings once in setup before entering
  * Studio. Non-administrators always enter a ready Studio.
+ *
+ * The configuration form shows while the configuration step needs action. Once
+ * saved choices pass, the backend keeps advertising "configure" until storage is
+ * locked; the form then stays closed unless *editingConfiguration* is set.
  */
 export function setupView(
   status: SetupStatusResponse,
   acknowledgedWarnings: ReadonlySet<string> = new Set(),
+  editingConfiguration = false,
 ): SetupViewModel {
   const { report, can_manage: canManage, admin_group: adminGroup } = status;
   const userName = status.user_name ?? "";
@@ -63,12 +84,12 @@ export function setupView(
           .map((id) => ({ id, stepId: step.id })),
       )
     : [];
+  const configurationStep = configurableStep(status);
+  const configurationPassed = configurationStep?.state === "passed";
   const showConfigurationForm =
-    canManage &&
-    report.steps.some(
-      (step) =>
-        step.id === "configuration" && step.actions?.includes("configure"),
-    );
+    !!configurationStep && (!configurationPassed || editingConfiguration);
+  const canEditConfiguration =
+    !!configurationStep && configurationPassed && !editingConfiguration;
 
   if (report.state === "ready") {
     const review =
@@ -84,6 +105,7 @@ export function setupView(
       taskRunnerJobId,
       configuration,
       showConfigurationForm,
+      canEditConfiguration,
     };
   }
 
@@ -98,6 +120,7 @@ export function setupView(
       taskRunnerJobId,
       configuration,
       showConfigurationForm,
+      canEditConfiguration,
     };
   }
 
@@ -111,5 +134,6 @@ export function setupView(
     taskRunnerJobId,
     configuration,
     showConfigurationForm,
+    canEditConfiguration,
   };
 }

@@ -26,6 +26,7 @@ import {
   type SetupConfigurationValues,
 } from "@/components/setup/SetupConfigurationForm";
 import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
+import type { SetupCatalogList } from "@/lib/setup-catalogs";
 import type { SetupViewAction, SetupViewModel } from "@/lib/setup-state";
 
 type SetupWizardProps = {
@@ -40,6 +41,9 @@ type SetupWizardProps = {
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring?: boolean;
   configurationError?: string;
+  catalogList?: SetupCatalogList;
+  /** Opens (true) or closes (false) the form for changing saved choices. */
+  onEditConfiguration?: (editing: boolean) => void;
 };
 
 function progressSteps(view: SetupViewModel): SetupStep[] {
@@ -223,9 +227,12 @@ function StepCard({
   onOverride,
   configuration,
   showConfigurationForm,
+  canEditConfiguration,
   onConfigure,
   isConfiguring,
   configurationError,
+  catalogList,
+  onEditConfiguration,
 }: {
   step: SetupStep;
   actions: SetupViewAction[];
@@ -236,13 +243,20 @@ function StepCard({
   onOverride?: (stepId: SetupStep["id"]) => void;
   configuration: SetupConfigurationView | null;
   showConfigurationForm: boolean;
+  canEditConfiguration: boolean;
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring: boolean;
   configurationError?: string;
+  catalogList?: SetupCatalogList;
+  onEditConfiguration?: (editing: boolean) => void;
 }) {
   const { t } = useTranslation();
   const isConfigurationStep = step.id === "configuration";
   const showForm = isConfigurationStep && showConfigurationForm;
+  const showEdit =
+    isConfigurationStep && canEditConfiguration && !!onEditConfiguration;
+  // A passed step's form is open only because the administrator chose to change it.
+  const isEditingSaved = showForm && step.state === "passed";
   const showSummary =
     isConfigurationStep &&
     !!configuration &&
@@ -286,6 +300,7 @@ function StepCard({
           stepActions.length > 0 ||
           canOverride ||
           showForm ||
+          showEdit ||
           showSummary ||
           (canManage && step.id === "task_runner" && jobsLink)) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
@@ -307,8 +322,18 @@ function StepCard({
                 ))}
               </div>
             ) : null}
-            {showSummary && configuration && (
+            {showSummary && configuration && !isEditingSaved && (
               <ConfigurationSummary configuration={configuration} />
+            )}
+            {showEdit && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onEditConfiguration?.(true)}
+              >
+                {t("setup.configuration.edit")}
+              </Button>
             )}
             {showForm && (
               <SetupConfigurationForm
@@ -318,6 +343,12 @@ function StepCard({
                 isSubmitting={isConfiguring}
                 errorCode={configurationError}
                 onSubmit={(values) => onConfigure?.(values)}
+                catalogList={catalogList}
+                onCancel={
+                  isEditingSaved && onEditConfiguration
+                    ? () => onEditConfiguration(false)
+                    : undefined
+                }
               />
             )}
             {canManage && step.id === "task_runner" && jobsLink && (
@@ -405,6 +436,8 @@ export function SetupWizard({
   onConfigure,
   isConfiguring = false,
   configurationError,
+  catalogList,
+  onEditConfiguration,
 }: SetupWizardProps) {
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
@@ -484,9 +517,12 @@ export function SetupWizard({
               onOverride={onOverride}
               configuration={view.configuration}
               showConfigurationForm={view.showConfigurationForm}
+              canEditConfiguration={view.canEditConfiguration}
               onConfigure={onConfigure}
               isConfiguring={isConfiguring}
               configurationError={configurationError}
+              catalogList={catalogList}
+              onEditConfiguration={onEditConfiguration}
             />
           ))}
         </ol>

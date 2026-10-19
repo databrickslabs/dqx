@@ -21,6 +21,7 @@ import { getWorkspaceHostQueryKey } from "@/lib/api-custom";
 import { useTheme } from "@/components/layout/theme-provider";
 import en from "@/lib/i18n/locales/en.json";
 import { setupView } from "@/lib/setup-state";
+import type { SetupCatalogList } from "@/lib/setup-catalogs";
 
 Object.defineProperty(globalThis, "__APP_NAME__", { value: "DQX Studio" });
 Object.defineProperty(globalThis, "localStorage", {
@@ -195,7 +196,7 @@ describe("SetupGate", () => {
       id: "configuration",
       state: "action_required",
       code: "configuration_required",
-      summary: "Choose the catalog, storage prefix and audience group for DQX Studio.",
+      summary: "Choose the catalog, storage prefix and default user group for DQX Studio.",
       actions: ["configure"],
     });
 
@@ -215,14 +216,14 @@ describe("SetupGate", () => {
       id: "configuration",
       state: "action_required",
       code: "saved_configuration_invalid",
-      summary: "The Studio catalog, storage prefix or audience group isn't valid.",
+      summary: "The Studio catalog, storage prefix or default user group isn't valid.",
     });
 
     const markup = renderGate(status);
 
     expect(markup).toContain(en.setup.notAdmin.configurationPending);
     expect(markup).toContain("saved_configuration_invalid");
-    expect(markup).not.toContain("storage prefix or audience group isn");
+    expect(markup).not.toContain("storage prefix or default user group isn");
   });
 
   test.each(["failed", "warning"] as const)(
@@ -233,7 +234,7 @@ describe("SetupGate", () => {
         id: "configuration",
         state,
         code: "configuration_unreadable",
-        summary: "Fix the catalog, storage prefix or audience group, then click Verify again.",
+        summary: "Fix the catalog, storage prefix or default user group, then click Verify again.",
       });
 
       const markup = renderGate(status);
@@ -406,13 +407,21 @@ function configurationStatus(canManage: boolean): SetupStatusResponse {
   };
 }
 
-function renderWizard(status: SetupStatusResponse): string {
+function renderWizard(
+  status: SetupStatusResponse,
+  {
+    editingConfiguration = false,
+    catalogList,
+  }: { editingConfiguration?: boolean; catalogList?: SetupCatalogList } = {},
+): string {
   return renderSetup(
     <SetupWizard
-      view={setupView(status)}
+      view={setupView(status, new Set(), editingConfiguration)}
       isReconciling={false}
       onReconcile={() => undefined}
       reconciliationFailed={false}
+      catalogList={catalogList}
+      onEditConfiguration={() => undefined}
     />,
   );
 }
@@ -423,6 +432,14 @@ describe("setup configuration", () => {
     expect(html).toContain('name="catalog"');
     expect(html).toContain('value="dqx_studio"');
     expect(html).toContain('name="audience_group"');
+  });
+
+  test("the form picks the catalog from the listed catalogs", () => {
+    const html = renderWizard(configurationStatus(true), {
+      catalogList: { status: "ready", catalogs: ["main"] },
+    });
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain('name="catalog"');
   });
 
   test("non-admins never see the form", () => {
@@ -549,21 +566,33 @@ describe("editable saved configuration", () => {
     return status;
   }
 
-  test("a passed configuration step that advertises configure shows a prefilled form", () => {
+  test("after saving, the passed step shows the saved choices and a change button, not the form", () => {
     const html = renderWizard(savedStatus());
+
+    expect(html).not.toContain('name="catalog"');
+    expect(html).not.toContain(`>${en.setup.configuration.submit}<`);
+    expect(html).toContain("custom_prefix_tmp");
+    expect(html).toContain(`>${en.setup.configuration.edit}</button>`);
+  });
+
+  test("choosing to change saved choices opens a prefilled form that can be cancelled", () => {
+    const html = renderWizard(savedStatus(), { editingConfiguration: true });
 
     expect(html).toContain('name="catalog"');
     expect(html).toContain('value="main"');
     expect(html).toContain('value="custom_prefix"');
     expect(html).toContain('value="data-team"');
-    expect(html).toContain("custom_prefix_tmp");
+    expect(html).toContain(`>${en.common.cancel}</button>`);
+    expect(html).not.toContain(`>${en.setup.configuration.edit}</button>`);
   });
 
   test("a saved configuration without configure stays read-only", () => {
     const status = savedStatus();
     status.report.steps[1] = { id: "configuration", state: "passed" };
 
-    expect(renderWizard(status)).not.toContain('name="catalog"');
+    const html = renderWizard(status);
+    expect(html).not.toContain('name="catalog"');
+    expect(html).not.toContain(`>${en.setup.configuration.edit}</button>`);
   });
 });
 
