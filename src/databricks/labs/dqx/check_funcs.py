@@ -2499,6 +2499,7 @@ def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
     row_filter: str | None = None,
+    trim_strings: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a uniqueness check condition and closure for dataset-level validation.
@@ -2514,6 +2515,9 @@ def is_unique(
         columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
         nulls_distinct: Whether NULLs are treated as distinct (default: True).
         row_filter: Optional SQL expression for filtering rows before checking uniqueness. Auto-injected from the check filter.
+        trim_strings: Whether to trim leading and trailing spaces from string keys before
+            checking uniqueness (default: False). Non-string keys and input values are unchanged.
+            Nested string values inside arrays or structs are not trimmed.
 
     Returns:
         A tuple of:
@@ -2547,7 +2551,17 @@ def is_unique(
         """
         window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
-        w = Window.partitionBy(col_expr)
+        partition_expr = col_expr
+        if trim_strings:
+            key_columns = [F.col(col) if isinstance(col, str) else col for col in columns]
+            key_schema = df.select(*key_columns).schema
+            normalized_keys = [
+                F.trim(key) if isinstance(field.dataType, types.StringType) else key
+                for key, field in zip(key_columns, key_schema.fields)
+            ]
+            partition_expr = normalized_keys[0] if len(normalized_keys) == 1 else F.struct(*normalized_keys)
+
+        w = Window.partitionBy(partition_expr)
 
         filter_condition = F.lit(True)
         if row_filter:
