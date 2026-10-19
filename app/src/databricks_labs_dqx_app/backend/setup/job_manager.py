@@ -1,6 +1,9 @@
 """Idempotent management of the DQX Studio task-runner job."""
 
+import logging
+import uuid
 from dataclasses import dataclass
+from itertools import islice
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
@@ -11,12 +14,23 @@ from databricks.sdk.service.jobs import (
     JobEnvironment,
     JobParameterDefinition,
     JobPermissionLevel,
+    JobRunAs,
     JobSettings,
     PythonWheelTask,
     Task,
 )
 
-from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+from databricks_labs_dqx_app.backend.setup.models import (
+    SetupActionId,
+    SetupStep,
+    SetupStepId,
+    StepState,
+    TaskRunnerPrincipal,
+    TaskRunnerSpPermission,
+)
+
+logger = logging.getLogger(__name__)
 
 _DISCOVERY_TAGS = {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
 _MANAGED_TAGS = {"app": "dqx-studio", **_DISCOVERY_TAGS}
@@ -26,6 +40,31 @@ _ENVIRONMENT_KEY = "default"
 # Must stay in sync with ``timeout_seconds`` on the DAB job and
 # ``_IN_FLIGHT_MAX_AGE`` in ``scheduler_service``.
 _TASK_RUNNER_TIMEOUT_SECONDS = 4 * 60 * 60
+# Most service principals offered in the setup picker; a longer list falls back to pasting an ID.
+MAX_LISTED_PRINCIPALS = 500
+_PRINCIPAL_ATTRIBUTES = "id,displayName,applicationId"
+# Either role lets the app run a job as the service principal (the Permissions tab's CAN USE / CAN MANAGE).
+_USE_ROLES = frozenset({"roles/servicePrincipal.user", "roles/servicePrincipal.manager"})
+_INVALID_APPLICATION_ID = "A service principal Application ID is a value like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d."
+_RUN_AS_SUMMARIES = {
+    "task_runner_run_as_missing": (
+        "Studio runs scheduled checks under a dedicated service principal, separate from the app itself. "
+        "Follow the three steps below."
+    ),
+    "task_runner_run_as_matches_app": (
+        "Studio's background job is using the app's own account. Scheduled checks need a separate service "
+        "principal. Follow the three steps below."
+    ),
+    "task_runner_run_as_not_service_principal": (
+        "Studio's background job is set to run as a person rather than a service principal, so it would stop "
+        "working if that person left. Follow the three steps below."
+    ),
+}
+_DEPLOYMENT_RUN_AS_SUMMARY = (
+    "This job's service principal is set when Studio is deployed. Set the dqx_service_principal_application_id "
+    "deployment variable to the Application ID of a service principal (not the app's own), redeploy, then click "
+    "Verify again."
+)
 
 
 @dataclass(frozen=True)
@@ -93,27 +132,95 @@ class TaskRunnerJobManager:
             return False
         return True
 
-    def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
-        """Report whether a task-runner job uses a distinct service principal."""
+    def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep:
+        """Report whether a task-runner job uses a distinct service principal.
+
+        Args:
+            job_id: Task-runner job to inspect.
+            app_sp_id: Application ID of the app's own service principal.
+            managed_by_deployment: Whether the job comes from the deployment bundle, which sets
+                its run_as; Studio then points to the deployment variable instead of offering
+                to choose a service principal, because a redeploy would undo the choice.
+        """
         job = self.workspace.jobs.get(job_id)
         run_as = getattr(getattr(job, "settings", None), "run_as", None)
         service_principal = getattr(run_as, "service_principal_name", None)
-        if service_principal and service_principal != app_sp_id:
+        if service_principal and not _same_application_id(service_principal, app_sp_id):
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.PASSED,
                 code="task_runner_run_as_ready",
                 summary="The task-runner job runs as its own service principal.",
             )
+        code = _run_as_action_code(run_as, app_sp_id)
+        if managed_by_deployment:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code=code,
+                summary=_DEPLOYMENT_RUN_AS_SUMMARY,
+                actions=(SetupActionId.VERIFY_AGAIN,),
+            )
         return SetupStep(
             id=SetupStepId.TASK_RUNNER,
             state=StepState.ACTION_REQUIRED,
-            code=_run_as_action_code(run_as, app_sp_id),
-            summary=(
-                "The task-runner job must run as its own service principal, not the app's. "
-                "Change Run as on the job, then click Verify again."
-            ),
-            actions=(SetupActionId.VERIFY_AGAIN,),
+            code=code,
+            summary=_RUN_AS_SUMMARIES[code],
+            actions=(SetupActionId.CHOOSE_TASK_RUNNER, SetupActionId.VERIFY_AGAIN),
+        )
+
+    def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission:
+        """Whether the app may use service principal *application_id*, as far as the app can tell.
+
+        Reads the service principal's account rule set as the app. The answer is *confirmed*
+        when the app is granted a role that lets it use the service principal, *missing* when
+        the rule set shows no such grant to the app or to any group, and *unverified* when the
+        rule set can't be read (or a group grant might include the app). Setting the job's
+        run_as is what finally proves it, so a failed read never blocks.
+
+        Args:
+            application_id: Application ID of the chosen service principal.
+            app_application_id: Application ID of the app's own service principal.
+        """
+        account_id = (getattr(self.workspace.config, "account_id", None) or "").strip()
+        if not account_id:
+            return "unverified"
+        name = f"accounts/{account_id}/servicePrincipals/{application_id}/ruleSets/default"
+        try:
+            rule_set = self.workspace.account_access_control_proxy.get_rule_set(name=name, etag="")
+        except Exception as error:
+            logger.info(f"Could not read the chosen service principal's permissions ({type(error).__name__})")
+            return "unverified"
+        app_principal = f"servicePrincipals/{app_application_id.strip()}".casefold()
+        group_may_grant = False
+        for rule in rule_set.grant_rules or []:
+            if rule.role not in _USE_ROLES:
+                continue
+            principals = [principal.casefold() for principal in rule.principals or []]
+            if app_principal in principals:
+                return "confirmed"
+            group_may_grant = group_may_grant or any(principal.startswith("groups/") for principal in principals)
+        return "unverified" if group_may_grant else "missing"
+
+    def set_run_as(self, job_id: int, application_id: str) -> None:
+        """Make task-runner job *job_id* run as the service principal *application_id*.
+
+        Only run_as is sent, so every other job setting is left alone, and a job already
+        running as that service principal is not updated. Errors propagate: Databricks
+        refuses with PermissionDenied until the app may use the service principal.
+
+        Args:
+            job_id: Task-runner job to update.
+            application_id: Normalized Application ID of the chosen service principal.
+        """
+        job = self.workspace.jobs.get(job_id)
+        run_as = getattr(getattr(job, "settings", None), "run_as", None)
+        current = getattr(run_as, "service_principal_name", None)
+        if current and _same_application_id(current, application_id):
+            return
+        self.workspace.jobs.update(
+            job_id=job_id,
+            new_settings=JobSettings(run_as=JobRunAs(service_principal_name=application_id)),
         )
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
@@ -130,6 +237,75 @@ class TaskRunnerJobManager:
                 environments=[_task_runner_environment(wheel_paths)],
             ),
         )
+
+
+@dataclass(frozen=True)
+class TaskRunnerPrincipalListing:
+    """Service principals offered for the task-runner job, and the app's own display name."""
+
+    principals: tuple[TaskRunnerPrincipal, ...]
+    app_display_name: str | None
+
+
+def normalize_application_id(value: str) -> str:
+    """Return *value* as a lower-case canonical UUID, the form of a service principal Application ID.
+
+    Raises:
+        InvalidParameterError: If *value* isn't a UUID.
+    """
+    candidate = (value or "").strip()
+    try:
+        parsed = uuid.UUID(candidate)
+    except ValueError:
+        raise InvalidParameterError(_INVALID_APPLICATION_ID) from None
+    if str(parsed) != candidate.lower():
+        # Rejects the brace, URN and undashed forms uuid.UUID also accepts.
+        raise InvalidParameterError(_INVALID_APPLICATION_ID)
+    return str(parsed)
+
+
+def list_task_runner_principals(
+    workspace: WorkspaceClient, app_application_id: str, *, limit: int = MAX_LISTED_PRINCIPALS
+) -> TaskRunnerPrincipalListing:
+    """List workspace service principals the task-runner job could run as, sorted by name.
+
+    The app's own service principal is left out (its display name is returned separately so
+    the administrator can find the app), as are entries without an Application ID. At most
+    *limit* service principals are read. Listing errors propagate.
+
+    Args:
+        workspace: App service principal workspace client.
+        app_application_id: Application ID of the app's own service principal.
+        limit: Most service principals to read.
+    """
+    principals: list[TaskRunnerPrincipal] = []
+    app_display_name: str | None = None
+    for principal in islice(workspace.service_principals.list(attributes=_PRINCIPAL_ATTRIBUTES), limit + 1):
+        application_id = (principal.application_id or "").strip()
+        display_name = _display(principal.display_name or "") or application_id
+        if not application_id:
+            continue
+        if _same_application_id(application_id, app_application_id):
+            app_display_name = display_name
+            continue
+        if len(principals) < limit:
+            principals.append(
+                TaskRunnerPrincipal(
+                    id=_display(principal.id or ""),
+                    display_name=display_name,
+                    application_id=_display(application_id),
+                )
+            )
+    principals.sort(key=lambda item: (item.display_name.casefold(), item.application_id))
+    return TaskRunnerPrincipalListing(principals=tuple(principals), app_display_name=app_display_name)
+
+
+def _same_application_id(left: str, right: str) -> bool:
+    return left.strip().casefold() == right.strip().casefold()
+
+
+def _display(value: str) -> str:
+    return replace_control_characters(value).strip()
 
 
 def _parse_job_id(configured_job_id: str) -> int:
@@ -193,6 +369,7 @@ def _task_runner_environment(wheel_paths: list[str]) -> JobEnvironment:
 def _run_as_action_code(run_as: object, app_sp_id: str) -> str:
     if run_as is None:
         return "task_runner_run_as_missing"
-    if getattr(run_as, "service_principal_name", None) == app_sp_id:
+    service_principal = getattr(run_as, "service_principal_name", None)
+    if service_principal and _same_application_id(service_principal, app_sp_id):
         return "task_runner_run_as_matches_app"
     return "task_runner_run_as_not_service_principal"

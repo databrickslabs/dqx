@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 
 import { useState } from "react";
-import axios, { type AxiosError, type AxiosResponse } from "axios";
+import type { AxiosError, AxiosResponse } from "axios";
 import {
   configureSetup,
   getGetSetupStatusQueryKey,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import {
   configurationAdvertised,
+  setupErrorCode,
   setupView,
   unacknowledgedWarnings,
   warningKey,
@@ -80,17 +81,6 @@ export function reconciliationMutationOptions(
     mutationFn,
     onSettled: () => invalidateSetupStatus(queryClient),
   };
-}
-
-/** Extract the backend error code from a failed configuration request. */
-export function configurationErrorCode(error: unknown): string | undefined {
-  if (!axios.isAxiosError(error)) return undefined;
-  const detail: unknown = error.response?.data?.detail;
-  if (typeof detail === "object" && detail !== null && "code" in detail) {
-    const { code } = detail;
-    return typeof code === "string" ? code : undefined;
-  }
-  return undefined;
 }
 
 /**
@@ -192,7 +182,7 @@ export function SetupGate({ children }: SetupGateProps) {
   } else if (grantStepId && applyGrants.isError) {
     grantOutcome = {
       stepId: grantStepId,
-      outcome: grantRequestFailure(configurationErrorCode(applyGrants.error)),
+      outcome: grantRequestFailure(setupErrorCode(applyGrants.error)),
     };
   }
 
@@ -222,7 +212,7 @@ export function SetupGate({ children }: SetupGateProps) {
       isConfiguring={configuration.isPending}
       configurationError={
         configuration.isError
-          ? (configurationErrorCode(configuration.error) ?? "default")
+          ? (setupErrorCode(configuration.error) ?? "default")
           : undefined
       }
       catalogList={setupCatalogList({

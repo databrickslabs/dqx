@@ -1,3 +1,5 @@
+import axios from "axios";
+
 import type {
   SetupActionId,
   SetupConfigurationView,
@@ -136,4 +138,15 @@ export function setupView(
     showConfigurationForm,
     canEditConfiguration,
   };
+}
+
+/** Extract the backend error code from a failed setup request. */
+export function setupErrorCode(error: unknown): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const detail: unknown = error.response?.data?.detail;
+  if (typeof detail === "object" && detail !== null && "code" in detail) {
+    const { code } = detail;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
 }

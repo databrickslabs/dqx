@@ -2,7 +2,9 @@
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
@@ -30,6 +32,28 @@ _ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Veri
 _OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 RUN_GRANTS_AS_OWNER = "Ask the owner of these objects to run the following in a SQL editor, then click Verify again:"
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RunnerGrants:
+    """Access a task-runner service principal still needs.
+
+    Args:
+        grant_statements: GRANT statements for privileges observed missing.
+        unreadable: Instructions for privileges Studio couldn't read, so couldn't confirm.
+    """
+
+    grant_statements: tuple[str, ...]
+    unreadable: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RunnerInspection:
+    grant_statements: tuple[str, ...]
+    unreadable: tuple[str, ...]
+    unreadable_kinds: frozenset[str]
+    scope: str
+    fingerprint: str
 
 
 class ResourceCheckers:
@@ -175,21 +199,8 @@ class ResourceCheckers:
                 Schema grants cover current and future outputs; source access
                 remains run-specific. Runner Lakebase access is not checked.
         """
-        app_sp = self._app_sp
-        try:
-            job = self._workspace.jobs.get(job_id)
-            run_as = getattr(getattr(job, "settings", None), "run_as", None)
-            principal = getattr(run_as, "service_principal_name", None)
-        except Exception:
-            # Setup must remain action-required when the Jobs API cannot resolve the identity.
-            principal = None
-        if (
-            not app_sp
-            or not isinstance(principal, str)
-            or not principal.strip()
-            or _has_control_characters(principal)
-            or principal.casefold() == app_sp.casefold()
-        ):
+        principal = self._job_runner_principal(job_id)
+        if principal is None:
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
@@ -201,7 +212,99 @@ class ResourceCheckers:
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
-        self._grant_runner_access(principal, include_outputs=include_outputs)
+        self.grant_runner_access(principal, include_outputs=include_outputs)
+        inspection = self._inspect_runner_access(
+            principal, reader_ws, reader_sql=reader_sql, include_outputs=include_outputs
+        )
+        grant_statements = inspection.grant_statements
+        if inspection.unreadable:
+            # Studio-managed schemas and the wheels volume must stay inspectable by the app;
+            # only the user-selected catalog may rely on a previous verification.
+            if (
+                not grant_statements
+                and inspection.unreadable_kinds == {"CATALOG"}
+                and self._reuses_verification(inspection.scope, inspection.fingerprint, reader_sql, reader_ws)
+            ):
+                return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permission_check_failed",
+                summary="Studio couldn't read the task runner's permissions.",
+                instructions=inspection.unreadable,
+                grant_statements=grant_statements,
+                actions=_OVERRIDABLE,
+            )
+        if grant_statements:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permissions_missing",
+                summary="The task runner doesn't have all the permissions it needs to run checks.",
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=grant_statements,
+                actions=_OVERRIDABLE,
+            )
+        self._record_verification(inspection.scope, inspection.fingerprint)
+        return _passed(SetupStepId.TASK_RUNNER, "The task runner has the access it needs.")
+
+    def runner_grants(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+    ) -> RunnerGrants:
+        """Report the GRANT statements service principal *principal* still needs to run Studio's checks.
+
+        Covers everything the task runner needs once setup finishes (including the main
+        schema's data access). Only inspects: nothing is granted, and the task-runner job
+        isn't consulted, so a service principal can be checked before the job runs as it.
+
+        Args:
+            principal: Application ID of the service principal to check.
+            reader_ws: Setup administrator's OBO client for read-only ownership inspection.
+            reader_sql: Administrator's SQL executor for SHOW GRANTS.
+
+        Raises:
+            InvalidParameterError: If *principal* is empty, unprintable or the app's own.
+        """
+        checked = self._usable_runner_principal(principal)
+        if checked is None:
+            raise InvalidParameterError("The task runner needs a service principal other than the app's own.")
+        inspection = self._inspect_runner_access(checked, reader_ws, reader_sql=reader_sql, include_outputs=True)
+        return RunnerGrants(grant_statements=inspection.grant_statements, unreadable=inspection.unreadable)
+
+    def _job_runner_principal(self, job_id: int) -> str | None:
+        """The service principal task-runner job *job_id* runs as, when the runner may use it."""
+        try:
+            job = self._workspace.jobs.get(job_id)
+            run_as = getattr(getattr(job, "settings", None), "run_as", None)
+            principal = getattr(run_as, "service_principal_name", None)
+        except Exception:
+            # Setup must remain action-required when the Jobs API cannot resolve the identity.
+            return None
+        return self._usable_runner_principal(principal) if isinstance(principal, str) else None
+
+    def _usable_runner_principal(self, principal: str) -> str | None:
+        app_sp = self._app_sp
+        if (
+            not app_sp
+            or not principal.strip()
+            or _has_control_characters(principal)
+            or principal.casefold() == app_sp.casefold()
+        ):
+            return None
+        return principal
+
+    def _inspect_runner_access(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None,
+        *,
+        reader_sql: SqlExecutor | None,
+        include_outputs: bool,
+    ) -> _RunnerInspection:
         volume = self._resources.volume
         catalog = instruction_identifier(volume.catalog)
         schema = f"{catalog}.{instruction_identifier(volume.schema)}"
@@ -262,36 +365,13 @@ class ResourceCheckers:
                 for kind, full_name, privilege, *_ in requirements
             ),
         )
-        if unknown:
-            # Studio-managed schemas and the wheels volume must stay inspectable by the app;
-            # only the user-selected catalog may rely on a previous verification.
-            if (
-                not grant_statements
-                and unknown_kinds == {"CATALOG"}
-                and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws)
-            ):
-                return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_permission_check_failed",
-                summary="Studio couldn't read the task runner's permissions.",
-                instructions=tuple(unknown),
-                grant_statements=tuple(grant_statements),
-                actions=_OVERRIDABLE,
-            )
-        if grant_statements:
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_permissions_missing",
-                summary="The task runner doesn't have all the permissions it needs to run checks.",
-                instructions=(RUN_GRANTS_AS_OWNER,),
-                grant_statements=tuple(grant_statements),
-                actions=_OVERRIDABLE,
-            )
-        self._record_verification(scope, fingerprint)
-        return _passed(SetupStepId.TASK_RUNNER, "The task runner has the access it needs.")
+        return _RunnerInspection(
+            grant_statements=tuple(grant_statements),
+            unreadable=tuple(unknown),
+            unreadable_kinds=frozenset(unknown_kinds),
+            scope=scope,
+            fingerprint=fingerprint,
+        )
 
     def _reuses_verification(
         self,
@@ -494,8 +574,8 @@ class ResourceCheckers:
             )
         return _passed(SetupStepId.STORAGE, "Studio's schemas and wheels volume are ready.")
 
-    def _grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
-        """Best-effort least-privilege grants for the task runner on Studio-managed objects.
+    def grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
+        """Best-effort least-privilege grants, as the app, for the task runner on Studio-managed objects.
 
         Grants USE SCHEMA and SELECT on the temporary-view schema (the runner reads OBO
         temporary views through that schema-level SELECT, not per-view grants). Never grants

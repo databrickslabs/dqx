@@ -57,6 +57,7 @@ class SetupActionId(_StrEnum):
     VERIFY_AGAIN = "verify_again"
     CONFIGURE = "configure"
     OVERRIDE = "override"
+    CHOOSE_TASK_RUNNER = "choose_task_runner"
 
 
 class _ImmutableModel(BaseModel):
@@ -151,6 +152,65 @@ class SetupOverrideRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     step_id: SetupStepId
+
+
+class TaskRunnerPrincipal(_ImmutableModel):
+    """A workspace service principal the task-runner job could run as."""
+
+    id: str
+    display_name: str
+    application_id: str
+
+
+class TaskRunnerPrincipalsResponse(_ImmutableModel):
+    """Service principals an administrator can choose for the task-runner job.
+
+    *available* is false when Studio couldn't list them, so the administrator pastes an
+    Application ID instead. *app_name* names the DQX Studio app so the administrator can
+    find it when giving it access to the chosen service principal.
+    """
+
+    available: bool
+    principals: tuple[TaskRunnerPrincipal, ...] = ()
+    app_name: str = ""
+
+
+class TaskRunnerPrincipalRequest(BaseModel):
+    """The service principal an administrator picked for the task-runner job, by Application ID."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: str = Field(max_length=64)
+
+
+TaskRunnerSpPermission = Literal["confirmed", "missing", "unverified"]
+
+
+class TaskRunnerAccessResponse(_ImmutableModel):
+    """Whether a picked service principal is ready to run Studio's task-runner job.
+
+    *sp_permission* says whether the app may use the service principal: *confirmed*,
+    *missing*, or *unverified* when Studio can't read that permission. *grant_statements*
+    are the GRANT statements the service principal still needs on Studio's data;
+    *grants_unverified* is true when some of its access couldn't be read.
+    """
+
+    sp_permission: TaskRunnerSpPermission
+    grant_statements: tuple[str, ...] = ()
+    grants_unverified: bool = False
+
+
+class TaskRunnerGrantsResponse(_ImmutableModel):
+    """Outcome of running a picked service principal's GRANT statements as the administrator.
+
+    *grant_statements* are the statements the service principal still needs afterwards.
+    """
+
+    applied: int
+    total: int
+    failed: tuple[SetupGrantFailure, ...] = ()
+    grant_statements: tuple[str, ...] = ()
+    grants_unverified: bool = False
 
 
 class SetupStatusResponse(_ImmutableModel):

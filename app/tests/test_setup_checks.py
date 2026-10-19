@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import (
@@ -1578,3 +1579,76 @@ def test_unreadable_studio_object_grants_never_reuse_memo(
 
     assert step.code == "task_runner_permission_check_failed"
     assert "confirmed by an administrator" not in step.summary
+
+
+_PICKED = "22222222-3333-4444-8555-666666666666"
+
+
+def test_runner_grants_are_computed_for_a_given_service_principal_without_the_job(
+    checkers: ResourceCheckers, workspace: MagicMock, sql: MagicMock
+) -> None:
+    """A service principal picked in setup is checked before the job runs as it, and nothing is granted."""
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: _effective_permissions(
+        principal=principal
+    )
+
+    grants = checkers.runner_grants(_PICKED)
+
+    workspace.jobs.get.assert_not_called()
+    sql.execute_no_schema.assert_not_called()
+    assert grants.unreadable == ()
+    assert grants.grant_statements == (
+        f"GRANT USE_CATALOG ON CATALOG `main` TO `{_PICKED}`;",
+        f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`;",
+        f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`;",
+        f"GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`;",
+        f"GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `{_PICKED}`;",
+        f"GRANT SELECT ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`;",
+        f"GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`;",
+    )
+    assert {call.kwargs["principal"] for call in workspace.grants.get_effective.call_args_list} == {_PICKED}
+
+
+def test_runner_grants_are_empty_when_the_service_principal_has_its_access(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: _effective_permissions(
+        Privilege.ALL_PRIVILEGES, principal=principal
+    )
+
+    grants = checkers.runner_grants(_PICKED)
+
+    assert grants.grant_statements == ()
+    assert grants.unreadable == ()
+
+
+def test_runner_grants_report_grants_they_could_not_read(checkers: ResourceCheckers, workspace: MagicMock) -> None:
+    workspace.grants.get_effective.side_effect = PermissionError("unreadable")
+    workspace.catalogs.get.side_effect = PermissionError("unreadable")
+    workspace.schemas.get.side_effect = PermissionError("unreadable")
+    workspace.volumes.read.side_effect = PermissionError("unreadable")
+
+    grants = checkers.runner_grants(_PICKED)
+
+    assert grants.grant_statements == ()
+    assert grants.unreadable
+
+
+@pytest.mark.parametrize("principal", ["", "app-sp-id", "APP-SP-ID", "runner\nforged"])
+def test_runner_grants_refuse_the_app_or_an_unusable_principal(checkers: ResourceCheckers, principal: str) -> None:
+    with pytest.raises(InvalidParameterError):
+        checkers.runner_grants(principal)
+
+
+def test_grant_runner_access_grants_studio_objects_to_a_given_service_principal(
+    checkers: ResourceCheckers, sql: MagicMock
+) -> None:
+    checkers.grant_runner_access(_PICKED, include_outputs=True)
+
+    statements = [call.args[0] for call in sql.execute_no_schema.call_args_list]
+    assert statements == [
+        f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`",
+        f"GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`",
+        f"GRANT USE_SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`",
+        f"GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `{_PICKED}`",
+    ]

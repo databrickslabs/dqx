@@ -19,9 +19,15 @@ from databricks_labs_dqx_app.backend.setup.configuration import (
     SetupChoices,
     SetupConfigurationStore,
 )
-from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+from databricks_labs_dqx_app.backend.setup.checks import RunnerGrants
+from databricks_labs_dqx_app.backend.setup.errors import (
+    AppServicePrincipalChosenError,
+    RequiredViewSetupError,
+    TaskRunnerJobUnavailableError,
+    TaskRunnerManagedByDeploymentError,
+)
 from databricks_labs_dqx_app.backend.setup.grant_application import GRANT_PREFIX, run_grant_statements
-from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
+from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob, normalize_application_id
 from databricks_labs_dqx_app.backend.setup.overrides import OVERRIDABLE_STEPS, SetupOverrides, override_fingerprint
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
@@ -32,6 +38,9 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStep,
     SetupStepId,
     StepState,
+    TaskRunnerAccessResponse,
+    TaskRunnerGrantsResponse,
+    TaskRunnerSpPermission,
 )
 from databricks_labs_dqx_app.backend.setup.resources import (
     ActiveResources,
@@ -89,6 +98,16 @@ class BoundChecks(Protocol):
 
     def effective_warehouse_id(self) -> str: ...
 
+    def grant_runner_access(self, principal: str, *, include_outputs: bool) -> None: ...
+
+    def runner_grants(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+    ) -> RunnerGrants: ...
+
     def check_runner_access(
         self,
         job_id: int,
@@ -130,9 +149,13 @@ class SetupJobs(Protocol):
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None: ...
 
-    def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep: ...
+    def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep: ...
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None: ...
+
+    def set_run_as(self, job_id: int, application_id: str) -> None: ...
+
+    def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission: ...
 
 
 class SetupMigrations(Protocol):
@@ -426,6 +449,152 @@ class SetupOrchestrator:
         report = await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
         return SetupApplyGrantsResponse(report=report, applied=run.applied, total=run.total, failed=run.failed)
 
+    @property
+    def job_managed_by_deployment(self) -> bool:
+        """Whether the task-runner job comes from the deployment bundle, which sets its run_as."""
+        return bool(self.bootstrap.job_id)
+
+    async def set_task_runner_run_as(
+        self,
+        application_id: str,
+        *,
+        setup_user: str | None,
+        reader_ws: WorkspaceClient | None = None,
+        reader_sql_factory: ReaderSqlFactory | None = None,
+    ) -> SetupReport:
+        """Make the task-runner job run as the chosen service principal, then re-verify setup.
+
+        The job is updated with the app service principal's client, which manages the job
+        Studio created; Databricks refuses until the app may use the chosen service principal.
+        A job from the deployment bundle is never changed, because the next deploy would undo it.
+
+        Args:
+            application_id: Application ID of the chosen service principal.
+            setup_user: Authenticated administrator making the choice.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+            reader_sql_factory: Builds the administrator SQL executor for the bound storage.
+
+        Returns:
+            The re-verified setup report.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own
+                (AppServicePrincipalChosenError).
+            TaskRunnerJobUnavailableError: If setup hasn't resolved a task-runner job yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        async with self.runtime.activation_lock:
+            job_id = self.runtime.job_id
+            if job_id is None:
+                raise TaskRunnerJobUnavailableError()
+            await asyncio.to_thread(self.jobs.set_run_as, job_id, normalized)
+        return await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+
+    async def check_task_runner_access(
+        self,
+        application_id: str,
+        *,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> TaskRunnerAccessResponse:
+        """Check a picked service principal before the task-runner job runs as it.
+
+        Reports whether the app may use the service principal, gives it Studio's own
+        least-privilege grants on Studio's schemas and wheels volume (as the app), then lists
+        the GRANT statements it still needs. Nothing about the job changes.
+
+        Args:
+            application_id: Application ID of the picked service principal.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own.
+            TaskRunnerJobUnavailableError: If setup hasn't reached the task-runner step yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        bound = self._task_runner_bound()
+        permission = await asyncio.to_thread(self.jobs.app_permission_on, normalized, self.app_sp_id)
+        await asyncio.to_thread(partial(bound.checkers.grant_runner_access, normalized, include_outputs=True))
+        grants = await self._picked_runner_grants(bound, normalized, reader_ws, reader_sql_factory)
+        return TaskRunnerAccessResponse(
+            sp_permission=permission,
+            grant_statements=grants.grant_statements,
+            grants_unverified=bool(grants.unreadable),
+        )
+
+    async def apply_task_runner_grants(
+        self,
+        application_id: str,
+        *,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> TaskRunnerGrantsResponse:
+        """Run the GRANT statements a picked service principal still needs, as the administrator.
+
+        The statements are re-derived here, by the same check that displayed them, and run
+        through the administrator's own SQL executor; a failed statement doesn't stop the rest.
+
+        Args:
+            application_id: Application ID of the picked service principal.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Returns:
+            How many statements ran, which failed, and the statements still needed afterwards.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own.
+            TaskRunnerJobUnavailableError: If setup hasn't reached the task-runner step yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        bound = self._task_runner_bound()
+        executor = reader_sql_factory(bound.resources)
+        grants = await asyncio.to_thread(
+            partial(bound.checkers.runner_grants, normalized, reader_ws, reader_sql=executor)
+        )
+        if not grants.grant_statements:
+            return TaskRunnerGrantsResponse(applied=0, total=0, grants_unverified=bool(grants.unreadable))
+        run = await asyncio.to_thread(run_grant_statements, grants.grant_statements, executor)
+        remaining = await asyncio.to_thread(
+            partial(bound.checkers.runner_grants, normalized, reader_ws, reader_sql=executor)
+        )
+        return TaskRunnerGrantsResponse(
+            applied=run.applied,
+            total=run.total,
+            failed=run.failed,
+            grant_statements=remaining.grant_statements,
+            grants_unverified=bool(remaining.unreadable),
+        )
+
+    def _task_runner_candidate(self, application_id: str) -> str:
+        """Validate a picked service principal for an app-created task-runner job."""
+        if self.job_managed_by_deployment:
+            raise TaskRunnerManagedByDeploymentError()
+        normalized = normalize_application_id(application_id)
+        if normalized.casefold() == self.app_sp_id.casefold():
+            raise AppServicePrincipalChosenError()
+        return normalized
+
+    def _task_runner_bound(self) -> BoundSetup:
+        bound = self.bound
+        if bound is None:
+            raise TaskRunnerJobUnavailableError()
+        return bound
+
+    @staticmethod
+    async def _picked_runner_grants(
+        bound: BoundSetup,
+        principal: str,
+        reader_ws: WorkspaceClient | None,
+        reader_sql_factory: ReaderSqlFactory,
+    ) -> RunnerGrants:
+        executor = reader_sql_factory(bound.resources)
+        return await asyncio.to_thread(partial(bound.checkers.runner_grants, principal, reader_ws, reader_sql=executor))
+
     async def _run_steps(
         self,
         *,
@@ -700,7 +869,14 @@ class SetupOrchestrator:
             try:
                 if setup_user is not None:
                     await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
-                step = await asyncio.to_thread(self.jobs.validate_run_as, resolved.job_id, self.app_sp_id)
+                step = await asyncio.to_thread(
+                    partial(
+                        self.jobs.validate_run_as,
+                        resolved.job_id,
+                        self.app_sp_id,
+                        managed_by_deployment=self.job_managed_by_deployment,
+                    )
+                )
             except NotFound:
                 # NotFound can also mean an unknown principal; only forget a job that is really gone.
                 if await asyncio.to_thread(self.jobs.exists, resolved.job_id):

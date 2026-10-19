@@ -7,7 +7,7 @@ from typing import Annotated
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound, PermissionDenied
+from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
 from databricks.sdk.errors.base import DatabricksError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -26,6 +26,12 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.setup.audience import AudienceGroupRequiredError, BuiltInAudienceGroupError
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore, validate_choices
+from databricks_labs_dqx_app.backend.setup.errors import (
+    AppServicePrincipalChosenError,
+    TaskRunnerJobUnavailableError,
+    TaskRunnerManagedByDeploymentError,
+)
+from databricks_labs_dqx_app.backend.setup.job_manager import list_task_runner_principals
 from databricks_labs_dqx_app.backend.setup.storage import InvalidCatalogNameError
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupApplyGrantsResponse,
@@ -34,6 +40,10 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupReport,
     SetupStatusResponse,
     SetupStepId,
+    TaskRunnerAccessResponse,
+    TaskRunnerGrantsResponse,
+    TaskRunnerPrincipalRequest,
+    TaskRunnerPrincipalsResponse,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -195,3 +205,114 @@ async def apply_setup_step_grants(
     if result is None:
         raise _error(status.HTTP_409_CONFLICT, "nothing_to_apply")
     return result
+
+
+@router.get(
+    "/task-runner/service-principals",
+    response_model=TaskRunnerPrincipalsResponse,
+    operation_id="listTaskRunnerServicePrincipals",
+)
+async def list_task_runner_service_principals(
+    _access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    config: Annotated[AppConfig, Depends(get_conf)],
+) -> TaskRunnerPrincipalsResponse:
+    """List the service principals the task-runner job could run as, without the app's own.
+
+    Listed as the app. When the app can't list them, *available* is false so the
+    administrator pastes an Application ID instead.
+    """
+    fallback_name = sanitize_setup_display(config.app_slug_name) or ""
+    try:
+        listing = await asyncio.to_thread(list_task_runner_principals, sp_ws, orchestrator.app_sp_id)
+    except DatabricksError as error:
+        logger.warning(f"Could not list service principals for the task runner ({type(error).__name__})")
+        return TaskRunnerPrincipalsResponse(available=False, app_name=fallback_name)
+    return TaskRunnerPrincipalsResponse(
+        available=True,
+        principals=listing.principals,
+        app_name=listing.app_display_name or fallback_name,
+    )
+
+
+_TASK_RUNNER_REFUSALS = (TaskRunnerManagedByDeploymentError, TaskRunnerJobUnavailableError, InvalidParameterError)
+
+
+def _task_runner_refusal(error: Exception) -> HTTPException:
+    """Map a refused task-runner choice (one of *_TASK_RUNNER_REFUSALS*) to an HTTP error."""
+    if isinstance(error, TaskRunnerManagedByDeploymentError):
+        return _error(status.HTTP_409_CONFLICT, "task_runner_managed_by_deployment")
+    if isinstance(error, TaskRunnerJobUnavailableError):
+        return _error(status.HTTP_409_CONFLICT, "task_runner_job_unavailable")
+    if isinstance(error, AppServicePrincipalChosenError):
+        return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "task_runner_principal_is_app")
+    return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "task_runner_principal_invalid")
+
+
+@router.post("/task-runner/access", response_model=TaskRunnerAccessResponse, operation_id="checkTaskRunnerAccess")
+async def check_task_runner_access(
+    body: TaskRunnerPrincipalRequest,
+    _access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
+) -> TaskRunnerAccessResponse:
+    """Check a picked service principal: whether the app may use it, and the data access it still needs."""
+    try:
+        return await orchestrator.check_task_runner_access(
+            body.application_id, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
+        )
+    except _TASK_RUNNER_REFUSALS as error:
+        raise _task_runner_refusal(error) from None
+
+
+@router.post("/task-runner/grants", response_model=TaskRunnerGrantsResponse, operation_id="applyTaskRunnerGrants")
+async def apply_task_runner_grants(
+    body: TaskRunnerPrincipalRequest,
+    _access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
+) -> TaskRunnerGrantsResponse:
+    """Run a picked service principal's GRANT statements as the signed-in administrator.
+
+    The request carries only the service principal; the statements are re-derived on the server.
+    """
+    try:
+        return await orchestrator.apply_task_runner_grants(
+            body.application_id, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
+        )
+    except _TASK_RUNNER_REFUSALS as error:
+        raise _task_runner_refusal(error) from None
+
+
+@router.post("/task-runner/run-as", response_model=SetupReport, operation_id="setTaskRunnerRunAs")
+async def set_task_runner_run_as(
+    body: TaskRunnerPrincipalRequest,
+    access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
+) -> SetupReport:
+    """Make the task-runner job run as the picked service principal, then re-run setup.
+
+    The job is updated as the app, which manages the job it created; Databricks refuses until
+    the app may use the service principal. A job from the deployment bundle is never changed.
+    """
+    try:
+        return await orchestrator.set_task_runner_run_as(
+            body.application_id,
+            setup_user=access.user_name,
+            reader_ws=reader_ws,
+            reader_sql_factory=reader_sql_factory,
+        )
+    except _TASK_RUNNER_REFUSALS as error:
+        raise _task_runner_refusal(error) from None
+    except PermissionDenied:
+        raise _error(status.HTTP_403_FORBIDDEN, "task_runner_run_as_forbidden") from None
+    except (NotFound, InvalidParameterValue):
+        raise _error(status.HTTP_404_NOT_FOUND, "task_runner_principal_not_found") from None
+    except DatabricksError as error:
+        logger.warning(f"Could not set the task-runner job's service principal ({type(error).__name__})")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "task_runner_run_as_failed") from None

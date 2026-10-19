@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import InternalError, NotFound, PermissionDenied
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.sdk.errors import InternalError, InvalidParameterValue, NotFound, PermissionDenied
+from databricks.sdk.service.iam import ServicePrincipal
 from fastapi.testclient import TestClient
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
@@ -20,6 +22,11 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_sp_ws,
 )
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore
+from databricks_labs_dqx_app.backend.setup.errors import (
+    AppServicePrincipalChosenError,
+    TaskRunnerJobUnavailableError,
+    TaskRunnerManagedByDeploymentError,
+)
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupApplyGrantsResponse,
     SetupConfigurationView,
@@ -29,6 +36,8 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStep,
     SetupStepId,
     StepState,
+    TaskRunnerAccessResponse,
+    TaskRunnerGrantsResponse,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -40,6 +49,10 @@ from databricks_labs_dqx_app.backend.setup.resources import (
     LakebaseConnection,
     VolumeLocation,
 )
+
+
+APP_APPLICATION_ID = "11111111-2222-4333-8444-555555555555"
+RUNNER_APPLICATION_ID = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
 
 
 def user_in_groups(*groups: str, user_name: str = "admin@example.com") -> MagicMock:
@@ -89,6 +102,7 @@ def orchestrator(resources: ActiveResources) -> MagicMock:
         lakebase=resources.lakebase, warehouse_id=resources.warehouse_id, job_id=resources.job_id
     )
     setup_orchestrator.bound = MagicMock(resources=resources)
+    setup_orchestrator.app_sp_id = APP_APPLICATION_ID
 
     async def save_configuration(
         store: SetupConfigurationStore, choices: SetupChoices, *, user_email: str | None
@@ -675,3 +689,203 @@ def test_apply_grants_rejects_unknown_step(client: TestClient) -> None:
     setup_runtime.publish(SetupReport(state=SetupState.READY, steps=()))
 
     assert client.post("/api/v1/setup/steps/nope/apply-grants").status_code == 422
+
+
+_PRINCIPALS_URL = "/api/v1/setup/task-runner/service-principals"
+_ACCESS_URL = "/api/v1/setup/task-runner/access"
+_RUNNER_GRANTS_URL = "/api/v1/setup/task-runner/grants"
+_RUN_AS_URL = "/api/v1/setup/task-runner/run-as"
+_PICKED_GRANT = f"GRANT USE_CATALOG ON CATALOG `main` TO `{RUNNER_APPLICATION_ID}`;"
+
+
+def test_service_principal_list_excludes_the_app_and_names_it(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.service_principals.list.return_value = iter(
+        [
+            ServicePrincipal(id="2", display_name="app-1a2b dqx-studio", application_id=APP_APPLICATION_ID),
+            ServicePrincipal(id="1", display_name="dqx-studio-task-runner", application_id=RUNNER_APPLICATION_ID),
+        ]
+    )
+
+    response = client.get(_PRINCIPALS_URL)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": True,
+        "principals": [{"id": "1", "display_name": "dqx-studio-task-runner", "application_id": RUNNER_APPLICATION_ID}],
+        "app_name": "app-1a2b dqx-studio",
+    }
+
+
+@pytest.mark.parametrize("error", [PermissionDenied("internal detail"), InternalError("internal detail")])
+def test_service_principal_list_falls_back_to_pasting_an_id(
+    client: TestClient, sp_ws: MagicMock, error: Exception
+) -> None:
+    sp_ws.service_principals.list.side_effect = error
+
+    response = client.get(_PRINCIPALS_URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["available"], body["principals"]) == (False, [])
+    assert body["app_name"] == "dqx-studio"
+    assert "internal detail" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [("get", _PRINCIPALS_URL), ("post", _ACCESS_URL), ("post", _RUNNER_GRANTS_URL), ("post", _RUN_AS_URL)],
+)
+def test_task_runner_endpoints_require_setup_admin(
+    client: TestClient, obo_ws: MagicMock, sp_ws: MagicMock, orchestrator: MagicMock, method: str, url: str
+) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("users")
+    orchestrator.check_task_runner_access = AsyncMock()
+    orchestrator.apply_task_runner_grants = AsyncMock()
+    orchestrator.set_task_runner_run_as = AsyncMock()
+
+    response = getattr(client, method)(url, **({} if method == "get" else {"json": {"application_id": "x"}}))
+
+    assert response.status_code == 403
+    sp_ws.service_principals.list.assert_not_called()
+    orchestrator.check_task_runner_access.assert_not_awaited()
+    orchestrator.apply_task_runner_grants.assert_not_awaited()
+    orchestrator.set_task_runner_run_as.assert_not_awaited()
+
+
+def test_confirm_access_reports_the_picked_principal_with_the_admin_reader(
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
+) -> None:
+    orchestrator.check_task_runner_access = AsyncMock(
+        return_value=TaskRunnerAccessResponse(sp_permission="missing", grant_statements=(_PICKED_GRANT,))
+    )
+
+    response = client.post(_ACCESS_URL, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sp_permission": "missing",
+        "grant_statements": [_PICKED_GRANT],
+        "grants_unverified": False,
+    }
+    orchestrator.check_task_runner_access.assert_awaited_once_with(
+        RUNNER_APPLICATION_ID, reader_ws=obo_ws, reader_sql_factory=reader_sql_factory
+    )
+
+
+def test_runner_grants_run_with_the_admin_sql_reader_and_report_failures(
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
+) -> None:
+    orchestrator.apply_task_runner_grants = AsyncMock(
+        return_value=TaskRunnerGrantsResponse(
+            applied=1,
+            total=2,
+            failed=(SetupGrantFailure(statement=_PICKED_GRANT, error_code="permission_denied"),),
+            grant_statements=(_PICKED_GRANT,),
+        )
+    )
+
+    response = client.post(_RUNNER_GRANTS_URL, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["applied"], body["total"]) == (1, 2)
+    assert body["failed"] == [{"statement": _PICKED_GRANT, "error_code": "permission_denied"}]
+    assert body["grant_statements"] == [_PICKED_GRANT]
+    orchestrator.apply_task_runner_grants.assert_awaited_once_with(
+        RUNNER_APPLICATION_ID, reader_ws=obo_ws, reader_sql_factory=reader_sql_factory
+    )
+
+
+def test_runner_grants_cannot_carry_sql_from_the_client(client: TestClient, orchestrator: MagicMock) -> None:
+    orchestrator.apply_task_runner_grants = AsyncMock()
+
+    response = client.post(
+        _RUNNER_GRANTS_URL, json={"application_id": RUNNER_APPLICATION_ID, "sql": "DROP CATALOG main"}
+    )
+
+    assert response.status_code == 422
+    orchestrator.apply_task_runner_grants.assert_not_awaited()
+
+
+def test_run_as_sets_the_job_and_returns_the_reconciled_report(
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
+) -> None:
+    report = SetupReport(
+        state=SetupState.SETUP_REQUIRED,
+        current_step=SetupStepId.TASK_RUNNER,
+        steps=(
+            SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permissions_missing",
+                grant_statements=(_PICKED_GRANT,),
+            ),
+        ),
+    )
+    orchestrator.set_task_runner_run_as = AsyncMock(return_value=report)
+
+    response = client.post(_RUN_AS_URL, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == 200
+    assert response.json()["steps"][0]["grant_statements"] == [_PICKED_GRANT]
+    orchestrator.set_task_runner_run_as.assert_awaited_once_with(
+        RUNNER_APPLICATION_ID,
+        setup_user="admin@example.com",
+        reader_ws=obo_ws,
+        reader_sql_factory=reader_sql_factory,
+    )
+
+
+_ERROR_CASES = [
+    (TaskRunnerManagedByDeploymentError(), 409, "task_runner_managed_by_deployment"),
+    (TaskRunnerJobUnavailableError(), 409, "task_runner_job_unavailable"),
+    (AppServicePrincipalChosenError(), 422, "task_runner_principal_is_app"),
+    (InvalidParameterError("not a uuid"), 422, "task_runner_principal_invalid"),
+]
+
+
+@pytest.mark.parametrize(("error", "status_code", "code"), _ERROR_CASES)
+@pytest.mark.parametrize(
+    ("url", "method"),
+    [
+        (_ACCESS_URL, "check_task_runner_access"),
+        (_RUNNER_GRANTS_URL, "apply_task_runner_grants"),
+        (_RUN_AS_URL, "set_task_runner_run_as"),
+    ],
+)
+def test_task_runner_choices_map_refusals_to_codes(
+    client: TestClient,
+    orchestrator: MagicMock,
+    url: str,
+    method: str,
+    error: Exception,
+    status_code: int,
+    code: str,
+) -> None:
+    setattr(orchestrator, method, AsyncMock(side_effect=error))
+
+    response = client.post(url, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == status_code
+    assert response.json()["detail"] == {"code": code}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "code"),
+    [
+        (PermissionDenied("internal detail"), 403, "task_runner_run_as_forbidden"),
+        (NotFound("internal detail"), 404, "task_runner_principal_not_found"),
+        (InvalidParameterValue("internal detail"), 404, "task_runner_principal_not_found"),
+        (InternalError("internal detail"), 502, "task_runner_run_as_failed"),
+    ],
+)
+def test_run_as_maps_databricks_failures_to_codes_without_raw_text(
+    client: TestClient, orchestrator: MagicMock, error: Exception, status_code: int, code: str
+) -> None:
+    orchestrator.set_task_runner_run_as = AsyncMock(side_effect=error)
+
+    response = client.post(_RUN_AS_URL, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == status_code
+    assert response.json()["detail"] == {"code": code}
+    assert "internal detail" not in response.text

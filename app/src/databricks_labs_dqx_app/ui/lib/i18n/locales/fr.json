@@ -3224,6 +3224,68 @@
         "app_sharing": "Studio n'est pas autorisé à lire avec qui l'application est partagée ; il ne peut donc pas le vérifier lui-même. Une fois l'application partagée avec vos utilisateurs, confirmez-le ici.",
         "ai": "Si vos utilisateurs peuvent déjà utiliser ce modèle d'IA (par exemple via un groupe parent), vous pouvez garder les fonctionnalités d'IA activées."
       }
+    },
+    "taskRunner": {
+      "pickFirst": "Pick a service principal first.",
+      "steps": {
+        "pick": "Pick a service principal",
+        "access": "Confirm access",
+        "apply": "Apply it to the task-runner job"
+      },
+      "pick": {
+        "label": "Service principal for scheduled checks",
+        "placeholder": "Choose a service principal",
+        "search": "Search by name or Application ID",
+        "useTyped": "Use Application ID {{id}}",
+        "noMatches": "No service principals match. Paste its Application ID to use it.",
+        "pastePlaceholder": "Application ID, for example 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "listUnavailable": "Studio couldn't load the list of service principals. Paste the service principal's Application ID instead. You'll find it on its page under Settings → Identity and access.",
+        "invalidId": "An Application ID looks like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
+        "createTitle": "Don't have one? Create it",
+        "createStep1": "Open Settings → Identity and access → Service principals, click Add service principal, and create one named dqx-studio-task-runner.",
+        "createStep2": "On its Permissions tab, give yourself CAN MANAGE and CAN USE.",
+        "createStep3": "Come back here and pick it above.",
+        "openServicePrincipals": "Open service principals"
+      },
+      "access": {
+        "intro": "On this service principal's Permissions tab (Settings → Identity and access → Service principals → {{name}} → Permissions):",
+        "nameFallback": "your service principal",
+        "self": "Give yourself CAN MANAGE and CAN USE.",
+        "app": "Give the DQX Studio app ({{appName}}) CAN USE.",
+        "appFallback": "the app's own service principal",
+        "openServicePrincipal": "Open this service principal",
+        "button": "Confirm access",
+        "result": {
+          "confirmed": "Access confirmed. Studio can use this service principal.",
+          "permissionConfirmed": "Studio can use this service principal.",
+          "missing": "Studio doesn't have CAN USE on this service principal yet. Add it on the Permissions tab (step b above), then click Confirm access again.",
+          "unverified": "Studio can't check this service principal's permissions itself. Make sure you've done steps a and b, then continue. Step 3 will confirm it.",
+          "grantsPending": "This service principal also needs access to Studio's data. Run the commands below, or send them to the catalog owner.",
+          "grantsUnverified": "Studio couldn't check all of this service principal's access to Studio's data. Setup checks it again after step 3."
+        },
+        "errors": {
+          "task_runner_principal_invalid": "That isn't an Application ID. Pick the service principal again, or paste its Application ID.",
+          "task_runner_principal_is_app": "That's the DQX Studio app's own service principal. Pick a different one.",
+          "task_runner_managed_by_deployment": "This job's service principal is set when Studio is deployed. Set the dqx_service_principal_application_id deployment variable to the Application ID of a service principal (not the app's own), redeploy, then click Verify again.",
+          "task_runner_job_unavailable": "Studio's task-runner job isn't ready yet. Click Verify again, then try again.",
+          "default": "Studio couldn't check this service principal. Try again in a minute."
+        }
+      },
+      "apply": {
+        "help": "Studio sets its task-runner job to run as this service principal, then checks setup again.",
+        "button": "Use this service principal",
+        "confirmFirst": "Confirm access first.",
+        "grantsStillMissing": "Grants still missing. You can continue: setup lists them again after this step.",
+        "errors": {
+          "task_runner_run_as_forbidden": "Studio isn't allowed to use this service principal yet. Open the task-runner job, change its Run as setting (the identity the job runs under) to this service principal yourself, then click Verify again.",
+          "task_runner_principal_not_found": "Studio couldn't find that service principal. Check that it was created in this workspace, then pick it again.",
+          "task_runner_principal_invalid": "That isn't an Application ID. Pick the service principal again, or paste its Application ID.",
+          "task_runner_principal_is_app": "That's the DQX Studio app's own service principal. Pick a different one.",
+          "task_runner_managed_by_deployment": "This job's service principal is set when Studio is deployed. Set the dqx_service_principal_application_id deployment variable to the Application ID of a service principal (not the app's own), redeploy, then click Verify again.",
+          "task_runner_job_unavailable": "Studio's task-runner job isn't ready yet. Click Verify again, then try again.",
+          "default": "Studio couldn't update its task-runner job. Try again, or open the job and change its Run as setting to this service principal yourself, then click Verify again."
+        }
+      }
     }
   },
   "schedules": {

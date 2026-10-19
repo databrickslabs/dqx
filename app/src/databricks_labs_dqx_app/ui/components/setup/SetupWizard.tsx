@@ -28,12 +28,9 @@ import {
 } from "@/components/setup/SetupConfigurationForm";
 import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
 import type { SetupCatalogList } from "@/lib/setup-catalogs";
-import {
-  grantErrorMessageKey,
-  grantStatementsSql,
-  type GrantRunOutcome,
-  type StepGrantOutcome,
-} from "@/lib/setup-grants";
+import { GrantOutcomeNotice } from "@/components/setup/GrantOutcomeNotice";
+import { TaskRunnerSetup } from "@/components/setup/TaskRunnerSetup";
+import { grantStatementsSql, type StepGrantOutcome } from "@/lib/setup-grants";
 import type { SetupViewAction, SetupViewModel } from "@/lib/setup-state";
 
 type SetupWizardProps = {
@@ -230,36 +227,12 @@ function StepActions({
   });
 }
 
-function GrantOutcomeNotice({ outcome }: { outcome: GrantRunOutcome }) {
-  const { t } = useTranslation();
-
-  return (
-    <div
-      role="alert"
-      className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"
-    >
-      {outcome.summary && (
-        <p className="font-medium">
-          {t("setup.grants.partial", outcome.summary)}
-        </p>
-      )}
-      {outcome.failedSql && (
-        <div className="text-foreground">
-          <SqlCodeBlock sql={outcome.failedSql} />
-        </div>
-      )}
-      {outcome.errorCodes.map((code) => (
-        <p key={code}>{t(grantErrorMessageKey(code))}</p>
-      ))}
-    </div>
-  );
-}
-
 function StepCard({
   step,
   actions,
   canManage,
   jobsLink,
+  workspaceHost,
   isReconciling,
   onReconcile,
   onOverride,
@@ -279,6 +252,7 @@ function StepCard({
   actions: SetupViewAction[];
   canManage: boolean;
   jobsLink: JobsLink | null;
+  workspaceHost?: string;
   isReconciling: boolean;
   onReconcile: () => void;
   onOverride?: (stepId: SetupStep["id"]) => void;
@@ -317,6 +291,15 @@ function StepCard({
   const canOverride =
     !!onOverride && stepActions.some((action) => action.id === "override");
   const grantStatements = step.grant_statements ?? [];
+  const choosesTaskRunner =
+    canManage &&
+    stepActions.some((action) => action.id === "choose_task_runner");
+  // Choosing the task runner is the step's own guided form, which links the job itself.
+  const buttonActions = stepActions.filter(
+    (action) => action.id !== "choose_task_runner",
+  );
+  const showJobsLink =
+    canManage && step.id === "task_runner" && !!jobsLink && !choosesTaskRunner;
 
   return (
     <li className="relative pl-10 sm:pl-12">
@@ -343,12 +326,13 @@ function StepCard({
         {(step.code ||
           step.instructions?.length ||
           grantStatements.length > 0 ||
-          stepActions.length > 0 ||
+          buttonActions.length > 0 ||
+          choosesTaskRunner ||
           canOverride ||
           showForm ||
           showEdit ||
           showSummary ||
-          (canManage && step.id === "task_runner" && jobsLink)) && (
+          showJobsLink) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
             {step.code && (
               <p className="font-mono text-xs text-muted-foreground break-all">
@@ -414,7 +398,14 @@ function StepCard({
                 }
               />
             )}
-            {canManage && step.id === "task_runner" && jobsLink && (
+            {choosesTaskRunner && (
+              <TaskRunnerSetup
+                workspaceHost={workspaceHost}
+                jobsLink={jobsLink}
+                isBusy={isReconciling}
+              />
+            )}
+            {showJobsLink && jobsLink && (
               <a
                 href={jobsLink.href}
                 target="_blank"
@@ -432,10 +423,10 @@ function StepCard({
                 {t(`setup.override.help.${overrideCopyKey(step.id)}`)}
               </p>
             )}
-            {stepActions.length > 0 && (
+            {buttonActions.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 <StepActions
-                  actions={stepActions}
+                  actions={buttonActions}
                   isBusy={isReconciling}
                   onReconcile={onReconcile}
                   onOverride={onOverride}
@@ -578,6 +569,7 @@ export function SetupWizard({
               actions={view.actions}
               canManage={view.canManage}
               jobsLink={jobsLink}
+              workspaceHost={workspaceHost}
               isReconciling={
                 isReconciling || isOverriding || !!applyingGrantsStepId
               }

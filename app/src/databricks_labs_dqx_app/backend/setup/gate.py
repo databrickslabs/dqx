@@ -22,6 +22,11 @@ _ALLOWED_BEFORE_READY = frozenset(
         ("POST", "/api/v1/setup/override"),
         # The setup form's catalog picker lists catalogs as the signed-in user.
         ("GET", "/api/v1/discovery/catalogs"),
+        # The task-runner step blocks setup until its service principal is picked, checked and applied.
+        ("GET", "/api/v1/setup/task-runner/service-principals"),
+        ("POST", "/api/v1/setup/task-runner/access"),
+        ("POST", "/api/v1/setup/task-runner/grants"),
+        ("POST", "/api/v1/setup/task-runner/run-as"),
         # Running a blocked step's GRANT statements is one way an administrator gets past it.
         *(("POST", f"/api/v1/setup/steps/{step_id.value}/apply-grants") for step_id in SetupStepId),
     }
