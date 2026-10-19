@@ -380,7 +380,7 @@ async def test_startup_reconciles_studio_resource_tags(
     resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, include_bundle_resources: bool
 ) -> None:
     from databricks_labs_dqx_app.backend import startup
-    from databricks_labs_dqx_app.backend.services.resource_tagging_service import startup_tag_targets
+    from databricks_labs_dqx_app.backend.services.resource_tagging_service import TagTarget, startup_tag_targets
 
     tagger = MagicMock()
     captured = _patch_startup(monkeypatch, resources)
@@ -398,9 +398,50 @@ async def test_startup_reconciles_studio_resource_tags(
     try:
         bound = await captured["binder"].bind(resources)
         await bound.activation.activate()
-        tagger.reconcile.assert_called_once_with(startup_tag_targets(resources, include_bundle_resources))
+        tagger.reconcile.assert_called_once_with(
+            startup_tag_targets(resources, include_bundle_resources, app_name=startup.conf.app_slug_name)
+        )
+        assert TagTarget("apps", startup.conf.app_slug_name) in tagger.reconcile.call_args.args[0]
     finally:
         await startup.stop_studio(lifecycle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("space_id", ["01f0space", None])
+async def test_startup_tags_the_genie_space_right_after_ensuring_it(
+    resources: ActiveResources, monkeypatch: pytest.MonkeyPatch, space_id: str | None
+) -> None:
+    from databricks_labs_dqx_app.backend import startup
+    from databricks_labs_dqx_app.backend.services import genie_space_service
+
+    order: list[str] = []
+    tagger = MagicMock()
+    tagger.reconcile.side_effect = lambda _targets: order.append("reconcile")
+    tagger.tag_genie_space.side_effect = lambda _space_id: order.append("tag_genie_space")
+
+    def _ensure(**_kwargs: object) -> str | None:
+        order.append("ensure")
+        return space_id
+
+    captured = _patch_startup(monkeypatch, resources)
+    monkeypatch.setattr(startup, "ResourceTaggingService", lambda _workspace: tagger)
+    monkeypatch.setattr(genie_space_service, "ensure_dq_genie_space", _ensure)
+    monkeypatch.setattr(startup, "_ensure_score_views", lambda *_args: None)
+    monkeypatch.setattr(startup, "_ensure_metadata_dims", AsyncMock())
+    monkeypatch.setattr(startup, "ensure_entitlement_objects", lambda *_args: None)
+    monkeypatch.setattr(startup, "mark_tmp_schema_ready", lambda: None)
+    monkeypatch.setattr(startup, "_stop_background_services", AsyncMock())
+
+    lifecycle = await startup.start_studio(FastAPI())
+    assert lifecycle is not None
+    try:
+        bound = await captured["binder"].bind(resources)
+        await bound.activation.activate()
+    finally:
+        await startup.stop_studio(lifecycle)
+
+    tagger.tag_genie_space.assert_called_once_with(space_id)
+    assert order == ["reconcile", "ensure", "tag_genie_space"]
 
 
 @pytest.mark.asyncio

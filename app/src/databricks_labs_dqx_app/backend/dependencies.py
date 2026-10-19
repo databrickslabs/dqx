@@ -310,7 +310,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        return ensure_dq_genie_space(
+        space_id = ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
@@ -318,6 +318,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             schema=resources.genie_schema,
             audience_groups=resources.audience.workspace_principals,
         )
+        # A reset can recreate the space, so tag it like startup does (best-effort).
+        ResourceTaggingService(sp_ws).tag_genie_space(space_id)
+        return space_id
 
     return _reprovision
 
