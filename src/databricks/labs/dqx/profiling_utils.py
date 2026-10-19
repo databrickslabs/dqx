@@ -107,3 +107,42 @@ def calculate_median_absolute_deviation(
     mad = df_with_deviations.agg(F.percentile_approx("absolute_deviation", 0.5)).collect()[0][0]
 
     return median_value, mad
+
+
+def median_absolute_deviation_bounds_df(
+    df: DataFrame,
+    column: str,
+    filter_condition: Column | None,
+    lower_bound_col: str,
+    upper_bound_col: str,
+) -> DataFrame:
+    """
+    Lazily builds the median absolute deviation bounds of a numeric column.
+
+    Args:
+        df: PySpark DataFrame
+        column: Name of the numeric column to calculate MAD for
+        filter_condition: Filter to apply before calculation (optional), as a pre-compiled Column.
+        lower_bound_col: Name of the output column holding the lower bound.
+        upper_bound_col: Name of the output column holding the upper bound.
+
+    Returns:
+        A one-row DataFrame with *lower_bound_col* and *upper_bound_col*. Both are null when the filtered
+        DataFrame is empty or the column has only nulls.
+    """
+    if filter_condition is not None:
+        df = df.filter(filter_condition)
+
+    values = df.select(F.col(column).alias("value"))
+    median_df = values.agg(F.percentile_approx("value", 0.5).alias("median"))
+    stats_df = values.crossJoin(median_df).agg(
+        F.first("median").alias("median"),
+        F.percentile_approx(F.abs(F.col("value") - F.col("median")), 0.5).alias("mad"),
+    )
+
+    median = F.col("median").cast("double")
+    mad = F.col("mad").cast("double")
+    return stats_df.select(
+        (median - F.lit(3.5) * mad).alias(lower_bound_col),
+        (median + F.lit(3.5) * mad).alias(upper_bound_col),
+    )

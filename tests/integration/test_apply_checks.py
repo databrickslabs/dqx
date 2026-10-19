@@ -7,6 +7,7 @@ from collections.abc import Callable
 import yaml
 import pyspark.sql.functions as F
 import pytest
+from pyspark.errors import PySparkException
 from pyspark.sql import Column, DataFrame, SparkSession
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
@@ -4299,7 +4300,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
 
 
 def test_apply_checks_with_sql_query_without_merge_columns_multiple_rows_error(ws, spark):
-    """Ensure dataset-level sql_query errors when the query returns more than one row."""
+    """Ensure dataset-level sql_query validates its single-row contract lazily at action time."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200]], SCHEMA)
 
@@ -4318,10 +4319,12 @@ def test_apply_checks_with_sql_query_without_merge_columns_multiple_rows_error(w
         ),
     ]
 
+    checked_df = dq_engine.apply_checks(test_df, checks)
+
     with pytest.raises(
-        InvalidParameterError, match="Dataset-level sql_query without merge_columns must return exactly one row"
+        PySparkException, match="Dataset-level sql_query without merge_columns must return exactly one row"
     ):
-        dq_engine.apply_checks(test_df, checks)
+        checked_df.collect()
 
 
 def test_apply_checks_with_sql_query_and_ref_table(ws, spark):

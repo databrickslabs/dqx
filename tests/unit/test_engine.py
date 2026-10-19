@@ -4,7 +4,7 @@ from unittest.mock import create_autospec, Mock
 
 import pytest
 import pyspark.sql.functions as F
-from pyspark.errors import AnalysisException
+from pyspark.errors import AnalysisException, PySparkException
 from pyspark.sql import Column, SparkSession
 
 from databricks.sdk import WorkspaceClient
@@ -24,6 +24,7 @@ from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.engine import InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DQDatasetRule, CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.rule import DQRowRule, register_rule, requires_dbr_version
 
@@ -284,6 +285,109 @@ def test_apply_checks_and_save_in_table_allows_metrics_only(
     _, save_metrics_kwargs = save_summary_metrics.call_args
     assert save_metrics_kwargs["observed_metrics"] == {"input_row_count": 2}
     assert save_metrics_kwargs["metrics_config"] == OutputConfig(location="catalog.schema.metrics")
+
+
+def test_persist_if_supported_uses_default_storage_level():
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    spark = create_autospec(SparkSession)
+    spark.conf = Mock()
+    spark.conf.get.return_value = None
+
+    assert engine_module.persist_if_supported(checked_df, spark) is True
+
+    checked_df.persist.assert_called_once_with()
+
+
+def test_persist_if_supported_falls_back_when_persist_is_unsupported():
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    checked_df.persist.side_effect = PySparkException("persist is unsupported")
+    spark = create_autospec(SparkSession)
+    spark.conf = Mock()
+    spark.conf.get.return_value = None
+
+    assert engine_module.persist_if_supported(checked_df, spark) is False
+
+
+def test_persist_if_supported_falls_back_for_non_spark_exception():
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    checked_df.persist.side_effect = RuntimeError("persist is unsupported")
+    spark = create_autospec(SparkSession)
+    spark.conf = Mock()
+    spark.conf.get.return_value = None
+
+    assert engine_module.persist_if_supported(checked_df, spark) is False
+
+
+def test_apply_checks_and_split_does_not_persist_checked_dataframe(mock_workspace_client, monkeypatch):
+    """The split DataFrames are lazy, so the engine could not know when to unpersist a cached result."""
+    spark = create_autospec(SparkSession)
+    spark.conf = Mock()
+    spark.conf.get.return_value = None
+    input_df = create_autospec(engine_module.DataFrame)
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    engine = DQEngineCore(mock_workspace_client, spark)
+    monkeypatch.setattr(engine, "apply_checks", Mock(return_value=checked_df))
+
+    engine.apply_checks_and_split(input_df, [])
+
+    checked_df.persist.assert_not_called()
+
+
+def test_apply_checks_and_save_in_table_unpersists_after_both_batch_writes(
+    mock_workspace_client, mock_spark, monkeypatch
+):
+    mock_spark.conf.get.return_value = None
+    input_df = create_autospec(engine_module.DataFrame)
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    apply_checks = Mock(return_value=checked_df)
+    save_dataframe = Mock(return_value=None)
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    monkeypatch.setattr(engine, "apply_checks", apply_checks)
+    monkeypatch.setattr(engine_module, "read_input_data", Mock(return_value=input_df))
+    monkeypatch.setattr(engine_module, "save_dataframe_as_table", save_dataframe)
+
+    engine.apply_checks_and_save_in_table(
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.output"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        checks=[],
+    )
+
+    checked_df.persist.assert_called_once_with()
+    assert save_dataframe.call_count == 2
+    checked_df.unpersist.assert_called_once_with()
+
+
+def test_apply_checks_and_save_in_table_unpersists_when_second_write_fails(
+    mock_workspace_client, mock_spark, monkeypatch
+):
+    mock_spark.conf.get.return_value = None
+    input_df = create_autospec(engine_module.DataFrame)
+    checked_df = create_autospec(engine_module.DataFrame)
+    checked_df.isStreaming = False
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    monkeypatch.setattr(engine, "apply_checks", Mock(return_value=checked_df))
+    monkeypatch.setattr(engine_module, "read_input_data", Mock(return_value=input_df))
+    monkeypatch.setattr(
+        engine_module,
+        "save_dataframe_as_table",
+        Mock(side_effect=[None, RuntimeError("quarantine write failed")]),
+    )
+
+    with pytest.raises(RuntimeError, match="quarantine write failed"):
+        engine.apply_checks_and_save_in_table(
+            input_config=InputConfig(location="catalog.schema.input"),
+            output_config=OutputConfig(location="catalog.schema.output"),
+            quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+            checks=[],
+        )
+
+    checked_df.unpersist.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -590,3 +694,43 @@ def test_compute_summary_metrics_raises_when_result_columns_missing(mock_workspa
     checked_df.columns = ["id", "name"]  # no _errors / _warnings columns
     with pytest.raises(InvalidParameterError, match="missing the DQX result column"):
         engine.compute_summary_metrics(checked_df)
+
+
+@register_rule("dataset")
+def _custom_dataset_check(column: str):
+    """A custom dataset-level check, which may change the rows of its input."""
+
+    def apply(df):
+        return df
+
+    return F.col(column).isNull(), apply
+
+
+@pytest.mark.parametrize(
+    "check, keeps_rows",
+    [
+        (DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="a"), True),
+        (DQDatasetRule(criticality="error", check_func=check_funcs.is_unique, columns=["a"]), True),
+        (
+            DQDatasetRule(
+                criticality="error",
+                check_func=check_funcs.is_aggr_not_greater_than,
+                column="a",
+                check_func_kwargs={"limit": 1},
+            ),
+            True,
+        ),
+        (
+            DQDatasetRule(
+                criticality="error",
+                check_func=check_funcs.compare_datasets,
+                columns=["a"],
+                check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref"},
+            ),
+            False,
+        ),
+        (DQDatasetRule(criticality="error", check_func=_custom_dataset_check, column="a"), False),
+    ],
+)
+def test_keeps_input_rows_only_for_row_checks_and_known_dataset_checks(check, keeps_rows):
+    assert engine_module._keeps_input_rows(check) is keeps_rows

@@ -57,6 +57,78 @@ def test_rule_manager_suppress_skipped_false_returns_struct_for_invalid_column()
     assert result.check_df is df_mock
 
 
+def test_rule_manager_validates_columns_against_original_input_schema():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(input_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_col' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="derived_col"),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+
+    result = manager.process()
+
+    assert "skipped" in str(result.condition).lower()
+    input_df.select.assert_called()
+    current_df.select.assert_called_once()
+
+
+def test_rule_manager_validates_filter_against_current_dataframe():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(current_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_col' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="base_col", filter="derived_col > 0"),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+
+    assert manager.has_invalid_filter is True
+    current_df.select.assert_called()
+    input_df.select.assert_not_called()
+
+
+def test_rule_manager_validates_message_expression_against_current_dataframe():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(current_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_message' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(
+            check_func=check_funcs.is_not_null,
+            column="base_col",
+            message_expr="derived_message",
+        ),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+
+    assert manager.has_invalid_custom_message is True
+    current_df.select.assert_called()
+    input_df.select.assert_not_called()
+
+
 def _make_manager_with_filter(df: DataFrame, spark: SparkSession, check: DQRowRule | DQDatasetRule) -> DQRuleManager:
     return DQRuleManager(
         check=check,
