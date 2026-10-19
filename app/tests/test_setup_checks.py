@@ -186,7 +186,8 @@ def test_runner_missing_wheel_access_requires_specific_grant(
     assert result.id == SetupStepId.TASK_RUNNER
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
-    assert result.instructions == (RUN_GRANTS_AS_OWNER, instruction)
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (instruction,)
     assert result.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 
 
@@ -207,8 +208,8 @@ def test_runner_requires_temporary_schema_usage(runner_checkers: ResourceChecker
     result = runner_checkers.check_runner_access(42)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == (
-        RUN_GRANTS_AS_OWNER,
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (
         "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
     )
@@ -228,8 +229,8 @@ def test_runner_missing_temporary_schema_select_reports_schema_grant(
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
-    assert result.instructions == (
-        RUN_GRANTS_AS_OWNER,
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -259,8 +260,8 @@ def test_runner_missing_schema_data_permission_blocks_readiness(
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == (
-        RUN_GRANTS_AS_OWNER,
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (
         f"GRANT {missing.value} ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -299,6 +300,7 @@ def test_runner_schema_permission_lookup_failure_is_not_reported_as_missing_gran
     assert result.code == "task_runner_permission_check_failed"
     assert "sensitive schema payload" not in str(result)
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
+    assert result.grant_statements == ()
 
 
 @pytest.mark.parametrize("include_outputs", [False, True])
@@ -351,8 +353,8 @@ def test_runner_schema_owner_still_requires_data_grants(
 
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permissions_missing"
-    assert result.instructions == (
-        RUN_GRANTS_AS_OWNER,
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (
         "GRANT SELECT ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
         "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
@@ -399,6 +401,7 @@ def test_runner_permission_lookup_failure_blocks_setup_without_raw_error(
     assert "Verify" in " ".join(result.instructions)
     assert "metastore admin" in " ".join(result.instructions)
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
+    assert result.grant_statements == ()
 
 
 @pytest.fixture
@@ -518,6 +521,7 @@ def test_runner_sql_unknown_result_columns_do_not_report_missing_grants(
     assert result.state == StepState.ACTION_REQUIRED
     assert result.code == "task_runner_permission_check_failed"
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
+    assert result.grant_statements == ()
 
 
 def test_runner_schema_permissions_are_rechecked_after_success(
@@ -534,8 +538,8 @@ def test_runner_schema_permissions_are_rechecked_after_success(
     result = runner_checkers.check_runner_access(42, include_outputs=True)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert result.instructions == (
-        RUN_GRANTS_AS_OWNER,
+    assert result.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert result.grant_statements == (
         "GRANT MODIFY ON SCHEMA `main`.`dqx_studio` TO `11111111-2222-3333-4444-555555555555`;",
     )
 
@@ -590,7 +594,7 @@ def test_runner_sql_inspection_does_not_accept_another_principals_grants(
     result = runner_checkers.check_runner_access(42, reader_sql=runner_sql)
 
     assert result.state == StepState.ACTION_REQUIRED
-    assert any("GRANT READ_VOLUME" in instruction for instruction in result.instructions)
+    assert any("GRANT READ_VOLUME" in statement for statement in result.grant_statements)
 
 
 def test_runner_sql_inspection_failure_reports_unknown_permissions(
@@ -604,6 +608,7 @@ def test_runner_sql_inspection_failure_reports_unknown_permissions(
     assert result.code == "task_runner_permission_check_failed"
     assert "sensitive SQL payload" not in str(result)
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
+    assert result.grant_statements == ()
 
 
 def test_runner_ownership_uses_app_metadata_when_obo_volume_scope_is_unavailable(
@@ -659,8 +664,30 @@ def test_catalog_check_requires_app_sp_catalog_privileges(checkers: ResourceChec
 
     assert step.id == SetupStepId.UNITY_CATALOG
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;")
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert step.grant_statements == ("GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;",)
     assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
+
+
+def test_catalog_step_exposes_missing_grants_as_statements_apart_from_prose(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    """Two missing grants surface as runnable statements; the prose keeps only the guidance."""
+
+    def effective(kind: str, name: str, *, principal: str) -> EffectivePermissionsList:
+        if principal == "app-sp-id":
+            return _effective_permissions(Privilege.USE_CATALOG)
+        return _effective_permissions(principal=principal)
+
+    workspace.grants.get_effective.side_effect = effective
+
+    step = checkers.check_unity_catalog()
+
+    assert step.grant_statements == (
+        "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;",
+        "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;",
+    )
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
 
 
 def test_catalog_grant_instruction_uses_underscore_privilege_names(
@@ -677,7 +704,7 @@ def test_catalog_grant_instruction_uses_underscore_privilege_names(
 
     step = checkers.check_unity_catalog()
 
-    assert "GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
+    assert "GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.grant_statements
     assert not any("USE CATALOG" in instruction for instruction in step.instructions)
 
 
@@ -692,7 +719,8 @@ def test_catalog_check_reports_missing_audience_usage(checkers: ResourceCheckers
     step = checkers.check_unity_catalog()
 
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;")
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert step.grant_statements == ("GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;",)
 
 
 def test_catalog_check_grants_audience_usage_best_effort(
@@ -741,7 +769,8 @@ def test_catalog_check_reports_missing_group_usage_when_only_show_grants_is_read
     step = checkers.check_unity_catalog(reader_sql=sql)
 
     assert step.code == "catalog_permissions_missing"
-    assert step.instructions == (RUN_GRANTS_AS_OWNER, "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;")
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert step.grant_statements == ("GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;",)
 
 
 def test_catalog_check_accepts_request_scoped_reader_sql(
@@ -806,10 +835,8 @@ def test_storage_schema_with_manage_only_requires_usage_grants(
     step = checkers.ensure_storage(provision=False)
 
     assert step.code == "storage_permissions_missing"
-    assert step.instructions[:2] == (
-        RUN_GRANTS_AS_OWNER,
-        "GRANT USE_SCHEMA, CREATE_TABLE ON SCHEMA `main`.`dqx_studio` TO `app-sp-id`;",
-    )
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert step.grant_statements[0] == "GRANT USE_SCHEMA, CREATE_TABLE ON SCHEMA `main`.`dqx_studio` TO `app-sp-id`;"
     sql.execute_no_schema.assert_not_called()
 
 
@@ -952,10 +979,8 @@ def test_existing_volume_requires_read_and_write(
     step = checkers.ensure_storage(provision=False)
 
     assert step.code == "volume_permissions_missing"
-    assert step.instructions == (
-        RUN_GRANTS_AS_OWNER,
-        f"GRANT {grant_privilege} ON VOLUME `main`.`dqx_studio`.`wheels` TO `app-sp-id`;",
-    )
+    assert step.instructions == (RUN_GRANTS_AS_OWNER,)
+    assert step.grant_statements == (f"GRANT {grant_privilege} ON VOLUME `main`.`dqx_studio`.`wheels` TO `app-sp-id`;",)
 
 
 @pytest.mark.parametrize("app_sp_id", ["", "   ", "app-sp\nid"])
@@ -1391,7 +1416,7 @@ def test_missing_catalog_privilege_blocks_despite_memo(
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "catalog_permission_check_failed"
     assert "confirmed by an administrator" not in step.summary
-    assert "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.instructions
+    assert "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.grant_statements
     assert any("metastore admin" in instruction for instruction in step.instructions)
 
 
@@ -1528,7 +1553,7 @@ def test_missing_runner_privilege_blocks_despite_memo(
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "task_runner_permission_check_failed"
     assert "confirmed by an administrator" not in step.summary
-    assert any(instruction.startswith("GRANT SELECT ON SCHEMA") for instruction in step.instructions)
+    assert any(statement.startswith("GRANT SELECT ON SCHEMA") for statement in step.grant_statements)
 
 
 @pytest.mark.parametrize(

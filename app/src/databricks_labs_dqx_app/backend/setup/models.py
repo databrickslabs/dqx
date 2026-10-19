@@ -64,13 +64,18 @@ class _ImmutableModel(BaseModel):
 
 
 class SetupStep(_ImmutableModel):
-    """Sanitized status for one setup step."""
+    """Sanitized status for one setup step.
+
+    *instructions* is prose for the administrator; *grant_statements* holds the GRANT
+    statements the step still needs, kept apart so they can be copied or run as SQL.
+    """
 
     id: SetupStepId
     state: StepState
     code: str = ""
     summary: str = ""
     instructions: tuple[str, ...] = ()
+    grant_statements: tuple[str, ...] = ()
     actions: tuple[SetupActionId, ...] = ()
 
 
@@ -97,6 +102,25 @@ class SetupReport(_ImmutableModel):
             if item.id == step_id:
                 return item
         raise LookupError(f"Setup report does not contain step {step_id.value!r}")
+
+
+GrantErrorCode = Literal["permission_denied", "warehouse_unavailable", "not_found", "unknown"]
+
+
+class SetupGrantFailure(_ImmutableModel):
+    """A setup GRANT statement that could not be run, with a sanitized error code."""
+
+    statement: str
+    error_code: GrantErrorCode
+
+
+class SetupApplyGrantsResponse(_ImmutableModel):
+    """Outcome of running a step's GRANT statements as the signed-in administrator."""
+
+    report: SetupReport
+    applied: int
+    total: int
+    failed: tuple[SetupGrantFailure, ...] = ()
 
 
 class SetupConfigurationView(_ImmutableModel):

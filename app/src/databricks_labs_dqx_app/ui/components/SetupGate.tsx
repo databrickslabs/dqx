@@ -7,14 +7,18 @@ import {
 } from "@tanstack/react-query";
 
 import { useState } from "react";
-import axios from "axios";
+import axios, { type AxiosError, type AxiosResponse } from "axios";
 import {
   configureSetup,
   getGetSetupStatusQueryKey,
   getSetupStatus,
   overrideSetupStep,
   reconcileSetup,
+  useApplySetupStepGrants,
   useListCatalogs,
+  type HTTPValidationError,
+  type SetupApplyGrantsResponse,
+  type SetupStatusResponse,
   type SetupStepId,
 } from "@/lib/api";
 import {
@@ -24,6 +28,11 @@ import {
   warningKey,
 } from "@/lib/setup-state";
 import { setupCatalogList } from "@/lib/setup-catalogs";
+import {
+  grantRequestFailure,
+  grantRunOutcome,
+  type StepGrantOutcome,
+} from "@/lib/setup-grants";
 import {
   acknowledgeWarnings,
   readAcknowledgedWarnings,
@@ -85,6 +94,32 @@ export function configurationErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * After a step's GRANT statements run, show the re-verified report straight away,
+ * then refetch the full status.
+ */
+export function applyGrantsCallbacks(
+  queryClient: QueryClient,
+): UseMutationOptions<
+  AxiosResponse<SetupApplyGrantsResponse>,
+  AxiosError<HTTPValidationError>,
+  { stepId: SetupStepId }
+> {
+  return {
+    onSuccess: (response) => {
+      queryClient.setQueryData<AxiosResponse<SetupStatusResponse>>(
+        getGetSetupStatusQueryKey(),
+        (current) =>
+          current && {
+            ...current,
+            data: { ...current.data, report: response.data.report },
+          },
+      );
+    },
+    onSettled: () => invalidateSetupStatus(queryClient),
+  };
+}
+
+/**
  * Blocks Studio routes until the authenticated caller's setup readiness is
  * known. Remediation actions are rendered only from the backend report.
  */
@@ -97,6 +132,9 @@ export function SetupGate({ children }: SetupGateProps) {
     mutationFn: (stepId: SetupStepId) =>
       overrideSetupStep({ step_id: stepId }),
     onSettled: () => invalidateSetupStatus(queryClient),
+  });
+  const applyGrants = useApplySetupStepGrants({
+    mutation: applyGrantsCallbacks(queryClient),
   });
   const [editingConfiguration, setEditingConfiguration] = useState(false);
   const configuration = useMutation({
@@ -111,7 +149,9 @@ export function SetupGate({ children }: SetupGateProps) {
     refetchInterval: (query) =>
       setupPollingInterval(
         query.state.data?.data.report.state,
-        reconciliation.isPending || override.isPending,
+        reconciliation.isPending ||
+          override.isPending ||
+          applyGrants.isPending,
       ),
     refetchIntervalInBackground: setupPollingInBackground(),
   });
@@ -144,6 +184,18 @@ export function SetupGate({ children }: SetupGateProps) {
   );
   if (view.kind === "ready") return <>{children}</>;
 
+  const grantStepId = applyGrants.variables?.stepId;
+  let grantOutcome: StepGrantOutcome | undefined;
+  if (grantStepId && applyGrants.isSuccess) {
+    const outcome = grantRunOutcome(applyGrants.data.data);
+    grantOutcome = outcome ? { stepId: grantStepId, outcome } : undefined;
+  } else if (grantStepId && applyGrants.isError) {
+    grantOutcome = {
+      stepId: grantStepId,
+      outcome: grantRequestFailure(configurationErrorCode(applyGrants.error)),
+    };
+  }
+
   const onAcknowledgeWarnings = () =>
     setAcknowledged((current) =>
       acknowledgeWarnings(
@@ -157,7 +209,11 @@ export function SetupGate({ children }: SetupGateProps) {
       view={view}
       workspaceHost={workspaceHost.data?.workspace_host}
       isReconciling={reconciliation.isPending}
-      onReconcile={() => reconciliation.mutate()}
+      onReconcile={() => {
+        // A fresh check replaces the outcome of the last GRANT run.
+        applyGrants.reset();
+        reconciliation.mutate();
+      }}
       reconciliationFailed={reconciliation.isError || override.isError}
       onOverride={(stepId) => override.mutate(stepId)}
       isOverriding={override.isPending}
@@ -178,6 +234,9 @@ export function SetupGate({ children }: SetupGateProps) {
         configuration.reset();
         setEditingConfiguration(editing);
       }}
+      onApplyGrants={(stepId) => applyGrants.mutate({ stepId })}
+      applyingGrantsStepId={applyGrants.isPending ? grantStepId : undefined}
+      grantOutcome={grantOutcome}
     />
   );
 }

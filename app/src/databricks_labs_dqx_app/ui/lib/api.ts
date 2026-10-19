@@ -4603,6 +4603,16 @@ export const SetupActionId = {
 } as const;
 
 /**
+ * Outcome of running a step's GRANT statements as the signed-in administrator.
+ */
+export interface SetupApplyGrantsResponse {
+  report: SetupReport;
+  applied: number;
+  total: number;
+  failed?: SetupGrantFailure[];
+}
+
+/**
  * Administrator-submitted catalog, prefix and audience group (Marketplace path).
  */
 export interface SetupConfigurationRequest {
@@ -4635,6 +4645,25 @@ export interface SetupConfigurationView {
   schemas?: string[];
   broad_audience?: boolean;
   locked?: boolean;
+}
+
+export type SetupGrantFailureErrorCode = typeof SetupGrantFailureErrorCode[keyof typeof SetupGrantFailureErrorCode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupGrantFailureErrorCode = {
+  permission_denied: 'permission_denied',
+  warehouse_unavailable: 'warehouse_unavailable',
+  not_found: 'not_found',
+  unknown: 'unknown',
+} as const;
+
+/**
+ * A setup GRANT statement that could not be run, with a sanitized error code.
+ */
+export interface SetupGrantFailure {
+  statement: string;
+  error_code: SetupGrantFailureErrorCode;
 }
 
 /**
@@ -4687,6 +4716,9 @@ export interface SetupStatusResponse {
 
 /**
  * Sanitized status for one setup step.
+
+*instructions* is prose for the administrator; *grant_statements* holds the GRANT
+statements the step still needs, kept apart so they can be copied or run as SQL.
  */
 export interface SetupStep {
   id: SetupStepId;
@@ -4694,6 +4726,7 @@ export interface SetupStep {
   code?: string;
   summary?: string;
   instructions?: string[];
+  grant_statements?: string[];
   actions?: SetupActionId[];
 }
 
@@ -6711,6 +6744,70 @@ export const useOverrideSetupStep = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getOverrideSetupStepMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run a step's GRANT statements as the signed-in administrator, then re-verify setup.
+
+The request carries only the step; the statements are re-derived on the server.
+ * @summary Apply Setup Step Grants
+ */
+export const applySetupStepGrants = (
+    stepId: SetupStepId, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupApplyGrantsResponse>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/steps/${stepId}/apply-grants`,undefined,options
+    );
+  }
+
+
+
+export const getApplySetupStepGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext> => {
+
+const mutationKey = ['applySetupStepGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applySetupStepGrants>>, {stepId: SetupStepId}> = (props) => {
+          const {stepId} = props ?? {};
+
+          return  applySetupStepGrants(stepId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplySetupStepGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applySetupStepGrants>>>
+    
+    export type ApplySetupStepGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Setup Step Grants
+ */
+export const useApplySetupStepGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applySetupStepGrants>>,
+        TError,
+        {stepId: SetupStepId},
+        TContext
+      > => {
+
+      const mutationOptions = getApplySetupStepGrantsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

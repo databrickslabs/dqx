@@ -20,10 +20,12 @@ from databricks_labs_dqx_app.backend.setup.configuration import (
     SetupConfigurationStore,
 )
 from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+from databricks_labs_dqx_app.backend.setup.grant_application import GRANT_PREFIX, run_grant_statements
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.overrides import OVERRIDABLE_STEPS, SetupOverrides, override_fingerprint
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
+    SetupApplyGrantsResponse,
     SetupConfigurationView,
     SetupReport,
     SetupState,
@@ -383,6 +385,46 @@ class SetupOrchestrator:
             if not saved:
                 return None
         return await self.reconcile(setup_user=actor, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+
+    async def apply_grants(
+        self,
+        step_id: SetupStepId,
+        *,
+        setup_user: str | None,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupApplyGrantsResponse | None:
+        """Run the GRANT statements a step reports as the signed-in administrator, then re-verify.
+
+        Setup is re-checked first so the statements are re-derived by the same checks that
+        display them; nothing the client sends is executed. Each statement runs through the
+        administrator's own SQL executor (never the app service principal), and a failed
+        statement doesn't stop the rest.
+
+        Args:
+            step_id: Step whose GRANT statements to run.
+            setup_user: Authenticated administrator running the statements.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Returns:
+            The re-verified report with how many statements ran and which failed, or None
+            when the step has no GRANT statements to run.
+        """
+        checked = await self.reconcile(
+            setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
+        )
+        bound = self.bound
+        try:
+            statements = checked.step(step_id).grant_statements
+        except LookupError:
+            return None
+        if bound is None or not any(statement.startswith(GRANT_PREFIX) for statement in statements):
+            return None
+        executor = reader_sql_factory(bound.resources)
+        run = await asyncio.to_thread(run_grant_statements, statements, executor)
+        report = await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+        return SetupApplyGrantsResponse(report=report, applied=run.applied, total=run.total, failed=run.failed)
 
     async def _run_steps(
         self,

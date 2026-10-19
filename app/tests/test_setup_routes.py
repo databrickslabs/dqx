@@ -21,7 +21,9 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore
 from databricks_labs_dqx_app.backend.setup.models import (
+    SetupApplyGrantsResponse,
     SetupConfigurationView,
+    SetupGrantFailure,
     SetupReport,
     SetupState,
     SetupStep,
@@ -607,3 +609,69 @@ def test_override_requires_setup_admin(client: TestClient, orchestrator: MagicMo
 
 def test_override_rejects_unknown_step(client: TestClient) -> None:
     assert client.post(_OVERRIDE_URL, json={"step_id": "nope"}).status_code == 422
+
+
+_APPLY_GRANTS_URL = "/api/v1/setup/steps/task_runner/apply-grants"
+
+
+def test_apply_grants_runs_as_the_signed_in_administrator(
+    client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock, reader_sql_factory: MagicMock
+) -> None:
+    orchestrator.apply_grants = AsyncMock(
+        return_value=SetupApplyGrantsResponse(
+            report=SetupReport(state=SetupState.SETUP_REQUIRED, steps=()),
+            applied=1,
+            total=2,
+            failed=(SetupGrantFailure(statement="GRANT X ON SCHEMA `a`.`b` TO `c`;", error_code="permission_denied"),),
+        )
+    )
+
+    response = client.post(_APPLY_GRANTS_URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["applied"], body["total"]) == (1, 2)
+    assert body["failed"] == [{"statement": "GRANT X ON SCHEMA `a`.`b` TO `c`;", "error_code": "permission_denied"}]
+    orchestrator.apply_grants.assert_awaited_once_with(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_ws=obo_ws,
+        reader_sql_factory=reader_sql_factory,
+    )
+
+
+def test_apply_grants_with_nothing_to_apply_is_a_conflict(client: TestClient, orchestrator: MagicMock) -> None:
+    orchestrator.apply_grants = AsyncMock(return_value=None)
+
+    response = client.post(_APPLY_GRANTS_URL)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "nothing_to_apply"
+
+
+def test_apply_grants_requires_setup_admin(client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock) -> None:
+    obo_ws.current_user.me.return_value = user_in_groups("users")
+    orchestrator.apply_grants = AsyncMock()
+
+    response = client.post(_APPLY_GRANTS_URL)
+
+    assert response.status_code == 403
+    orchestrator.apply_grants.assert_not_awaited()
+
+
+def test_apply_grants_cannot_carry_sql_from_the_client(client: TestClient, orchestrator: MagicMock) -> None:
+    """Statements are always re-derived on the server; the endpoint takes no request body."""
+    orchestrator.apply_grants = AsyncMock(return_value=None)
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/setup/steps/{step_id}/apply-grants"]["post"]
+
+    client.post(_APPLY_GRANTS_URL, json={"sql": "DROP CATALOG main"})
+
+    assert "requestBody" not in operation
+    assert orchestrator.apply_grants.call_args.args == (SetupStepId.TASK_RUNNER,)
+    assert "DROP" not in str(orchestrator.apply_grants.call_args)
+
+
+def test_apply_grants_rejects_unknown_step(client: TestClient) -> None:
+    setup_runtime.publish(SetupReport(state=SetupState.READY, steps=()))
+
+    assert client.post("/api/v1/setup/steps/nope/apply-grants").status_code == 422

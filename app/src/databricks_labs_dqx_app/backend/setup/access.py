@@ -158,29 +158,33 @@ class AudienceAccess:
                 _acl_instruction("Can view", "dashboard", self._dashboard_id, group) for group in missing
             )
 
-        instructions = (*uc_unknown, *shared_unknown, *uc_missing, *genie_missing, *dashboard_missing)
-        if uc_missing:
-            instructions = (
-                *uc_unknown,
-                *shared_unknown,
-                RUN_GRANTS_AS_OWNER,
-                *uc_missing,
-                *genie_missing,
-                *dashboard_missing,
-            )
+        # The GRANT statements are kept apart from the prose; the owner guidance comes last so
+        # it sits directly above them.
+        instructions = (
+            *uc_unknown,
+            *shared_unknown,
+            *genie_missing,
+            *dashboard_missing,
+            *((RUN_GRANTS_AS_OWNER,) if uc_missing else ()),
+        )
+        grants = tuple(uc_missing)
         if uc_unknown:
-            return _blocked("audience_grant_check_failed", "Studio couldn't read its users' permissions.", instructions)
+            return _blocked(
+                "audience_grant_check_failed", "Studio couldn't read its users' permissions.", instructions, grants
+            )
         if shared_unknown:
             return _blocked(
                 "shared_resource_check_failed",
                 "Studio couldn't check who can open its Genie space or dashboard.",
                 instructions,
+                grants,
             )
         if uc_missing:
             return _blocked(
                 "audience_grants_missing",
                 "Studio users or administrators don't have all the data permissions they need.",
                 instructions,
+                grants,
             )
         if genie_missing:
             return _blocked(
@@ -330,13 +334,16 @@ class AudienceAccess:
         )
 
 
-def _blocked(code: str, summary: str, instructions: tuple[str, ...]) -> SetupStep:
+def _blocked(
+    code: str, summary: str, instructions: tuple[str, ...], grant_statements: tuple[str, ...] = ()
+) -> SetupStep:
     return SetupStep(
         id=SetupStepId.ACCESS,
         state=StepState.ACTION_REQUIRED,
         code=code,
         summary=summary,
         instructions=instructions,
+        grant_statements=grant_statements,
         actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
     )
 

@@ -28,10 +28,12 @@ from databricks_labs_dqx_app.backend.setup.audience import AudienceGroupRequired
 from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore, validate_choices
 from databricks_labs_dqx_app.backend.setup.storage import InvalidCatalogNameError
 from databricks_labs_dqx_app.backend.setup.models import (
+    SetupApplyGrantsResponse,
     SetupConfigurationRequest,
     SetupOverrideRequest,
     SetupReport,
     SetupStatusResponse,
+    SetupStepId,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import ReaderSqlFactory, SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
@@ -166,3 +168,30 @@ async def override_setup_step(
     if report is None:
         raise _error(status.HTTP_409_CONFLICT, "override_not_available")
     return report
+
+
+@router.post(
+    "/steps/{step_id}/apply-grants",
+    response_model=SetupApplyGrantsResponse,
+    operation_id="applySetupStepGrants",
+)
+async def apply_setup_step_grants(
+    step_id: SetupStepId,
+    access: Annotated[SetupAccess, require_setup_admin()],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
+    reader_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    reader_sql_factory: Annotated[ReaderSqlFactory, Depends(get_setup_sql_reader_factory)],
+) -> SetupApplyGrantsResponse:
+    """Run a step's GRANT statements as the signed-in administrator, then re-verify setup.
+
+    The request carries only the step; the statements are re-derived on the server.
+    """
+    result = await orchestrator.apply_grants(
+        step_id,
+        setup_user=access.user_name,
+        reader_ws=reader_ws,
+        reader_sql_factory=reader_sql_factory,
+    )
+    if result is None:
+        raise _error(status.HTTP_409_CONFLICT, "nothing_to_apply")
+    return result

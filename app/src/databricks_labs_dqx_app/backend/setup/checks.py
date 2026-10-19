@@ -131,10 +131,8 @@ class ResourceCheckers:
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permission_check_failed",
                 summary="Studio couldn't read the permissions on its catalog.",
-                instructions=(
-                    _read_permissions_instruction("catalog", instruction_identifier(catalog)),
-                    *_catalog_grant_instructions(catalog, missing_by_principal),
-                ),
+                instructions=(_read_permissions_instruction("catalog", instruction_identifier(catalog)),),
+                grant_statements=_catalog_grant_statements(catalog, missing_by_principal),
                 actions=_OVERRIDABLE,
             )
         if missing_by_principal:
@@ -143,7 +141,8 @@ class ResourceCheckers:
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permissions_missing",
                 summary="Studio or its users don't have the permissions they need on the catalog.",
-                instructions=(RUN_GRANTS_AS_OWNER, *_catalog_grant_instructions(catalog, missing_by_principal)),
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=_catalog_grant_statements(catalog, missing_by_principal),
                 actions=_OVERRIDABLE,
             )
         self._record_verification(SetupStepId.UNITY_CATALOG.value, fingerprint)
@@ -228,7 +227,7 @@ class ResourceCheckers:
                 ("SCHEMA", self._main_schema_full_name(), privilege, privilege, schema)
                 for privilege in ("SELECT", "MODIFY")
             )
-        instructions: list[str] = []
+        grant_statements: list[str] = []
         unknown: list[str] = []
         unknown_kinds: set[str] = set()
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
@@ -253,7 +252,7 @@ class ResourceCheckers:
                 if guidance not in unknown:
                     unknown.append(guidance)
                 continue
-            instructions.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
+            grant_statements.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
         scope = _RUNNER_OUTPUTS_SCOPE if include_outputs else SetupStepId.TASK_RUNNER.value
         fingerprint = requirement_fingerprint(
             scope,
@@ -267,7 +266,7 @@ class ResourceCheckers:
             # Studio-managed schemas and the wheels volume must stay inspectable by the app;
             # only the user-selected catalog may rely on a previous verification.
             if (
-                not instructions
+                not grant_statements
                 and unknown_kinds == {"CATALOG"}
                 and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws)
             ):
@@ -277,16 +276,18 @@ class ResourceCheckers:
                 state=StepState.ACTION_REQUIRED,
                 code="task_runner_permission_check_failed",
                 summary="Studio couldn't read the task runner's permissions.",
-                instructions=(*unknown, *instructions),
+                instructions=tuple(unknown),
+                grant_statements=tuple(grant_statements),
                 actions=_OVERRIDABLE,
             )
-        if instructions:
+        if grant_statements:
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
                 code="task_runner_permissions_missing",
                 summary="The task runner doesn't have all the permissions it needs to run checks.",
-                instructions=(RUN_GRANTS_AS_OWNER, *instructions),
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=tuple(grant_statements),
                 actions=_OVERRIDABLE,
             )
         self._record_verification(scope, fingerprint)
@@ -432,14 +433,12 @@ class ResourceCheckers:
             state=StepState.ACTION_REQUIRED,
             code="storage_permissions_missing",
             summary="Studio needs more permissions on one of its schemas.",
-            instructions=(
-                RUN_GRANTS_AS_OWNER,
-                *(
-                    "GRANT "
-                    + ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
-                    + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
-                    for schema, missing in incomplete
-                ),
+            instructions=(RUN_GRANTS_AS_OWNER,),
+            grant_statements=tuple(
+                "GRANT "
+                + ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
+                + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
+                for schema, missing in incomplete
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
@@ -486,8 +485,8 @@ class ResourceCheckers:
                 state=StepState.ACTION_REQUIRED,
                 code="volume_permissions_missing",
                 summary="Studio needs permission to read and write its wheels volume.",
-                instructions=(
-                    RUN_GRANTS_AS_OWNER,
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=(
                     f"GRANT {', '.join(p for p in missing)} ON VOLUME {quoted_volume} "
                     f"TO {instruction_identifier(app_sp)};",
                 ),
@@ -652,7 +651,7 @@ class ResourceCheckers:
         return f"{volume.catalog}.{volume.schema}"
 
 
-def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
+def _catalog_grant_statements(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
     quoted_catalog = instruction_identifier(catalog)
     return tuple(
         f"GRANT {', '.join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "

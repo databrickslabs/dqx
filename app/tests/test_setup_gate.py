@@ -53,6 +53,10 @@ def gated_app() -> tuple[FastAPI, SetupRuntime, list[str]]:
     def override() -> dict[str, str]:
         return {"state": runtime.report().state}
 
+    @app.post("/api/v1/setup/steps/{step_id}/apply-grants")
+    def apply_grants(step_id: str) -> dict[str, str]:
+        return {"step_id": step_id}
+
     @app.get("/api/v1/discovery/catalogs")
     def discovery_catalogs() -> list[dict[str, str]]:
         return []
@@ -120,6 +124,14 @@ def test_gate_blocks_database_backed_current_user_role(
 def test_gate_does_not_prefix_match_allowed_routes(gated_client: TestClient) -> None:
     assert gated_client.get("/api/v1/setup/status/extra").status_code == 503
     assert gated_client.post("/api/v1/setup/status").status_code == 503
+
+
+def test_gate_allows_running_a_known_step_grants_before_ready(gated_client: TestClient) -> None:
+    """Running a blocked step's GRANTs is how an administrator gets past it, so it must work before READY."""
+    assert gated_client.post("/api/v1/setup/steps/task_runner/apply-grants").status_code == 200
+    assert gated_client.post("/api/v1/setup/steps/access/apply-grants").status_code == 200
+    assert gated_client.post("/api/v1/setup/steps/unknown/apply-grants").status_code == 503
+    assert gated_client.get("/api/v1/setup/steps/task_runner/apply-grants").status_code == 503
 
 
 def test_gate_keeps_static_ui_available(gated_client: TestClient) -> None:

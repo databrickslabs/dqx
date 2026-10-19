@@ -10,13 +10,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   SetupGate,
+  applyGrantsCallbacks,
   invalidateSetupStatus,
   reconciliationMutationOptions,
   setupPollingInBackground,
   setupPollingInterval,
 } from "./SetupGate";
 import { SetupShell, SetupWizard, workspaceJobsLink } from "./setup/SetupWizard";
-import { getGetSetupStatusQueryKey, type SetupStatusResponse } from "@/lib/api";
+import {
+  getApplySetupStepGrantsMutationOptions,
+  getGetSetupStatusQueryKey,
+  type SetupStatusResponse,
+} from "@/lib/api";
 import { getWorkspaceHostQueryKey } from "@/lib/api-custom";
 import { useTheme } from "@/components/layout/theme-provider";
 import en from "@/lib/i18n/locales/en.json";
@@ -681,5 +686,145 @@ describe("setup overrides", () => {
     const markup = renderWithOverride(status);
 
     expect(markup).toContain(en.setup.states.overridden);
+  });
+});
+
+describe("setup grant statements", () => {
+  const GRANTS = [
+    "GRANT USE_CATALOG ON CATALOG `main` TO `runner`;",
+    "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner`;",
+    "GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner`;",
+  ];
+  const RUN_LABEL = `aria-label="${en.sqlCodeBlock.run}"`;
+
+  function grantStatus(canManage = true): SetupStatusResponse {
+    return {
+      can_manage: canManage,
+      admin_group: "dqx-admins",
+      report: {
+        state: "setup_required",
+        current_step: "task_runner",
+        steps: [
+          {
+            id: "task_runner",
+            state: "action_required",
+            code: "task_runner_permissions_missing",
+            summary: "The task runner doesn't have all the permissions it needs.",
+            instructions: ["Ask the owner of these objects to run the following:"],
+            grant_statements: GRANTS,
+            actions: ["verify_again"],
+          },
+        ],
+      },
+    };
+  }
+
+  function renderGrants(
+    props: Partial<React.ComponentProps<typeof SetupWizard>> = {},
+    status: SetupStatusResponse = grantStatus(),
+  ): string {
+    return renderSetup(
+      <SetupWizard
+        view={setupView(status)}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        reconciliationFailed={false}
+        onApplyGrants={() => undefined}
+        {...props}
+      />,
+    );
+  }
+
+  test("shows the prose and every statement in one copyable code block", () => {
+    const markup = renderGrants();
+
+    expect(markup).toContain("Ask the owner of these objects to run the following:");
+    expect(markup).toContain(GRANTS.join("\n"));
+    expect(markup.split("<pre").length - 1).toBe(2);
+    expect(markup).toContain(`aria-label="${en.common.copy}"`);
+    expect(markup).toContain(RUN_LABEL);
+  });
+
+  test("only administrators can run the statements", () => {
+    expect(renderGate(grantStatus(false))).not.toContain(RUN_LABEL);
+    expect(renderGate(grantStatus(false))).toContain(GRANTS[0]);
+    expect(renderGrants({ onApplyGrants: undefined })).not.toContain(RUN_LABEL);
+  });
+
+  test("shows a spinner on the step whose statements are running", () => {
+    const markup = renderGrants({ applyingGrantsStepId: "task_runner" });
+
+    expect(markup).toContain("animate-spin");
+    expect(markup).toContain('disabled=""');
+  });
+
+  test("lists the commands that failed under a partial-success summary", () => {
+    const markup = renderGrants({
+      grantOutcome: {
+        stepId: "task_runner",
+        outcome: {
+          summary: { applied: 2, total: 3 },
+          failedSql: GRANTS[1],
+          errorCodes: ["permission_denied"],
+        },
+      },
+    });
+
+    expect(markup).toContain("Done: 2 of 3.");
+    expect(markup).toContain(escapeHtml(en.setup.grants.errors.permission_denied));
+    expect(markup).toContain('role="alert"');
+    const alert = markup.slice(markup.indexOf('role="alert"'));
+    expect(alert).toContain(GRANTS[1]);
+    expect(alert).not.toContain(GRANTS[0]);
+  });
+
+  test("keeps another step's outcome off this step", () => {
+    const markup = renderGrants({
+      grantOutcome: {
+        stepId: "access",
+        outcome: { summary: null, failedSql: "", errorCodes: ["unknown"] },
+      },
+    });
+
+    expect(markup).not.toContain(escapeHtml(en.setup.grants.errors.unknown));
+  });
+
+  test("the run icon calls the step's apply-grants endpoint and updates the report", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(getGetSetupStatusQueryKey(), { data: grantStatus() });
+    const requests: { method?: string; url?: string; data?: unknown }[] = [];
+    const nextReport = { state: "ready" as const, steps: [] };
+    const mutation = new MutationObserver(
+      queryClient,
+      getApplySetupStepGrantsMutationOptions({
+        mutation: applyGrantsCallbacks(queryClient),
+        axios: {
+          adapter: async (config) => {
+            requests.push({ method: config.method, url: config.url, data: config.data });
+            return {
+              data: { report: nextReport, applied: 3, total: 3, failed: [] },
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              config,
+            };
+          },
+        },
+      }),
+    );
+
+    await mutation.mutate({ stepId: "task_runner" });
+
+    expect(requests).toEqual([
+      { method: "post", url: "/api/v1/setup/steps/task_runner/apply-grants", data: undefined },
+    ]);
+    const cached = queryClient.getQueryData<{ data: SetupStatusResponse }>(
+      getGetSetupStatusQueryKey(),
+    );
+    expect(cached?.data.report).toEqual(nextReport);
+    expect(cached?.data.can_manage).toBe(true);
+    expect(
+      queryClient.getQueryState(getGetSetupStatusQueryKey())?.isInvalidated,
+    ).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ from databricks.sdk.service.iam import PermissionLevel
 
 from databricks_labs_dqx_app.backend.setup.access import GENIE_ALLOWLIST, AudienceAccess
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
+from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import (
     BootstrapResources,
@@ -150,7 +151,19 @@ def test_access_reports_missing_grants_with_statements(workspace, sql) -> None:
 
     assert step.state == StepState.ACTION_REQUIRED
     assert step.code == "audience_grants_missing"
-    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.grant_statements
+
+
+def test_access_exposes_missing_grants_as_statements_apart_from_prose(workspace, sql) -> None:
+    workspace.grants.get_effective.return_value = _grants()
+
+    step = _access(workspace, sql).reconcile_access()
+
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.grant_statements
+    assert "GRANT CREATE_TABLE ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.grant_statements
+    assert all(statement.startswith("GRANT ") for statement in step.grant_statements)
+    assert not any(instruction.startswith("GRANT") for instruction in step.instructions)
+    assert step.instructions[-1] == RUN_GRANTS_AS_OWNER
 
 
 def test_access_reports_uninspectable_grants_separately(workspace, sql) -> None:
@@ -175,7 +188,7 @@ def test_unknown_grants_take_precedence_over_missing_grants(workspace, sql) -> N
     step = _access(workspace, sql).reconcile_access()
 
     assert step.code == "audience_grant_check_failed"
-    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.instructions
+    assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.grant_statements
 
 
 def test_grant_failures_are_ignored_and_verification_decides(workspace, sql) -> None:

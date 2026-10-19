@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { HelpTooltip } from "@/components/HelpTooltip";
+import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
 import Logo from "@/components/layout/Logo";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { ThemeProvider } from "@/components/layout/theme-provider";
@@ -27,6 +28,12 @@ import {
 } from "@/components/setup/SetupConfigurationForm";
 import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
 import type { SetupCatalogList } from "@/lib/setup-catalogs";
+import {
+  grantErrorMessageKey,
+  grantStatementsSql,
+  type GrantRunOutcome,
+  type StepGrantOutcome,
+} from "@/lib/setup-grants";
 import type { SetupViewAction, SetupViewModel } from "@/lib/setup-state";
 
 type SetupWizardProps = {
@@ -44,6 +51,12 @@ type SetupWizardProps = {
   catalogList?: SetupCatalogList;
   /** Opens (true) or closes (false) the form for changing saved choices. */
   onEditConfiguration?: (editing: boolean) => void;
+  /** Runs a step's GRANT statements as the signed-in administrator. */
+  onApplyGrants?: (stepId: SetupStep["id"]) => void;
+  /** Step whose GRANT statements are running. */
+  applyingGrantsStepId?: SetupStep["id"];
+  /** Outcome of the last GRANT run, shown under that step's statements. */
+  grantOutcome?: StepGrantOutcome;
 };
 
 function progressSteps(view: SetupViewModel): SetupStep[] {
@@ -217,6 +230,31 @@ function StepActions({
   });
 }
 
+function GrantOutcomeNotice({ outcome }: { outcome: GrantRunOutcome }) {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      role="alert"
+      className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"
+    >
+      {outcome.summary && (
+        <p className="font-medium">
+          {t("setup.grants.partial", outcome.summary)}
+        </p>
+      )}
+      {outcome.failedSql && (
+        <div className="text-foreground">
+          <SqlCodeBlock sql={outcome.failedSql} />
+        </div>
+      )}
+      {outcome.errorCodes.map((code) => (
+        <p key={code}>{t(grantErrorMessageKey(code))}</p>
+      ))}
+    </div>
+  );
+}
+
 function StepCard({
   step,
   actions,
@@ -233,6 +271,9 @@ function StepCard({
   configurationError,
   catalogList,
   onEditConfiguration,
+  onApplyGrants,
+  applyingGrantsStepId,
+  grantOutcome,
 }: {
   step: SetupStep;
   actions: SetupViewAction[];
@@ -249,6 +290,9 @@ function StepCard({
   configurationError?: string;
   catalogList?: SetupCatalogList;
   onEditConfiguration?: (editing: boolean) => void;
+  onApplyGrants?: (stepId: SetupStep["id"]) => void;
+  applyingGrantsStepId?: SetupStep["id"];
+  grantOutcome?: StepGrantOutcome;
 }) {
   const { t } = useTranslation();
   const isConfigurationStep = step.id === "configuration";
@@ -272,6 +316,7 @@ function StepCard({
       : step.summary;
   const canOverride =
     !!onOverride && stepActions.some((action) => action.id === "override");
+  const grantStatements = step.grant_statements ?? [];
 
   return (
     <li className="relative pl-10 sm:pl-12">
@@ -297,6 +342,7 @@ function StepCard({
         </CardHeader>
         {(step.code ||
           step.instructions?.length ||
+          grantStatements.length > 0 ||
           stepActions.length > 0 ||
           canOverride ||
           showForm ||
@@ -309,10 +355,10 @@ function StepCard({
                 {t("setup.diagnosticCode", { code: step.code })}
               </p>
             )}
-            {step.instructions?.length ? (
+            {step.instructions?.length || grantStatements.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-sm font-medium">{t("setup.instructions")}</p>
-                {step.instructions.map((instruction, index) => (
+                {step.instructions?.map((instruction, index) => (
                   <pre
                     key={`${step.id}-${index}`}
                     className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed"
@@ -320,6 +366,23 @@ function StepCard({
                     {instruction}
                   </pre>
                 ))}
+                {grantStatements.length > 0 && (
+                  <SqlCodeBlock
+                    sql={grantStatementsSql(grantStatements)}
+                    onRun={
+                      canManage && onApplyGrants
+                        ? () => onApplyGrants(step.id)
+                        : undefined
+                    }
+                    isRunning={applyingGrantsStepId === step.id}
+                    runDisabled={isReconciling}
+                    result={
+                      grantOutcome?.stepId === step.id ? (
+                        <GrantOutcomeNotice outcome={grantOutcome.outcome} />
+                      ) : undefined
+                    }
+                  />
+                )}
               </div>
             ) : null}
             {showSummary && configuration && !isEditingSaved && (
@@ -438,6 +501,9 @@ export function SetupWizard({
   configurationError,
   catalogList,
   onEditConfiguration,
+  onApplyGrants,
+  applyingGrantsStepId,
+  grantOutcome,
 }: SetupWizardProps) {
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
@@ -512,7 +578,9 @@ export function SetupWizard({
               actions={view.actions}
               canManage={view.canManage}
               jobsLink={jobsLink}
-              isReconciling={isReconciling || isOverriding}
+              isReconciling={
+                isReconciling || isOverriding || !!applyingGrantsStepId
+              }
               onReconcile={onReconcile}
               onOverride={onOverride}
               configuration={view.configuration}
@@ -523,6 +591,9 @@ export function SetupWizard({
               configurationError={configurationError}
               catalogList={catalogList}
               onEditConfiguration={onEditConfiguration}
+              onApplyGrants={onApplyGrants}
+              applyingGrantsStepId={applyingGrantsStepId}
+              grantOutcome={grantOutcome}
             />
           ))}
         </ol>
@@ -530,7 +601,7 @@ export function SetupWizard({
           <div className="flex justify-end">
             <Button
               type="button"
-              disabled={isReconciling || isOverriding}
+              disabled={isReconciling || isOverriding || !!applyingGrantsStepId}
               onClick={onAcknowledgeWarnings}
             >
               {t("setup.warningsReview.acknowledge")}
