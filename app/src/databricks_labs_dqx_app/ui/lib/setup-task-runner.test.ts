@@ -121,8 +121,9 @@ function access(
   sp_permission: TaskRunnerAccessResult["sp_permission"],
   grant_statements: string[] = [],
   grants_unverified = false,
+  automatic_grants: string[] = [],
 ): TaskRunnerAccessResult {
-  return { sp_permission, grant_statements, grants_unverified };
+  return { sp_permission, grant_statements, automatic_grants, grants_unverified };
 }
 
 describe("accessResultMessageKeys", () => {
@@ -150,6 +151,29 @@ describe("accessResultMessageKeys", () => {
       "setup.taskRunner.access.result.missing",
       "setup.taskRunner.access.result.grantsPending",
     ]);
+  });
+
+  test("says Studio sets up the rest of the access itself once the job runs as it", () => {
+    expect(accessResultMessageKeys(access("confirmed", [], false, ["GRANT Y"]))).toEqual([
+      "setup.taskRunner.access.result.permissionConfirmed",
+      "setup.taskRunner.access.result.automaticGrants",
+    ]);
+    expect(
+      accessResultMessageKeys(access("unverified", ["GRANT X"], false, ["GRANT Y"])),
+    ).toEqual([
+      "setup.taskRunner.access.result.unverified",
+      "setup.taskRunner.access.result.grantsPending",
+      "setup.taskRunner.access.result.automaticGrants",
+    ]);
+  });
+
+  test("doesn't count Studio's own grants as missing on step 3", () => {
+    expect(
+      taskRunnerSteps({
+        selected: true,
+        access: access("confirmed", [], false, ["GRANT Y"]),
+      }),
+    ).toMatchObject({ applyEnabled: true, grantsStillMissing: false });
   });
 
   test("says when some data access couldn't be checked", () => {

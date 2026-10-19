@@ -1597,8 +1597,9 @@ def test_runner_grants_are_computed_for_a_given_service_principal_without_the_jo
     workspace.jobs.get.assert_not_called()
     sql.execute_no_schema.assert_not_called()
     assert grants.unreadable == ()
-    assert grants.grant_statements == (
-        f"GRANT USE_CATALOG ON CATALOG `main` TO `{_PICKED}`;",
+    # Only a person can give catalog usage; setup grants the rest itself once the job runs as it.
+    assert grants.grant_statements == (f"GRANT USE_CATALOG ON CATALOG `main` TO `{_PICKED}`;",)
+    assert grants.automatic_grants == (
         f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`;",
         f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`;",
         f"GRANT SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`;",
@@ -1619,7 +1620,23 @@ def test_runner_grants_are_empty_when_the_service_principal_has_its_access(
     grants = checkers.runner_grants(_PICKED)
 
     assert grants.grant_statements == ()
+    assert grants.automatic_grants == ()
     assert grants.unreadable == ()
+
+
+def test_reconcile_still_grants_studio_objects_to_the_job_service_principal(
+    runner_checkers: ResourceCheckers, sql: MagicMock
+) -> None:
+    """Once the job runs as the service principal, setup gives it Studio's own grants itself."""
+    runner_checkers.check_runner_access(42, include_outputs=True)
+
+    runner = "11111111-2222-3333-4444-555555555555"
+    assert [call.args[0] for call in sql.execute_no_schema.call_args_list] == [
+        f"GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `{runner}`",
+        f"GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `{runner}`",
+        f"GRANT USE_SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `{runner}`",
+        f"GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `{runner}`",
+    ]
 
 
 def test_runner_grants_report_grants_they_could_not_read(checkers: ResourceCheckers, workspace: MagicMock) -> None:

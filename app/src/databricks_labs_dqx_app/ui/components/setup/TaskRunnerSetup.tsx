@@ -55,6 +55,7 @@ export function accessResult(response: TaskRunnerAccessResponse): TaskRunnerAcce
   return {
     sp_permission: response.sp_permission,
     grant_statements: response.grant_statements ?? [],
+    automatic_grants: response.automatic_grants ?? [],
     grants_unverified: response.grants_unverified ?? false,
   };
 }

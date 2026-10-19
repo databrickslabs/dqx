@@ -109,8 +109,12 @@ export function accessResultMessageKeys(
 ): string[] {
   const prefix = "setup.taskRunner.access.result";
   const pending = access.grant_statements.length > 0;
+  const automatic = access.automatic_grants.length > 0;
   const permissionOnly =
-    access.sp_permission === "confirmed" && !pending && !access.grants_unverified;
+    access.sp_permission === "confirmed" &&
+    !pending &&
+    !automatic &&
+    !access.grants_unverified;
   const keys = [
     permissionOnly
       ? `${prefix}.confirmed`
@@ -119,7 +123,8 @@ export function accessResultMessageKeys(
         : `${prefix}.${access.sp_permission}`,
   ];
   if (pending) keys.push(`${prefix}.grantsPending`);
-  else if (access.grants_unverified) keys.push(`${prefix}.grantsUnverified`);
+  if (automatic) keys.push(`${prefix}.automaticGrants`);
+  if (!pending && access.grants_unverified) keys.push(`${prefix}.grantsUnverified`);
   return keys;
 }
 

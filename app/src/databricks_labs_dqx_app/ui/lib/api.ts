@@ -5047,12 +5047,14 @@ export const TaskRunnerAccessResponseSpPermission = {
 
 *sp_permission* says whether the app may use the service principal: *confirmed*,
 *missing*, or *unverified* when Studio can't read that permission. *grant_statements*
-are the GRANT statements the service principal still needs on Studio's data;
+are the GRANT statements only a person can run for it; *automatic_grants* are the ones
+setup runs itself on Studio's own objects once the task-runner job runs as it.
 *grants_unverified* is true when some of its access couldn't be read.
  */
 export interface TaskRunnerAccessResponse {
   sp_permission: TaskRunnerAccessResponseSpPermission;
   grant_statements?: string[];
+  automatic_grants?: string[];
   grants_unverified?: boolean;
 }
 
@@ -6931,7 +6933,8 @@ export const useApplySetupStepGrants = <TError = AxiosError<HTTPValidationError>
  * List the service principals the task-runner job could run as, without the app's own.
 
 Listed as the app. When the app can't list them, *available* is false so the
-administrator pastes an Application ID instead.
+administrator pastes an Application ID instead. A job from the deployment bundle gets
+its service principal from the deployment, so there is nothing to choose.
  * @summary List Task Runner Service Principals
  */
 export const listTaskRunnerServicePrincipals = (

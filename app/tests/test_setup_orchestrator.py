@@ -113,6 +113,7 @@ class FakeBound:
     access_reader: WorkspaceClient | None = None
     warehouse_id: str = "warehouse-id"
     picked_grants: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    picked_automatic: tuple[str, ...] = ()
     picked_unreadable: tuple[str, ...] = ()
     picked_reader_sql: list[SqlExecutor | None] = field(default_factory=list)
 
@@ -170,7 +171,11 @@ class FakeBound:
     ) -> RunnerGrants:
         self.events.append(f"runner_grants:{principal}")
         self.picked_reader_sql.append(reader_sql)
-        return RunnerGrants(grant_statements=self.picked_grants.get(principal, ()), unreadable=self.picked_unreadable)
+        return RunnerGrants(
+            grant_statements=self.picked_grants.get(principal, ()),
+            automatic_grants=self.picked_automatic,
+            unreadable=self.picked_unreadable,
+        )
 
     def reconcile_access(
         self,
@@ -1899,8 +1904,9 @@ async def test_choosing_a_task_runner_lets_permission_errors_reach_the_caller() 
 
 _PICKED_GRANTS = (
     f"GRANT USE_CATALOG ON CATALOG `main` TO `{_RUNNER_ID}`;",
-    f"GRANT SELECT ON SCHEMA `main`.`studio` TO `{_RUNNER_ID}`;",
+    f"GRANT USE_CATALOG ON CATALOG `other` TO `{_RUNNER_ID}`;",
 )
+_AUTOMATIC_GRANTS = (f"GRANT SELECT ON SCHEMA `main`.`studio_tmp` TO `{_RUNNER_ID}`;",)
 
 
 @pytest.mark.asyncio
@@ -1912,6 +1918,7 @@ async def test_confirming_access_applies_studio_grants_then_reports_what_the_pic
     await harness.orchestrator.reconcile(setup_user="admin@example.com")
     harness.jobs.app_permission = permission
     harness.bound.picked_grants[_RUNNER_ID] = _PICKED_GRANTS
+    harness.bound.picked_automatic = _AUTOMATIC_GRANTS
     executor = create_autospec(SqlExecutor, instance=True)
     del harness.events[:]
 
@@ -1921,10 +1928,11 @@ async def test_confirming_access_applies_studio_grants_then_reports_what_the_pic
 
     assert access.sp_permission == permission
     assert access.grant_statements == _PICKED_GRANTS
+    assert access.automatic_grants == _AUTOMATIC_GRANTS
     assert access.grants_unverified is False
+    # Confirming access only inspects: nothing is granted with the app's authority.
     assert harness.events == [
         f"app_permission:{_RUNNER_ID}:{_APP_ID}",
-        f"grant_runner:{_RUNNER_ID}:True",
         f"runner_grants:{_RUNNER_ID}",
     ]
     assert harness.bound.picked_reader_sql == [executor]
@@ -1947,6 +1955,7 @@ async def test_task_runner_grants_run_as_the_administrator_and_report_the_rest()
     harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
     await harness.orchestrator.reconcile(setup_user="admin@example.com")
     harness.bound.picked_grants[_RUNNER_ID] = _PICKED_GRANTS
+    harness.bound.picked_automatic = _AUTOMATIC_GRANTS
     executor = create_autospec(SqlExecutor, instance=True)
 
     def run(statement: str) -> None:
@@ -1960,9 +1969,12 @@ async def test_task_runner_grants_run_as_the_administrator_and_report_the_rest()
         _RUNNER_ID, reader_sql_factory=lambda resources: executor
     )
 
+    # Only the statements a person must run are run; Studio's own grants wait for run_as.
     assert [entry.args[0] for entry in executor.execute_no_schema.call_args_list] == [
         statement.removesuffix(";") for statement in _PICKED_GRANTS
     ]
+    assert not any("studio_tmp" in entry.args[0] for entry in executor.execute_no_schema.call_args_list)
+    assert not any(event.startswith("grant_runner") for event in harness.events)
     assert (result.applied, result.total) == (1, 2)
     assert [(failure.statement, failure.error_code) for failure in result.failed] == [
         (_PICKED_GRANTS[0], "permission_denied")

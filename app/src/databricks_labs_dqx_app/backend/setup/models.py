@@ -191,12 +191,14 @@ class TaskRunnerAccessResponse(_ImmutableModel):
 
     *sp_permission* says whether the app may use the service principal: *confirmed*,
     *missing*, or *unverified* when Studio can't read that permission. *grant_statements*
-    are the GRANT statements the service principal still needs on Studio's data;
+    are the GRANT statements only a person can run for it; *automatic_grants* are the ones
+    setup runs itself on Studio's own objects once the task-runner job runs as it.
     *grants_unverified* is true when some of its access couldn't be read.
     """
 
     sp_permission: TaskRunnerSpPermission
     grant_statements: tuple[str, ...] = ()
+    automatic_grants: tuple[str, ...] = ()
     grants_unverified: bool = False
 
 

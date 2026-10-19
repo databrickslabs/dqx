@@ -121,7 +121,7 @@ describe("TaskRunnerSteps", () => {
   test("confirms access and enables applying when nothing is missing", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "confirmed", grant_statements: [], grants_unverified: false },
+      access: { sp_permission: "confirmed", grant_statements: [], automatic_grants: [], grants_unverified: false },
     });
 
     expect(html).toContain(copy.access.result.confirmed);
@@ -133,7 +133,7 @@ describe("TaskRunnerSteps", () => {
   test("keeps applying disabled while the app lacks CAN USE", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "missing", grant_statements: [], grants_unverified: false },
+      access: { sp_permission: "missing", grant_statements: [], automatic_grants: [], grants_unverified: false },
     });
 
     expect(html).toContain(escapeHtml(copy.access.result.missing));
@@ -144,7 +144,7 @@ describe("TaskRunnerSteps", () => {
   test("lets an unverifiable permission continue to step 3", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "unverified", grant_statements: [], grants_unverified: false },
+      access: { sp_permission: "unverified", grant_statements: [], automatic_grants: [], grants_unverified: false },
     });
 
     expect(html).toContain(escapeHtml(copy.access.result.unverified));
@@ -154,7 +154,7 @@ describe("TaskRunnerSteps", () => {
   test("shows pending grants as runnable SQL and flags them on step 3", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "confirmed", grant_statements: [GRANT], grants_unverified: false },
+      access: { sp_permission: "confirmed", grant_statements: [GRANT], automatic_grants: [], grants_unverified: false },
     });
 
     expect(html).toContain(escapeHtml(copy.access.result.grantsPending));
@@ -167,7 +167,7 @@ describe("TaskRunnerSteps", () => {
   test("shows why running the grants failed", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "confirmed", grant_statements: [GRANT], grants_unverified: false },
+      access: { sp_permission: "confirmed", grant_statements: [GRANT], automatic_grants: [], grants_unverified: false },
       grantOutcome: { summary: null, failedSql: GRANT, errorCodes: ["permission_denied"] },
     });
 
@@ -177,7 +177,7 @@ describe("TaskRunnerSteps", () => {
   test("tells the administrator to set Run as themselves when Studio isn't allowed", () => {
     const html = renderSteps({
       picked: PICKED,
-      access: { sp_permission: "unverified", grant_statements: [], grants_unverified: false },
+      access: { sp_permission: "unverified", grant_statements: [], automatic_grants: [], grants_unverified: false },
       runAsErrorCode: "task_runner_run_as_forbidden",
     });
 
@@ -204,8 +204,28 @@ describe("accessResult", () => {
     expect(accessResult({ sp_permission: "confirmed" })).toEqual({
       sp_permission: "confirmed",
       grant_statements: [],
+      automatic_grants: [],
       grants_unverified: false,
     });
+  });
+});
+
+describe("automatic grants", () => {
+  test("are explained, not offered to run", () => {
+    const automatic = `GRANT SELECT ON SCHEMA \`main\`.\`dqx_studio_tmp\` TO \`${RUNNER}\`;`;
+    const html = renderSteps({
+      picked: PICKED,
+      access: {
+        sp_permission: "confirmed",
+        grant_statements: [],
+        automatic_grants: [automatic],
+        grants_unverified: false,
+      },
+    });
+
+    expect(html).toContain(escapeHtml(copy.access.result.automaticGrants));
+    expect(html).not.toContain(escapeHtml(automatic));
+    expect(html).not.toContain('aria-label="Run these commands with your Databricks access"');
   });
 });
 

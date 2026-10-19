@@ -28,6 +28,8 @@ _SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
 _SCHEMA_PRIVILEGE_ORDER = ("USE_SCHEMA", "CREATE_TABLE")
 _VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
 _RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
+# Securables grant_runner_access gives the runner itself: Studio's schemas and wheels volume.
+_STUDIO_GRANTED_KINDS = frozenset({"SCHEMA", "VOLUME"})
 _ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Verify again to re-check it."
 _OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 RUN_GRANTS_AS_OWNER = "Ask the owner of these objects to run the following in a SQL editor, then click Verify again:"
@@ -39,17 +41,22 @@ class RunnerGrants:
     """Access a task-runner service principal still needs.
 
     Args:
-        grant_statements: GRANT statements for privileges observed missing.
+        grant_statements: GRANT statements only a person can run, such as catalog usage on the
+            catalog Studio doesn't own.
+        automatic_grants: GRANT statements on Studio's own schemas and wheels volume, which setup
+            grants itself once the task-runner job runs as the service principal.
         unreadable: Instructions for privileges Studio couldn't read, so couldn't confirm.
     """
 
     grant_statements: tuple[str, ...]
+    automatic_grants: tuple[str, ...]
     unreadable: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class _RunnerInspection:
     grant_statements: tuple[str, ...]
+    automatic_grants: tuple[str, ...]
     unreadable: tuple[str, ...]
     unreadable_kinds: frozenset[str]
     scope: str
@@ -258,8 +265,10 @@ class ResourceCheckers:
         """Report the GRANT statements service principal *principal* still needs to run Studio's checks.
 
         Covers everything the task runner needs once setup finishes (including the main
-        schema's data access). Only inspects: nothing is granted, and the task-runner job
-        isn't consulted, so a service principal can be checked before the job runs as it.
+        schema's data access), split into what only a person can grant and what setup grants
+        itself on Studio's own objects once the job runs as the service principal. Only
+        inspects: nothing is granted, and the task-runner job isn't consulted, so a service
+        principal can be checked before the job runs as it.
 
         Args:
             principal: Application ID of the service principal to check.
@@ -273,7 +282,12 @@ class ResourceCheckers:
         if checked is None:
             raise InvalidParameterError("The task runner needs a service principal other than the app's own.")
         inspection = self._inspect_runner_access(checked, reader_ws, reader_sql=reader_sql, include_outputs=True)
-        return RunnerGrants(grant_statements=inspection.grant_statements, unreadable=inspection.unreadable)
+        automatic = set(inspection.automatic_grants)
+        return RunnerGrants(
+            grant_statements=tuple(item for item in inspection.grant_statements if item not in automatic),
+            automatic_grants=inspection.automatic_grants,
+            unreadable=inspection.unreadable,
+        )
 
     def _job_runner_principal(self, job_id: int) -> str | None:
         """The service principal task-runner job *job_id* runs as, when the runner may use it."""
@@ -331,6 +345,7 @@ class ResourceCheckers:
                 for privilege in ("SELECT", "MODIFY")
             )
         grant_statements: list[str] = []
+        automatic_grants: list[str] = []
         unknown: list[str] = []
         unknown_kinds: set[str] = set()
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
@@ -355,7 +370,10 @@ class ResourceCheckers:
                 if guidance not in unknown:
                     unknown.append(guidance)
                 continue
-            grant_statements.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
+            statement = f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};"
+            grant_statements.append(statement)
+            if kind in _STUDIO_GRANTED_KINDS:
+                automatic_grants.append(statement)
         scope = _RUNNER_OUTPUTS_SCOPE if include_outputs else SetupStepId.TASK_RUNNER.value
         fingerprint = requirement_fingerprint(
             scope,
@@ -367,6 +385,7 @@ class ResourceCheckers:
         )
         return _RunnerInspection(
             grant_statements=tuple(grant_statements),
+            automatic_grants=tuple(automatic_grants),
             unreadable=tuple(unknown),
             unreadable_kinds=frozenset(unknown_kinds),
             scope=scope,

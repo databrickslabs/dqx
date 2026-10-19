@@ -221,8 +221,11 @@ async def list_task_runner_service_principals(
     """List the service principals the task-runner job could run as, without the app's own.
 
     Listed as the app. When the app can't list them, *available* is false so the
-    administrator pastes an Application ID instead.
+    administrator pastes an Application ID instead. A job from the deployment bundle gets
+    its service principal from the deployment, so there is nothing to choose.
     """
+    if orchestrator.job_managed_by_deployment:
+        raise _error(status.HTTP_409_CONFLICT, "task_runner_managed_by_deployment")
     fallback_name = sanitize_setup_display(config.app_slug_name) or ""
     try:
         listing = await asyncio.to_thread(list_task_runner_principals, sp_ws, orchestrator.app_sp_id)

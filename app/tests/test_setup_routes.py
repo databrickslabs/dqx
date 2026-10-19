@@ -103,6 +103,7 @@ def orchestrator(resources: ActiveResources) -> MagicMock:
     )
     setup_orchestrator.bound = MagicMock(resources=resources)
     setup_orchestrator.app_sp_id = APP_APPLICATION_ID
+    setup_orchestrator.job_managed_by_deployment = False
 
     async def save_configuration(
         store: SetupConfigurationStore, choices: SetupChoices, *, user_email: str | None
@@ -731,6 +732,19 @@ def test_service_principal_list_falls_back_to_pasting_an_id(
     assert "internal detail" not in response.text
 
 
+def test_service_principal_list_is_refused_for_a_bundle_managed_job(
+    client: TestClient, orchestrator: MagicMock, sp_ws: MagicMock
+) -> None:
+    """A bundle-deployed job's service principal comes from the deployment, so there is nothing to pick."""
+    orchestrator.job_managed_by_deployment = True
+
+    response = client.get(_PRINCIPALS_URL)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "task_runner_managed_by_deployment"}
+    sp_ws.service_principals.list.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("method", "url"),
     [("get", _PRINCIPALS_URL), ("post", _ACCESS_URL), ("post", _RUNNER_GRANTS_URL), ("post", _RUN_AS_URL)],
@@ -765,6 +779,7 @@ def test_confirm_access_reports_the_picked_principal_with_the_admin_reader(
     assert response.json() == {
         "sp_permission": "missing",
         "grant_statements": [_PICKED_GRANT],
+        "automatic_grants": [],
         "grants_unverified": False,
     }
     orchestrator.check_task_runner_access.assert_awaited_once_with(

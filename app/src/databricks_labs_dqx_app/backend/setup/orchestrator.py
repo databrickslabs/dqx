@@ -98,8 +98,6 @@ class BoundChecks(Protocol):
 
     def effective_warehouse_id(self) -> str: ...
 
-    def grant_runner_access(self, principal: str, *, include_outputs: bool) -> None: ...
-
     def runner_grants(
         self,
         principal: str,
@@ -500,9 +498,11 @@ class SetupOrchestrator:
     ) -> TaskRunnerAccessResponse:
         """Check a picked service principal before the task-runner job runs as it.
 
-        Reports whether the app may use the service principal, gives it Studio's own
-        least-privilege grants on Studio's schemas and wheels volume (as the app), then lists
-        the GRANT statements it still needs. Nothing about the job changes.
+        Only inspects: reports whether the app may use the service principal and the GRANT
+        statements it still needs, split into those only a person can run and those setup runs
+        itself on Studio's own objects once the job runs as the service principal. Nothing is
+        granted and nothing about the job changes, so picking a service principal never gives
+        it access to Studio's data.
 
         Args:
             application_id: Application ID of the picked service principal.
@@ -517,11 +517,11 @@ class SetupOrchestrator:
         normalized = self._task_runner_candidate(application_id)
         bound = self._task_runner_bound()
         permission = await asyncio.to_thread(self.jobs.app_permission_on, normalized, self.app_sp_id)
-        await asyncio.to_thread(partial(bound.checkers.grant_runner_access, normalized, include_outputs=True))
         grants = await self._picked_runner_grants(bound, normalized, reader_ws, reader_sql_factory)
         return TaskRunnerAccessResponse(
             sp_permission=permission,
             grant_statements=grants.grant_statements,
+            automatic_grants=grants.automatic_grants,
             grants_unverified=bool(grants.unreadable),
         )
 
@@ -532,10 +532,12 @@ class SetupOrchestrator:
         reader_sql_factory: ReaderSqlFactory,
         reader_ws: WorkspaceClient | None = None,
     ) -> TaskRunnerGrantsResponse:
-        """Run the GRANT statements a picked service principal still needs, as the administrator.
+        """Run the GRANT statements only a person can give a picked service principal, as the administrator.
 
         The statements are re-derived here, by the same check that displayed them, and run
         through the administrator's own SQL executor; a failed statement doesn't stop the rest.
+        Grants on Studio's own objects are left for setup to give once the job runs as the
+        service principal.
 
         Args:
             application_id: Application ID of the picked service principal.

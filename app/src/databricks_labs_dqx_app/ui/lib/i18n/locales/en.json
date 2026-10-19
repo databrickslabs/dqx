@@ -3261,6 +3261,7 @@
           "missing": "Studio doesn't have CAN USE on this service principal yet. Add it on the Permissions tab (step b above), then click Confirm access again.",
           "unverified": "Studio can't check this service principal's permissions itself. Make sure you've done steps a and b, then continue. Step 3 will confirm it.",
           "grantsPending": "This service principal also needs access to Studio's data. Run the commands below, or send them to the catalog owner.",
+          "automaticGrants": "Studio will set up the rest of this service principal's access automatically once it's assigned to the job.",
           "grantsUnverified": "Studio couldn't check all of this service principal's access to Studio's data. Setup checks it again after step 3."
         },
         "errors": {
