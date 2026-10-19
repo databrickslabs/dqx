@@ -175,6 +175,18 @@ class TestUpdateMdxFiles:
         sync_versions.update_mdx_files(tmp_path, "0.16.0")
         assert "blob/v0.16.0/src/foo.py" in mdx.read_text()
 
+    def test_keeps_studio_app_urls_on_main(self, tmp_path):
+        mdx = tmp_path / "page.mdx"
+        mdx.write_text("https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md\n")
+        sync_versions.update_mdx_files(tmp_path, "0.16.0")
+        assert "blob/main/app/DEPLOYMENT.md" in mdx.read_text()
+
+    def test_moves_versioned_studio_app_urls_to_main(self, tmp_path):
+        mdx = tmp_path / "page.mdx"
+        mdx.write_text("https://github.com/databrickslabs/dqx/blob/v0.15.0/app/DEVELOPMENT.md\n")
+        sync_versions.update_mdx_files(tmp_path, "0.16.0")
+        assert "blob/main/app/DEVELOPMENT.md" in mdx.read_text()
+
     def test_leaves_unrelated_urls_alone(self, tmp_path):
         mdx = tmp_path / "page.mdx"
         original = "https://github.com/databrickslabs/other/blob/main/x.py\n"

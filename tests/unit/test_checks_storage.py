@@ -1,21 +1,36 @@
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import Column, Row, SparkSession
+from pyspark.sql.functions import col
+from sqlalchemy import Engine
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_storage import (
     DataFrameConverter,
+    InstallationChecksStorageHandler,
     LakebaseChecksStorageHandler,
     TableChecksStorageHandler,
     is_table_location,
 )
-from databricks.labs.dqx.config import LakebaseChecksStorageConfig, TableChecksStorageConfig
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.config import (
+    InstallationChecksStorageConfig,
+    LakebaseChecksStorageConfig,
+    TableChecksStorageConfig,
+)
+from databricks.labs.dqx.errors import InvalidCheckError, UnsafeSqlQueryError
 
 _SIMPLE_CHECK = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
 _VERSIONING_COLUMNS = ("created_at", "rule_fingerprint", "rule_set_fingerprint")
+_CUSTOM_CHECK = [{"criticality": "error", "check": {"function": "custom_not_null", "arguments": {"column": "id"}}}]
+
+
+def custom_not_null(column: str) -> Column:
+    return col(column)
+
+
+_CUSTOM_CHECK_FUNCTIONS = {"custom_not_null": custom_not_null}
 
 
 @pytest.mark.parametrize(
@@ -419,3 +434,57 @@ def test_row_to_check_dict_handles_null_user_metadata_value():
     check_dict = DataFrameConverter._row_to_check_dict(row)
 
     assert check_dict["user_metadata"] == {"missing": None, "owner": "a@b.com"}
+
+
+def test_lakebase_normalize_checks_rejects_custom_function_without_custom_check_functions():
+    """_normalize_checks cannot fingerprint a check that references an unknown custom function."""
+    with pytest.raises(InvalidCheckError):
+        LakebaseChecksStorageHandler._normalize_checks(_CUSTOM_CHECK, _lakebase_config())
+
+
+def test_lakebase_normalize_checks_uses_custom_check_functions():
+    """_normalize_checks resolves custom functions when computing the rule set fingerprint."""
+    normalized = LakebaseChecksStorageHandler._normalize_checks(
+        _CUSTOM_CHECK, _lakebase_config(), _CUSTOM_CHECK_FUNCTIONS
+    )
+
+    assert normalized[0]["check"]["function"] == "custom_not_null"
+    assert normalized[0]["rule_set_fingerprint"]
+
+
+def test_lakebase_save_forwards_custom_check_functions():
+    """save() passes custom_check_functions on to _save_checks_to_lakebase."""
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    engine = create_autospec(Engine)
+    handler = LakebaseChecksStorageHandler(ws, spark, engine)
+    config = _lakebase_config()
+
+    with patch.object(LakebaseChecksStorageHandler, "_save_checks_to_lakebase") as mock_save:
+        handler.save(_CUSTOM_CHECK, config, _CUSTOM_CHECK_FUNCTIONS)
+
+    mock_save.assert_called_once_with(_CUSTOM_CHECK, config, engine, _CUSTOM_CHECK_FUNCTIONS)
+
+
+def test_installation_save_forwards_custom_check_functions():
+    """save() passes custom_check_functions on to the resolved storage handler."""
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    handler = InstallationChecksStorageHandler(ws, spark)
+    handler.table_handler = create_autospec(TableChecksStorageHandler)
+    config = InstallationChecksStorageConfig(
+        location="catalog.schema.table", overwrite_location=True, install_folder="/Workspace/dqx"
+    )
+
+    handler.save(_CUSTOM_CHECK, config, _CUSTOM_CHECK_FUNCTIONS)
+
+    handler.table_handler.save.assert_called_once_with(_CUSTOM_CHECK, config, _CUSTOM_CHECK_FUNCTIONS)
+
+
+def test_to_dataframe_uses_custom_checks():
+    """to_dataframe validates and fingerprints checks that reference custom functions."""
+    spark = create_autospec(SparkSession)
+
+    DataFrameConverter.to_dataframe(spark, _CUSTOM_CHECK, custom_checks=_CUSTOM_CHECK_FUNCTIONS)
+
+    spark.createDataFrame.assert_called_once()

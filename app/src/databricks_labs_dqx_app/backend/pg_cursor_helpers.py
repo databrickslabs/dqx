@@ -36,7 +36,9 @@ rationale.
 """
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, LiteralString, cast
+from typing import TYPE_CHECKING, Any, cast
+
+from typing_extensions import LiteralString
 
 if TYPE_CHECKING:
     # Type-only import keeps this module psycopg-free at runtime so

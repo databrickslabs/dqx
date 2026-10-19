@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.models import (
     TableScoreOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule
+from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_service import ScoreService
@@ -89,7 +90,7 @@ def _compute_score_for_table(
     mode. Raises the underlying exception on SQL failure — the caller
     maps it to an HTTP status.
     """
-    mv = metric_view_fqn(app_conf.catalog, app_conf.genie_schema_name)
+    mv = metric_view_fqn(sql.catalog, rt.require_resources().genie_schema)
     e_fqn = escape_sql_string(table_fqn)
     conds = [f"input_location = '{e_fqn}'"]
     if not include_drafts:

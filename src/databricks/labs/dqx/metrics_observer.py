@@ -8,6 +8,8 @@ from uuid import uuid4
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.utils import escape_sql_string_literal
+
 
 OBSERVATION_TABLE_SCHEMA = (
     "run_id string, run_name string, input_location string, output_location string, quarantine_location string, "
@@ -130,10 +132,10 @@ class DQMetricsObserver:
         """
         fragments: list[str] = []
         for check_name in check_names:
-            check_name_escaped = check_name.replace("'", "''")
+            check_name_escaped = escape_sql_string_literal(check_name)
             # JSON-encode the check name (handles embedded quotes, backslashes, control chars),
-            # then SQL-escape any single quotes for safe inclusion in a literal.
-            json_check_name_sql_esc = json.dumps(check_name).replace("'", "''")
+            # then escape it again for safe inclusion in a SQL string literal.
+            json_check_name_sql_esc = escape_sql_string_literal(json.dumps(check_name))
             err = self._error_column_name
             warn = self._warning_column_name
             fragments.append(

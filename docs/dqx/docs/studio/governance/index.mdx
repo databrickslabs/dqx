@@ -9,19 +9,18 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Governance & security
 
-This section is for the people accountable for *how* DQX Studio is run — data
-governance managers and workspace admins. It covers rolling the app out to your
-teams, the controls that keep it accountable, and how it respects your existing
-data access.
+This section is for governance admins accountable for *how* DQX Studio is run. It covers configuring the app once it's installed.
 
 If you're setting DQX Studio up for the first time, the rollout playbook below
 walks you through it. For the day-to-day detail behind each step, follow the
 links into the rest of this section.
 
-## Set up DQX Studio for your organization
+## Configure DQX Studio
 
-You'll make a handful of decisions once, and every author, reviewer, and steward
-who follows inherits them.
+You set a handful of org-wide policies once — how roles map to your teams, your
+approval rules, your shared standards (governed tags, quality dimensions, default
+thresholds), and data retention. From then on, every author, approver, and steward
+works within them.
 
 <Admonition type="note" title="You'll need the Admin role">
 Everything below lives under **Admin Settings** and is only available to people
@@ -81,9 +80,8 @@ Set the shared vocabulary authors will reuse:
 ### Step 4 — Set retention and handle sensitive data
 
 In Admin Settings you choose how long runs, results, and metrics are kept, and —
-separately — how long quarantined sample rows (which may contain sensitive data)
-are kept. Keep the evidence long enough to investigate, then let it clear to
-support data minimization.
+separately — how long quarantined rows (which may contain sensitive data)
+are kept. Keep the evidence long enough to investigate, then let it clear to minimize the app data.
 
 <Admonition type="tip" title="Now invite your team">
 With roles, approvals, and standards in place, point authors at the
@@ -93,15 +91,16 @@ With roles, approvals, and standards in place, point authors at the
 
 ## How DQX Studio respects your data access
 
-DQX Studio browses Unity Catalog **as you** — you only ever see catalogs and
+DQX Studio browses Unity Catalog **on your behalf** — you only ever see catalogs and
 tables you already have permission to, and profiling and tests run under your own
-access. It never widens anyone's reach to data. Quarantined sample rows are
+access. It never widens anyone's permissions. Quarantined rows are
 visible only to approvers and admins, and still only for data they can already
 read.
 
 Every change to a rule, role, permission, or schedule is **audited** — who
-changed it, when, and the before-and-after values — so you always have an
-evidence trail.
+changed it, when, and the before-and-after values. Review a rule's history on its
+**History** tab (and a collection's on the collection's **History** tab); the
+complete trail is kept in append-only history tables in the app's own catalog.
 
 ## In this section
 
@@ -109,5 +108,5 @@ evidence trail.
   — roles across the app, and per-object access.
 - [The approval workflow](/docs/studio/governance/approval-workflow) — draft →
   review → approve, and the four-eyes rule.
-- [Try the built-in demo](/docs/demos#dqx-studio-built-in-demo) — deploy sample
+- [Try the built-in demo](/docs/demos#dqx-studio) — deploy sample
   content from Admin Settings to explore every feature.

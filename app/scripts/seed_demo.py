@@ -169,7 +169,6 @@ def main() -> int:
     # if present; an ImportError is surfaced with a clear message.
     try:
         from databricks_labs_dqx_app.backend.config import AppConfig
-        from databricks_labs_dqx_app.backend.demo.manifest import SOURCE_SCHEMA as DEMO_SOURCE_SCHEMA
         from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
         from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
         from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -182,6 +181,7 @@ def main() -> int:
         from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
         from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
         from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+        from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService
         from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
         from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
         from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
@@ -209,13 +209,15 @@ def main() -> int:
         schema=conf.schema_name,
     )
 
+    demo_schema = conf.demo_schema_name or f"{conf.schema_name}_demo"
+
     # Demo source executor — bound to the demo source schema
     # (dqx_studio_demo), same as the demo_sql in get_demo_seed_service.
     demo_sql = SqlExecutor(
         ws=ws,
         warehouse_id=warehouse_id,
         catalog=catalog,
-        schema=DEMO_SOURCE_SCHEMA,
+        schema=demo_schema,
     )
 
     # OLTP executor — prefer Lakebase when configured, else Delta fallback.
@@ -306,6 +308,7 @@ def main() -> int:
         app_sql=sp_sql,
         oltp=oltp,
         sp_ws=ws,
+        resource_tagger=ResourceTaggingService(ws),
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,
@@ -321,6 +324,7 @@ def main() -> int:
         job_service=job_service,
         profiler_view=sp_view,
         catalog=catalog,
+        schema=demo_schema,
     )
 
     # ------------------------------------------------------------------

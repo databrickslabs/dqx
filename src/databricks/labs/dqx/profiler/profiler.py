@@ -1,6 +1,7 @@
-import uuid
+import dataclasses
 import logging
 import os
+import uuid
 from concurrent import futures
 from decimal import Decimal, Context
 from difflib import SequenceMatcher
@@ -11,14 +12,16 @@ import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
+
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
-from databricks.labs.dqx.profiler.profile import DQProfile
-from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES, validate_profile_options
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_geospatial, is_text
+from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, validate_profile_options
 from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
     PROFILE_OPTION_FILTER,
@@ -30,8 +33,16 @@ from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_SAMPLE_SEED,
     PROFILE_OPTION_TRIM_STRINGS,
 )
-from databricks.labs.dqx.utils import list_tables
+from databricks.labs.dqx.profiler.profiler_column_metrics import (
+    build_registered_metric_aggregations,
+)
+from databricks.labs.dqx.profiler.semantic import (
+    DQProfileContext,
+    DQSemanticType,
+    SemanticRegistry,
+)
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.utils import list_tables
 
 try:
     from databricks.labs.dqx.llm.llm_pk_engine import DQLLMPrimaryKeyEngine
@@ -51,6 +62,8 @@ class DQProfiler(DQEngineBase):
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
         llm_model_config: LLMModelConfig | None = None,
+        *,
+        semantic_registry: SemanticRegistry | None = None,
     ):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -59,6 +72,7 @@ class DQProfiler(DQEngineBase):
         self.llm_engine = (
             DQLLMPrimaryKeyEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
         )
+        self._semantic_registry = semantic_registry
 
     @staticmethod
     def get_columns_or_fields(columns: list[T.StructField]) -> list[T.StructField]:
@@ -98,13 +112,20 @@ class DQProfiler(DQEngineBase):
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
 
+        return self._profile_dataframe(df, columns, options)
+
+    def _profile_dataframe(
+        self,
+        df: DataFrame,
+        columns: list[str] | None,
+        options: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], list[DQProfile]]:
+        """Shared private entry point for *.profile()* and *.profile_table()*."""
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
 
-        if options is None:
-            options = {}
-
+        options = options or {}
         options = {**DEFAULT_PROFILE_OPTIONS, **options}  # merge default options with user-provided options
         validate_profile_options(options)  # fail fast on misconfiguration before any profiling work
         df = self._sample(df, options)
@@ -142,6 +163,9 @@ class DQProfiler(DQEngineBase):
 
         logger.info(f"Profiling {input_config.location} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=input_config)
+        # Route through *self.profile* (not *_profile_dataframe*) so the nested
+        # *profile* telemetry event fires alongside *profile_table*. Downstream
+        # dashboards key on the *profile* event for per-DataFrame counts.
         return self.profile(df=df, columns=columns, options=options)
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
@@ -439,44 +463,69 @@ class DQProfiler(DQEngineBase):
             summary_stats: Summary statistics dictionary to update with profiler results.
             total_count: Total number of rows in the input DataFrame.
         """
-        trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
-
         for field in self.get_columns_or_fields(df_cols):
-            field_name = field.name
-            field_type = field.dataType
-            if field_name not in summary_stats:
-                summary_stats[field_name] = {}
-            metrics = summary_stats[field_name]
+            column_df, column_label = DQProfiler._prepare_column_df(df, field, opts)
+            field_summary_stats = summary_stats.get(field.name, {})
+            metrics = DQProfiler._build_column_metrics(column_df, column_label, field, field_summary_stats, total_count)
+            summary_stats[field.name] = metrics
 
-            column_df = df.select(field_name).dropna()
-            column_label = column_df.columns[0]
-            is_text = isinstance(field_type, TEXT_TYPES)
-            if is_text and trim_strings:
-                column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
-
-            aggr_stats = column_df.agg(
-                F.count(column_label).alias("cnt"),
-                F.countDistinct(column_label).alias("cnt_distinct"),
-            ).first()
-            count_non_null = aggr_stats[0] if aggr_stats else 0
-            metrics["count"] = total_count
-            metrics["count_null"] = total_count - count_non_null
-            metrics["count_non_null"] = count_non_null
-            metrics["count_distinct"] = aggr_stats[1] if aggr_stats else 0
-            if is_text:
-                metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
-            else:
-                metrics["empty_count"] = 0
-
-            self._build_profiles_for_column(column_df, field_name, field_type, metrics, opts, dq_rules)
+            self._build_profiles_for_column(column_df, field, metrics, opts, dq_rules)
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
+
+    @staticmethod
+    def _prepare_column_df(df: DataFrame, field: T.StructField, opts: dict[str, Any]) -> tuple[DataFrame, str]:
+        trim_strings = opts.get(PROFILE_OPTION_TRIM_STRINGS, True)
+        field_name = field.name
+        field_type = field.dataType
+
+        column_df = df.select(field_name).dropna()
+        column_label = column_df.columns[0]
+        if is_text(field_type) and trim_strings:
+            column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
+        return column_df, column_label
+
+    @staticmethod
+    def _build_column_metrics(
+        column_df: DataFrame,
+        column_label: str,
+        field: T.StructField,
+        field_summary_stats: dict[str, Any],
+        total_count: int,
+    ) -> dict[str, Any]:
+        # count_non_null / count_null / count are always-on internals aggregated (or derived) here,
+        # not through PROFILE_COLUMN_METRIC_REGISTRY. build_registered_metric_aggregations skips
+        # reserved keys as defence-in-depth so a colliding entry injected directly into the registry
+        # can never shadow the inline alias via Row.asDict().
+        count_non_null_alias = "count_non_null"
+        field_metric_aggregations = [F.count(column_label).alias(count_non_null_alias)]
+        field_metric_aggregations.extend(build_registered_metric_aggregations(field, column_label))
+
+        field_aggregation_stats: dict[str, Any] = {}
+        field_aggregation_row = column_df.agg(*field_metric_aggregations).first()
+        if field_aggregation_row:
+            # Drop keys whose aggregation evaluated to SQL NULL so downstream consumers
+            # (profile builders, count_null derivation) can rely on int/comparable values.
+            field_aggregation_stats = {
+                metric_name: metric_value
+                for metric_name, metric_value in field_aggregation_row.asDict().items()
+                if metric_value is not None
+            }
+
+        # Merge order guarantees reserved keys are authoritative: summary_stats first, then
+        # registry aggregations, then the always-on internals (count_non_null / count / count_null)
+        # last, so nothing upstream can shadow them.
+        count_non_null = field_aggregation_stats.get(count_non_null_alias, 0)
+        metrics: dict[str, Any] = {**field_summary_stats, **field_aggregation_stats}
+        metrics["count_non_null"] = count_non_null
+        metrics["count"] = total_count
+        metrics["count_null"] = total_count - count_non_null
+        return metrics
 
     def _build_profiles_for_column(
         self,
         column_df: DataFrame,
-        field_name: str,
-        field_type: T.DataType,
+        field: T.StructField,
         metrics: dict[str, Any],
         opts: dict[str, Any],
         dq_rules: list[DQProfile],
@@ -492,19 +541,106 @@ class DQProfiler(DQEngineBase):
         After a min_max profile is produced, its resolved min/max values are written back into
         *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
         without triggering a second Spark action.
+
+        A builder may return a single profile or a list of profiles (e.g. the geospatial builder
+        derives several rules from one column); both are appended, and an empty result is skipped.
         """
+        semantic_type = self._detect_semantic_type(column_df, field.name, field.dataType, metrics, opts)
+
+        builder_ctx = DQProfileContext(
+            df=column_df,
+            column_name=field.name,
+            column_type=field.dataType,
+            metrics=metrics,
+            options=opts,
+            semantic_type=semantic_type,
+        )
+
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
-            profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
-            if not profile:
+            result = self._build_profiles(profile_type, column_df, builder_ctx, field, metrics, opts)
+            if not result:
                 continue
-            dq_rules.append(profile)
-            # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
-            # can access the final values without re-running Spark aggregates.
-            if profile.name == "min_max" and profile.parameters:
-                if profile.parameters.get("min") is not None:
-                    metrics["min"] = profile.parameters.get("min")
-                if profile.parameters.get("max") is not None:
-                    metrics["max"] = profile.parameters.get("max")
+            result = [result] if isinstance(result, DQProfile) else result
+            for profile in result:
+                if semantic_type is not None and profile.semantic_type is None:
+                    profile = dataclasses.replace(profile, semantic_type=semantic_type.name)
+                dq_rules.append(profile)
+                metrics.update(self._min_max_metrics(profile))
+                # Refresh the frozen context so contextual builders registered after *min_max*
+                # observe the resolved min/max values just written back. Pydantic materializes
+                # *ctx.metrics* as a fresh dict at construction, so contextual builders will not
+                # see mutations to the outer *metrics* dict without an explicit refresh.
+                builder_ctx = builder_ctx.with_metrics(metrics)
+
+    @staticmethod
+    def _build_profiles(
+        profile_type: DQProfileBuilder,
+        column_df: DataFrame,
+        builder_ctx: DQProfileContext,
+        field: T.StructField,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+    ) -> list[DQProfile]:
+        raw: DQProfile | list[DQProfile] | None = None
+        if profile_type.contextual_builder is not None:
+            raw = profile_type.contextual_builder(builder_ctx)
+        elif profile_type.builder is not None:
+            raw = profile_type.builder(column_df, field.name, field.dataType, metrics, opts)
+        if raw is None:
+            return []
+        if isinstance(raw, DQProfile):
+            return [raw]
+        return raw
+
+    def _detect_semantic_type(
+        self,
+        column_df: DataFrame,
+        field_name: str,
+        field_type: T.DataType,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+    ) -> DQSemanticType | None:
+        if self._semantic_registry is None:
+            return None
+        detector_ctx = DQProfileContext(
+            df=column_df,
+            column_name=field_name,
+            column_type=field_type,
+            metrics=metrics,
+            options=opts,
+            semantic_type=None,
+        )
+        for detector in self._semantic_registry.detectors:
+            match = detector.detect(detector_ctx)
+            if match is not None:
+                return match
+        return None
+
+    @staticmethod
+    def _min_max_metrics(profile: DQProfile) -> dict[str, Any]:
+        """
+        Returns the resolved min/max values from a min_max profile as a metrics update.
+
+        Downstream consumers (e.g. LLM primary-key detection, summary_stats consumers) read these
+        final values without re-running Spark aggregates. Returns an empty dict for other profiles
+        or when the bounds are absent.
+
+        Args:
+            profile: The profile produced by a builder.
+
+        Returns:
+            A dictionary with *min* and/or *max* keys, or an empty dictionary when nothing applies.
+        """
+        if profile.name != "min_max" or not profile.parameters:
+            return {}
+        updates: dict[str, Any] = {}
+        min_value = profile.parameters.get("min")
+        if min_value is not None:
+            updates["min"] = min_value
+        max_value = profile.parameters.get("max")
+        if max_value is not None:
+            updates["max"] = max_value
+        return updates
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
@@ -572,8 +708,12 @@ class DQProfiler(DQEngineBase):
             A dictionary with metrics per column.
         """
         sm_dict: dict[str, dict] = {}
-        field_types = {f.name: f.dataType for f in df.schema.fields}
-        for row in df.summary().collect():
+        summary_fields = [f.name for f in df.schema.fields if not is_geospatial(f.dataType)]
+        if not summary_fields:
+            return sm_dict
+        summary_df = df.select(*summary_fields)
+        field_types = {f.name: f.dataType for f in summary_df.schema.fields}
+        for row in summary_df.summary().collect():
             row_dict = row.asDict()
             metric = row_dict["summary"]
             self._process_row(row_dict, metric, sm_dict, field_types)

@@ -394,3 +394,51 @@ class TestGetHistory:
     def test_swallows_query_error(self, svc):
         svc._sql.query.side_effect = RuntimeError("warehouse down")
         assert svc.get_history("r") == []
+
+
+# ---------------------------------------------------------------------------
+# rule_fingerprint — stored on every write so the dq_rules_core view (and thus
+# DQEngine.load_checks) can read a dqx-core-compatible fingerprint.
+# ---------------------------------------------------------------------------
+
+
+class TestRuleFingerprintPersisted:
+    def test_save_writes_the_dqx_core_fingerprint(self, svc, sql_executor_mock):
+        from databricks.labs.dqx.rule import compute_rule_fingerprint
+
+        # find_duplicates issues one SELECT; no existing rows -> nothing skipped.
+        sql_executor_mock.query.return_value = []
+        check = {
+            "name": "id_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        }
+        svc.save("main.sales.orders", [check], user_email="a@b.com")
+
+        insert_sql = sql_executor_mock.execute.call_args_list[0].args[0]
+        assert "rule_fingerprint" in insert_sql
+        # The stored value is exactly what dqx-core would compute for the check.
+        assert compute_rule_fingerprint(check) in insert_sql
+
+    def test_update_rewrites_the_fingerprint(self, svc, sql_executor_mock):
+        from databricks.labs.dqx.rule import compute_rule_fingerprint
+
+        old_check = {
+            "name": "r",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        }
+        # get_by_rule_id row layout: [table_fqn, check_json, version, status,
+        # created_by, created_at, updated_by, updated_at, source, rule_id].
+        sql_executor_mock.query.return_value = [
+            ["main.sales.orders", json.dumps(old_check), "1", "approved", "a@b.com", "t", "a@b.com", "t", "ui", "rid1"]
+        ]
+        new_check = {
+            "name": "r",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "email"}},
+        }
+        svc.update_rule("rid1", [new_check], user_email="a@b.com")
+
+        update_sql = next(c.args[0] for c in sql_executor_mock.execute.call_args_list if c.args[0].startswith("UPDATE"))
+        assert f"rule_fingerprint = '{compute_rule_fingerprint(new_check)}'" in update_sql

@@ -24,6 +24,7 @@ future migration authors from silently breaking the contract:
    raw ``CREATE SCHEMA prod-east.dqx_studio``.
 """
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -144,15 +145,13 @@ def _statements(template: str) -> list[str]:
     return [" ".join(stmt.split()) for stmt in template.split(";") if stmt.strip()]
 
 
-def _oltp_baseline() -> str:
-    return " ".join(next(m for m in MIGRATIONS if m.oltp_fallback).sql_template.split())
-
-
 class TestBaselineOnlyCatalogue:
-    """The catalogue is two baselines and the schema is expressed as CREATE TABLE.
+    """The catalogue is the analytical baseline plus additive CREATE TABLE steps.
 
-    There are no external installs to upgrade yet, so a shape change is
-    edited into the baseline rather than appended as an ALTER. These tests
+    A new table is appended as its own CREATE TABLE IF NOT EXISTS migration so
+    installs that already recorded v1 still get it; a shape change to an
+    existing table is edited into its CREATE TABLE rather than appended as an
+    ALTER. These tests
     pin that decision: an ``ADD COLUMN``, ``DROP COLUMN``, or backfill
     ``UPDATE`` creeping back in would mean the schema is once again split
     across a replay chain — and ``DROP COLUMN`` in particular is rejected
@@ -160,8 +159,22 @@ class TestBaselineOnlyCatalogue:
     how the previous chain broke in CI.
     """
 
-    def test_catalogue_is_exactly_the_two_baselines(self) -> None:
-        assert [(m.version, m.oltp_fallback) for m in MIGRATIONS] == [(1, False), (2, True)]
+    def test_catalogue_contains_only_the_analytical_baseline(self) -> None:
+        assert [(m.version, m.description) for m in MIGRATIONS] == [
+            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)"),
+            (2, "Staged run configs too large to inline in job parameters"),
+        ]
+
+    def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
+        created = {
+            match
+            for migration in MIGRATIONS
+            for match in re.findall(
+                r"CREATE TABLE IF NOT EXISTS \{catalog\}\.\{schema\}\.([a-z_][a-z0-9_]*)",
+                migration.sql_template,
+            )
+        }
+        assert created.isdisjoint(OLTP_TABLE_NAMES)
 
     def test_every_statement_creates_a_table_or_adds_a_constraint(self) -> None:
         # ADD CONSTRAINT is the one unavoidable ALTER: Delta accepts only
@@ -181,6 +194,7 @@ class TestBaselineOnlyCatalogue:
             "dq_validation_runs",
             "dq_quarantine_records",
             "dq_metrics",
+            "dq_run_configs",
         )
 
     @pytest.mark.parametrize(
@@ -196,44 +210,8 @@ class TestBaselineOnlyCatalogue:
             "dq_rule_embeddings",
         ],
     )
-    def test_oltp_tables_come_from_the_fallback_baseline(self, table: str) -> None:
-        # The reset feature and physical routing derive the table set from the
-        # CREATE statements, so every OLTP table must land in that bucket only.
+    def test_oltp_tables_come_from_the_postgres_baseline(self, table: str) -> None:
         assert table in OLTP_TABLE_NAMES
-
-
-class TestOltpBaselineShape:
-    """Columns that earlier revisions bolted on by ALTER now ship on CREATE.
-
-    Counts are asserted per column so a table dropping one is caught, not
-    just a global "the word appears somewhere" check. Three owner-bearing
-    tables: ``dq_rules``, ``dq_monitored_tables``, ``dq_data_products``.
-    """
-
-    def test_owner_columns_replace_steward(self) -> None:
-        sql = _oltp_baseline()
-        assert "steward" not in sql
-        assert sql.count("owner STRING,") == 3
-        assert sql.count("owner_display_name STRING,") == 3
-        # dq_rules clusters on owner now that steward is gone.
-        assert "CLUSTER BY (status, fingerprint, owner)" in sql
-
-    def test_rationale_columns_ship_on_create(self) -> None:
-        sql = _oltp_baseline()
-        assert sql.count("pending_rationale STRING,") == 3
-        assert sql.count("last_decision_rationale STRING,") == 3
-        # dq_rules_history keeps the per-transition note under a bare name.
-        assert sql.count(" rationale STRING,") == 1
-
-    def test_sticky_object_notes_are_gone(self) -> None:
-        assert "notes" not in _oltp_baseline()
-
-    def test_both_schedulable_scopes_carry_the_schedule_columns(self) -> None:
-        sql = _oltp_baseline()
-        assert sql.count("schedule_sample_size INT,") == 2
-        assert sql.count("schedule_kind STRING,") == 2
-        assert "chk_dq_monitored_tables_schedule_kind" in sql
-        assert "chk_dq_data_products_schedule_kind" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +289,12 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
 
         # Use a tiny ad-hoc migration that won't trip the idempotency
         # swallow list (so we can read the captured SQL directly).
-        from databricks_labs_dqx_app.backend.migrations import DeltaMigration
+        from databricks_labs_dqx_app.backend.migrations import Migration
 
-        m = DeltaMigration(
+        m = Migration(
             version=999,
             description="test",
             sql_template="CREATE TABLE IF NOT EXISTS {catalog}.{schema}.test_t (x INT)",
-            oltp_fallback=False,
         )
         runner._apply(m)
 

@@ -18,6 +18,8 @@ from databricks_labs_dqx_app.backend.services.ai_rules_service import (
     _DEFAULT_DIMENSIONS,
     _DEFAULT_SEVERITIES,
     _DQX_NATIVE_COVERAGE_GUIDANCE,
+    _DQX_NATIVE_GUIDANCE,
+    _DQX_NATIVE_MULTI_COLUMN_GUIDANCE,
     _EXPLAIN_SQL_SYSTEM_TEMPLATE,
     _IMPROVE_SQL_SYSTEM_TEMPLATE,
     _LOWCODE_PROPOSAL_SYSTEM_TEMPLATE,
@@ -637,6 +639,120 @@ class TestGenerateRulePrefersBuiltInCheck:
         assert gateway.query.call_count == 1
         assert gateway.query.call_args.kwargs["purpose"] == "generate_rule:dqx_native"
 
+    async def test_multi_column_native_proposal_falls_through_to_lowcode(self):
+        # A col-vs-col requirement has no authorable built-in form: the editor
+        # binds a native rule to ONE column, so a check with two single-column
+        # parameters is dropped and the Condition Builder gets the requirement.
+        native = json.dumps(
+            {
+                "name": "Shipped after delivery",
+                "description": "shipped date must not be before delivery date",
+                "definition": {
+                    "function": "is_older_than_col2_for_n_days",
+                    "arguments": {"column1": "shipped_date", "column2": "delivery_date", "days": 0},
+                },
+                "columns": [
+                    {"name": "shipped_date", "family": "temporal"},
+                    {"name": "delivery_date", "family": "temporal"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="shipped date must not be before delivery date", user_email="a@x"
+        )
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_args_list[0].kwargs["purpose"] == "generate_rule:dqx_native"
+        assert gateway.query.call_args_list[1].kwargs["purpose"] == "generate_rule:lowcode"
+
+    async def test_column_smuggled_into_value_argument_falls_through_to_lowcode(self):
+        # The subtler shape: a second column passed to a VALUE argument (`limit`),
+        # which the editor renders as a literal input — leaving that column
+        # unbindable. Dropped in favour of the Condition Builder.
+        native = json.dumps(
+            {
+                "name": "Shipped after delivery",
+                "description": "shipped date must not be before delivery date",
+                "definition": {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "shipped_date", "limit": "delivery_date"},
+                },
+                "columns": [
+                    {"name": "shipped_date", "family": "temporal"},
+                    {"name": "delivery_date", "family": "temporal"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="shipped date must not be before delivery date", user_email="a@x"
+        )
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 2
+
+    async def test_composite_key_native_proposal_keeps_its_several_columns(self):
+        # The one legitimate multi-column native shape: a LIST-typed column
+        # argument (is_unique) binds any number of columns, so it is NOT dropped.
+        native = json.dumps(
+            {
+                "name": "Order line unique",
+                "description": "order id and line number must be unique together",
+                "definition": {"function": "is_unique", "arguments": {"columns": ["order_id", "line_number"]}},
+                "columns": [
+                    {"name": "order_id", "family": "any"},
+                    {"name": "line_number", "family": "any"},
+                ],
+            }
+        )
+        gateway = _gateway_returning(native)
+        service = _service(gateway)
+
+        result = await service.generate_rule(
+            description="order id and line number must be unique together", user_email="a@x"
+        )
+
+        assert result["mode"] == "dqx_native"
+        assert [slot["name"] for slot in result["slots"]] == ["order_id", "line_number"]
+        assert gateway.query.call_count == 1
+
+    async def test_composite_key_check_still_checks_its_value_arguments(self):
+        # The list-typed `columns` argument exempts the SLOT COUNT (a composite key
+        # legitimately binds several columns) — not the whole function. An
+        # unbindable {{placeholder}} in a value argument is still caught, so the
+        # exemption stays as narrow as it claims to be.
+        native = json.dumps(
+            {
+                "name": "Order schema",
+                "description": "order table must match the expected schema",
+                "definition": {
+                    "function": "has_valid_schema",
+                    "arguments": {"columns": ["order_id"], "expected_schema": "{{schema_ddl}}"},
+                },
+                "columns": [{"name": "order_id", "family": "any"}],
+            }
+        )
+        gateway = _gateway_returning(native, _lowcode_proposal())
+        service = _service(gateway)
+
+        result = await service.generate_rule(description="order table must match its schema", user_email="a@x")
+
+        assert result["mode"] == "lowcode"
+        assert gateway.query.call_count == 2
+
+    def test_native_prompt_asks_for_a_decline_on_a_multi_column_requirement(self):
+        # The prompt half of the fix: the model is told a built-in targets one
+        # column, so it declines col-vs-col requirements instead of bending a
+        # value argument into a column reference.
+        assert '{"decline": true}' in _DQX_NATIVE_MULTI_COLUMN_GUIDANCE
+        assert _DQX_NATIVE_MULTI_COLUMN_GUIDANCE in _DQX_NATIVE_GUIDANCE
+        assert _DQX_NATIVE_COVERAGE_GUIDANCE in _DQX_NATIVE_GUIDANCE
+
     def test_native_prompt_offers_the_decline_escape_hatch(self):
         # Without an explicit way to decline, a model asked for one check always
         # produces one — so the coverage wording is what the fall-through rests on.
@@ -845,6 +961,101 @@ class TestSuggestField:
 
         with pytest.raises(AIResponseParseError):
             await service.suggest_field(field="dimension", context="ctx", user_email="a@x")
+
+
+class TestSuggestFieldNameCasing:
+    """Suggested rule NAMES are always Title Case.
+
+    The rule context is full of snake_case identifiers (the DQX check-function
+    name, column/slot names), so the model frequently answers in snake_case
+    however the prompt is worded. The casing is therefore enforced server-side
+    rather than merely requested.
+    """
+
+    async def test_snake_case_suggestion_is_title_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "order_amount_must_be_positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    async def test_all_lower_case_phrase_is_title_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "order amount must be positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    async def test_already_title_case_is_left_alone(self):
+        gateway = _gateway_returning(json.dumps({"value": "Order Amount Must Be Positive"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Order Amount Must Be Positive"
+
+    @pytest.mark.parametrize(
+        "suggestion",
+        ["PostgreSQL Connection Valid", "SKU Is Present", "Order ETA Within SLA"],
+    )
+    async def test_correct_casing_survives_untouched(self, suggestion):
+        """Blanket re-casing would flatten acronyms and proper nouns the model got
+        right ("PostgreSQL" -> "Postgresql"), so a capitalised suggestion is kept
+        exactly as the model wrote it."""
+        gateway = _gateway_returning(json.dumps({"value": suggestion}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == suggestion
+
+    async def test_acronyms_are_upper_cased(self):
+        gateway = _gateway_returning(json.dumps({"value": "customer_id_is_valid_url"}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Customer ID Is Valid URL"
+
+    async def test_surrounding_whitespace_is_trimmed(self):
+        gateway = _gateway_returning(json.dumps({"value": "  unique_order_id  "}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        assert value == "Unique Order ID"
+
+    async def test_name_prompt_asks_for_title_case(self):
+        """The prompt should also ask, so the model usually gets it right and the
+        normalisation is a safety net rather than the only mechanism."""
+        gateway = _gateway_returning(json.dumps({"value": "Some Name"}))
+        service = _service(gateway)
+
+        await service.suggest_field(field="name", context="ctx", user_email="a@x")
+
+        system = gateway.query.call_args.kwargs["messages"][0]["content"]
+        assert "Title Case" in system
+        assert "snake_case" in system
+
+    async def test_other_fields_are_not_re_cased(self):
+        """Description text must keep its original casing and punctuation."""
+        gateway = _gateway_returning(json.dumps({"value": "Flags orders whose amount is negative."}))
+        service = _service(gateway)
+
+        value = await service.suggest_field(field="description", context="ctx", user_email="a@x")
+
+        assert value == "Flags orders whose amount is negative."
+
+    async def test_other_fields_get_no_name_guidance(self):
+        gateway = _gateway_returning(json.dumps({"value": "Completeness"}))
+        service = _service(gateway)
+
+        await service.suggest_field(field="dimension", context="ctx", user_email="a@x")
+
+        system = gateway.query.call_args.kwargs["messages"][0]["content"]
+        assert "Title Case" not in system
 
 
 class TestWriteSql:

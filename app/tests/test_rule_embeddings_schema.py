@@ -1,11 +1,8 @@
 """Schema tests for Phase 4B — rule embeddings corpus (``dq_rule_embeddings``).
 
-The table ships on both baselines — the Postgres v1 baseline and the Delta
-OLTP fallback — so semantic search over the registry works whichever backend
-owns the OLTP tables.
+The table ships in the Postgres v1 baseline, the sole OLTP schema.
 """
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 _EXPECTED_COLUMNS = ("rule_id", "rule_version", "embed_text", "embedding", "model", "updated_at")
@@ -37,14 +34,3 @@ class TestDqRuleEmbeddingsPostgres:
     def test_primary_key_on_rule_id(self):
         ddl = _create_stmt(_PG_BASELINE, _TABLE)
         assert "rule_id TEXT PRIMARY KEY" in ddl
-
-
-class TestDqRuleEmbeddingsDelta:
-    def test_has_expected_columns(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, _TABLE)
-        for col in _EXPECTED_COLUMNS:
-            assert col in ddl
-
-    def test_primary_key_on_rule_id(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, _TABLE)
-        assert "PRIMARY KEY (rule_id)" in ddl

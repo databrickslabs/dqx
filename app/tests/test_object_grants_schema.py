@@ -1,12 +1,8 @@
 """Schema tests for the UC-style object-permissions tables (P22-D item 10).
 
-``dq_object_grants`` (+ history) ship on both baselines — the Postgres v1
-baseline and the Delta OLTP fallback. Both must declare the same logical
-columns so the ``PermissionsService`` read/write path is portable across
-backends.
+``dq_object_grants`` (+ history) ship in the Postgres v1 OLTP baseline.
 """
 
-from databricks_labs_dqx_app.backend.migrations import _V2_OLTP_FALLBACK
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 _GRANT_COLS = (
@@ -59,20 +55,3 @@ class TestObjectGrantsPostgres:
     def test_read_path_index(self):
         # Every permission check reads "all grants for this object".
         assert "idx_dq_object_grants_object" in _PG_BASELINE
-
-
-class TestObjectGrantsDelta:
-    def test_baseline_declares_both_tables(self):
-        assert _create_stmt(_V2_OLTP_FALLBACK, "dq_object_grants")
-        assert _create_stmt(_V2_OLTP_FALLBACK, "dq_object_grants_history")
-
-    def test_delta_columns(self):
-        ddl = _create_stmt(_V2_OLTP_FALLBACK, "dq_object_grants")
-        for col in (*_GRANT_COLS, "grant_id"):
-            assert col in ddl
-
-    def test_check_constraints_follow_the_table(self):
-        # Delta accepts only PK/FK inline, so CHECKs arrive as separate
-        # ALTER TABLE … ADD CONSTRAINT statements in the same baseline.
-        assert "chk_dq_object_grants_object_type" in _V2_OLTP_FALLBACK
-        assert "chk_dq_object_grants_principal_type" in _V2_OLTP_FALLBACK

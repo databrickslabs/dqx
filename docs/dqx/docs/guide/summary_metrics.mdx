@@ -11,7 +11,7 @@ import { AvailableSinceVersion, FeatureTags } from '@site/src/components/Feature
 # Summary Metrics
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.10.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.10.0" heading={false} />
 </FeatureTags>
 
 DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](/docs/reference/table_schemas).
@@ -35,7 +35,7 @@ DQX automatically captures the following built-in metrics for every data quality
 ### Per-Check Metrics
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.14.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.14.0" heading={false} />
 </FeatureTags>
 
 When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
@@ -396,7 +396,7 @@ This is supported for both batch and streaming.
 ### Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.16.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.16.0" heading={false} />
 </FeatureTags>
 
 To compute summary metrics in Spark Declarative Pipelines (a.k.a. SDP, Lakeflow Pipelines, or DLT), use `compute_summary_metrics`, passing the same `checks` you applied to the input data. For information about why the `DQObserver` cannot be used, see [Why not the observer](#why-not-the-observer-directly).

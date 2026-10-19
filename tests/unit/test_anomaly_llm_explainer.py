@@ -170,14 +170,6 @@ def test_format_segment_redacts_listed_keys():
     assert "C-42" not in out
 
 
-def test_sql_string_literal_escapes_quote_and_backslash():
-    """Both single quote and backslash must be escaped — Spark SQL treats backslash as an
-    escape char inside string literals, so quote-doubling alone is insufficient."""
-    assert llm_explainer._sql_string_literal("o'brien") == "o''brien"
-    assert llm_explainer._sql_string_literal("a\\b") == "a\\\\b"
-    assert llm_explainer._sql_string_literal("x'\\y") == "x''\\\\y"
-
-
 def test_explanation_context_pattern_col_defaults_to_fixed_name():
     ctx = ExplanationContext(
         severity_col="severity_percentile",

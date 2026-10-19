@@ -7,7 +7,7 @@ Manages the LIVE ``dq_monitored_tables`` bindings and their
 This is Layer 2 of the Rules Registry: a thin binding recording that a
 table is under active governance, plus the live link between a published
 registry rule (``dq_rules``) and that table's column mapping. Applying new
-rules, mapping columns, and materializing into ``dq_quality_rules`` (Phase
+rules, mapping columns, and materializing into ``dq_resolved_rules`` (Phase
 3C) are explicitly out of scope here — this module only covers register/
 list/get/delete of the binding + applied rules, and a READ-ONLY path over
 the existing ``dq_profiling_results`` Delta table (never written here; the
@@ -48,7 +48,13 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    DeferredTaskRunner,
+    fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
+    resolve_owner_display_name,
+    run_in_background,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -183,7 +189,7 @@ class MonitoredTableService:
     ``profiling_sql`` is a separate executor because ``dq_profiling_results``
     is always a Delta analytical table (written by the profiler job),
     independent of whether the OLTP tables live in Lakebase Postgres or the
-    Delta OLTP-fallback baseline.
+    Lakebase OLTP baseline.
     """
 
     VALID_STATUSES: frozenset[str] = frozenset(get_args(MonitoredTableStatus))
@@ -194,16 +200,18 @@ class MonitoredTableService:
         profiling_sql: SqlExecutor,
         permissions: PermissionsService | None = None,
         sp_ws: WorkspaceClient | None = None,
+        defer_owner_resolution: DeferredTaskRunner = run_in_background,
     ) -> None:
         self._sql = sql
         self._profiling_sql = profiling_sql
         self._perms = permissions
         self._sp_ws = sp_ws
+        self._defer_owner_resolution = defer_owner_resolution
         self._table = sql.fqn("dq_monitored_tables")
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
         self._rules_table = sql.fqn("dq_rules")
-        self._quality_rules_table = sql.fqn("dq_quality_rules")
+        self._quality_rules_table = sql.fqn("dq_resolved_rules")
         self._score_cache_table = sql.fqn("dq_score_cache")
         self._profiling_table = profiling_sql.fqn("dq_profiling_results")
         # ``dq_validation_runs`` is always Delta (written by the runner job),
@@ -470,6 +478,11 @@ class MonitoredTableService:
         if name:
             needle = name.lower()
             tables = [(t, s, c) for t, s, c in tables if needle in t.table_fqn.lower()]
+        # Cache-only owner fill: a list read never waits on SCIM (unresolved
+        # owners are resolved and written back off the request path).
+        fill_owner_display_names_from_cache(
+            [t for t, _, _c in tables], self._sp_ws, self._sql, self._table, defer=self._defer_owner_resolution
+        )
         applied_counts = self._applied_rule_counts([t.binding_id for t, _, _c in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
         bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
@@ -560,12 +573,12 @@ class MonitoredTableService:
         return out
 
     def _materialized_check_counts(self, table_fqns: list[str]) -> dict[str, int]:
-        """Count active ``dq_quality_rules`` rows per *table_fqns* entry, regardless of authoring source.
+        """Count active ``dq_resolved_rules`` rows per *table_fqns* entry, regardless of authoring source.
 
         One grouped query for all listed tables (no per-table round-trip); a
         table with zero active rows is simply absent from the result.
 
-        ``dq_quality_rules`` holds every check for a table — authored
+        ``dq_resolved_rules`` holds every check for a table — authored
         directly (``source`` in ``ui``/``sql``/``profiler``/``import``/``ai``)
         as well as materialized from a Rules Registry application
         (``source = 'registry'``). This must count all of them, not just
@@ -712,6 +725,7 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             return None
+        fill_missing_owner_display_names([table], self._sp_ws, self._sql, self._table)
         # ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
         # row (denormalized on completion by :meth:`refresh_run_timestamps`) —
         # no warehouse hop on the detail load (About tab reads last_profiled_at).
@@ -754,6 +768,19 @@ class MonitoredTableService:
             return {}
         in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
         sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
+
+    def get_table_fqns(self, binding_ids: set[str]) -> dict[str, str]:
+        """Batched ``binding_id -> table_fqn`` lookup in ONE ``IN (...)`` query.
+
+        A lightweight join key for callers that only need each binding's table
+        name (no score, counts, or owner enrichment). Unknown ids are absent.
+        """
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in sorted(binding_ids))
+        sql = f"SELECT binding_id, table_fqn FROM {self._table} WHERE binding_id IN ({in_list})"  # noqa: S608
         rows = self._sql.query(sql)
         return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
 
@@ -887,7 +914,7 @@ class MonitoredTableService:
         """Set a monitored table binding's own review-lifecycle status flag.
 
         Only flips the binding row's ``status`` column — it never touches
-        ``dq_applied_rules`` or the materialized ``dq_quality_rules`` rows.
+        ``dq_applied_rules`` or the materialized ``dq_resolved_rules`` rows.
         The route layer (``routes/v1/monitored_tables.py``) orchestrates the
         binding status alongside the materializer and the per-rule
         submit/approve/reject transitions so the binding's status stays a
@@ -1034,10 +1061,10 @@ class MonitoredTableService:
         return table
 
     def list_materialized_rule_statuses(self, binding_id: str) -> list[tuple[str, str]]:
-        """Return ``(rule_id, status)`` for every ``dq_quality_rules`` row this binding materialized.
+        """Return ``(rule_id, status)`` for every ``dq_resolved_rules`` row this binding materialized.
 
         Resolves the binding's materialized rows through the SAME
-        ``dq_quality_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
+        ``dq_resolved_rules.applied_rule_id`` -> ``dq_applied_rules.id`` ->
         ``dq_applied_rules.binding_id`` linkage the materializer maintains
         (:meth:`Materializer.materialize_binding` /
         :meth:`Materializer._cleanup_orphans`), rather than matching on
@@ -1111,7 +1138,7 @@ class MonitoredTableService:
         """Delete a monitored table binding and its applied rules.
 
         TODO(Phase 3C): once the materializer exists, de-materialize (or at
-        minimum orphan-flag) any ``dq_quality_rules`` rows whose
+        minimum orphan-flag) any ``dq_resolved_rules`` rows whose
         ``applied_rule_id`` references an application under this binding
         before deleting the rows here — otherwise materialized runner rows
         are left pointing at applications that no longer exist. Not

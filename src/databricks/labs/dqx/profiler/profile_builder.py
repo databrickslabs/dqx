@@ -1,26 +1,33 @@
 import datetime
 import decimal
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import math
-from typing import Any
+from typing import Any, Literal
 
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 
 from databricks.labs.dqx.check_funcs import get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.geo.check_funcs import DEFAULT_SRID, MULTIPOLYGON_TYPE, POINT_TYPE, POLYGON_TYPE
+from databricks.labs.dqx.profiler.common import TEXT_TYPES, is_geography, is_geospatial, is_text
+from databricks.labs.dqx.utils import quote_column_name
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
+from databricks.labs.dqx.profiler.semantic import DQProfileContext, EnumProperties
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.profiler.profile_options import (
     PROFILE_OPTION_DISTINCT_RATIO,
     PROFILE_OPTION_FILTER,
+    PROFILE_OPTION_GEOSPATIAL_SRID,
     PROFILE_OPTION_MAX_EMPTY_RATIO,
     PROFILE_OPTION_MAX_IN_COUNT,
     PROFILE_OPTION_MAX_NULL_RATIO,
     PROFILE_OPTION_NUM_SIGMAS,
     PROFILE_OPTION_OUTLIER_COLUMNS,
     PROFILE_OPTION_OUTLIERS_RATIO,
+    PROFILE_OPTION_PROFILE_GEOSPATIAL,
     PROFILE_OPTION_REMOVE_OUTLIERS,
     PROFILE_OPTION_ROUND,
     PROFILE_OPTION_TRIM_STRINGS,
@@ -30,160 +37,216 @@ from databricks.labs.dqx.profiler.profile_options import (
     DEFAULT_PROFILE_OPTIONS,
 )
 
-# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
-TextType = T.CharType | T.StringType | T.VarcharType
-TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
-
 # Matched pair for serializing timestamp min/max through the Spark fallback: Spark renders with six
 # fractional-second digits and Python parses them back. Kept together as constants so the two patterns
 # can never drift apart (a mismatch would raise ValueError at parse time).
 _TIMESTAMP_SPARK_FORMAT = "yyyy-MM-dd HH:mm:ss.SSSSSS"
 _TIMESTAMP_STRPTIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+_GEO_STAT_MIN_X = "min_x_coordinate"
+_GEO_STAT_MAX_X = "max_x_coordinate"
+_GEO_STAT_MIN_Y = "min_y_coordinate"
+_GEO_STAT_MAX_Y = "max_y_coordinate"
+_GEO_STAT_MIN_AREA = "min_area"
+_GEO_STAT_MAX_AREA = "max_area"
+_GEO_STAT_MIN_NUM_POINTS = "min_num_points"
+_GEO_STAT_MAX_NUM_POINTS = "max_num_points"
+_GEO_STAT_TYPES = "geometry_types"
+_GEO_STAT_EMPTY_COUNT = "empty_geometry_count"
+_GEO_STAT_INVALID_COUNT = "invalid_geometry_count"
+_GEO_STAT_NULL_ISLAND_COUNT = "null_island_count"
+_POLYGONAL_GEOMETRY_TYPES = frozenset({POLYGON_TYPE, MULTIPOLYGON_TYPE})
+_UNRESOLVED_ROUTINE_CONDITION = "UNRESOLVED_ROUTINE"
+
+GEOSPATIAL_PROFILE_NAMES: frozenset[str] = frozenset(
+    {
+        "geometry_type",
+        "has_x_coordinate_between",
+        "has_y_coordinate_between",
+        "is_area_not_less_than",
+        "is_area_not_greater_than",
+        "is_num_points_not_less_than",
+        "is_num_points_not_greater_than",
+        "is_non_empty_geometry",
+        "is_ogc_valid",
+        "is_not_null_island",
+    }
+)
 
 
 PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
 
 
-def register_profile_builder(profile_type: str) -> Callable:
+def register_profile_builder(
+    profile_type: str,
+    *,
+    kind: Literal["legacy", "context"] | None = None,
+) -> Callable:
+    """Register a profile builder in *PROFILE_BUILDER_REGISTRY*.
+
+    Args:
+        profile_type: Registry key (e.g. *min_max*).
+        kind: Callback shape.
+            * *None* (default) or *"legacy"* — builder is a 5-argument callback
+              matching the *ProfileBuilder* type alias. Registered as
+              *DQProfileBuilder(name=..., builder=fn)*. Backward-compatible path.
+            * *"context"* — builder is a single-argument callback matching
+              *ContextualProfileBuilder*. Registered as
+              *DQProfileBuilder(name=..., contextual_builder=fn)*.
+    """
+
     def wrapper(builder_func: Callable) -> Callable:
-        PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(name=profile_type, builder=builder_func)
+        if kind == "context":
+            PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(
+                name=profile_type, contextual_builder=builder_func
+            )
+        else:
+            PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(name=profile_type, builder=builder_func)
         return builder_func
 
     return wrapper
 
 
-@register_profile_builder("null_or_empty")
-def make_null_or_empty_profile(
-    _: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+def deregister_profile_builder(profile_type: str) -> None:
     """
-    Creates an 'is_not_null_or_empty', 'is_not_null', or 'is_not_empty' profile by checking the input column type,
-    profiled metrics, and profiler options.
+    Removes a previously registered profile builder from *PROFILE_BUILDER_REGISTRY*.
+    No-op if no builder is registered under the given key.
 
     Args:
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
-
-    Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        profile_type: Key under which the builder was registered.
     """
-    if _is_text(column_type):
-        return _make_null_or_empty_profile(column_name, profiler_metrics, profiler_options)
-
-    return _make_null_profile(column_name, profiler_metrics, profiler_options)
+    PROFILE_BUILDER_REGISTRY.pop(profile_type, None)
 
 
-@register_profile_builder("is_in")
-def make_is_in_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("null_or_empty", kind="context")
+def make_null_or_empty_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
-    Creates an 'is_in' profile by checking the input column type, profiled metrics, and profiler options.
+    Creates an *is_not_null_or_empty*, *is_not_null*, or *is_not_empty* profile by checking
+    the input column type, profiled metrics, and profiler options.
 
     Args:
-        df: Single-column DataFrame
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options).
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if the correct conditions are met, otherwise None.
     """
-    if not _supports_distinct(column_type):
+    if is_text(ctx.column_type):
+        return _make_null_or_empty_profile(ctx.column_name, ctx.metrics, ctx.options)
+
+    return _make_null_profile(ctx.column_name, ctx.metrics, ctx.options)
+
+
+@register_profile_builder("is_in", kind="context")
+def make_is_in_profile(ctx: DQProfileContext) -> DQProfile | None:
+    """
+    Creates an *is_in* profile.
+
+    When a semantic registry is configured and the column was classified as *enum*,
+    the distinct values collected by the enum detector are reused (no extra Spark
+    action). Columns classified as other semantic types (*key*, *measurement*,
+    *text*, user-defined) are skipped. When no semantic type is present, the
+    builder applies the shared applicability gate: the type must satisfy
+    *_supports_distinct* and the *distinct_count / count_non_null* ratio must fall
+    below the configured *distinct_ratio* threshold — the same denominator used by
+    the semantic-enum detector so the two paths agree on low-repetition columns.
+
+    Note:
+        The ratio uses *count_non_null* as the denominator, so null-heavy
+        low-cardinality columns may fail the gate and not emit *is_in*.
+
+    Args:
+        ctx: Profile context (column, type, metrics, options, semantic_type).
+
+    Returns:
+        A DQProfile if the correct conditions are met, otherwise None.
+    """
+    if not _supports_distinct(ctx.column_type):
         return None
 
-    total_count = profiler_metrics.get("count", 0)
-    if total_count == 0:
+    count_non_null = ctx.metrics.get("count_non_null", 0)
+    if count_non_null == 0:
         return None
 
-    max_in_count = profiler_options.get(PROFILE_OPTION_MAX_IN_COUNT, 0)
-    max_distinct_ratio = profiler_options.get(PROFILE_OPTION_DISTINCT_RATIO, 0.0)
+    semantic_type = ctx.semantic_type
+    if semantic_type is not None:
+        if semantic_type.name != "enum":
+            # A non-enum semantic type was assigned; do not emit an is_in candidate that would
+            # contradict the semantic classification.
+            return None
+        enum_props = semantic_type.get_typed_properties(EnumProperties)
+        if enum_props is None or not enum_props.values:
+            return None
+        # Sort so the emitted rule is deterministic across runs — EnumProperties.values is a set.
+        distinct_values = sorted(enum_props.values)
+        return DQProfile(
+            name="is_in",
+            column=ctx.column_name,
+            parameters={"in": distinct_values},
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
+        )
 
-    col = df.columns[0]
-    distinct_values = [row[0] for row in df.select(col).distinct().collect()]
+    max_in_count = ctx.options.get(PROFILE_OPTION_MAX_IN_COUNT, 0)
+    max_distinct_ratio = ctx.options.get(PROFILE_OPTION_DISTINCT_RATIO, 0.0)
+
+    col = ctx.df.columns[0]
+    distinct_values = [row[0] for row in ctx.df.select(col).distinct().collect()]
     distinct_count = len(distinct_values)
     if distinct_count == 0:
         # The df passed here has nulls already dropped by the caller. If distinct_count is 0,
         # the column is entirely null — no valid values to build an allowlist from.
         return None
 
-    distinct_ratio = (1.0 * distinct_count) / total_count
+    # Denominator is *count_non_null* so this ratio matches *_detect_enum* in semantic.py.
+    # A mismatch would let semantic-enum classification and legacy is_in emission disagree on
+    # low-repetition columns with heavy nulls.
+    distinct_ratio = (1.0 * distinct_count) / count_non_null
 
     if distinct_count < max_in_count and distinct_ratio < max_distinct_ratio:
         return DQProfile(
             name="is_in",
-            column=column_name,
+            column=ctx.column_name,
             parameters={"in": distinct_values},
-            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
 
 
-@register_profile_builder("min_max")
-def make_min_max_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("min_max", kind="context")
+def make_min_max_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
-    Creates a 'min_max' profile by checking the input column type, profiled metrics, and profiler options.
+    Creates a *min_max* profile.
+
+    Gated on semantic type when semantic profiling is enabled: skipped unless
+    *ctx.semantic_type* is *None* or its name is *"measurement"*.
 
     Args:
-        df: Single-column DataFrame
-        column_name: Input column name (used for DQProfile output)
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler (includes summary stats)
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options, semantic_type).
 
     Returns:
-        A DQProfile if the correct conditions are met, otherwise None
+        A DQProfile if the correct conditions are met, otherwise None.
     """
-    if profiler_metrics.get("count_non_null", 0) == 0:
+    if ctx.metrics.get("count_non_null", 0) == 0:
         return None
 
-    if not _supports_min_max(column_type):
+    if not _supports_min_max(ctx.column_type):
         return None
 
-    if _remove_outliers(column_name, profiler_options):
+    if ctx.semantic_type is not None and ctx.semantic_type.name != "measurement":
+        return None
+
+    if _remove_outliers(ctx.column_name, ctx.options):
         return _make_min_max_profile_with_outlier_removal(
-            df, column_name, column_type, profiler_metrics, profiler_options
+            ctx.df, ctx.column_name, ctx.column_type, dict(ctx.metrics), dict(ctx.options)
         )
 
     return _make_min_max_profile_without_outlier_removal(
-        df, column_name, column_type, profiler_metrics, profiler_options
+        ctx.df, ctx.column_name, ctx.column_type, dict(ctx.metrics), dict(ctx.options)
     )
 
 
-def _is_text(column_type: T.DataType) -> bool:
-    """
-    Validates that the input column type is a Spark text type.
-
-    Args:
-        column_type: Input column type
-
-    Returns:
-        True if the column is a Spark text type, otherwise False
-    """
-    return isinstance(column_type, TEXT_TYPES)
-
-
 def _make_null_or_empty_profile(
-    column_name: str, profiler_metrics: dict[str, Any], profiler_options: dict[str, Any]
+    column_name: str, profiler_metrics: Mapping[str, Any], profiler_options: Mapping[str, Any]
 ) -> DQProfile | None:
     """
     Creates an 'is_not_null_or_empty', 'is_not_null', or 'is_not_empty' profile for text type columns.
@@ -256,7 +319,7 @@ def _make_null_or_empty_profile(
 
 
 def _make_null_profile(
-    column_name: str, profiler_metrics: dict[str, Any], profiler_options: dict[str, Any]
+    column_name: str, profiler_metrics: Mapping[str, Any], profiler_options: Mapping[str, Any]
 ) -> DQProfile | None:
     """
     Builds an 'is_not_null' profile for non-text columns.
@@ -295,13 +358,17 @@ def _supports_distinct(column_type: T.DataType) -> bool:
     """
     Validates that the input column type supports distinct operations.
 
+    The accepted set (text plus *IntegerType*/*LongType*/*ShortType*) must stay in sync with the
+    semantic enum detector in *semantic._detect_enum* — a mismatch would let semantic-enum
+    classification suppress *min_max* without producing an *is_in* in return.
+
     Args:
         column_type: Input column type
 
     Returns:
         True if the column supports distinct operations, otherwise False
     """
-    return isinstance(column_type, (T.IntegerType, T.LongType) + TEXT_TYPES)
+    return isinstance(column_type, (T.IntegerType, T.LongType, T.ShortType) + TEXT_TYPES)
 
 
 def _supports_min_max(column_type: T.DataType) -> bool:
@@ -319,7 +386,7 @@ def _supports_min_max(column_type: T.DataType) -> bool:
     )
 
 
-def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool:
+def _remove_outliers(column_name: str, profiler_options: Mapping[str, Any]) -> bool:
     """
     Checks if outliers should be removed when generating 'min_max' profiles.
 
@@ -340,7 +407,7 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
     return column_name in outlier_columns
 
 
-def _is_has_no_outliers_enabled(column_name: str, profiler_options: dict[str, Any]) -> bool:
+def _is_has_no_outliers_enabled(column_name: str, profiler_options: Mapping[str, Any]) -> bool:
     """
     Checks if *has_no_outliers* profiling is enabled for given column.
 
@@ -365,7 +432,7 @@ def _is_profile_enabled(
     profile_enabled_option_name: str,
     profile_allow_columns_option_name: str,
     profile_deny_columns_option_name: str,
-    profiler_options: dict[str, Any],
+    profiler_options: Mapping[str, Any],
 ) -> bool:
     """
     Checks if a profiler builder is enabled for the given column.
@@ -776,45 +843,43 @@ def _round_decimal(value: decimal.Decimal, rounding_direction: str) -> decimal.D
     return value
 
 
-@register_profile_builder("has_no_outliers")
-def make_has_no_outliers_profile(
-    df: DataFrame,
-    column_name: str,
-    column_type: T.DataType,
-    profiler_metrics: dict[str, Any],
-    profiler_options: dict[str, Any],
-) -> DQProfile | None:
+@register_profile_builder("has_no_outliers", kind="context")
+def make_has_no_outliers_profile(ctx: DQProfileContext) -> DQProfile | None:
     """
     Creates a *has_no_outliers* profile using the same MAD method as the *has_no_outliers* check rule.
 
     A profile is returned when all the following conditions are met:
-    - The column type is child of `pyspark.sql.types.NumericType`.
+    - The column type is child of *pyspark.sql.types.NumericType*.
     - The DataFrame is non-empty.
     - The fraction of outliers (values outside *median* ± 3.5 × MAD) is at or below *outliers_ratio*.
     - Profile generation is enabled at configuration level for all columns or given column.
+    - When semantic profiling is enabled, the semantic type is unset or *measurement*.
 
     Args:
-        df: The DataFrame to create the profile for.
-        column_name: Input column name
-        column_type: Input column type
-        profiler_metrics: Column-level statistics computed by the DQProfiler
-        profiler_options: Configuration options for the DQProfiler
+        ctx: Profile context (column, type, metrics, options, semantic_type).
 
     Returns:
         A DQProfile if all conditions are met, otherwise None.
     """
+    column_name = ctx.column_name
+    column_type = ctx.column_type
+    profiler_options = ctx.options
+
     if not isinstance(column_type, T.NumericType):
+        return None
+
+    if ctx.semantic_type is not None and ctx.semantic_type.name != "measurement":
         return None
 
     if not _is_has_no_outliers_enabled(column_name, profiler_options):
         return None
 
-    total_non_null_count = profiler_metrics.get("count_non_null", 0)
+    total_non_null_count = ctx.metrics.get("count_non_null", 0)
     if total_non_null_count == 0:
         logger.info(f"Column '{column_name}' has no non-null values. Skipping `has_no_outliers` profile generation")
         return None
 
-    bounds = calculate_median_absolute_deviation_bounds(df, column_name)
+    bounds = calculate_median_absolute_deviation_bounds(ctx.df, column_name)
     if bounds is None:
         logger.info(
             f"MAD bounds were not calculated for column '{column_name}'. Skipping `has_no_outliers` profile generation"
@@ -838,7 +903,7 @@ def make_has_no_outliers_profile(
     below_lower_bound_expr = F.col(column_name) < get_limit_expr(lower_bound)
     above_upper_bound_expr = F.col(column_name) > get_limit_expr(upper_bound)
     outside_bounds_expr = below_lower_bound_expr | above_upper_bound_expr
-    outliers_count = df.filter(outside_bounds_expr).count()
+    outliers_count = ctx.df.filter(outside_bounds_expr).count()
 
     outliers_ratio = float(outliers_count) / total_non_null_count
     outliers_ratio_threshold = profiler_options.get(
@@ -853,7 +918,377 @@ def make_has_no_outliers_profile(
             name="has_no_outliers",
             description=f"Column {safe_column_name} has {outliers_ratio * 100:.1f}% of outliers (allowed: {outliers_ratio_threshold * 100:.1f}%). Lower boundary - {lower_bound}, upper boundary - {upper_bound}.",
             column=column_name,
-            filter=profiler_options.get(PROFILE_OPTION_FILTER, None),
+            filter=ctx.options.get(PROFILE_OPTION_FILTER, None),
         )
 
     return None
+
+
+@register_profile_builder("geospatial")
+def make_geospatial_profile(
+    df: DataFrame,
+    column_name: str,
+    column_type: T.DataType,
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> list[DQProfile] | None:
+    """
+    Creates geospatial profiles for native GEOMETRY/GEOGRAPHY columns.
+
+    The column is referenced directly (it is already a native geometry/geography value), so the
+    profiled bounds line up with the checks the profiler generates, which set *convert_column=False*.
+    Requires Databricks serverless compute or classic compute with Databricks Runtime Version >17.1.
+    If the runtime does not meet these requirements, a warning is logged and no geospatial profiles
+    are produced.
+
+    Args:
+        df: Single-column DataFrame (nulls already dropped)
+        column_name: Input column name
+        column_type: Input column type
+        profiler_metrics: Column-level statistics computed by the DQProfiler
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        A list of DQProfiles, or None when profiling is disabled, the column is not geospatial,
+        the column is entirely null, or the spatial functions are unavailable.
+
+    Notes:
+        Because spatial aggregations required for profiling can be expensive at scale, geospatial
+        profiling must be  enabled via the *profile_geospatial* option (default: *False*).
+
+        When geospatial profiling is enabled and the column is a geometry or geography type, a single
+        aggregation computes the bounding box, area range, point-count range, geometry-type distribution
+        and quality counts. Summary stats are added to the *profiler_metrics* (and thus the summary statistics)
+        and used to emit the matching row-level geospatial profiles.
+    """
+    if not profiler_options.get(PROFILE_OPTION_PROFILE_GEOSPATIAL, False):
+        return None
+
+    if not is_geospatial(column_type):
+        return None
+
+    if profiler_metrics.get("count_non_null", 0) == 0:
+        return None
+
+    stats = _compute_geospatial_stats(df, column_name, column_type, profiler_options)
+    if stats is None:
+        return None
+
+    profiler_metrics.update(stats)
+    profiles = _build_geospatial_profiles(column_name, column_type, stats, profiler_metrics, profiler_options)
+    return profiles or None
+
+
+def _compute_geospatial_stats(
+    df: DataFrame, column_name: str, column_type: T.DataType, profiler_options: dict[str, Any]
+) -> dict[str, Any] | None:
+    """
+    Runs a single spatial aggregation over a geometry column and returns the raw stats.
+
+    Requires Databricks serverless compute or classic compute with Databricks Runtime
+    Version >17.1. If the runtime does not meet these requirements, a warning is logged
+    and no geospatial profiles are produced.
+
+    Args:
+        df: Single-column DataFrame with nulls dropped
+        column_name: Input column name
+        column_type: Input column type, used to compute geodesic areas for geography columns
+        profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        A dictionary of statistics about the geometry values in the profiled column, or None when the
+        spatial SQL functions are unavailable on the current runtime.
+    """
+    column_label = df.columns[0]
+    # The column is already a native GEOMETRY/GEOGRAPHY type (guaranteed by the is_geospatial gate in
+    # make_geospatial_profile), so reference it directly. Wrapping it in try_to_geometry() — which only
+    # accepts STRING/BINARY — would throw a type-mismatch on native columns. quote_column_name escapes
+    # embedded backticks so column names with special characters produce valid SQL.
+    geom = quote_column_name(column_label)
+    area = _geospatial_area_expr(geom, column_type, profiler_options)
+    # st_area, st_npoints, st_geometrytype and st_isempty accept both GEOMETRY and GEOGRAPHY.
+    empty_or_null = f"{geom} IS NULL OR st_isempty({geom})"
+    non_empty = f"NOT ({empty_or_null})"
+    aggregations = [
+        F.expr(f"min({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_AREA),
+        F.expr(f"max({area}) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_AREA),
+        F.expr(f"min(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_NUM_POINTS),
+        F.expr(f"max(st_npoints({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_NUM_POINTS),
+        F.expr(f"array_sort(collect_set(st_geometrytype({geom})))").alias(_GEO_STAT_TYPES),
+        F.expr(f"count_if({empty_or_null})").alias(_GEO_STAT_EMPTY_COUNT),
+    ]
+    if not is_geography(column_type):
+        null_island = (
+            f"CASE WHEN st_geometrytype({geom}) = '{POINT_TYPE}' THEN "
+            f"st_x({geom}) = 0.0 AND st_y({geom}) = 0.0 "
+            f"AND (st_z({geom}) IS NULL OR st_z({geom}) = 0.0) "
+            f"AND (st_m({geom}) IS NULL OR st_m({geom}) = 0.0) "
+            f"ELSE false END"
+        )
+        aggregations += [
+            F.expr(f"min(st_xmin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_X),
+            F.expr(f"max(st_xmax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_X),
+            F.expr(f"min(st_ymin({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MIN_Y),
+            F.expr(f"max(st_ymax({geom})) FILTER (WHERE {non_empty})").alias(_GEO_STAT_MAX_Y),
+            F.expr(f"count_if({geom} IS NULL OR NOT st_isvalid({geom}))").alias(_GEO_STAT_INVALID_COUNT),
+            F.expr(f"count_if({null_island})").alias(_GEO_STAT_NULL_ISLAND_COUNT),
+        ]
+    try:
+        row = df.agg(*aggregations).first()
+    except AnalysisException as exc:
+        match exc:
+            # NOTE: Using getCondition would be preferred, but Python 3.10 and 3.11 do not support getCondition
+            # on exception classes; We must use pattern matching instead to determine the error class and decide
+            # to raise or skip the exception
+            case AnalysisException(_errorClass=condition) if condition == _UNRESOLVED_ROUTINE_CONDITION:
+                safe_column_name = column_name.replace("\n", " ").replace("\r", " ")
+                logger.warning(
+                    f"Skipping geospatial profiling for column '{safe_column_name}': the spatial SQL functions "
+                    f"are unavailable on this runtime (requires Databricks serverless or DBR 17.1+). Details: {exc}"
+                )
+                return None
+            case _:
+                raise
+
+    return row.asDict() if row else None
+
+
+def _resolve_geospatial_srid(profiler_options: dict[str, Any]) -> int:
+    """
+    Resolves the SRID used to compute geometry areas.
+
+    Falls back to the profiler default when the option is missing or falsy (None/0), so the profiled
+    area bounds are always computed in the same units as the generated *is_area_* checks, which default
+    to the same SRID. Returning a concrete SRID keeps the area transform and the emitted profile aligned.
+
+    Args:
+        profiler_options: Configuration options for the DQProfiler.
+
+    Returns:
+        The SRID to use for area computations.
+
+    Raises:
+        InvalidParameterError: If the configured SRID is not an integer.
+    """
+    srid = (
+        profiler_options.get(PROFILE_OPTION_GEOSPATIAL_SRID) or DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_GEOSPATIAL_SRID]
+    )
+    if isinstance(srid, bool) or not isinstance(srid, int):
+        raise InvalidParameterError(f"'{PROFILE_OPTION_GEOSPATIAL_SRID}' must be an integer SRID, got: {srid!r}")
+    return srid
+
+
+def _geospatial_area_expr(geo: str, column_type: T.DataType, profiler_options: dict[str, Any]) -> str:
+    """
+    Builds the SQL area expression, matching how the generated *is_area_* checks compute area.
+
+    Geography areas are geodesic (*st_area* on the native geography value); geometry areas are planar and
+    computed after projecting to the configured SRID. Mirrors *geo/check_funcs.py* so the profiled bounds
+    and the generated checks use the same units.
+
+    Args:
+        geo: Quoted SQL reference to the geometry/geography column.
+        column_type: Input column type.
+        profiler_options: Configuration options for the DQProfiler.
+
+    Returns:
+        The SQL area expression as a string.
+    """
+    if is_geography(column_type):
+        return f"st_area({geo})"
+    srid = _resolve_geospatial_srid(profiler_options)
+    return f"st_area(st_transform(st_setsrid({geo}, {DEFAULT_SRID}), {srid}))"
+
+
+def _build_geospatial_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> list[DQProfile]:
+    """
+    Builds a list of geospatial DQProfiles from the aggregated profiler stats.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_metrics: Profiler metrics from non-geospatial profiling.
+        profiler_options: Profiler options.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    dq_filter = profiler_options.get(PROFILE_OPTION_FILTER, None)
+    profiles = []
+
+    geometry_types = stats.get(_GEO_STAT_TYPES) or []
+    if len(geometry_types) == 1:
+        profiles.append(
+            DQProfile(
+                name="geometry_type",
+                column=column_name,
+                parameters={"type": geometry_types[0]},
+                description=f"All profiled geometries are of type {geometry_types[0]}",
+                filter=dq_filter,
+            )
+        )
+
+    profiles.extend(_build_geospatial_range_profiles(column_name, column_type, stats, profiler_options, dq_filter))
+    profiles.extend(
+        _build_geospatial_quality_profiles(
+            column_name, column_type, stats, profiler_metrics, profiler_options, dq_filter
+        )
+    )
+    return profiles
+
+
+def _build_geospatial_range_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_options: dict[str, Any],
+    dq_filter: str | None,
+) -> list[DQProfile]:
+    """
+    Builds value range profiles for the bounding-box, area and number of points in the input
+    geometry column.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type, used to pick a planar (geometry) or geodesic (geography) area bound.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_options: Profiler options.
+        dq_filter: Row filter applied to the input column before profiling column values.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    profiles = []
+
+    min_x, max_x = stats.get(_GEO_STAT_MIN_X), stats.get(_GEO_STAT_MAX_X)
+    if min_x is not None and max_x is not None:
+        profiles.append(
+            DQProfile(
+                name="has_x_coordinate_between",
+                column=column_name,
+                parameters={
+                    "min_value": _round_value(float(min_x), "down", profiler_options),
+                    "max_value": _round_value(float(max_x), "up", profiler_options),
+                },
+                filter=dq_filter,
+            )
+        )
+
+    min_y, max_y = stats.get(_GEO_STAT_MIN_Y), stats.get(_GEO_STAT_MAX_Y)
+    if min_y is not None and max_y is not None:
+        profiles.append(
+            DQProfile(
+                name="has_y_coordinate_between",
+                column=column_name,
+                parameters={
+                    "min_value": _round_value(float(min_y), "down", profiler_options),
+                    "max_value": _round_value(float(max_y), "up", profiler_options),
+                },
+                filter=dq_filter,
+            )
+        )
+
+    geometry_types = set(stats.get(_GEO_STAT_TYPES) or [])
+
+    if geometry_types and geometry_types <= _POLYGONAL_GEOMETRY_TYPES:
+        area_bound: dict[str, Any] = (
+            {"geodesic": True} if is_geography(column_type) else {"srid": _resolve_geospatial_srid(profiler_options)}
+        )
+        min_area, max_area = stats.get(_GEO_STAT_MIN_AREA), stats.get(_GEO_STAT_MAX_AREA)
+        if min_area is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_area_not_less_than",
+                    column=column_name,
+                    parameters={"value": _round_value(float(min_area), "down", profiler_options), **area_bound},
+                    filter=dq_filter,
+                )
+            )
+        if max_area is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_area_not_greater_than",
+                    column=column_name,
+                    parameters={"value": _round_value(float(max_area), "up", profiler_options), **area_bound},
+                    filter=dq_filter,
+                )
+            )
+
+    if geometry_types and geometry_types != {POINT_TYPE}:
+        min_num_points, max_num_points = stats.get(_GEO_STAT_MIN_NUM_POINTS), stats.get(_GEO_STAT_MAX_NUM_POINTS)
+        if min_num_points is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_num_points_not_less_than",
+                    column=column_name,
+                    parameters={"value": int(min_num_points)},
+                    filter=dq_filter,
+                )
+            )
+        if max_num_points is not None:
+            profiles.append(
+                DQProfile(
+                    name="is_num_points_not_greater_than",
+                    column=column_name,
+                    parameters={"value": int(max_num_points)},
+                    filter=dq_filter,
+                )
+            )
+
+    return profiles
+
+
+def _build_geospatial_quality_profiles(
+    column_name: str,
+    column_type: T.DataType,
+    stats: dict[str, Any],
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+    dq_filter: str | None,
+) -> list[DQProfile]:
+    """
+    Builds profiles for empty, OGC-invalid, or null-island values in geometry columns.
+
+    Profiles are emitted only when the sampled violation ratio is within *max_null_ratio*.
+    Columns with some empty/invalid/null-island values are still profiled. The OGC-validity
+    (*st_isvalid*) and null-island (*st_x*/*st_y*) checks only accept GEOMETRY, so those profiles
+    are skipped for geography columns.
+
+    Args:
+        column_name: Input column name.
+        column_type: Input column type, used to skip profiles unsupported for geography columns.
+        stats: Dictionary of stats from profiling values in the input column.
+        profiler_metrics: Dictionary of profiling metrics from profiling values in the input column.
+        profiler_options: Profiler options.
+        dq_filter: Row filter applied to the input column before profiling column values.
+
+    Returns:
+        A list of geospatial DQProfiles.
+    """
+    total = profiler_metrics.get("count_non_null", 0)
+    if total <= 0:
+        return []
+
+    max_null_ratio = profiler_options.get(
+        PROFILE_OPTION_MAX_NULL_RATIO, DEFAULT_PROFILE_OPTIONS[PROFILE_OPTION_MAX_NULL_RATIO]
+    )
+    property_profiles = [(_GEO_STAT_EMPTY_COUNT, "is_non_empty_geometry")]
+    if not is_geography(column_type):
+        property_profiles.append((_GEO_STAT_INVALID_COUNT, "is_ogc_valid"))
+        if set(stats.get(_GEO_STAT_TYPES) or []) == {POINT_TYPE}:
+            property_profiles.append((_GEO_STAT_NULL_ISLAND_COUNT, "is_not_null_island"))
+
+    profiles = []
+    for stat_key, profile_name in property_profiles:
+        violation_ratio = stats.get(stat_key, 0) / total
+        if violation_ratio <= max_null_ratio:
+            profiles.append(DQProfile(name=profile_name, column=column_name, filter=dq_filter))
+
+    return profiles

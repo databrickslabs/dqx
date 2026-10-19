@@ -57,8 +57,6 @@ import {
 import { ExportDialog } from "@/components/ExportDialog";
 import {
   LifecycleDecisionNote,
-  LifecycleRationaleDialog,
-  type LifecycleAction,
 } from "@/components/LifecycleRationaleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
@@ -74,6 +72,7 @@ import {
   invalidateAfterRegistryRuleEdit,
 } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
+import { resolvePageTab } from "@/lib/registry-rule-page-tab";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -131,6 +130,10 @@ function RegistryRuleDetailPage() {
   const queryClient = useQueryClient();
   const { ruleId } = useParams({ from: "/_sidebar/registry-rules/$ruleId" });
   const { tab } = useSearch({ from: "/_sidebar/registry-rules/$ruleId" });
+  // Absent ?tab= means About — derived, never redirected, so opening a rule
+  // adds a single history entry (same as the Tables / Collections pages).
+  // Tab switches push an entry so back/forward moves between tabs.
+  const activeTab = resolvePageTab(tab);
 
   const { data } = useGetRegistryRuleSuspense(ruleId);
   const rule = data.data.rule;
@@ -141,7 +144,9 @@ function RegistryRuleDetailPage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [lifecycleDialog, setLifecycleDialog] = useState<"approve" | "reject" | null>(null);
+  // Reject discards the submitter's pending rule, so it keeps a plain yes/no
+  // confirm (no rationale textarea). Approve fires directly from its button.
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // Read-only view / "save as new draft" clone dialog (rule isn't editable
@@ -329,7 +334,7 @@ function RegistryRuleDetailPage() {
             variant="outline"
             size="sm"
             className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-            onClick={() => setLifecycleDialog("approve")}
+            onClick={() => handleApprove(null)}
             disabled={lifecycleBusy}
           >
             {approveMutation.isPending ? (
@@ -343,7 +348,7 @@ function RegistryRuleDetailPage() {
             variant="outline"
             size="sm"
             className="gap-2 h-8 text-red-600 border-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-            onClick={() => setLifecycleDialog("reject")}
+            onClick={() => setRejectConfirmOpen(true)}
             disabled={lifecycleBusy}
           >
             {rejectMutation.isPending ? (
@@ -486,7 +491,7 @@ function RegistryRuleDetailPage() {
             // instead of serving the pre-edit 5-minute cache (L3).
             invalidateAfterRegistryRuleEdit(queryClient, savedRuleId ?? ruleId);
           }}
-          activeTab={tab as PageTab | undefined}
+          activeTab={activeTab}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
           jsonDialogOpen={formJsonDialogOpen}
@@ -519,7 +524,6 @@ function RegistryRuleDetailPage() {
             navigate({
               to: "/registry-rules/$ruleId",
               params: { ruleId: newRuleId },
-              search: { tab: "about" },
             });
           } else {
             invalidateAfterRegistryRuleEdit(queryClient, rule.rule_id);
@@ -527,36 +531,28 @@ function RegistryRuleDetailPage() {
         }}
       />
 
-      <LifecycleRationaleDialog
-        open={lifecycleDialog !== null}
-        onOpenChange={(open) => {
-          if (!open) setLifecycleDialog(null);
-        }}
-        action={(lifecycleDialog ?? "approve") as LifecycleAction}
-        title={
-          lifecycleDialog === "reject"
-            ? t("rulesRegistry.rejectConfirmTitle")
-            : t("rulesRegistry.actionApprove")
-        }
-        description={
-          lifecycleDialog === "reject"
-            ? t("rulesRegistry.rejectConfirmDescription", { name })
-            : t("rulesRegistry.statusPendingApproval")
-        }
-        confirmLabel={
-          lifecycleDialog === "reject"
-            ? t("rulesRegistry.actionReject")
-            : t("rulesRegistry.actionApprove")
-        }
-        destructive={lifecycleDialog === "reject"}
-        busy={lifecycleBusy}
-        onConfirm={(rationale) => {
-          const action = lifecycleDialog;
-          setLifecycleDialog(null);
-          if (action === "approve") handleApprove(rationale);
-          else if (action === "reject") handleReject(rationale);
-        }}
-      />
+      <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("rulesRegistry.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("rulesRegistry.rejectConfirmDescription", { name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={lifecycleBusy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                handleReject(null);
+              }}
+            >
+              {t("rulesRegistry.actionReject")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>

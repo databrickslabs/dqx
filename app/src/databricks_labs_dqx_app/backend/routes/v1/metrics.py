@@ -171,8 +171,8 @@ def get_metrics_trend(
 
     # Catalog/schema are backtick-quoted (quote_object_fqn) so hyphenated
     # app catalogs stay parseable — same convention as the dq_results reads.
-    metrics_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_metrics")
-    runs_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_validation_runs")
+    metrics_table = quote_object_fqn(sql.catalog, sql.schema, "dq_metrics")
+    runs_table = quote_object_fqn(sql.catalog, sql.schema, "dq_validation_runs")
     e_fqn = escape_sql_string(table_fqn)
 
     # Pull the latest ``limit`` runs for this table (DESC by run_time)
@@ -214,8 +214,8 @@ def get_metrics_summary(
     Computes pass rate inline from ``valid_row_count`` and
     ``input_row_count`` so we don't need a stored ``pass_rate`` column.
     """
-    metrics_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_metrics")
-    runs_table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_validation_runs")
+    metrics_table = quote_object_fqn(sql.catalog, sql.schema, "dq_metrics")
+    runs_table = quote_object_fqn(sql.catalog, sql.schema, "dq_validation_runs")
 
     # For each (input_location), find the most recent run_id, then pull
     # input/valid counts plus run_type/created_at from the runs table.

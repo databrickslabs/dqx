@@ -36,16 +36,14 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import METRIC_VIEW_NAME
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 ACCESSIBLE_CATALOGS = frozenset({"main", "dev"})
 
 
 @pytest.fixture
-def sql_mock() -> MagicMock:
-    mock = create_autospec(SqlExecutor, instance=True)
-    mock.query_dicts.return_value = []
-    return mock
+def sql_mock(sql_executor_mock: MagicMock) -> MagicMock:
+    sql_executor_mock.query_dicts.return_value = []
+    return sql_executor_mock
 
 
 @pytest.fixture
@@ -297,17 +295,18 @@ class TestRuleScore:
     def test_hyphenated_app_catalog_is_quoted_in_the_measure_query(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock, app_config
     ):
-        # The metric view is a genie-schema derived object — uses genie_schema_name
-        # (default "genie"), NOT schema_name. Verify the catalog is still quoted.
+        # The metric view uses the derived Genie schema, separate from the main schema.
         client.app.dependency_overrides[get_conf] = lambda: app_config.model_copy(
             update={"catalog": "prod-east", "schema_name": "dqx-studio"}
         )
+        sql_mock.catalog = "prod-east"
+        sql_mock.schema = "dqx-studio"
         apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
         monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
         resp = client.get("/api/v1/dq-score/rule/r1")
         assert resp.status_code == 200
         stmt = sql_mock.query_dicts.call_args[0][0]
-        assert f"`prod-east`.`genie`.{METRIC_VIEW_NAME}" in stmt
+        assert f"`prod-east`.`dqx_app_test_genie`.{METRIC_VIEW_NAME}" in stmt
 
     def test_binding_with_invalid_fqn_is_skipped_before_interpolation(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock

@@ -62,7 +62,7 @@ def _query_quarantine(
 
     # Catalog/schema are backtick-quoted (quote_object_fqn) so hyphenated
     # app catalogs stay parseable — same convention as the dq_results reads.
-    table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_quarantine_records")
+    table = quote_object_fqn(sql.catalog, sql.schema, "dq_quarantine_records")
     er = escape_sql_string(run_id)
 
     where = f"run_id = '{er}'"
@@ -220,7 +220,7 @@ def export_quarantine_records(
     """Export quarantine records for a run as CSV or JSON download (capped)."""
     from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
-    table = quote_object_fqn(app_conf.catalog, app_conf.schema_name, "dq_quarantine_records")
+    table = quote_object_fqn(sql.catalog, sql.schema, "dq_quarantine_records")
     er = escape_sql_string(run_id)
 
     where = f"run_id = '{er}'"

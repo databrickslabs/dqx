@@ -159,33 +159,145 @@ class TestPgMigrationsCatalogue:
             assert m.description.strip(), f"v{m.version} migration has an empty description"
 
 
-class TestBaselineOnlyCatalogue:
-    """The catalogue is one baseline and the schema is expressed as CREATE TABLE.
+_ADD_COLUMN_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*) (.+)"
+)
+_DROP_TABLE_RE = re.compile(r"DROP TABLE IF EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+_DROP_CONSTRAINT_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) DROP CONSTRAINT IF EXISTS ([a-z_][a-z0-9_]*)"
+)
+_ADD_CONSTRAINT_RE = re.compile(
+    r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD CONSTRAINT ([a-z_][a-z0-9_]*) CHECK \(.+\)"
+)
 
-    There are no external installs to upgrade yet, so a shape change is
-    edited into v1 rather than appended as an ALTER. These tests pin that
-    decision — an ``ALTER TABLE`` or backfill ``UPDATE`` creeping back in
-    would mean the schema is once again split across a replay chain.
+
+class TestBaselineCatalogue:
+    """v1 is the full schema as CREATE TABLE; later migrations upgrade existing installs.
+
+    The baseline stays the single description of the schema, so it holds no
+    ``ALTER TABLE`` or backfill ``UPDATE``. Later migrations exist only to
+    upgrade deployments that already applied v1. Each column they add must
+    already be in the baseline, and each table they drop must not be, so a
+    fresh install and an upgraded one end up with the same shape. Constraint
+    replacements are allowed when the CHECK they add is already in v1.
     """
 
-    def test_catalogue_is_exactly_the_baseline(self):
-        assert [m.version for m in PG_MIGRATIONS] == [1]
+    def test_baseline_is_version_one(self):
+        assert PG_MIGRATIONS[0].version == 1
 
-    def test_every_statement_creates_a_table_or_an_index(self):
+    def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                assert (
+                    _ADD_COLUMN_RE.fullmatch(stmt)
+                    or _DROP_TABLE_RE.fullmatch(stmt)
+                    or _DROP_CONSTRAINT_RE.fullmatch(stmt)
+                    or _ADD_CONSTRAINT_RE.fullmatch(stmt)
+                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
+
+    def test_dropped_tables_are_not_in_the_baseline(self):
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                if match := _DROP_TABLE_RE.fullmatch(stmt):
+                    assert match.group(1) not in OLTP_TABLE_NAMES, f"v{m.version} drops baseline table {match.group(1)}"
+
+    def test_added_columns_match_the_baseline(self):
+        baseline = _baseline()
+        for m in PG_MIGRATIONS[1:]:
+            for stmt in _statements(" ".join(m.sql.split())):
+                match = _ADD_COLUMN_RE.fullmatch(stmt)
+                if match is None:
+                    continue
+                table, column, definition = match.groups()
+                create = re.search(rf"CREATE TABLE IF NOT EXISTS \{{schema\}}\.{table} \((.*?)\);", baseline + ";")
+                assert create is not None, f"v{m.version}: {table} is not created by the baseline"
+                assert (
+                    f" {column} {definition}," in f" {create.group(1)},"
+                ), f"v{m.version}: {table}.{column} {definition} is not in the baseline CREATE TABLE"
+
+    def test_every_statement_creates_a_table_index_or_view(self):
+        # The baseline is CREATE TABLE / CREATE INDEX plus the single
+        # ``dq_rules_core`` compatibility view (CREATE OR REPLACE VIEW) —
+        # still declarative, no ALTER/backfill UPDATE.
         for stmt in _statements(_baseline()):
             assert stmt.startswith(
-                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")
-            ), f"baseline statement is neither a CREATE TABLE nor a CREATE INDEX: {stmt[:120]}"
+                ("CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS", "CREATE OR REPLACE VIEW")
+            ), f"unexpected baseline statement kind: {stmt[:120]}"
 
     def test_no_table_is_created_twice(self):
         created = _created_tables(_baseline())
         assert len(created) == len(set(created))
 
-    def test_oltp_table_set_matches_the_delta_fallback_baseline(self):
-        # Lakebase and Delta-fallback deploys must serve the same tables: the
-        # app picks a backend at startup and the services are backend-agnostic,
-        # so a table present in only one baseline breaks that deploy shape.
+    def test_oltp_table_set_is_derived_from_postgres_baseline(self):
+        # The view is not a table and must stay out of OLTP_TABLE_NAMES
+        # (it is never cleared by the reset sweep nor version-tracked).
         assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+        assert "dq_rules_core" not in OLTP_TABLE_NAMES
+
+
+class TestDqRulesCoreView:
+    """The dqx-core-compatible read view over approved ``dq_resolved_rules``."""
+
+    def test_baseline_creates_exactly_one_view(self):
+        views = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert len(views) == 1
+        assert "{schema}.dq_rules_core" in views[0]
+
+    def test_view_exposes_the_columns_dqx_core_reads(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        # Column names + order must match dqx-core's LakebaseChecksStorageHandler.
+        for col in (
+            "AS name",
+            "AS criticality",
+            'AS "check"',
+            "AS filter",
+            "AS run_config_name",
+            "AS user_metadata",
+            "AS message_expr",
+            "AS created_at",
+            "AS rule_fingerprint",
+            "AS rule_set_fingerprint",
+        ):
+            assert col in view, f"view is missing projection {col!r}"
+
+    def test_view_only_reads_approved_rows(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert "WHERE status = 'approved'" in view
+
+    def test_view_maps_run_config_name_to_table_fqn(self):
+        (view,) = [s for s in _statements(_baseline()) if s.startswith("CREATE OR REPLACE VIEW")]
+        assert "a.table_fqn" in view and "AS run_config_name" in view
+
+    def test_set_fingerprint_algorithm_matches_dqx_core(self):
+        # The view computes rule_set_fingerprint as sha256 of the JSON array of
+        # sorted per-rule fingerprints (the set_fp CTE). That must equal
+        # dqx-core's compute_rule_set_fingerprint so external callers see a
+        # value consistent with the core library. This guards against drift
+        # between the SQL reproduction and core's Python for the common
+        # (non-for_each_column) case.
+        import hashlib
+        import json as _json
+
+        from databricks.labs.dqx.rule import compute_rule_fingerprint
+        from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
+
+        checks = [
+            {"name": "a", "criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+            {
+                "name": "b",
+                "criticality": "warn",
+                "check": {"function": "is_not_null", "arguments": {"column": "email"}},
+            },
+        ]
+        stored_fps = [compute_rule_fingerprint(c) for c in checks]
+        # Python emulation of the view's SQL string_agg:
+        #   '[' || string_agg('"'||fp||'"', ', ' ORDER BY fp) || ']'
+        view_input = "[" + ", ".join(f'"{fp}"' for fp in sorted(stored_fps)) + "]"
+        # (json.dumps(sorted(fps)) renders identically — verified below.)
+        assert view_input == _json.dumps(sorted(stored_fps))
+        view_fp = hashlib.sha256(view_input.encode("utf-8")).hexdigest()
+
+        assert view_fp == compute_rule_set_fingerprint_by_metadata(checks)
 
 
 class TestBaselineShape:
@@ -354,9 +466,9 @@ class TestMigrationsInjection:
         assert 9001 in bound_versions
         assert 9002 in bound_versions
         production_versions = {m.version for m in PG_MIGRATIONS}
-        assert not (set(bound_versions) & production_versions), (
-            "Injected runner leaked production-catalogue versions: " f"{set(bound_versions) & production_versions}"
-        )
+        assert not (
+            set(bound_versions) & production_versions
+        ), f"Injected runner leaked production-catalogue versions: {set(bound_versions) & production_versions}"
 
     def test_injected_list_is_snapshotted_defensively(self):
         """Mutating the caller's list after construction must not move the runner's view.
@@ -442,9 +554,7 @@ class TestApplyAtomicity:
             version=42,
             description="failing test",
             sql=(
-                "CREATE TABLE {schema}.t1 (id int);"
-                "CREATE TABLE {schema}.t2 (id int);"
-                "CREATE TABLE {schema}.t3 (id int);"
+                "CREATE TABLE {schema}.t1 (id int);CREATE TABLE {schema}.t2 (id int);CREATE TABLE {schema}.t3 (id int);"
             ),
         )
 

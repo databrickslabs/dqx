@@ -339,6 +339,20 @@ targets:
     # Note `sync.include` APPENDS to the base list rather than replacing it (unlike an environment
     # spec or a complex variable, which replace) — so this adds to the runner wheel instead of
     # shadowing it, and repeating the runner wheel here would duplicate the entry.
+    resources:
+      jobs:
+        dqx_runner:
+          tasks:
+            # Run the coverage-wrapping entry point instead of the pristine one. It calls the real
+            # runner and then persists coverage from ordinary code, with the task arguments already
+            # in sys.argv — so the upload destination resolves and delivery does not depend on a
+            # timer tick or on atexit firing. The entry point lives in the TEST-ONLY bootstrap wheel,
+            # so package_name switches with it and production source stays coverage-unaware.
+            - task_key: dqx_run
+              python_wheel_task:
+                package_name: dqx_mcp_coverage_bootstrap
+                entry_point: dqx-mcp-runner-coverage
+
     sync:
       include:
         - ".build/dqx_mcp_coverage_bootstrap-*.whl"
@@ -371,6 +385,12 @@ targets:
             value: "${var.runner_wheel_filename}"
           - name: DQX_VERSION
             value: "${var.dqx_version}"
+          # The app has no wheel entry point to wrap, so unlike the runner it still needs a periodic
+          # flush: it relies on a graceful SIGTERM plus atexit, and this bounds the loss if the
+          # platform's ~15s shutdown budget is exceeded. The bootstrap defaults this OFF because the
+          # runner's wrapping entry point persists deterministically instead.
+          - name: DQX_COVERAGE_CHECKPOINT_SECONDS
+            value: "15"
           - name: DQX_SWEEP_INTERVAL_SECONDS
             value: "0"
           # Notice a finished run sooner. get_run_result blocks server-side while the run is pending

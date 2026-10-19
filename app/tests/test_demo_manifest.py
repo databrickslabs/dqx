@@ -127,6 +127,24 @@ def test_dqx_native_scalars_live_in_parameters_not_body_arguments():
     assert saw_a_parameterised_rule, "expected at least one dqx_native rule with a scalar ParamSpec"
 
 
+def test_is_in_list_allowed_values_are_sql_quoted_literals():
+    # C1 regression: DQX's is_in_list resolves each `allowed` entry like a
+    # comparison limit — a BARE string is treated as a COLUMN reference, not a
+    # string literal (see check_funcs.is_in_list docstring). An unquoted enum
+    # therefore binds against a non-existent column and FAILS every run. Each
+    # enum value must be a single-quoted SQL string literal (e.g. "'US'").
+    is_in_list_rules = [r for r in m.RULES if r.body.get("function") == "is_in_list"]
+    assert is_in_list_rules, "expected at least one is_in_list rule in the demo manifest"
+    for r in is_in_list_rules:
+        allowed = next((p for p in r.parameters if p.name == "allowed"), None)
+        assert allowed is not None, f"{r.key}: is_in_list rule must declare an `allowed` parameter"
+        assert isinstance(allowed.value, list) and allowed.value, f"{r.key}: `allowed` must be a non-empty list"
+        for value in allowed.value:
+            assert (
+                isinstance(value, str) and value.startswith("'") and value.endswith("'") and len(value) >= 3
+            ), f"{r.key}: is_in_list enum {value!r} must be a single-quoted SQL string literal (e.g. \"'US'\")"
+
+
 def test_non_dqx_native_rules_declare_no_scalar_parameters():
     # Scalars-as-parameters is a dqx_native concern; sql/lowcode rules carry
     # their values inside the predicate / compiled AST, not `parameters`.

@@ -32,24 +32,40 @@ applied with the admin's OBO client (the app SP usually can't CAN_MANAGE a
 warehouse it doesn't own). All routes are ADMIN-gated.
 """
 
+import asyncio
+from functools import partial
 from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole, get_user_email
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
     get_compute_service,
     get_obo_ws,
+    get_setup_orchestrator,
     require_role,
 )
 from databricks_labs_dqx_app.backend.logger import logger
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    PROFILER_SAMPLE_KIND_DEFAULT,
+    PROFILER_SAMPLE_KIND_FULL,
+    PROFILER_SAMPLE_KIND_PERCENT,
+    PROFILER_SAMPLE_RECORDS_MAX,
+    PROFILER_SAMPLE_VALUE_DEFAULT,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService, resolve_warehouse_id
+from databricks_labs_dqx_app.backend.setup.models import StepState
+from databricks_labs_dqx_app.backend.setup.orchestrator import SetupOrchestrator
 
 router = APIRouter()
+
+# The app service principal's access could not be read (for example it was given through a
+# group); the warehouse may well work, so the administrator's choice is accepted.
+_TOLERATED_WAREHOUSE_CODES = frozenset({"warehouse_permission_unknown"})
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +177,67 @@ def _settings_out(app_settings: AppSettingsService) -> ComputeSettingsOut:
     )
 
 
+class ProfilerSampleOut(BaseModel):
+    """Current profiler sampling policy plus the bounds the UI needs."""
+
+    sample_kind: Literal["full", "records", "percent"]
+    sample_value: int
+    records_max: int = PROFILER_SAMPLE_RECORDS_MAX
+    default_kind: Literal["full", "records", "percent"] = PROFILER_SAMPLE_KIND_DEFAULT
+    default_value: int = PROFILER_SAMPLE_VALUE_DEFAULT
+
+
+class ProfilerSampleIn(BaseModel):
+    """New profiler sampling policy.
+
+    *sample_value* is required for ``records`` and ``percent`` and ignored for
+    ``full``. The kind decides which unit the value carries, so a row cap and a
+    percentage can never both be active.
+    """
+
+    sample_kind: Literal["full", "records", "percent"]
+    sample_value: int | None = Field(default=None, ge=1)
+
+
+@router.get(
+    # Readable by everyone who can run a profile, not just admins: the profiler
+    # page and the Profile tab hydrate their sampling control from this, and a
+    # 403 would leave a RULE_AUTHOR silently running with the UI's placeholder
+    # instead of the admin-configured policy. Only the PUT below is ADMIN-only.
+    "/profiler-sample",
+    response_model=ProfilerSampleOut,
+    operation_id="getProfilerSample",
+    dependencies=[require_role(*CAN_RUN_ROLES)],
+)
+def get_profiler_sample(
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+) -> ProfilerSampleOut:
+    """Return how much of a source table the profiler reads (Admin or Author)."""
+    sample = app_settings.get_profiler_sample()
+    return ProfilerSampleOut(sample_kind=sample.kind, sample_value=sample.value)
+
+
+@router.put(
+    "/profiler-sample",
+    response_model=ProfilerSampleOut,
+    operation_id="saveProfilerSample",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def save_profiler_sample(
+    body: ProfilerSampleIn,
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> ProfilerSampleOut:
+    """Set how much of a source table the profiler reads (admin only)."""
+    if body.sample_kind != PROFILER_SAMPLE_KIND_FULL and body.sample_value is None:
+        raise HTTPException(status_code=400, detail="sample_value is required unless sample_kind is 'full'.")
+    if body.sample_kind == PROFILER_SAMPLE_KIND_PERCENT and not 1 <= (body.sample_value or 0) <= 100:
+        raise HTTPException(status_code=400, detail="sample_value must be between 1 and 100 for a percentage sample.")
+
+    saved = app_settings.save_profiler_sample(body.sample_kind, body.sample_value or 0, user_email=email)
+    return ProfilerSampleOut(sample_kind=saved.kind, sample_value=saved.value)
+
+
 @router.get(
     "/settings",
     response_model=ComputeSettingsOut,
@@ -180,10 +257,12 @@ def get_compute_settings(
     operation_id="saveComputeSettings",
     dependencies=[require_role(UserRole.ADMIN)],
 )
-def save_compute_settings(
+async def save_compute_settings(
     body: ComputeSettingsIn,
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     email: Annotated[str, Depends(get_user_email)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    orchestrator: Annotated[SetupOrchestrator, Depends(get_setup_orchestrator)],
 ) -> ComputeSettingsOut:
     """Update one or both compute settings (admin only)."""
     if body.sql_warehouse_id is None and body.jobs_compute is None:
@@ -191,7 +270,29 @@ def save_compute_settings(
             status_code=400, detail="At least one of sql_warehouse_id or jobs_compute must be provided."
         )
     if body.sql_warehouse_id is not None:
+        warehouse_id = body.sql_warehouse_id.strip()
+        if warehouse_id:
+            bound = orchestrator.bound
+            if bound is None:
+                raise HTTPException(status_code=503, detail="DQX Studio storage is not configured.")
+            # Probe the candidate read-only: the audience is only granted access once it is adopted.
+            step = await asyncio.to_thread(
+                partial(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws, include_audience=False)
+            )
+            if step.state != StepState.PASSED and step.code not in _TOLERATED_WAREHOUSE_CODES:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": step.code,
+                        "summary": step.summary,
+                        "instructions": step.instructions,
+                    },
+                )
         app_settings.save_sql_warehouse_id(body.sql_warehouse_id, user_email=email)
+        if warehouse_id and (bound := orchestrator.bound) is not None:
+            adopted = await asyncio.to_thread(bound.checkers.check_warehouse, warehouse_id, reader_ws=obo_ws)
+            if adopted.state != StepState.PASSED:
+                logger.warning("Saved the SQL warehouse, but Studio users may not be able to use it yet")
     if body.jobs_compute is not None:
         app_settings.save_jobs_compute(body.jobs_compute.model_dump(), user_email=email)
     logger.info("Saved compute settings (by=%s)", email)
@@ -214,7 +315,7 @@ async def get_warehouse_access(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     warehouse_id: Annotated[str, Query(description="Warehouse id to check")],
 ) -> WarehouseAccessOut:
-    """Check whether the app SP has CAN_USE on *warehouse_id*.
+    """Check whether the app SP has CAN_MANAGE on *warehouse_id*.
 
     Never raises for the access-read itself — returns ``"unknown"`` when the ACL
     can't be read so the UI shows no false warning.
@@ -237,12 +338,12 @@ async def grant_warehouse_access(
     svc: Annotated[ComputeService, Depends(get_compute_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> WarehouseAccessOut:
-    """Grant the app SP CAN_USE on the warehouse via the admin's OBO client."""
+    """Grant the app SP CAN_MANAGE on the warehouse via the admin's OBO client."""
     wid = (body.warehouse_id or "").strip()
     if not wid:
         raise HTTPException(status_code=400, detail="warehouse_id is required.")
     try:
-        await svc.grant_warehouse_can_use_async(wid, grantor_ws=obo_ws)
+        await svc.grant_warehouse_manage_async(wid, grantor_ws=obo_ws)
     except Exception as e:
         logger.warning("Failed to grant warehouse access on %s: %s", wid, e, exc_info=True)
         raise HTTPException(

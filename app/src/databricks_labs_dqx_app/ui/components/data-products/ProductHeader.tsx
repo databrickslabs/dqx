@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import {
   useDeleteDataProduct,
   useRunDataProduct,
+  useGetDraftRunSampleLimit,
   useRevertDataProduct,
   useApproveMonitoredTable,
   useRejectMonitoredTable,
@@ -34,7 +35,6 @@ import {
   useApproveDataProductWithRationale,
   useRejectDataProductWithRationale,
 } from "@/lib/api-custom";
-import { RunSampleDialog } from "@/components/common/RunSampleDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { isRunStale, useRequireDraftRunBeforeSubmit } from "@/hooks/use-require-draft-run";
@@ -59,8 +59,6 @@ import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/dr
 import { ExportDialog } from "@/components/ExportDialog";
 import {
   LifecycleDecisionNote,
-  LifecycleRationaleDialog,
-  type LifecycleAction,
 } from "@/components/LifecycleRationaleDialog";
 import { cn } from "@/lib/utils";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
@@ -312,26 +310,26 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   const canApprove = perms.canApproveRules;
 
   const runMut = useRunDataProduct({ mutation: { onError: () => {} } });
+  // Draft runs scan the admin-configured sample (default 0 = whole
+  // table). "Run now" (approved) always scans the full table (sample_size 0).
+  // While the limit query has not resolved (loading OR error) this is
+  // `undefined`, NOT 0 — so the draft run OMITS sample_size and the backend
+  // resolves the configured draft default. Never fall back to 0 here: 0 = full
+  // table and the backend can't rescue it.
+  const draftSampleQuery = useGetDraftRunSampleLimit();
+  const draftSampleSize = draftSampleQuery.data?.data.draft_run_sample_limit;
   const deleteMut = useDeleteDataProduct({ mutation: { onError: () => {} } });
   const approveMut = useApproveDataProductWithRationale({ mutation: { onError: () => {} } });
   const rejectMut = useRejectDataProductWithRationale({ mutation: { onError: () => {} } });
   const revertMut = useRevertDataProduct({ mutation: { onError: () => {} } });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [lifecycleDialog, setLifecycleDialog] = useState<LifecycleAction | null>(null);
+  // Reject discards the author's pending submission, so it keeps a plain
+  // yes/no confirm (no rationale textarea). Submit and approve fire directly.
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  // Scope (full table vs an N-row sample) is asked for AFTER pressing a run
-  // button, not parked in the header: it only applies to the run being
-  // started. The pending source deliberately OUTLIVES the close — resetting it
-  // would swap the dialog's labels mid fade-out.
-  const [scopePrompt, setScopePrompt] = useState<RunDataProductInSource>(RunDataProductInSource.approved);
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const promptScope = (source: RunDataProductInSource) => {
-    setScopePrompt(source);
-    setScopeOpen(true);
-  };
   // Bridges the gap between a successful submit and the next 4s poll
   // catching the new RUNNING run set, so the button doesn't flash back to
   // "Run now" for a moment after submission.
@@ -424,12 +422,15 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
   const handleRun = async (
     source: (typeof RunDataProductInSource)[keyof typeof RunDataProductInSource],
-    sampleSize: number,
+    sampleSize: number | undefined,
   ) => {
     setBusyRun(true);
     try {
       const resp = await runMut.mutateAsync({
         productId: product.product_id,
+        // `sample_size: undefined` is dropped from the JSON body, so the
+        // backend receives None and resolves the configured draft default —
+        // draft runs are never accidentally sent as full-table (sample_size 0).
         data: { source, sample_size: sampleSize },
       });
       // The run endpoint returns 200 even when EVERY member failed to launch
@@ -462,7 +463,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // Run draft is demoted. Draft wins as primary when both exist (item 59).
   const draftIsPrimary = canRunDraft;
 
-  const handleRunDraft = async (sampleSize: number) => {
+  const handleRunDraft = async (sampleSize: number | undefined) => {
     // Spans the whole save-then-run sequence, not just the run mutation, so a
     // fast double-click can't fire a second save while the first is still in
     // flight (the save leg predates `handleRun`'s own `busyRun` toggle).
@@ -531,7 +532,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
           {canEdit && (
             <Button
-              onClick={() => setLifecycleDialog("submit")}
+              onClick={() => void editState.handleSubmit(null)}
               disabled={editState.submitPending || needsDraftRun || (submitDisabledNoChanges && !editState.canSave)}
               size="sm"
               className="gap-2"
@@ -555,7 +556,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
           {canRun &&
             (draftIsPrimary ? (
               <Button
-                onClick={() => promptScope(RunDataProductInSource.draft)}
+                onClick={() => void handleRunDraft(draftSampleSize)}
                 disabled={runPending}
                 size="sm"
                 className="gap-2"
@@ -566,7 +567,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
               </Button>
             ) : (
               <Button
-                onClick={() => promptScope(RunDataProductInSource.approved)}
+                onClick={() => void handleRun(RunDataProductInSource.approved, 0)}
                 disabled={runPending || runnableCount === 0}
                 size="sm"
                 className="gap-2"
@@ -615,7 +616,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              promptScope(RunDataProductInSource.approved);
+                              void handleRun(RunDataProductInSource.approved, 0);
                             }}
                             disabled={runPending || runnableCount === 0}
                             className="gap-2"
@@ -638,7 +639,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                           <DropdownMenuItem
                             onSelect={(e) => {
                               e.preventDefault();
-                              promptScope(RunDataProductInSource.draft);
+                              void handleRunDraft(draftSampleSize);
                             }}
                             disabled={runPending || !canRunDraft}
                             className="gap-2"
@@ -672,36 +673,6 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
             onOpenChange={setExportOpen}
             fetchDqx={() => exportDataProduct(product.product_id, "dqx")}
             fetchOdcs={() => exportDataProduct(product.product_id, "odcs")}
-          />
-          <RunSampleDialog
-            open={scopeOpen}
-            onOpenChange={(next) => {
-              if (!next) setScopeOpen(false);
-            }}
-            title={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftScopeTitle")
-                : t("dataProducts.runNowScopeTitle")
-            }
-            description={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftScopeHint")
-                : t("dataProducts.runNowScopeHint")
-            }
-            confirmLabel={
-              scopePrompt === RunDataProductInSource.draft
-                ? t("dataProducts.runDraftAction")
-                : t("dataProducts.runNowButton")
-            }
-            busy={runPending}
-            // A draft run is a spot-check, so it opens on a 1000-row sample;
-            // a published run opens on the full table it has always scanned.
-            defaultKind={scopePrompt === RunDataProductInSource.draft ? "records" : "full"}
-            onConfirm={(sampleSize) => {
-              setScopeOpen(false);
-              if (scopePrompt === RunDataProductInSource.draft) void handleRunDraft(sampleSize);
-              else void handleRun(scopePrompt, sampleSize);
-            }}
           />
         </div>
       </div>
@@ -768,7 +739,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => setLifecycleDialog("approve")}
+                    onClick={() => void handleApprove(null)}
                     className="gap-1.5 h-7 text-xs text-emerald-700 border-emerald-400 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950"
                   >
                     {approveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -778,7 +749,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
                     variant="outline"
                     size="sm"
                     disabled={lifecycleBusy}
-                    onClick={() => setLifecycleDialog("reject")}
+                    onClick={() => setRejectConfirmOpen(true)}
                     className="gap-1.5 h-7 text-xs text-red-700 border-red-400 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
                   >
                     {rejectMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -793,45 +764,28 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
 
       {!isPending && <LifecycleDecisionNote rationale={product.last_decision_rationale} />}
 
-      <LifecycleRationaleDialog
-        open={lifecycleDialog !== null}
-        onOpenChange={(open) => {
-          if (!open) setLifecycleDialog(null);
-        }}
-        action={lifecycleDialog ?? "submit"}
-        title={
-          lifecycleDialog === "approve"
-            ? t("dataProducts.approveAction")
-            : lifecycleDialog === "reject"
-              ? t("dataProducts.rejectConfirmTitle")
-              : willAutoApprove
-                ? t("dataProducts.saveAndPublishButton")
-                : t("dataProducts.submitForReviewButton")
-        }
-        description={
-          lifecycleDialog === "reject"
-            ? t("dataProducts.rejectConfirmDescription", { name: product.name })
-            : t("dataProducts.pendingBannerBody")
-        }
-        confirmLabel={
-          lifecycleDialog === "approve"
-            ? t("dataProducts.approveAction")
-            : lifecycleDialog === "reject"
-              ? t("dataProducts.rejectAction")
-              : willAutoApprove
-                ? t("dataProducts.saveAndPublishButton")
-                : t("dataProducts.submitForReviewButton")
-        }
-        destructive={lifecycleDialog === "reject"}
-        busy={lifecycleBusy}
-        onConfirm={(rationale) => {
-          const action = lifecycleDialog;
-          setLifecycleDialog(null);
-          if (action === "approve") void handleApprove(rationale);
-          else if (action === "reject") void handleReject(rationale);
-          else if (action === "submit") void editState.handleSubmit(rationale);
-        }}
-      />
+      <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("dataProducts.rejectConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("dataProducts.rejectConfirmDescription", { name: product.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={lifecycleBusy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                void handleReject(null);
+              }}
+            >
+              {t("dataProducts.rejectAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

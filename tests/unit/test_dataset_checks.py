@@ -1,11 +1,20 @@
+import math
+from datetime import date, datetime
+from enum import IntEnum
 from unittest.mock import create_autospec
 
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import types
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_no_gaps_per_time_window
+from databricks.labs.dqx.check_funcs import (
+    sql_query,
+    is_data_fresh_per_time_window,
+    has_no_gaps_per_time_window,
+    is_in_distribution,
+)
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError, MissingParameterError
 
@@ -363,6 +372,325 @@ def test_aggr_matches_dataset_invalid_tolerance_exceptions(abs_tolerance, rel_to
                 "rel_tolerance": rel_tolerance,
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — validation rules
+# ---------------------------------------------------------------------------
+# Column-type validation (unsupported Spark types) requires a real DataFrame
+# and belongs in integration tests. The unit tests below cover every input
+# validation performed by the outer function call.
+
+
+_VALID_DISTRIBUTION = {"A": 0.5, "B": 0.5}
+_VALID_DISTANCE = 0.1
+
+
+def _call(**overrides):
+    """Invoke is_in_distribution with valid defaults and per-test overrides."""
+    kwargs = {"column": "col1", "distribution": _VALID_DISTRIBUTION, "distance": _VALID_DISTANCE}
+    kwargs.update(overrides)
+    return is_in_distribution(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "overrides, expected_message",
+    [
+        ({"distribution": None}, "'distribution' is not provided."),
+        ({"distance": None}, "'distance' is not provided."),
+    ],
+)
+def test_is_in_distribution_missing_required_params(overrides, expected_message):
+    with pytest.raises(MissingParameterError) as excinfo:
+        _call(**overrides)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "distribution, expected_message",
+    [
+        ([("A", 0.5), ("B", 0.5)], "'distribution' must be a dict, got list instead."),
+        ("A=0.5,B=0.5", "'distribution' must be a dict, got str instead."),
+        (42, "'distribution' must be a dict, got int instead."),
+        ((("A", 0.5),), "'distribution' must be a dict, got tuple instead."),
+    ],
+)
+def test_is_in_distribution_distribution_not_a_dict(distribution, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution=distribution)
+    assert str(excinfo.value) == expected_message
+
+
+def test_is_in_distribution_empty_distribution():
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={})
+    assert str(excinfo.value) == "'distribution' must not be empty."
+
+
+def test_is_in_distribution_none_key():
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={None: 0.5, "A": 0.5})
+    assert str(excinfo.value) == "'distribution' must not contain None as a key."
+
+
+def test_is_in_distribution_none_value():
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={"A": None, "B": 0.5})
+    assert str(excinfo.value) == "'distribution' must not contain None as a value (key='A')."
+
+
+@pytest.mark.parametrize(
+    "bad_value, expected_message",
+    [
+        ("0.5", "'distribution' value for key 'A' must be a number, got str instead."),
+        ([0.5], "'distribution' value for key 'A' must be a number, got list instead."),
+        ({"nested": 0.5}, "'distribution' value for key 'A' must be a number, got dict instead."),
+        (True, "'distribution' value for key 'A' must be a number, got bool instead."),
+    ],
+)
+def test_is_in_distribution_non_numeric_values(bad_value, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={"A": bad_value, "B": 0.5})
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "bad_distance, expected_message",
+    [
+        ("0.5", "'distance' must be a number, got str instead."),
+        ([0.5], "'distance' must be a number, got list instead."),
+        ({"nested": 0.5}, "'distance' must be a number, got dict instead."),
+        (True, "'distance' must be a number, got bool instead."),
+    ],
+)
+def test_is_in_distribution_non_numeric_distance(bad_distance, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distance=bad_distance)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "bad_value, expected_message",
+    [
+        (math.inf, "'distribution' value inf for key 'A' must be finite (no inf, -inf, or nan)."),
+        (-math.inf, "'distribution' value -inf for key 'A' must be finite (no inf, -inf, or nan)."),
+        (math.nan, "'distribution' value nan for key 'A' must be finite (no inf, -inf, or nan)."),
+    ],
+)
+def test_is_in_distribution_non_finite_values(bad_value, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={"A": bad_value, "B": 0.5})
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "bad_value, expected_message",
+    [
+        (-0.1, "'distribution' value -0.1 for key 'A' must be non-negative."),
+        (-1.0, "'distribution' value -1.0 for key 'A' must be non-negative."),
+        (-0.0001, "'distribution' value -0.0001 for key 'A' must be non-negative."),
+    ],
+)
+def test_is_in_distribution_negative_values(bad_value, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution={"A": bad_value, "B": 0.5})
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "distribution, expected_message",
+    [
+        (
+            {"A": 0.7, "B": 0.5},
+            "'distribution' values sum (1.2) is greater than 1.",
+        ),
+        (
+            {"A": 1.0, "B": 0.5, "C": 0.5},
+            "'distribution' values sum (2.0) is greater than 1.",
+        ),
+        (
+            {"A": 1.01},
+            "'distribution' values sum (1.01) is greater than 1.",
+        ),
+    ],
+)
+def test_is_in_distribution_sum_greater_than_one(distribution, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution=distribution)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "distance, expected_message",
+    [
+        (-0.0001, "'distance' must be between 0 and 1 (inclusive), got -0.0001."),
+        (-0.1, "'distance' must be between 0 and 1 (inclusive), got -0.1."),
+        (-1.0, "'distance' must be between 0 and 1 (inclusive), got -1.0."),
+        (1.0001, "'distance' must be between 0 and 1 (inclusive), got 1.0001."),
+        (1.1, "'distance' must be between 0 and 1 (inclusive), got 1.1."),
+        (2.0, "'distance' must be between 0 and 1 (inclusive), got 2.0."),
+    ],
+)
+def test_is_in_distribution_distance_out_of_range(distance, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distance=distance)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "distribution, expected_message",
+    [
+        (
+            {"A": 0.5, 1: 0.5},  # str + int
+            "'distribution' keys must be homogeneous (all of the same type), got mixed types: ['int', 'str'].",
+        ),
+        (
+            {"A": 0.5, True: 0.5},  # str + bool
+            "'distribution' keys must be homogeneous (all of the same type), got mixed types: ['bool', 'str'].",
+        ),
+        (
+            {1: 0.5, 2.0: 0.5},  # int + float (also unsupported key type — but heterogeneity fires first)
+            "'distribution' keys must be homogeneous (all of the same type), got mixed types: ['float', 'int'].",
+        ),
+    ],
+)
+def test_is_in_distribution_heterogeneous_keys(distribution, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution=distribution)
+    assert str(excinfo.value) == expected_message
+
+
+@pytest.mark.parametrize(
+    "distribution, expected_message",
+    [
+        (
+            {"US": 0.5, "us": 0.5},
+            "'distribution' keys collide after case-insensitive normalisation: {'us': ['US', 'us']}.",
+        ),
+        (
+            {"Hello": 0.5, "HELLO": 0.5},
+            "'distribution' keys collide after case-insensitive normalisation: {'hello': ['Hello', 'HELLO']}.",
+        ),
+        (
+            {"a": 0.3, "A": 0.3, "b": 0.4},
+            "'distribution' keys collide after case-insensitive normalisation: {'a': ['a', 'A']}.",
+        ),
+    ],
+)
+def test_is_in_distribution_case_insensitive_key_collision(distribution, expected_message):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        _call(distribution=distribution, case_sensitive=False)
+    assert str(excinfo.value) == expected_message
+
+
+def test_is_in_distribution_case_sensitive_keys_do_not_collide():
+    """When case_sensitive is True (default), keys differing only in case must not raise."""
+    # This exercises the negative side of the collision rule — no error should be raised
+    # for these keys under the default case-sensitive semantics. The call may still return
+    # something falsy (until the implementation lands), but must not raise.
+    try:
+        _call(distribution={"US": 0.5, "us": 0.5}, case_sensitive=True)
+    except InvalidParameterError:
+        pytest.fail("case_sensitive=True must not treat 'US' and 'us' as colliding keys")
+
+
+# ---------------------------------------------------------------------------
+# is_in_distribution — column/key type compatibility (mocked DataFrame)
+# ---------------------------------------------------------------------------
+# These exercise the compatibility check that runs inside the returned closure via a
+# create_autospec(DataFrame) whose select().schema advertises the desired column type.
+# This keeps the coverage fast and Spark-free while still going through the public API.
+
+
+class _Grade(IntEnum):
+    A = 1
+    B = 2
+
+
+class _MyStr(str):
+    pass
+
+
+def _mock_df_with_column_type(column_type: types.DataType, column_name: str = "col1") -> DataFrame:
+    """Return a DataFrame mock whose select().schema[0].dataType is *column_type*."""
+    selected = create_autospec(DataFrame, instance=True)
+    selected.schema = types.StructType([types.StructField(column_name, column_type, True)])
+    df = create_autospec(DataFrame, instance=True)
+    df.select.return_value = selected
+    return df
+
+
+@pytest.mark.parametrize(
+    "column_type, distribution, key_type_display, expected_python_type_display",
+    [
+        # str keys against a non-string column
+        (types.IntegerType(), {"A": 0.5, "B": 0.5}, "str", "int"),
+        (types.BooleanType(), {"A": 0.5, "B": 0.5}, "str", "bool"),
+        (types.DateType(), {"A": 0.5, "B": 0.5}, "str", "date"),
+        # int keys against a non-integer column
+        (types.StringType(), {1: 0.5, 2: 0.5}, "int", "str"),
+        (types.BooleanType(), {1: 0.5, 2: 0.5}, "int", "bool"),
+        (types.DateType(), {1: 0.5, 2: 0.5}, "int", "date"),
+        # bool keys must not silently match integer columns even though bool subclasses int
+        (types.IntegerType(), {True: 0.5, False: 0.5}, "bool", "int"),
+        (types.LongType(), {True: 0.5, False: 0.5}, "bool", "int"),
+        (types.StringType(), {True: 0.5, False: 0.5}, "bool", "str"),
+        # date keys against a non-date column
+        (types.IntegerType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "int"),
+        (types.StringType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}, "date", "str"),
+    ],
+)
+def test_is_in_distribution_column_key_type_mismatch(
+    column_type: types.DataType,
+    distribution: dict,
+    key_type_display: str,
+    expected_python_type_display: str,
+):
+    """The compatibility check must reject mismatched key/column type families with a clear error."""
+    _, apply = is_in_distribution("col1", distribution, distance=_VALID_DISTANCE)
+    df = _mock_df_with_column_type(column_type)
+    with pytest.raises(InvalidParameterError) as excinfo:
+        apply(df)
+    assert str(excinfo.value) == (
+        f"Column 'col1' type '{column_type.simpleString()}' is not compatible with "
+        f"'distribution' key type '{key_type_display}'; expected '{expected_python_type_display}'."
+    )
+
+
+@pytest.mark.parametrize(
+    "column_type, distribution",
+    [
+        # Compatible subclasses: IntEnum values must be accepted against every integer-family column
+        (types.ByteType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.ShortType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.IntegerType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        (types.LongType(), {_Grade.A: 0.5, _Grade.B: 0.5}),
+        # Compatible subclasses: str subclass against string/char columns
+        (types.StringType(), {_MyStr("A"): 0.5, _MyStr("B"): 0.5}),
+        (types.CharType(3), {_MyStr("A"): 0.5, _MyStr("B"): 0.5}),
+        # datetime is a subclass of date — accepted against DateType
+        (types.DateType(), {datetime(2024, 1, 1): 0.5, datetime(2024, 2, 1): 0.5}),
+        # Exact matches
+        (types.BooleanType(), {True: 0.5, False: 0.5}),
+        (types.IntegerType(), {1: 0.5, 2: 0.5}),
+        (types.StringType(), {"A": 0.5, "B": 0.5}),
+        (types.DateType(), {date(2024, 1, 1): 0.5, date(2024, 2, 1): 0.5}),
+    ],
+)
+def test_is_in_distribution_column_key_type_compatible(
+    column_type: types.DataType,
+    distribution: dict,
+):
+    """Compatible key/column combinations — including subclasses like IntEnum — must pass the compat
+    check without raising an InvalidParameterError."""
+    _, apply = is_in_distribution("col1", distribution, distance=_VALID_DISTANCE)
+    df = _mock_df_with_column_type(column_type)
+    # apply() proceeds past the compat check and interacts with the mocked DataFrame; the only
+    # thing under test here is that the compat check itself does not reject the input.
+    try:
+        apply(df)
+    except InvalidParameterError as exc:
+        pytest.fail(f"compat check unexpectedly rejected {distribution!r} for {column_type}: {exc}")
 
 
 @pytest.mark.parametrize("column", ["*", F.expr("*"), F.col("*")])

@@ -168,6 +168,8 @@ class ResultFacets:
     By-table row set too. *schemas* values are the two-part ``catalog.schema``
     identity (see ``metrics_utils.schema_of``) so a ``sales`` schema in two
     catalogs stays distinct.
+
+    *outcomes* keeps only ``passed`` (no failing rows) or ``failed`` checks.
     """
 
     dimensions: tuple[str, ...] = ()
@@ -177,6 +179,7 @@ class ResultFacets:
     tables: tuple[str, ...] = ()
     catalogs: tuple[str, ...] = ()
     schemas: tuple[str, ...] = ()
+    outcomes: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
         return bool(
@@ -187,6 +190,7 @@ class ResultFacets:
             or self.tables
             or self.catalogs
             or self.schemas
+            or self.outcomes
         )
 
 
@@ -277,6 +281,8 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
         return False
     if facets.columns and not any(c in facets.columns for c in row.columns):
         return False
+    if facets.outcomes and ("failed" if row.failed > 0 else "passed") not in facets.outcomes:
+        return False
     return True
 
 
@@ -295,9 +301,25 @@ class _GroupAcc:
     # no resolver is supplied (breach evaluation is off).
     breached: bool = False
     breach_criticality: str | None = None
+    # The frozen per-run pass threshold (%) to DISPLAY for this group. A group
+    # can pool rows from several runs whose frozen thresholds differ; we surface
+    # the threshold stamped on the NEWEST run in the group (by run_date), which
+    # mirrors how the by-rule group takes its display label from the newest run.
+    # Stays None when no contributing row carried a frozen threshold (legacy runs).
+    pass_threshold: int | None = None
+    # None = nothing seen yet; "" = an undated contributing row (sorts oldest).
+    threshold_run_date: str | None = None
 
     def add(self, row: CheckResultRow, resolve: ThresholdResolver | None = None) -> None:
         self.failed += row.failed
+        # Track the newest contributing run across ALL rows and adopt THAT run's
+        # frozen threshold — even when it is None (the pass-threshold feature was
+        # turned off after an earlier run had it on). Strict '>' lets the
+        # first-seen row win ties, matching the by-rule label's tie behaviour.
+        row_date = row.run_date or ""  # undated rows sort oldest
+        if self.threshold_run_date is None or row_date > self.threshold_run_date:
+            self.threshold_run_date = row_date
+            self.pass_threshold = row.pass_threshold  # may be None — newest run wins
         if row.total is not None:
             self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
@@ -347,6 +369,7 @@ def _group_rows(
             total_tests=acc.total,
             breached=acc.breached,
             breach_criticality=acc.breach_criticality,
+            pass_threshold=acc.pass_threshold,
         )
         for label, acc in groups.items()
     ]

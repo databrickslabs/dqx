@@ -25,6 +25,7 @@ from pyspark.sql.types import DoubleType, LongType, StringType, StructField, Str
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import escape_sql_string_literal
 
 # Single source of truth for the per-group prompt. The instructions, input-field semantics, and
 # output-field rules below are rendered into one text prompt by *_render_ai_query_prompt_header*
@@ -129,17 +130,6 @@ _CONFIDENCE_HIGH_BELOW = 0.05
 _CONFIDENCE_MIXED_BELOW = 0.15
 
 
-def _sql_string_literal(value: str) -> str:
-    """Escape a string for safe interpolation inside a single-quoted Spark SQL literal.
-
-    Spark SQL treats backslash as an escape character inside string literals, so both the
-    backslash and the single quote must be escaped (not just the quote). Used for
-    *redact_columns* values — already validated as non-empty strings — before they are embedded
-    in the pattern-key SQL built by *_pattern_spark_expr*.
-    """
-    return value.replace("\\", "\\\\").replace("'", "''")
-
-
 def _build_ai_query_response_format() -> str:
     """Build the ai_query ``responseFormat`` JSON schema from *_PROMPT_OUTPUT_FIELDS*.
 
@@ -214,7 +204,7 @@ class ExplanationContext:
         )
 
 
-def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
+def pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Column:
     """Pattern key as a pure-Spark-SQL expression (no Python UDFs shipped to executors).
 
     Drops null and redacted entries, takes the top-2 features by |value| desc,
@@ -225,7 +215,7 @@ def _pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> C
     """
     col = f"`{contributions_col}`"
     if redact_set:
-        redact_arr = "array(" + ", ".join(f"'{_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
+        redact_arr = "array(" + ", ".join(f"'{escape_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
         entries = (
             f"filter(map_entries({col}), e -> e.value is not null " f"and not array_contains({redact_arr}, e.key))"
         )
@@ -509,7 +499,7 @@ def _call_llm_for_groups_ai_query(
             f"ai_query('{endpoint}', __prompt, "
             f"modelParameters => named_struct('max_tokens', {int(llm_cfg.max_tokens)}, "
             f"'temperature', {float(llm_cfg.temperature)}), "
-            f"responseFormat => '{_sql_string_literal(_AI_QUERY_RESPONSE_FORMAT)}', "
+            f"responseFormat => '{escape_sql_string_literal(_AI_QUERY_RESPONSE_FORMAT)}', "
             f"failOnError => false)"
         ),
     )
@@ -720,7 +710,7 @@ def add_explanation_column(
     """
     redact_set = frozenset(ctx.redact_columns)
     segment_str = _format_segment(segment_values, redact_set)
-    df_with_pattern = df.withColumn(ctx.pattern_col, _pattern_spark_expr(ctx.contributions_col, redact_set))
+    df_with_pattern = df.withColumn(ctx.pattern_col, pattern_spark_expr(ctx.contributions_col, redact_set))
     return _add_explanation_column_ai_query(
         df_with_pattern, ctx, segment_str, is_ensemble, drift_summary, endpoint_reachable=endpoint_reachable
     )

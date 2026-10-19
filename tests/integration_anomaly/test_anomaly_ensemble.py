@@ -149,7 +149,12 @@ def test_ensemble_with_feature_contributions(
         enable_confidence_std=True,
     )
 
-    # Check both confidence and contributions exist in _dq_info (array of structs; anomaly is first element)
-    row = result_df.collect()[0]
+    # Check both confidence and contributions exist in _dq_info (array of structs; anomaly is first element).
+    # Select the injected outlier (transaction_id=2) explicitly instead of collect()[0]: collect() order is
+    # not guaranteed, and contributions are gated to anomalous rows (see compute_gated_shap_contributions),
+    # so a non-anomalous row is intentionally None. The outlier is populated in both the gated and the
+    # small-sample fallback paths, which makes the assertion deterministic.
+    rows_by_id = {row["transaction_id"]: row for row in result_df.collect()}
+    row = rows_by_id[2]
     assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
     assert row["_dq_info"][0]["anomaly"]["contributions"] is not None

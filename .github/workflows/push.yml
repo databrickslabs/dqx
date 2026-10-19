@@ -172,6 +172,10 @@ jobs:
         run: make app-check
         working-directory: .
 
+      - name: Verify Marketplace package
+        run: make app-check-marketplace
+        working-directory: .
+
       - name: Run app backend tests
         run: make app-test
         working-directory: .

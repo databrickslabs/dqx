@@ -111,6 +111,7 @@ docs-install: ## Install docs site dependencies (yarn --frozen-lockfile)
 
 docs-build: ## Build the documentation site (pydoc-markdown + docusaurus build)
 	$(UV_RUN) --group docs pydoc-markdown
+	yarn --cwd docs/dqx test
 	yarn --cwd docs/dqx build
 
 docs-serve-dev: ## Run docusaurus dev server with hot reload
@@ -132,6 +133,24 @@ app-install: ## Install app frontend dependencies (yarn --frozen-lockfile)
 
 app-build: ## Build app: openapi → orval → vite (CI parity)
 	cd app && $(UV_RUN) python scripts/build_app.py
+
+app-build-marketplace: app-build ## Build the Databricks Marketplace source folder
+	cd app && $(UV_RUN) python scripts/build_marketplace.py
+
+app-check-marketplace: ## Validate Marketplace generation and signed-release tooling
+	cd app && $(UV_RUN) --group test pytest tests/test_build_marketplace.py tests/test_release_marketplace.py -v
+	@tracked="$$(git ls-files 'app/marketplace/**')"; \
+	deleted="$$(git diff --name-only --diff-filter=D -- 'app/marketplace/**')"; \
+	test -z "$$tracked" || test "$$tracked" = "$$deleted" || \
+	  (echo "Generated Marketplace artifacts must not be tracked on main."; exit 1)
+
+app-release-marketplace: ## Create and verify a local signed Marketplace release branch and tag (TAG=studio-vX.Y.Z)
+	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=studio-vX.Y.Z"; exit 1)
+	app/scripts/release_marketplace.sh $(TAG)
+
+app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
+	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
+	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ --studio-integration -v
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
@@ -201,7 +220,7 @@ app-test-ui: ## Run app UI unit tests (bun test)
 # adding an ``all`` extra later "just works".
 app-test: ## Run app backend pytest suite (K=<expr> filter, COV=1 for coverage)
 	cd app && (uv sync --group test --extra all 2>/dev/null || uv sync --group test)
-	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/ai_eval \
+	cd app && $(UV_RUN) --group test pytest tests/ --ignore=tests/ai_eval --ignore=tests/integration \
 	  $(if $(K),-k "$(K)") \
 	  $(if $(COV),--cov=src/databricks_labs_dqx_app/backend --cov-report=term-missing --cov-report=xml:coverage-app.xml)
 
@@ -368,15 +387,21 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 #
 # ONE-TIME prerequisite per catalog (the bundle does not manage the pre-existing
 # catalog, so it cannot grant catalog-level access): grant USE CATALOG on the
-# chosen catalog to the app SP, the task-runner SP, and ``account users``.
-# See app/DEPLOYMENT.md.
+# chosen catalog to the app SP (plus CREATE SCHEMA), the task-runner SP, and the
+# configured UC audience principal (the studio_user_group, or ``account users`` in
+# broad mode). See app/DEPLOYMENT.md.
 #
 # Usage: make app-deploy PROFILE=my-profile TARGET=dev
 #        make app-deploy PROFILE=my-profile TARGET=dev \
 #                        BUNDLE_VARS='--var=catalog_name=foo'
+#        make app-deploy PROFILE=my-profile TARGET=dev \
+#                        STUDIO_PREFIX=dqx_studio_acme STUDIO_USER_GROUP=data-team
+#        make app-deploy PROFILE=my-profile TARGET=dev STUDIO_USER_GROUP=users  # broad mode
 #
 # BUNDLE_VARS forwards arbitrary ``--var key=value`` arguments to ``bundle
-# deploy`` and ``bundle run``.
+# deploy`` and ``bundle run``. STUDIO_PREFIX sets the ``prefix`` variable (storage
+# names) and STUDIO_USER_GROUP sets ``studio_user_group``; an explicit --var in
+# BUNDLE_VARS always wins.
 #
 # FORCE=1 appends ``--force`` to ``bundle deploy``. Use it when the deploy
 # aborts because a resource was modified in the workspace UI since the last
@@ -384,13 +409,30 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 # overwrites the remote copy with the bundle's local definition. This DROPS
 # any in-UI edits, so only set it once you've confirmed the local version is
 # the one you want to ship.
-app-deploy: app-check-cli app-build ## Build, deploy bundle, and start app (FORCE=1 to overwrite remote edits)
+app-deploy: app-check-cli $(if $(filter release,$(TARGET)),,app-build) ## Deploy and start app; release target uses prebuilt tag (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
-	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(BUNDLE_VARS)
-	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(BUNDLE_VARS)
+	cd app && databricks bundle deploy -p $(PROFILE) -t $(TARGET) $(if $(FORCE),--force) $(STUDIO_BUNDLE_VARS)
+	cd app && databricks bundle run $(APP_NAME) -p $(PROFILE) -t $(TARGET) $(STUDIO_BUNDLE_VARS)
 
 APP_NAME ?= dqx-studio
+
+# Studio storage prefix / audience. STUDIO_USER_GROUP=users selects broad mode:
+# workspace ACLs use `users`, UC grants use `account users`. An explicit
+# studio_user_group in BUNDLE_VARS also suppresses the broad UC principal.
+studio_prefix_var = $(if $(STUDIO_PREFIX),$(if $(findstring prefix=,$(BUNDLE_VARS)),,--var prefix=$(STUDIO_PREFIX)))
+studio_group_var = $(if $(STUDIO_USER_GROUP),$(if $(findstring studio_user_group,$(BUNDLE_VARS)),,--var studio_user_group=$(STUDIO_USER_GROUP)))
+studio_uc_var = $(if $(filter users,$(STUDIO_USER_GROUP)),$(if $(findstring studio_uc_principal,$(BUNDLE_VARS))$(findstring studio_user_group,$(BUNDLE_VARS)),,--var "studio_uc_principal=account users"))
+STUDIO_BUNDLE_VARS = $(studio_prefix_var) $(studio_group_var) $(studio_uc_var) $(BUNDLE_VARS)
+
+# The broad-mode keyword is exactly lowercase `users`; any other casing would be
+# deployed as a (non-existent) dedicated group, so reject it before deploying.
+studio_group_lower = $(subst U,u,$(subst S,s,$(subst E,e,$(subst R,r,$(STUDIO_USER_GROUP)))))
+ifneq ($(filter app-deploy,$(MAKECMDGOALS)),)
+ifneq ($(and $(filter users,$(studio_group_lower)),$(filter-out users,$(STUDIO_USER_GROUP))),)
+$(error Broad mode requires lowercase STUDIO_USER_GROUP=users)
+endif
+endif
 
 ##@ Build & lockfiles
 
@@ -451,4 +493,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

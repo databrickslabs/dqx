@@ -21,8 +21,8 @@ function CreateRulesLanding() {
   const { canCreateRules } = usePermissions();
   if (!canCreateRules) return <Navigate to="/rules/active" replace />;
 
-  // Bulk import (YAML / data contract) lives under Rules Registry at
-  // ``/registry-rules/import``.
+  // Bulk YAML import lives under Rules Registry at ``/registry-rules/import``;
+  // ODCS data contracts are imported from ``/monitored-tables/import``.
   //
   // The standalone "Validate table schema" tile was also removed: schema
   // validation and other reference-table checks (foreign_key, …) are

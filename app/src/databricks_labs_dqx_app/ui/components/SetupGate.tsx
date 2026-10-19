@@ -1,0 +1,156 @@
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseMutationOptions,
+} from "@tanstack/react-query";
+
+import { useState } from "react";
+import axios from "axios";
+import {
+  configureSetup,
+  getGetSetupStatusQueryKey,
+  getSetupStatus,
+  overrideSetupStep,
+  reconcileSetup,
+  type SetupStepId,
+} from "@/lib/api";
+import {
+  setupView,
+  unacknowledgedWarnings,
+  warningKey,
+} from "@/lib/setup-state";
+import {
+  acknowledgeWarnings,
+  readAcknowledgedWarnings,
+} from "@/lib/setup-acknowledgements";
+import { useWorkspaceHost } from "@/lib/api-custom";
+import {
+  SetupStatusUnavailable,
+  SetupWizard,
+} from "@/components/setup/SetupWizard";
+import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
+import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
+
+type SetupGateProps = {
+  children: React.ReactNode;
+};
+
+const SETUP_POLL_INTERVAL_MS = 2_000;
+const SETUP_WAITING_POLL_INTERVAL_MS = 10_000;
+
+export function setupPollingInterval(
+  state: "checking" | "initializing" | "setup_required" | "ready" | undefined,
+  isReconciling = false,
+): number | false {
+  if (isReconciling || state === "checking" || state === "initializing") {
+    return SETUP_POLL_INTERVAL_MS;
+  }
+  return state === "setup_required" ? SETUP_WAITING_POLL_INTERVAL_MS : false;
+}
+
+export function setupPollingInBackground(): boolean {
+  return true;
+}
+
+export function invalidateSetupStatus(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: getGetSetupStatusQueryKey(),
+  });
+}
+
+export function reconciliationMutationOptions(
+  queryClient: QueryClient,
+  mutationFn: () => Promise<unknown>,
+): UseMutationOptions<unknown, Error, void, unknown> {
+  return {
+    mutationFn,
+    onSettled: () => invalidateSetupStatus(queryClient),
+  };
+}
+
+/** Extract the backend error code from a failed configuration request. */
+export function configurationErrorCode(error: unknown): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const detail: unknown = error.response?.data?.detail;
+  if (typeof detail === "object" && detail !== null && "code" in detail) {
+    const { code } = detail;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Blocks Studio routes until the authenticated caller's setup readiness is
+ * known. Remediation actions are rendered only from the backend report.
+ */
+export function SetupGate({ children }: SetupGateProps) {
+  const queryClient = useQueryClient();
+  const reconciliation = useMutation(
+    reconciliationMutationOptions(queryClient, () => reconcileSetup()),
+  );
+  const override = useMutation({
+    mutationFn: (stepId: SetupStepId) =>
+      overrideSetupStep({ step_id: stepId }),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
+  const configuration = useMutation({
+    mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
+    onSettled: () => invalidateSetupStatus(queryClient),
+  });
+  const setupStatus = useQuery({
+    queryKey: getGetSetupStatusQueryKey(),
+    queryFn: () => getSetupStatus(),
+    refetchInterval: (query) =>
+      setupPollingInterval(
+        query.state.data?.data.report.state,
+        reconciliation.isPending || override.isPending,
+      ),
+    refetchIntervalInBackground: setupPollingInBackground(),
+  });
+  const [acknowledged, setAcknowledged] = useState(readAcknowledgedWarnings);
+  const workspaceHost = useWorkspaceHost({
+    query: {
+      enabled:
+        setupStatus.data?.data.can_manage === true &&
+        setupStatus.data.data.report.state !== "ready",
+    },
+  });
+  // While readiness is being checked, show the same "Loading DQX Studio" spinner
+  // AuthGuard uses, so the check reads as one continuous load — no flash of the
+  // "Checking Studio readiness" card, and no blank/black screen.
+  if (setupStatus.isPending) return <StudioLoadingScreen />;
+  if (!setupStatus.data) return <SetupStatusUnavailable />;
+
+  const view = setupView(setupStatus.data.data, acknowledged);
+  if (view.kind === "ready") return <>{children}</>;
+
+  const onAcknowledgeWarnings = () =>
+    setAcknowledged((current) =>
+      acknowledgeWarnings(
+        current,
+        unacknowledgedWarnings(view.report, current).map(warningKey),
+      ),
+    );
+
+  return (
+    <SetupWizard
+      view={view}
+      workspaceHost={workspaceHost.data?.workspace_host}
+      isReconciling={reconciliation.isPending}
+      onReconcile={() => reconciliation.mutate()}
+      reconciliationFailed={reconciliation.isError || override.isError}
+      onOverride={(stepId) => override.mutate(stepId)}
+      isOverriding={override.isPending}
+      onAcknowledgeWarnings={onAcknowledgeWarnings}
+      onConfigure={(values) => configuration.mutate(values)}
+      isConfiguring={configuration.isPending}
+      configurationError={
+        configuration.isError
+          ? (configurationErrorCode(configuration.error) ?? "default")
+          : undefined
+      }
+    />
+  );
+}

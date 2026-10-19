@@ -52,6 +52,7 @@ from .registry_models import (
 )
 from .registry_seed_map import derive_slots_and_parameters
 from .routes.v1.check_functions import _introspect_check_functions
+from .sanitization import replace_control_characters
 from .sql_utils import strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ def _sanitize_name_fragment(value: str) -> str:
     but we sanitize defensively before embedding them in a display string that
     may be logged or stored as a tag value (CWE-117).
     """
-    return "".join(ch for ch in value if ch >= " ")
+    return replace_control_characters(value, replacement="")
 
 
 def _derive_rule_name(function: str, mapping: ColumnMappingGroup) -> str:

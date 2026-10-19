@@ -97,6 +97,53 @@ def test_get_metrics_with_checks_escapes_single_quotes():
     assert metrics == expected
 
 
+def test_check_metrics_expr_escapes_single_quotes_with_backslash():
+    """Single quotes must be escaped as \\' — ANSI '' doubling is not honoured by Spark.
+
+    Spark's parser runs with *spark.sql.parser.escapedStringLiterals* false, where a doubled ''
+    pair is dropped outright rather than unescaped: a check named "it's_valid" was reported as
+    "its_valid". The round-trip is covered by an integration test; this pins the emitted SQL.
+
+    ``test_get_metrics_with_checks_escapes_single_quotes`` above cannot catch this: it builds its
+    expectation from the same production helper, so it holds whatever the escaping does.
+    """
+    expr = DQMetricsObserver().get_metrics(["it's_valid"])[-1]
+
+    # Every occurrence of the name — in the JSON literal and in each aggregate's exists()
+    # comparison — must use the backslash form, and no ANSI-doubled pair may remain anywhere.
+    assert "it\\'s_valid" in expr
+    assert "it''s_valid" not in expr
+    assert "''" not in expr
+
+
+def test_check_metrics_expr_escapes_backslashes():
+    """Backslashes must be doubled, or the parser consumes them.
+
+    Without this, the backslash JSON-encoding adds for an embedded double quote is eaten and the
+    emitted value is malformed JSON (``{"check_name":"he said "hi""}``).
+    """
+    expr = DQMetricsObserver().get_metrics(['he said "hi"'])[-1]
+
+    # json.dumps produces \" for the embedded quotes; the SQL literal must carry \\" so the parser
+    # leaves a single backslash behind for the JSON decoder.
+    assert '\\\\"hi\\\\"' in expr
+
+
+def test_check_metrics_expr_escapes_backslash_in_comparison_literal():
+    """The exists() comparison literal (check_name_escaped), not only the JSON literal, must double
+    a backslash in the check name.
+
+    ``test_check_metrics_expr_escapes_backslashes`` pins only the JSON side (the ``\\\\"`` from an
+    embedded double quote). A regression that mis-escaped only the comparison literal (e.g. leaving a
+    single backslash) would slip past it and be caught solely by the live-Spark integration test.
+    """
+    expr = DQMetricsObserver().get_metrics(["a\\b"])[-1]
+
+    # Both the errors and warnings aggregates compare x.name against the escaped literal; the
+    # backslash must be doubled so Spark's parser leaves one behind to match the real column name.
+    assert expr.count("x.name = 'a\\\\b'") == 2
+
+
 def test_get_metrics_with_checks_empty_list():
     observer = DQMetricsObserver()
     metrics = observer.get_metrics([])

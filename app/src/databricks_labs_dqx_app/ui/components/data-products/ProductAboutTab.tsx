@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { formatDateShort } from "@/lib/format-utils";
 import type { DataProductOut } from "@/lib/api";
 import type { EditProductState } from "@/components/data-products/useEditProductState";
@@ -12,35 +12,6 @@ interface Props {
   product: DataProductOut;
   editState: EditProductState;
   canEdit: boolean;
-}
-
-/** Status pill for the Details panel — same wording as the collections table. */
-function StatusPill({ status }: { status: string }) {
-  const { t } = useTranslation();
-  switch (status) {
-    case "approved":
-      return <Badge variant="default" className="text-[10px]">{t("dataProducts.statusApproved")}</Badge>;
-    case "pending_approval":
-      return (
-        <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
-          {t("dataProducts.statusPendingApproval")}
-        </Badge>
-      );
-    case "rejected":
-      return (
-        <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">
-          {t("dataProducts.statusRejected")}
-        </Badge>
-      );
-    case "modified":
-      return (
-        <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-600">
-          {t("dataProducts.statusModified")}
-        </Badge>
-      );
-    default:
-      return <Badge variant="secondary" className="text-[10px]">{t("dataProducts.statusDraft")}</Badge>;
-  }
 }
 
 /** Read-only provenance panel — mirrors the rule About tab's Details column.
@@ -53,7 +24,7 @@ function DetailsPanel({ product }: { product: DataProductOut }) {
       <dl className="grid grid-cols-[130px_1fr] gap-x-4 gap-y-2 text-xs">
         <dt className="text-muted-foreground uppercase tracking-wide">{t("dataProducts.aboutStatus")}</dt>
         <dd>
-          <StatusPill status={product.display_status} />
+          <StatusBadge status={product.status} />
         </dd>
 
         <dt className="text-muted-foreground uppercase tracking-wide">{t("dataProducts.aboutVersion")}</dt>

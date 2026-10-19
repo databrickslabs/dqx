@@ -411,6 +411,7 @@ def test_save_checks_with_variables():
     mock_handler.save.assert_called_once_with(
         [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}],
         config,
+        None,
     )
 
 
@@ -429,7 +430,26 @@ def test_save_checks_variables_none():
 
     engine.save_checks(raw_checks, config, variables=None)
 
-    mock_handler.save.assert_called_once_with(raw_checks, config)
+    mock_handler.save.assert_called_once_with(raw_checks, config, None)
+
+
+def test_save_checks_forwards_custom_check_functions():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [{"criticality": "error", "check": {"function": "custom_func", "arguments": {"column": "id"}}}]
+    custom_check_functions = {"custom_func": lambda column: column}
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config, custom_check_functions=custom_check_functions)
+
+    mock_handler.save.assert_called_once_with(raw_checks, config, custom_check_functions)
 
 
 def test_save_checks_with_engine_default_variables():
@@ -453,6 +473,7 @@ def test_save_checks_with_engine_default_variables():
     mock_handler.save.assert_called_once_with(
         [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}}],
         config,
+        None,
     )
 
 
@@ -477,6 +498,7 @@ def test_save_checks_per_call_overrides_engine_defaults():
     mock_handler.save.assert_called_once_with(
         [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}}],
         config,
+        None,
     )
 
 

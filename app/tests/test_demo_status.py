@@ -75,3 +75,37 @@ def test_is_running_false_when_updated_at_unparseable():
     store = DemoStatusStore(settings)
     store.set(DemoStatus("running", "trend", "building", "", "not-a-timestamp"))
     assert store.is_running() is False
+
+
+def _store_with_memory() -> tuple[DemoStatusStore, dict[str, str]]:
+    settings = create_autospec(AppSettingsService, instance=True)
+    stored: dict[str, str] = {}
+    settings.save_setting.side_effect = lambda k, v, **kw: stored.__setitem__(k, v)
+    settings.get_setting.side_effect = lambda k: stored.get(k)
+    return DemoStatusStore(settings), stored
+
+
+def test_get_reports_stale_running_as_failed():
+    # The status endpoint returns get(), so a seed killed by a restart must stop
+    # showing as in progress once stale — not only stop blocking new deploys.
+    store, _ = _store_with_memory()
+    store.set(DemoStatus("running", "profile", "Profiling", _ago_iso(3 * 60 * 60), _ago_iso(3 * 60 * 60)))
+    got = store.get()
+    assert got.state == "failed"
+    assert got.phase == "profile"
+    assert "interrupted" in got.message
+
+
+def test_mark_interrupted_if_running_rewrites_a_recent_running_status():
+    store, stored = _store_with_memory()
+    store.set(DemoStatus("running", "profile", "Profiling", _now_iso(), _now_iso()))
+    assert store.mark_interrupted_if_running() is True
+    assert store.get().state == "failed"
+    assert '"failed"' in stored[DEMO_STATUS_KEY]
+
+
+def test_mark_interrupted_if_running_leaves_terminal_status_alone():
+    store, _ = _store_with_memory()
+    store.set(DemoStatus("succeeded", "done", "Done", _now_iso(), _now_iso()))
+    assert store.mark_interrupted_if_running() is False
+    assert store.get().state == "succeeded"

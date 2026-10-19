@@ -13,12 +13,12 @@ by ``ApplyRulesService``).
 Mirrors :class:`~databricks_labs_dqx_app.backend.services.rules_catalog_service.RulesCatalogService`'s
 shape (status machine, history recording, dialect-portable SQL via the
 executor helpers) but operates on the registry tables instead of
-per-table ``dq_quality_rules``.
+per-table ``dq_resolved_rules``.
 """
 
 import json
 import logging
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime, timezone
 from typing import Any, cast, get_args
 from uuid import uuid4
@@ -41,7 +41,12 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    DeferredTaskRunner,
+    OwnedObject,
+    canonicalize_owner,
+    fill_owner_display_names_from_cache,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, WhereIn
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -147,6 +152,25 @@ class RegistryService:
     def count(self) -> int:
         """Total registry rules, any status (homepage stat card)."""
         return self._sql.count(self._table)
+
+    def fill_owner_display_names(
+        self,
+        objects: Sequence[OwnedObject],
+        *,
+        defer: DeferredTaskRunner,
+        mark_unverified: Callable[[OwnedObject], None] | None = None,
+    ) -> None:
+        """Fill NULL ``owner_display_name`` on *objects* from cache; resolve the rest off the request path.
+
+        Imported rules take their ``owner`` straight from the contract/YAML (an
+        email) and can keep a NULL display name that renders as a raw email.
+        See :func:`fill_owner_display_names_from_cache` — resolved names are
+        written back to the rules table so later reads have them, and an
+        explicitly-set name is never overwritten.
+        """
+        fill_owner_display_names_from_cache(
+            objects, self._sp_ws, self._sql, self._table, defer=defer, mark_unverified=mark_unverified
+        )
 
     def list_rules(
         self,
@@ -589,8 +613,11 @@ class RegistryService:
         # Resolve the owner's display name at write time when the caller did
         # not already supply one (the principal picker does). Best-effort — a
         # group / unresolvable owner or SCIM failure stores NULL.
+        # An imported free-text owner (e.g. a mis-cased email) is replaced by
+        # the matched principal's canonical identity; unmatched owners are kept.
         if owner_display_name is None:
-            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
+            canonical, owner_display_name = canonicalize_owner(resolved_owner, self._sp_ws)
+            resolved_owner = canonical or resolved_owner
         rule = RegistryRule(
             rule_id=uuid4().hex[:16],
             mode=mode,
@@ -696,6 +723,7 @@ class RegistryService:
         owner: str | None = None,
         owner_display_name: str | None = None,
         author_kind: AuthorKind | None = None,
+        clear_polarity: bool = False,
     ) -> RegistryRule:
         """Update a registry rule's LIVE ``dq_rules`` row in place.
 
@@ -716,6 +744,11 @@ class RegistryService:
         (e.g. a human accepts an AI-suggested field on an otherwise
         human-authored draft, or vice versa) — omit it to leave the rule's
         existing provenance untouched.
+
+        A *polarity* of ``None`` leaves the stored polarity unchanged unless
+        *clear_polarity* is set. The editor sends an explicit null when the
+        rule's check has no polarity (a native function without ``negate``),
+        e.g. after switching a SQL rule to ``is_not_in_list``.
         """
         rule = self._get(rule_id)
         if rule is None:
@@ -732,6 +765,8 @@ class RegistryService:
             rule.definition = definition
         if polarity is not None:
             rule.polarity = polarity
+        elif clear_polarity:
+            rule.polarity = None
         if user_metadata is not None:
             rule.user_metadata = dict(user_metadata)
         if owner is not None:
@@ -739,7 +774,8 @@ class RegistryService:
             # Owner changed without an explicit display name → resolve it at
             # write time (best-effort). An explicitly-supplied name below wins.
             if owner_display_name is None:
-                rule.owner_display_name = resolve_owner_display_name(owner, self._sp_ws)
+                canonical, rule.owner_display_name = canonicalize_owner(owner, self._sp_ws)
+                rule.owner = canonical or owner
         if owner_display_name is not None:
             rule.owner_display_name = owner_display_name
         if author_kind is not None:
