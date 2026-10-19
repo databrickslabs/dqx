@@ -1,0 +1,71 @@
+# Dedicated ODCS v3.x fixture exercising the five `type: library` quality metrics
+# (rowCount, nullValues, missingValues, invalidValues, duplicateValues) end-to-end
+# against a real DataFrame. Kept separate from sample_datacontract.yaml so it doesn't
+# perturb the fixed rule counts / expected-rule lists asserted against that fixture
+# elsewhere (see tests/integration/test_datacontract_integration.py and
+# tests/unit/test_datacontract_generator.py).
+
+kind: DataContract
+apiVersion: v3.0.2
+id: urn:datacontract:tests:library_metrics
+name: Library Metrics Test Contract
+version: 1.0.0
+status: active
+
+schema:
+  - name: customers
+    physicalType: table
+    description: Customer records used to exercise ODCS type:library quality metrics end-to-end.
+
+    properties:
+      # duplicateValues (mustBe: 0) -> row-level-flagging is_unique dataset check
+      - name: customer_id
+        physicalType: STRING
+        logicalType: string
+        required: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+
+      # nullValues (mustBe: 0) -> row-level is_not_null check
+      - name: email
+        physicalType: STRING
+        logicalType: string
+        quality:
+          - type: library
+            metric: nullValues
+            mustBe: 0
+
+      # invalidValues (mustBe: 0) -> row-level is_in_list check
+      - name: status
+        physicalType: STRING
+        logicalType: string
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            arguments:
+              validValues:
+                - ACTIVE
+                - INACTIVE
+
+      # missingValues (mustBeGreaterThan, a strict threshold) -> sql_query fallback
+      - name: phone
+        physicalType: STRING
+        logicalType: string
+        quality:
+          - type: library
+            metric: missingValues
+            mustBeGreaterThan: 3
+            arguments:
+              missingValues:
+                - null
+                - ""
+                - N/A
+
+    # rowCount (mustBeGreaterOrEqualTo) -> dataset-level aggregate check, schema-level entry
+    quality:
+      - type: library
+        metric: rowCount
+        mustBeGreaterOrEqualTo: 10

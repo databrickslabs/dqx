@@ -130,3 +130,25 @@ def test_execute_warns_and_still_writes_when_no_lineage_edges_found(monkeypatch,
         "found no lineage edges for 'cat.sch.src'" in record.getMessage() and "best-effort" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_execute_escapes_single_quotes_in_the_inlined_table_name(monkeypatch) -> None:
+    """A table name with an apostrophe is inlined as *'o\\'brien'*: Spark concatenates a doubled
+    *''* into *obrien*, so the lineage walk would silently look up the wrong table."""
+    monkeypatch.setattr(lineage_mod, "save_dataframe_as_table", lambda df, cfg: None)
+    monkeypatch.setattr(lineage_mod, "_document_table", lambda **_: None)
+
+    spark = create_autospec(SparkSession, instance=True)
+    spark.createDataFrame.return_value = _mock_empty_dataframe()
+    spark.sql.return_value = _mock_empty_dataframe()
+
+    action = CollectLineageAction(
+        output_config=OutputConfig(location="cat.sch.lineage"),
+        config=LineageActionConfig(column_upstream=None, column_downstream=None),
+    )
+    action.execute(_make_context(input_location="cat.sch.o'brien"), _make_services(spark=spark))
+
+    queries = [call.args[0] for call in spark.sql.call_args_list]
+    assert queries
+    assert all("'cat.sch.o\\'brien'" in query for query in queries)
+    assert not any("o''brien" in query for query in queries)
