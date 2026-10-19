@@ -720,7 +720,7 @@ For a non-`mustBe: 0` threshold, `duplicateValues` counts the number of *distinc
 </Admonition>
 
 <Tabs>
-  <TabItem value="YAML" label="Single column (property-level)" default>
+  <TabItem value="single_column" label="Single column (property-level)" default>
     ```yaml
     properties:
       - name: order_id
@@ -732,7 +732,7 @@ For a non-`mustBe: 0` threshold, `duplicateValues` counts the number of *distinc
             mustBe: 0   # → row-level is_unique(columns=["order_id"])
     ```
   </TabItem>
-  <TabItem value="YAML" label="Composite key (schema-level)">
+  <TabItem value="composite_key" label="Composite key (schema-level)">
     ```yaml
     schema:
       - name: order_lines
