@@ -1,8 +1,9 @@
-"""Run a setup step's GRANT statements as the signed-in administrator.
+"""Run GRANT statements as the signed-in user.
 
-The statements come only from the setup checks that display them, never from the
-client. Each one runs on its own so a failure doesn't stop the rest, and failures are
-reported as a small set of codes; raw error text is never returned or logged.
+Used by setup steps and by the schedule preflight. The statements come only from the
+server-side checks that display them, never from the client. Each one runs on its own
+so a failure doesn't stop the rest, and failures are reported as a small set of codes;
+raw error text is never returned or logged.
 """
 
 import logging
@@ -57,9 +58,9 @@ def grant_error_code(error: Exception) -> GrantErrorCode:
     """
     if isinstance(error, PermissionDenied):
         return "permission_denied"
-    if isinstance(error, NotFound):
-        return "not_found"
-    if isinstance(error, _WAREHOUSE_ERRORS):
+    # The Statement Execution API only answers 404 when the warehouse itself can't be found;
+    # a missing catalog, schema or principal comes back as a failed statement instead.
+    if isinstance(error, (NotFound, *_WAREHOUSE_ERRORS)):
         return "warehouse_unavailable"
     if isinstance(error, SqlStatementError):
         if error.sqlstate in _PERMISSION_SQLSTATES:
@@ -82,23 +83,29 @@ def grant_error_code(error: Exception) -> GrantErrorCode:
 def run_grant_statements(statements: Sequence[str], executor: SqlExecutor | None) -> GrantRun:
     """Run each GRANT statement once through *executor*, continuing past failures.
 
+    Once the warehouse is unavailable, the remaining statements are reported as
+    *warehouse_unavailable* without being attempted, rather than each waiting out the
+    warehouse again.
+
     Args:
-        statements: Statements built by the setup checks; anything that isn't a GRANT is skipped.
-        executor: The signed-in administrator's SQL executor, or None when none could be built.
+        statements: Statements built by the server-side checks; anything that isn't a GRANT is skipped.
+        executor: The signed-in user's SQL executor, or None when none could be built.
 
     Returns:
         How many statements ran and which ones failed, with sanitized error codes.
     """
     grants = [statement for statement in statements if statement.startswith(GRANT_PREFIX)]
     failed: list[SetupGrantFailure] = []
+    warehouse_unavailable = executor is None
     for statement in grants:
-        if executor is None:
+        if executor is None or warehouse_unavailable:
             failed.append(SetupGrantFailure(statement=statement, error_code="warehouse_unavailable"))
             continue
         try:
             executor.execute_no_schema(statement.rstrip().removesuffix(";"))
         except Exception as error:
             code = grant_error_code(error)
-            logger.warning(f"A setup GRANT statement could not be run ({type(error).__name__}, {code})")
+            logger.warning(f"A GRANT statement could not be run ({type(error).__name__}, {code})")
             failed.append(SetupGrantFailure(statement=statement, error_code=code))
+            warehouse_unavailable = code == "warehouse_unavailable"
     return GrantRun(applied=len(grants) - len(failed), total=len(grants), failed=tuple(failed))

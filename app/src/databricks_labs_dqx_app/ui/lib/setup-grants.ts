@@ -1,8 +1,14 @@
-import type {
-  SetupApplyGrantsResponse,
-  SetupGrantFailureErrorCode,
-  SetupStepId,
-} from "./api";
+import type { SetupGrantFailureErrorCode, SetupStepId } from "./api";
+
+/** The result of running GRANT statements, as setup and schedule grants both return it. */
+export type GrantRunResult = {
+  applied: number;
+  total: number;
+  failed?: readonly {
+    statement: string;
+    error_code: SetupGrantFailureErrorCode;
+  }[];
+};
 
 /** What to show under a step's GRANT statements after running them. */
 export type GrantRunOutcome = {
@@ -24,7 +30,7 @@ export function grantStatementsSql(statements: readonly string[]): string {
 
 /** Describe a finished run, or null when every statement ran. */
 export function grantRunOutcome(
-  result: SetupApplyGrantsResponse,
+  result: GrantRunResult,
 ): GrantRunOutcome | null {
   const failed = result.failed ?? [];
   if (failed.length === 0) return null;

@@ -46,6 +46,8 @@ type SqlCodeBlockProps = {
   sql: string;
   /** Runs the SQL; the Run icon is hidden without it. */
   onRun?: () => void;
+  /** Tooltip and accessible name of the Run icon, when the default doesn't say enough. */
+  runLabel?: string;
   /** Shows a spinner on the Run icon and disables it. */
   isRunning?: boolean;
   /** Disables the Run icon without a spinner, for example while something else runs. */
@@ -88,6 +90,7 @@ function IconButton({
 export function SqlCodeBlock({
   sql,
   onRun,
+  runLabel: customRunLabel,
   isRunning = false,
   runDisabled = false,
   result,
@@ -113,7 +116,7 @@ export function SqlCodeBlock({
   };
 
   const copyLabel = copied ? t("common.copied") : t("common.copy");
-  const runLabel = t("sqlCodeBlock.run");
+  const runLabel = customRunLabel ?? t("sqlCodeBlock.run");
 
   return (
     <div className="space-y-2">

@@ -50,7 +50,17 @@
       "unverifiedPermissionsDescriptionCollection": "Studio n'a pas pu lire les autorisations de ces tables et ne peut donc pas savoir si vous pouvez configurer une planification. Réessayez ou demandez aux propriétaires des tables de la configurer.",
       "missingGrantsForTable": "Pour {{fqn}} :",
       "unverifiedConfigurationTitle": "Impossible de vérifier l'accès de la planification",
-      "unverifiedConfigurationDescription": "La configuration de Studio est incomplète (par exemple, il ne trouve pas le principal de service du job d'exécution des tâches), il ne peut donc pas vérifier si cette planification peut être configurée. Demandez à un administrateur Studio de consulter la page de configuration."
+      "unverifiedConfigurationDescription": "La configuration de Studio est incomplète (par exemple, il ne trouve pas le principal de service du job d'exécution des tâches), il ne peut donc pas vérifier si cette planification peut être configurée. Demandez à un administrateur Studio de consulter la page de configuration.",
+      "apply": {
+        "run": "Give the scheduler read access to these tables, using your Databricks access",
+        "partial": "Done: {{applied}} of {{total}}.",
+        "errors": {
+          "permission_denied": "You don't have permission to share these tables. Send the commands below to the table's owner, or to a Databricks workspace admin, and ask them to run them in the SQL editor. The schedule will work once they have.",
+          "warehouse_unavailable": "Studio couldn't reach a SQL warehouse to run these commands. Try again in a minute, or copy them and run them in the SQL editor.",
+          "not_found": "Something these commands refer to no longer exists, such as one of the tables or its schema. Click Try again to refresh the list.",
+          "unknown": "These commands couldn't be run. Copy them and run them in the SQL editor, or ask the table's owner or a Databricks workspace admin for help."
+        }
+      }
     }
   },
   "lifecycle": {

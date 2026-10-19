@@ -32,8 +32,10 @@ _STATEMENTS = (
             "permission_denied",
         ),
         (SqlStatementError("SQL execution failed: PERMISSION_DENIED: nope\nSQL: GRANT", None), "permission_denied"),
-        (NotFound("gone"), "not_found"),
-        (ResourceDoesNotExist("gone"), "not_found"),
+        # The Statement Execution API answers 404 when the warehouse itself is gone; a missing
+        # securable comes back as a failed statement instead.
+        (NotFound("gone"), "warehouse_unavailable"),
+        (ResourceDoesNotExist("gone"), "warehouse_unavailable"),
         (SqlStatementError("SQL execution failed: [SCHEMA_NOT_FOUND] x\nSQL: GRANT", "42704"), "not_found"),
         (SqlStatementError("SQL execution failed: [PRINCIPAL_DOES_NOT_EXIST] x\nSQL: GRANT", None), "not_found"),
         (TemporarilyUnavailable("warehouse starting"), "warehouse_unavailable"),
@@ -92,3 +94,17 @@ def test_without_a_sql_executor_every_statement_reports_the_warehouse() -> None:
 
     assert result.applied == 0
     assert [failure.error_code for failure in result.failed] == ["warehouse_unavailable"] * 3
+
+
+def test_once_the_warehouse_is_unavailable_the_remaining_statements_are_not_attempted() -> None:
+    executor = create_autospec(SqlExecutor, instance=True)
+    executor.execute_no_schema.side_effect = [None, TemporarilyUnavailable("warehouse starting")]
+
+    result = run_grant_statements(_STATEMENTS, executor)
+
+    assert executor.execute_no_schema.call_count == 2
+    assert result.applied == 1
+    assert result.failed == (
+        SetupGrantFailure(statement=_STATEMENTS[1], error_code="warehouse_unavailable"),
+        SetupGrantFailure(statement=_STATEMENTS[2], error_code="warehouse_unavailable"),
+    )

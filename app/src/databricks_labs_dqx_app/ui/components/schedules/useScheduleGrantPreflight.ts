@@ -1,5 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
-import { preflightScheduleGrants, type SchedulePreflightTableOut } from "@/lib/api";
+import { useQuery, useQueryClient, type QueryClient, type UseMutationOptions } from "@tanstack/react-query";
+import axios, { type AxiosError, type AxiosResponse } from "axios";
+import {
+  preflightScheduleGrants,
+  useApplyScheduleGrants,
+  type HTTPValidationError,
+  type ScheduleGrantApplyIn,
+  type ScheduleGrantApplyOut,
+  type SchedulePreflightOut,
+  type SchedulePreflightTableOut,
+} from "@/lib/api";
+import { grantRunOutcome, type GrantRunOutcome } from "@/lib/setup-grants";
 
 export interface ScheduleGrantPreflight {
   /** Tables the caller can't grant the scheduler service principals SELECT on. */
@@ -14,6 +24,12 @@ export interface ScheduleGrantPreflight {
   isFetching: boolean;
   /** Re-run the preflight (e.g. once the warehouse has started). */
   retry: () => void;
+  /** Run the missing catalog/schema grants for *missingGrantTables* with the user's own access. */
+  applyGrants: () => void;
+  /** True while those grants run. */
+  isApplying: boolean;
+  /** What went wrong in the last run, or null when nothing did (or nothing ran yet). */
+  applyOutcome: GrantRunOutcome | null;
 }
 
 /** Split preflight rows into denied (needs a MANAGE holder), missing scheduler
@@ -32,6 +48,40 @@ export function splitPreflightTables(
   return { blockedTables, missingGrantTables, unverifiedTables, hasGrantIssue };
 }
 
+/** React Query key of the preflight for *tableFqns*. */
+export function scheduleGrantPreflightQueryKey(tableFqns: readonly string[]) {
+  return ["scheduleGrantPreflight", tableFqns] as const;
+}
+
+/** Table names to send when running the missing grants: only the tables that list some.
+ *  The backend re-derives the statements from these names; no SQL is sent. */
+export function missingGrantTableFqns(missingGrantTables: readonly SchedulePreflightTableOut[]): string[] {
+  return missingGrantTables.map((table) => table.fqn);
+}
+
+/** After the grants run, show the backend's fresh check straight away, then refetch it. */
+export function applyScheduleGrantsCallbacks(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>,
+): UseMutationOptions<
+  AxiosResponse<ScheduleGrantApplyOut>,
+  AxiosError<HTTPValidationError>,
+  { data: ScheduleGrantApplyIn }
+> {
+  return {
+    onSuccess: (response) => {
+      queryClient.setQueryData<SchedulePreflightOut>(queryKey, response.data.preflight);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
+  };
+}
+
+/** Describe a request that failed before any statement ran. */
+export function applyScheduleGrantsFailure(error: unknown): GrantRunOutcome {
+  const unavailable = axios.isAxiosError(error) && error.response?.status === 503;
+  return { summary: null, failedSql: "", errorCodes: [unavailable ? "warehouse_unavailable" : "unknown"] };
+}
+
 /**
  * Schedule-grant preflight shared by every schedule form (table tab,
  * collection tab, New schedule page). Scheduled runs read tables as a
@@ -41,17 +91,34 @@ export function splitPreflightTables(
  * *enabled* should be gated on scheduling intent (a cron is set) as well as
  * edit rights: the preflight issues ownership reads plus paginated
  * grants.get_effective calls per table.
+ *
+ * The missing catalog/schema grants only run when the user asks for it
+ * (*applyGrants*); saving a schedule never runs them.
  */
 export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled: boolean): ScheduleGrantPreflight {
+  const queryClient = useQueryClient();
+  const queryKey = scheduleGrantPreflightQueryKey(tableFqns);
   const query = useQuery({
-    queryKey: ["scheduleGrantPreflight", tableFqns],
+    queryKey,
     queryFn: async () => (await preflightScheduleGrants({ table_fqns: [...tableFqns] })).data,
     enabled: enabled && tableFqns.length > 0,
     staleTime: 60_000,
   });
+  const apply = useApplyScheduleGrants({ mutation: applyScheduleGrantsCallbacks(queryClient, queryKey) });
+  const split = splitPreflightTables(query.data?.tables ?? []);
+  let applyOutcome: GrantRunOutcome | null = null;
+  if (apply.isSuccess) applyOutcome = grantRunOutcome(apply.data.data);
+  else if (apply.isError) applyOutcome = applyScheduleGrantsFailure(apply.error);
   return {
-    ...splitPreflightTables(query.data?.tables ?? []),
+    ...split,
     isFetching: query.isFetching,
-    retry: () => void query.refetch(),
+    retry: () => {
+      // A fresh check replaces the outcome of the last run.
+      apply.reset();
+      void query.refetch();
+    },
+    applyGrants: () => apply.mutate({ data: { table_fqns: missingGrantTableFqns(split.missingGrantTables) } }),
+    isApplying: apply.isPending,
+    applyOutcome,
   };
 }

@@ -22,7 +22,9 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
 import type { SchedulePreflightTableOut } from "@/lib/api";
+import { grantStatementsSql, type GrantRunOutcome } from "@/lib/setup-grants";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 
 type Entity = "table" | "collection";
@@ -108,9 +110,33 @@ function MissingGrantList({ grants }: { grants: NonNullable<SchedulePreflightTab
   );
 }
 
+/** What went wrong when the user ran the grants: how many ran, the statements
+ *  that didn't, and one plain message per reason. */
+function ApplyOutcomeNotice({ outcome }: { outcome: GrantRunOutcome }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive"
+    >
+      {outcome.summary && <p className="font-medium">{t("schedule.grantWarning.apply.partial", outcome.summary)}</p>}
+      {/* The messages point at "the commands below", so they come first. */}
+      {outcome.errorCodes.map((code) => (
+        <p key={code}>{t(`schedule.grantWarning.apply.errors.${code}`)}</p>
+      ))}
+      {outcome.failedSql && (
+        <div className="text-foreground">
+          <SqlCodeBlock sql={outcome.failedSql} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Amber card for tables whose catalog or schema Studio's service principals
  *  can't use yet. Lists the missing grants (per table for a collection), then
- *  every distinct GRANT statement once, for an owner to run. */
+ *  every distinct GRANT statement once. The user can copy them for an owner,
+ *  or run them with their own Databricks access. */
 function MissingGrantsNotice({ entity, preflight }: Props) {
   const { t } = useTranslation();
   const single = entity === "table";
@@ -146,9 +172,16 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
           ))
         )}
         <p className="text-xs font-medium">{t("schedule.grantWarning.missingGrantsInstructions")}</p>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-amber-500/40 bg-background/60 p-3 font-mono text-xs leading-relaxed">
-          {statements.join("\n")}
-        </pre>
+        <div className="text-foreground">
+          <SqlCodeBlock
+            sql={grantStatementsSql(statements)}
+            onRun={preflight.applyGrants}
+            runLabel={t("schedule.grantWarning.apply.run")}
+            isRunning={preflight.isApplying}
+            runDisabled={preflight.isFetching}
+            result={preflight.applyOutcome && <ApplyOutcomeNotice outcome={preflight.applyOutcome} />}
+          />
+        </div>
         <Button size="sm" variant="outline" onClick={preflight.retry} disabled={preflight.isFetching}>
           {t("schedule.grantWarning.retry")}
         </Button>

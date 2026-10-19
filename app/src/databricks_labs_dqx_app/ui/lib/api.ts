@@ -4376,6 +4376,53 @@ export interface ScheduleConfigOut {
 }
 
 /**
+ * Body of ``POST /schedule-grants/apply``: only table names, never SQL.
+
+The server re-derives the GRANT statements from its own preflight of these tables.
+ */
+export interface ScheduleGrantApplyIn {
+  /**
+   * Fully qualified names of the tables whose missing scheduler grants to run
+   * @minItems 1
+   * @maxItems 200
+   */
+  table_fqns: string[];
+}
+
+/**
+ * Outcome of running the missing scheduler grants as the signed-in user.
+ */
+export interface ScheduleGrantApplyOut {
+  /** Fresh preflight taken after the grants ran */
+  preflight: SchedulePreflightOut;
+  applied: number;
+  total: number;
+  failed?: ScheduleGrantFailureOut[];
+}
+
+export type ScheduleGrantFailureOutErrorCode = typeof ScheduleGrantFailureOutErrorCode[keyof typeof ScheduleGrantFailureOutErrorCode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ScheduleGrantFailureOutErrorCode = {
+  permission_denied: 'permission_denied',
+  warehouse_unavailable: 'warehouse_unavailable',
+  not_found: 'not_found',
+  unknown: 'unknown',
+} as const;
+
+/**
+ * A missing scheduler grant that could not be run, with a sanitized error code.
+ */
+export interface ScheduleGrantFailureOut {
+  /** First requested table that needed the grant */
+  fqn: string;
+  /** The GRANT statement, as the preflight showed it */
+  statement: string;
+  error_code: ScheduleGrantFailureOutErrorCode;
+}
+
+/**
  * A catalog or schema usage grant a scheduler service principal still needs.
  */
 export interface ScheduleMissingGrantOut {
@@ -30669,6 +30716,72 @@ export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getPreflightScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run the missing scheduler grants for these tables as the signed-in user, then re-check.
+
+The request carries only table names; the statements come from the server's own
+preflight and run under the caller's credentials, never the app service principal.
+ * @summary Apply Schedule Grants
+ */
+export const applyScheduleGrants = (
+    scheduleGrantApplyIn: ScheduleGrantApplyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScheduleGrantApplyOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/apply`,
+      scheduleGrantApplyIn,options
+    );
+  }
+
+
+
+export const getApplyScheduleGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext> => {
+
+const mutationKey = ['applyScheduleGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyScheduleGrants>>, {data: ScheduleGrantApplyIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyScheduleGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyScheduleGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applyScheduleGrants>>>
+    export type ApplyScheduleGrantsMutationBody = ScheduleGrantApplyIn
+    export type ApplyScheduleGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Schedule Grants
+ */
+export const useApplyScheduleGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyScheduleGrants>>,
+        TError,
+        {data: ScheduleGrantApplyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyScheduleGrantsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

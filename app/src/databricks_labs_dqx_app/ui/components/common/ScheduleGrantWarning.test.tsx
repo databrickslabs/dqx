@@ -1,0 +1,130 @@
+import { describe, expect, test } from "bun:test";
+import i18next from "i18next";
+import { I18nextProvider } from "react-i18next";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ScheduleGrantWarning } from "./ScheduleGrantWarning";
+import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
+import type { SchedulePreflightTableOut } from "@/lib/api";
+import en from "@/lib/i18n/locales/en.json";
+
+const testI18n = i18next.createInstance();
+void testI18n.init({
+  lng: "en",
+  resources: { en: { translation: en } },
+  interpolation: { escapeValue: false },
+  initImmediate: false,
+});
+
+const STATEMENT = "GRANT USE_SCHEMA ON SCHEMA `c`.`s` TO `runner-sp`;";
+
+const TABLE: SchedulePreflightTableOut = {
+  fqn: "c.s.t",
+  can_manage: false,
+  missing_grants: [
+    {
+      principal: "runner-sp",
+      display_name: "dqx-task-runner-sp",
+      privilege: "USE_SCHEMA",
+      securable_type: "SCHEMA",
+      securable: "c.s",
+      statement: STATEMENT,
+    },
+  ],
+};
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+}
+
+const RUN_LABEL = `aria-label="${escapeHtml(en.schedule.grantWarning.apply.run)}"`;
+
+function preflight(
+  overrides: Partial<ScheduleGrantPreflight> = {},
+): ScheduleGrantPreflight {
+  return {
+    blockedTables: [],
+    missingGrantTables: [TABLE],
+    unverifiedTables: [],
+    hasGrantIssue: true,
+    isFetching: false,
+    retry: () => undefined,
+    applyGrants: () => undefined,
+    isApplying: false,
+    applyOutcome: null,
+    ...overrides,
+  };
+}
+
+function render(value: ScheduleGrantPreflight): string {
+  return renderToStaticMarkup(
+    <I18nextProvider i18n={testI18n}>
+      <ScheduleGrantWarning entity="table" preflight={value} />
+    </I18nextProvider>,
+  );
+}
+
+function runButton(markup: string): string {
+  const start = markup.lastIndexOf("<button", markup.indexOf(RUN_LABEL));
+  return markup.slice(start, markup.indexOf("</button>", start));
+}
+
+describe("ScheduleGrantWarning missing grants", () => {
+  test("shows the statements with a run icon that explains what it does", () => {
+    const markup = render(preflight());
+
+    expect(markup).toContain(escapeHtml(STATEMENT));
+    expect(markup).toContain(RUN_LABEL);
+    expect(runButton(markup)).not.toContain('disabled=""');
+  });
+
+  test("shows a busy run icon while the grants run", () => {
+    const button = runButton(render(preflight({ isApplying: true })));
+
+    expect(button).toContain('disabled=""');
+    expect(button).toContain("animate-spin");
+  });
+
+  test("a permission failure explains who can help and keeps the SQL visible", () => {
+    const markup = render(
+      preflight({
+        applyOutcome: {
+          summary: { applied: 1, total: 2 },
+          failedSql: STATEMENT,
+          errorCodes: ["permission_denied"],
+        },
+      }),
+    );
+
+    expect(markup).toContain(
+      escapeHtml(en.schedule.grantWarning.apply.errors.permission_denied),
+    );
+    expect(markup).toContain("Done: 1 of 2.");
+    expect(markup).toContain(escapeHtml(STATEMENT));
+    // The message refers to "the commands below": the failed SQL follows it.
+    const message = markup.indexOf(
+      escapeHtml(en.schedule.grantWarning.apply.errors.permission_denied),
+    );
+    expect(markup.indexOf(escapeHtml(STATEMENT), message)).toBeGreaterThan(message);
+  });
+
+  test.each(["warehouse_unavailable", "not_found", "unknown"] as const)(
+    "has its own message for %s",
+    (code) => {
+      const markup = render(
+        preflight({
+          applyOutcome: { summary: null, failedSql: "", errorCodes: [code] },
+        }),
+      );
+
+      expect(markup).toContain(
+        escapeHtml(en.schedule.grantWarning.apply.errors[code]),
+      );
+    },
+  );
+});
