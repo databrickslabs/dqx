@@ -3,13 +3,20 @@ import { useTranslation } from "react-i18next";
 import { useListRegistryRuleVersions, type RegistryRuleVersionOut } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { buildDqxCheckJson, severityValueCriticality, type MaterializableRule } from "@/lib/registry-rule-conversion";
-import { ChangesDialog, useChangesSides, type ChangeItem } from "@/components/changes/ChangesDialog";
+import {
+  ChangesDialog,
+  ChangesPanel,
+  useChangesSides,
+  type ChangeItem,
+  type ChangesViewProps,
+} from "@/components/changes/ChangesDialog";
 import { itemStatus } from "@/lib/yaml-diff";
 
 /**
  * View changes for a registry rule: the rule's full check (function,
  * arguments, criticality, name, message, tags) compared between its approved
- * version and the proposed edit, or between any two approved versions.
+ * version and the proposed edit, or between any two approved versions. Shown
+ * in a dialog or in the rule's History tab.
  */
 export interface RuleChangesTarget {
   ruleId: string;
@@ -20,7 +27,7 @@ export interface RuleChangesTarget {
   proposed: MaterializableRule;
 }
 
-export function RuleChangesDialog({ target, onClose }: { target: RuleChangesTarget | null; onClose: () => void }) {
+function useRuleChanges(target: RuleChangesTarget | null): ChangesViewProps {
   const { t } = useTranslation();
   const ruleId = target?.ruleId ?? "";
   const { data, isLoading, isError } = useListRegistryRuleVersions(ruleId, { query: { enabled: !!target } });
@@ -63,24 +70,32 @@ export function RuleChangesDialog({ target, onClose }: { target: RuleChangesTarg
   const after = side(to);
   const item: ChangeItem = { key: ruleId, name: target?.name ?? "", status: itemStatus(before, after), before, after };
 
-  return (
-    <ChangesDialog
-      open={!!target}
-      onClose={onClose}
-      subject={target?.name ?? ""}
-      sides={sides}
-      hasPending={hasPending}
-      approvedVersion={approved}
-      versions={[...checks.keys()]}
-      items={target ? [item] : []}
-      single
-      loading={isLoading}
-      error={isError}
-      neverApprovedText={t("tableChanges.ruleNeverApproved")}
-      noChangesText={t("tableChanges.noChangesItem")}
-      footer={
-        approved > 0 ? t("tableChanges.ruleRunsUse", { version: approved }) : t("tableChanges.ruleNeverApprovedShort")
-      }
-    />
-  );
+  const versions = ((data?.data ?? []) as RegistryRuleVersionOut[]).map((v) => ({
+    version: v.version,
+    createdBy: v.created_by,
+    createdAt: v.created_at,
+  }));
+  return {
+    sides,
+    hasPending,
+    approvedVersion: approved,
+    versions,
+    items: target ? [item] : [],
+    single: true,
+    loading: isLoading,
+    error: isError,
+    neverApprovedText: t("tableChanges.ruleNeverApproved"),
+    noChangesText: t("tableChanges.noChangesItem"),
+  };
+}
+
+export function RuleChangesDialog({ target, onClose }: { target: RuleChangesTarget | null; onClose: () => void }) {
+  const view = useRuleChanges(target);
+  return <ChangesDialog open={!!target} onClose={onClose} subject={target?.name ?? ""} {...view} />;
+}
+
+/** The rule's History tab: the version timeline beside the changes. */
+export function RuleChangesPanel({ target }: { target: RuleChangesTarget }) {
+  const view = useRuleChanges(target);
+  return <ChangesPanel resetKey={target.ruleId} {...view} />;
 }

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { diffLines, inlineChange, sideYaml, unifiedRows, type DiffCell, type DiffRow } from "@/lib/yaml-diff";
 
 /**
- * The View changes dialog shared by tables, rules and collections, git-style:
+ * View changes, shared by tables, rules and collections, git-style:
  * each item (an applied rule, a rule, a collection member or its settings) is
  * one block — added, removed, modified (only the changed lines, with the
  * changed words marked) or unchanged (collapsed) — under a summary of counts.
@@ -16,7 +17,8 @@ import { diffLines, inlineChange, sideYaml, unifiedRows, type DiffCell, type Dif
  * It opens on "Pending changes" (the approved version against the proposed
  * state) when there are changes not yet approved, else on "Version history",
  * where any two approved versions can be compared. Each caller loads its own
- * sides and passes them in.
+ * sides and passes them in, and shows them in a dialog (:func:`ChangesDialog`)
+ * or in its History tab (:func:`ChangesPanel`, with the version timeline).
  */
 export type ChangesMode = "pending" | "history";
 type Layout = "unified" | "split";
@@ -85,6 +87,12 @@ export function useChangesSides(resetKey: string, hasPending: boolean, approved:
     setTarget: (next: number) => {
       setTo(next);
       if (historyBase >= next) setBase(next - 1);
+    },
+    /** Show one version against the version before it. */
+    selectVersion: (version: number) => {
+      setMode("history");
+      setTo(version);
+      setBase(version - 1);
     },
   };
 }
@@ -191,16 +199,21 @@ function ItemBlock({
   );
 }
 
-export interface ChangesDialogProps {
-  open: boolean;
-  onClose: () => void;
-  /** The object's name, shown under the title. */
-  subject: string;
+/** An approved version, for the picker and the History timeline. */
+export interface ChangesVersion {
+  version: number;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  /** A note under the version in the timeline (e.g. re-frozen in place). */
+  note?: string | null;
+}
+
+export interface ChangesViewProps {
   sides: ReturnType<typeof useChangesSides>;
   hasPending: boolean;
   approvedVersion: number;
-  /** Approved versions that can be picked under Version history. */
-  versions: number[];
+  /** Approved versions, for the picker and the History timeline. */
+  versions: ChangesVersion[];
   items: ChangeItem[];
   /** Hide the per-status counts and the unchanged toggle (a single item). */
   single?: boolean;
@@ -211,16 +224,35 @@ export interface ChangesDialogProps {
   /** Shown under Version history when nothing has been approved yet. */
   neverApprovedText: string;
   noChangesText: string;
-  /** Which version is in use, in the footer. */
-  footer: string;
 }
 
-export function ChangesDialog({
-  open,
-  onClose,
-  subject,
+function ModeTabs({ sides, hasPending }: Pick<ChangesViewProps, "sides" | "hasPending">) {
+  const { t } = useTranslation();
+  return (
+    <div role="tablist" aria-label={t("tableChanges.compare")} className="flex rounded-lg border p-0.5">
+      {(["pending", "history"] as ChangesMode[]).map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="tab"
+          aria-selected={sides.mode === m}
+          disabled={m === "pending" && !hasPending}
+          onClick={() => sides.setMode(m)}
+          className={cn(
+            "rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-40",
+            sides.mode === m ? "bg-foreground text-background" : "text-muted-foreground",
+          )}
+        >
+          {t(m === "pending" ? "tableChanges.pendingTab" : "tableChanges.historyTab")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The comparison: what is compared, the counts and toggles, and the items. */
+function ChangesBody({
   sides,
-  hasPending,
   approvedVersion: approved,
   versions,
   items,
@@ -231,14 +263,15 @@ export function ChangesDialog({
   error,
   neverApprovedText,
   noChangesText,
-  footer,
-}: ChangesDialogProps) {
+  resetKey,
+  scroll,
+}: ChangesViewProps & { resetKey: string; scroll: boolean }) {
   const { t } = useTranslation();
   const [layout, setLayout] = useState<Layout>("unified");
   const [showUnchanged, setShowUnchanged] = useState(false);
-  useEffect(() => setShowUnchanged(false), [subject]);
+  useEffect(() => setShowUnchanged(false), [resetKey]);
   const { mode } = sides;
-  const versionNumbers = [...versions].sort((a, b) => b - a);
+  const versionNumbers = versions.map((v) => v.version).sort((a, b) => b - a);
   const visible = items.filter((c) => single || showUnchanged || c.status !== "unchanged");
   const counts = useMemo(() => {
     const out: Record<Status, number> = { added: 0, removed: 0, modified: 0, unchanged: 0 };
@@ -248,164 +281,222 @@ export function ChangesDialog({
   const noHistory = mode === "history" && approved === 0;
 
   return (
+    <div className={cn("flex min-h-0 flex-col gap-3", scroll && "flex-1")}>
+      {mode === "pending" ? (
+        <span className="font-mono text-xs text-muted-foreground">
+          {approved > 0 ? t("tableChanges.pendingCompare", { version: approved }) : t("tableChanges.pendingCompareFirst")}
+        </span>
+      ) : (
+        versionNumbers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label htmlFor={`changes-base-${resetKey}`}>{t("tableChanges.compare")}</label>
+            <select
+              id={`changes-base-${resetKey}`}
+              value={sides.base}
+              onChange={(e) => sides.setBase(Number(e.target.value))}
+              className="rounded-md border bg-background px-2 py-1 font-mono text-xs"
+            >
+              <option value={0}>{t("tableChanges.nothing")}</option>
+              {versionNumbers
+                .filter((v) => v < sides.target)
+                .map((v) => (
+                  <option key={v} value={v}>
+                    v{v}
+                  </option>
+                ))}
+            </select>
+            <label htmlFor={`changes-to-${resetKey}`}>{t("tableChanges.to")}</label>
+            <select
+              id={`changes-to-${resetKey}`}
+              value={sides.target}
+              onChange={(e) => sides.setTarget(Number(e.target.value))}
+              className="rounded-md border bg-background px-2 py-1 font-mono text-xs"
+            >
+              {versionNumbers.map((v) => (
+                <option key={v} value={v}>
+                  v{v}
+                  {v === approved ? ` · ${t("tableChanges.runsNow")}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )
+      )}
+
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-6 w-64" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      ) : error ? (
+        <p className="flex items-center gap-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {t("tableChanges.loadFailed")}
+        </p>
+      ) : noHistory ? (
+        <p className="text-sm text-muted-foreground">{neverApprovedText}</p>
+      ) : (
+        <>
+          {note && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{note}</span>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {single ? (
+              <span />
+            ) : (
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full border px-2.5 py-1 text-red-700 dark:text-red-400">
+                  {t("tableChanges.countRemoved", { count: counts.removed })}
+                </span>
+                <span className="rounded-full border px-2.5 py-1 text-green-700 dark:text-green-400">
+                  {t("tableChanges.countAdded", { count: counts.added })}
+                </span>
+                <span className="rounded-full border px-2.5 py-1 text-amber-700 dark:text-amber-400">
+                  {t("tableChanges.countModified", { count: counts.modified })}
+                </span>
+                <span className="rounded-full border px-2.5 py-1 text-muted-foreground">
+                  {t("tableChanges.countUnchanged", { count: counts.unchanged })}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-3 text-sm">
+              {!single && (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} />
+                  {t("tableChanges.showUnchanged")}
+                </label>
+              )}
+              <div role="radiogroup" aria-label={t("tableChanges.layout")} className="flex overflow-hidden rounded-md border">
+                {(["unified", "split"] as Layout[]).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    role="radio"
+                    aria-checked={layout === l}
+                    onClick={() => setLayout(l)}
+                    className={cn("px-2.5 py-1 text-xs", layout === l ? "bg-muted font-medium" : "text-muted-foreground")}
+                  >
+                    {t(l === "unified" ? "tableChanges.unified" : "tableChanges.split")}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className={cn("space-y-2", scroll && "min-h-0 flex-1 overflow-y-auto pr-1")}>
+            {visible.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{noChangesText}</p>
+            ) : (
+              visible.map((c, i) => (
+                <ItemBlock
+                  key={`${mode}-${sides.base}-${sides.target}-${c.key}`}
+                  item={c}
+                  label={labelFor?.(c) || c.name || c.key}
+                  layout={layout}
+                  defaultOpen={single || (i < 3 && c.status !== "unchanged")}
+                />
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function ChangesDialog({
+  open,
+  onClose,
+  subject,
+  ...view
+}: ChangesViewProps & { open: boolean; onClose: () => void; subject: string }) {
+  const { t } = useTranslation();
+  return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col gap-3">
         <DialogHeader>
-          <DialogTitle>{t(mode === "pending" ? "tableChanges.pendingTitle" : "tableChanges.historyTitle")}</DialogTitle>
+          <DialogTitle>{t(view.sides.mode === "pending" ? "tableChanges.pendingTitle" : "tableChanges.historyTitle")}</DialogTitle>
           <DialogDescription className="font-mono text-xs break-all">{subject}</DialogDescription>
         </DialogHeader>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div role="tablist" aria-label={t("tableChanges.compare")} className="flex rounded-lg border p-0.5">
-            {(["pending", "history"] as ChangesMode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="tab"
-                aria-selected={mode === m}
-                disabled={m === "pending" && !hasPending}
-                onClick={() => sides.setMode(m)}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-40",
-                  mode === m ? "bg-foreground text-background" : "text-muted-foreground",
-                )}
-              >
-                {t(m === "pending" ? "tableChanges.pendingTab" : "tableChanges.historyTab")}
-              </button>
-            ))}
-          </div>
-          {mode === "pending" ? (
-            <span className="font-mono text-xs text-muted-foreground">
-              {approved > 0
-                ? t("tableChanges.pendingCompare", { version: approved })
-                : t("tableChanges.pendingCompareFirst")}
-            </span>
-          ) : (
-            versionNumbers.length > 0 && (
-              <div className="flex items-center gap-2 text-sm">
-                <label htmlFor="changes-base">{t("tableChanges.compare")}</label>
-                <select
-                  id="changes-base"
-                  value={sides.base}
-                  onChange={(e) => sides.setBase(Number(e.target.value))}
-                  className="rounded-md border bg-background px-2 py-1 font-mono text-xs"
-                >
-                  <option value={0}>{t("tableChanges.nothing")}</option>
-                  {versionNumbers
-                    .filter((v) => v < sides.target)
-                    .map((v) => (
-                      <option key={v} value={v}>
-                        v{v}
-                      </option>
-                    ))}
-                </select>
-                <label htmlFor="changes-to">{t("tableChanges.to")}</label>
-                <select
-                  id="changes-to"
-                  value={sides.target}
-                  onChange={(e) => sides.setTarget(Number(e.target.value))}
-                  className="rounded-md border bg-background px-2 py-1 font-mono text-xs"
-                >
-                  {versionNumbers.map((v) => (
-                    <option key={v} value={v}>
-                      v{v}
-                      {v === approved ? ` · ${t("tableChanges.runsNow")}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )
-          )}
-        </div>
-
-        {loading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-6 w-64" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        ) : error ? (
-          <p className="flex items-center gap-2 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {t("tableChanges.loadFailed")}
-          </p>
-        ) : noHistory ? (
-          <p className="text-sm text-muted-foreground">{neverApprovedText}</p>
-        ) : (
-          <>
-            {note && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{note}</span>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              {single ? (
-                <span />
-              ) : (
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full border px-2.5 py-1 text-red-700 dark:text-red-400">
-                    {t("tableChanges.countRemoved", { count: counts.removed })}
-                  </span>
-                  <span className="rounded-full border px-2.5 py-1 text-green-700 dark:text-green-400">
-                    {t("tableChanges.countAdded", { count: counts.added })}
-                  </span>
-                  <span className="rounded-full border px-2.5 py-1 text-amber-700 dark:text-amber-400">
-                    {t("tableChanges.countModified", { count: counts.modified })}
-                  </span>
-                  <span className="rounded-full border px-2.5 py-1 text-muted-foreground">
-                    {t("tableChanges.countUnchanged", { count: counts.unchanged })}
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-3 text-sm">
-                {!single && (
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} />
-                    {t("tableChanges.showUnchanged")}
-                  </label>
-                )}
-                <div role="radiogroup" aria-label={t("tableChanges.layout")} className="flex overflow-hidden rounded-md border">
-                  {(["unified", "split"] as Layout[]).map((l) => (
-                    <button
-                      key={l}
-                      type="button"
-                      role="radio"
-                      aria-checked={layout === l}
-                      onClick={() => setLayout(l)}
-                      className={cn("px-2.5 py-1 text-xs", layout === l ? "bg-muted font-medium" : "text-muted-foreground")}
-                    >
-                      {t(l === "unified" ? "tableChanges.unified" : "tableChanges.split")}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {visible.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{noChangesText}</p>
-              ) : (
-                visible.map((c, i) => (
-                  <ItemBlock
-                    key={`${mode}-${sides.base}-${sides.target}-${c.key}`}
-                    item={c}
-                    label={labelFor?.(c) || c.name || c.key}
-                    layout={layout}
-                    defaultOpen={single || (i < 3 && c.status !== "unchanged")}
-                  />
-                ))
-              )}
-            </div>
-          </>
-        )}
-
-        <div className="flex items-center justify-between gap-3 border-t pt-3">
-          <p className="text-xs text-muted-foreground">{footer}</p>
+        <ModeTabs sides={view.sides} hasPending={view.hasPending} />
+        <ChangesBody {...view} resetKey={subject} scroll />
+        <div className="flex justify-end border-t pt-3">
           <Button variant="outline" onClick={onClose}>
             {t("common.close", "Close")}
           </Button>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * View changes inside a History tab: the version timeline (pending changes on
+ * top, then each approved version with who approved it and when) beside the
+ * comparison. Picking a version shows it against the version before it.
+ */
+export function ChangesPanel({ resetKey, ...view }: ChangesViewProps & { resetKey: string }) {
+  const { t } = useTranslation();
+  const { sides, hasPending, approvedVersion: approved } = view;
+  const versions = [...view.versions].sort((a, b) => b.version - a.version);
+  const entry = (selected: boolean) =>
+    cn(
+      "flex w-full flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-xs",
+      selected ? "border-foreground/40 bg-muted" : "border-transparent hover:bg-muted/50",
+    );
+  return (
+    <div className="grid gap-4 pt-4 md:grid-cols-[16rem_minmax(0,1fr)]">
+      <nav aria-label={t("tableChanges.historyTitle")} className="space-y-1">
+        {hasPending && (
+          <button
+            type="button"
+            aria-current={sides.mode === "pending"}
+            onClick={() => sides.setMode("pending")}
+            className={entry(sides.mode === "pending")}
+          >
+            <span className="font-medium text-amber-700 dark:text-amber-400">{t("tableChanges.pendingTab")}</span>
+            <span className="text-muted-foreground">{t("tableChanges.notApprovedYet")}</span>
+          </button>
+        )}
+        {versions.length === 0 && !hasPending && (
+          <p className="px-3 py-2 text-xs text-muted-foreground">{view.neverApprovedText}</p>
+        )}
+        {versions.map((v) => {
+          const selected = sides.mode === "history" && sides.target === v.version;
+          return (
+            <button
+              key={v.version}
+              type="button"
+              aria-current={selected}
+              onClick={() => sides.selectVersion(v.version)}
+              className={entry(selected)}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="font-mono font-medium">v{v.version}</span>
+                {v.version === approved && (
+                  <span className="text-[10px] uppercase tracking-wide text-green-700 dark:text-green-400">
+                    {t("tableChanges.runsNow")}
+                  </span>
+                )}
+              </span>
+              {v.createdBy && <span className="truncate font-mono text-muted-foreground">{v.createdBy}</span>}
+              {v.createdAt && (
+                <span className="text-muted-foreground">
+                  <RelativeTimeCell iso={v.createdAt} />
+                </span>
+              )}
+              {v.note && <span className="text-amber-700 dark:text-amber-400">{v.note}</span>}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="min-w-0 space-y-3">
+        <ModeTabs sides={sides} hasPending={hasPending} />
+        <ChangesBody {...view} resetKey={resetKey} scroll={false} />
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,9 @@
 import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
+import {
+  TableChangesDialog,
+  TableChangesPanel,
+  type TableChangesTarget,
+} from "@/components/monitored-tables/TableChangesDialog";
 import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -172,7 +176,6 @@ import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestionsCard";
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
-import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -982,7 +985,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="history">
-            <MonitoredTableHistoryTab bindingId={bindingId} />
+            <TableChangesPanel bindingId={bindingId} />
           </TabsContent>
         </Tabs>
       </div>
