@@ -1,0 +1,1 @@
+import{j as n,bo as e}from"./index-BYKMFCH3.js";function r({children:t,delay:i=0,duration:a=.5,className:o}){return n.jsx(e.div,{initial:{opacity:0,y:10},animate:{opacity:1,y:0},transition:{duration:a,delay:i,ease:"easeOut"},className:o,children:t})}export{r as F};
