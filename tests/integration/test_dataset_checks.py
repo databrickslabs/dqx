@@ -5629,8 +5629,8 @@ def test_warning_sql_query_refers_to_error_results(ws, spark: SparkSession):
         2: (["value_is_null"], ["any_error"]),
         3: ([], ["valid_rows_with_large_value", "any_error"]),
     }
-    
-    
+
+
 @pytest.mark.parametrize("trim_strings", [False, True])
 @pytest.mark.parametrize("nulls_distinct", [False, True])
 @pytest.mark.parametrize("composite", [False, True])

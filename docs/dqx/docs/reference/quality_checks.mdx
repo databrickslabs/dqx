@@ -4387,6 +4387,13 @@ The `sql_query` check must execute the user query and join the results back to t
 This can be less performant than writing a custom dataset-level where we can this additional join.
 </Admonition>
 
+<Admonition type="tip" title="Mark row-preserving checks">
+DQX treats a custom dataset-level check as possibly changing the rows, so later dataset-level checks read its result.
+If your check's closure returns every input row exactly once (it may add columns), add the `@row_preserving` decorator
+from `databricks.labs.dqx.rule` above `@register_rule("dataset")`. Later dataset-level checks can then read the original
+input and share aggregates. Don't use this for any checks that can add, drop, or duplicate rows.
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python

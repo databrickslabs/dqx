@@ -21,6 +21,8 @@ from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError, MissingParameterError
 
+_UPPER_CODE = F.upper("code").alias("code")
+
 
 @pytest.mark.parametrize(
     "ref_df_name, ref_table, ref_columns, columns, expected_exception, expected_message",
@@ -870,6 +872,41 @@ def test_foreign_key_checks_share_reference_projection():
         )
 
     reference_df.select.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "first_kwargs, second_kwargs, reference_reads",
+    [
+        # same column names share one reference projection
+        ({"columns": ["first_id"], "ref_columns": ["id"]}, {"columns": ["second_id"], "ref_columns": ["id"]}, 1),
+        # a nested field a.b and a column literally named a.b are different names
+        ({"columns": ["id"], "ref_columns": ["a.b"]}, {"columns": ["id"], "ref_columns": ["`a.b`"]}, 2),
+        # null-safe keys are structs, so they differ from the plain key
+        ({"columns": ["id"], "ref_columns": ["id"]}, {"columns": ["id"], "ref_columns": ["id"], "null_safe": True}, 2),
+        # composite key structs take their field names from the source columns
+        ({"columns": ["a", "b"], "ref_columns": ["x", "y"]}, {"columns": ["c", "d"], "ref_columns": ["x", "y"]}, 2),
+        # Column inputs are never cached, even the same expression
+        ({"columns": ["id"], "ref_columns": [_UPPER_CODE]}, {"columns": ["id"], "ref_columns": [_UPPER_CODE]}, 2),
+        ({"columns": ["id"], "ref_columns": ["code"]}, {"columns": ["id"], "ref_columns": [_UPPER_CODE]}, 2),
+    ],
+)
+def test_foreign_key_reference_projection_is_shared_only_for_the_same_column_names(
+    first_kwargs, second_kwargs, reference_reads
+):
+    current_df = create_autospec(DataFrame)
+    reference_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    reference_cache: dict[tuple[str, str], DataFrame] = {}
+
+    for kwargs in (first_kwargs, second_kwargs):
+        rule = DQDatasetRule(
+            check_func=check_funcs.foreign_key, check_func_kwargs={**kwargs, "ref_df_name": "reference"}
+        )
+        DQDatasetRuleExecutor(rule).apply(
+            current_df, spark, ref_dfs={"reference": reference_df}, reference_cache=reference_cache
+        )
+
+    assert reference_df.select.call_count == reference_reads
 
 
 def test_foreign_key_broadcast_is_opt_in(monkeypatch):

@@ -20,7 +20,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds_df
-from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection, row_preserving
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -28,6 +28,8 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     normalize_column_expr,
     get_columns_as_strings,
+    get_template_placeholders,
+    replace_template,
     to_lowercase,
 )
 from databricks.labs.dqx.errors import (
@@ -150,7 +152,7 @@ class _ForeignKeyColumns:
     reference_name: str
     reference_display: str
     reference_expression: Column
-    reference_join_expression: str
+    reference_cache_key: str | None
     not_null_condition: Column
 
 
@@ -637,6 +639,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
@@ -2445,6 +2448,7 @@ def is_data_fresh(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
     """
@@ -2521,6 +2525,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -2632,6 +2637,7 @@ def is_unique(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def foreign_key(
     columns: list[str | Column],
@@ -2713,7 +2719,7 @@ def foreign_key(
             ref_dfs,
             spark,
             key.reference_expression,
-            key.reference_join_expression,
+            key.reference_cache_key,
             reference_cache,
         ).select(F.col(_REFERENCE_VALUE_COLUMN).alias(ref_alias))
         if broadcast_ref:
@@ -2763,6 +2769,7 @@ def foreign_key(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def sql_query(
     query: str,
@@ -2790,7 +2797,7 @@ def sql_query(
             automatically joined back to the input DataFrame. When merge_columns are not provided, the check
             applies to all rows (either all pass or all fail), making it useful for dataset-level validation
             with custom_metrics. Reference DataFrames provided in the ref_dfs parameter are registered as temp views
-            when the query refers to them via `{{ ref_df_name }}` placeholders.
+            when the query refers to them by name in a double-curly-brace placeholder (like *input_placeholder*).
         merge_columns: Optional (can be None or omitted). List of columns to join results back to input DataFrame.
             - If provided: Row-level validation - different rows can have different results
             - If None/omitted: Dataset-level validation - all rows get same result. The query must return at
@@ -2843,7 +2850,7 @@ def sql_query(
         replacements = {input_placeholder: unique_input_view}
         replacements.update(_register_referenced_dataframes(query, ref_dfs, unique_str))
 
-        query_resolved = _replace_sql_templates(query, replacements)
+        query_resolved = replace_template(query, replacements)
         if not is_sql_query_safe(query_resolved):
             # we only replace dict keys so there is no risk of SQL injection here,
             # but we still want to ensure the query is safe to execute
@@ -2886,6 +2893,7 @@ def sql_query(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
@@ -2935,6 +2943,7 @@ def is_aggr_not_greater_than(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
@@ -2984,6 +2993,7 @@ def is_aggr_not_less_than(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
@@ -3039,6 +3049,7 @@ def is_aggr_equal(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
@@ -3097,6 +3108,7 @@ def is_aggr_not_equal(
 _VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "week", "month"})
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_aggr_outliers(
     column: str | Column,
@@ -3338,6 +3350,7 @@ def has_no_aggr_outliers(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def aggr_matches_dataset(
     column: str | Column,
@@ -3804,6 +3817,7 @@ def compare_datasets(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_data_fresh_per_time_window(
     column: str | Column,
@@ -3918,6 +3932,7 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_gaps_per_time_window(
     column: str | Column,
@@ -4080,6 +4095,7 @@ def has_no_gaps_per_time_window(
 
 
 @register_for_original_columns_preselection()
+@row_preserving
 @register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
@@ -5616,25 +5632,14 @@ def _is_aggr_compare(
     return condition, apply
 
 
-def _sql_placeholder_pattern(key: str) -> str:
-    """Return a regex matching a SQL {{ key }} placeholder with optional inner whitespace."""
-    return r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
-
-
-def _replace_sql_templates(sql: str, replacements: dict[str, str]) -> str:
-    """Replace SQL placeholders with their temporary-view names."""
-    for key, value in replacements.items():
-        sql = re.sub(_sql_placeholder_pattern(key), value, sql)
-    return sql
-
-
 def _register_referenced_dataframes(
     query: str, ref_dfs: dict[str, DataFrame] | None, unique_str: str
 ) -> dict[str, str]:
     """Register and return replacements only for reference DataFrames used by *query*."""
     replacements: dict[str, str] = {}
+    placeholders = get_template_placeholders(query)
     for ref_name, ref_df in (ref_dfs or {}).items():
-        if re.search(_sql_placeholder_pattern(ref_name), query):
+        if ref_name in placeholders:
             unique_name = f"{ref_name}_{unique_str}"
             ref_df.createOrReplaceTempView(unique_name)
             replacements[ref_name] = unique_name
@@ -5647,20 +5652,26 @@ def _get_distinct_reference_values(
     ref_dfs: dict[str, DataFrame] | None,
     spark: SparkSession,
     ref_col_expr: Column,
-    ref_col_expr_str: str,
+    ref_col_key: str | None,
     reference_cache: ReferenceDataFrameCache | None,
 ) -> DataFrame:
-    """Return one distinct reference projection, reusing it across compatible foreign-key checks."""
-    source_key = f"dataframe:{ref_df_name}" if ref_df_name else f"table:{ref_table}"
-    cache_key = source_key, ref_col_expr_str
-    if reference_cache is not None and cache_key in reference_cache:
-        return reference_cache[cache_key]
+    """
+    Return one distinct reference projection, reusing it across compatible foreign-key checks.
 
-    ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-    distinct_values = ref_df.select(ref_col_expr.alias(_REFERENCE_VALUE_COLUMN)).distinct()
-    if reference_cache is not None:
-        reference_cache[cache_key] = distinct_values
-    return distinct_values
+    The projection is cached only when *ref_col_key* is given, i.e. when the reference key is built from column names.
+    """
+
+    def project() -> DataFrame:
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+        return ref_df.select(ref_col_expr.alias(_REFERENCE_VALUE_COLUMN)).distinct()
+
+    if reference_cache is None or ref_col_key is None:
+        return project()
+    source_key = f"dataframe:{ref_df_name}" if ref_df_name else f"table:{ref_table}"
+    cache_key = source_key, ref_col_key
+    if cache_key not in reference_cache:
+        reference_cache[cache_key] = project()
+    return reference_cache[cache_key]
 
 
 def _resolve_foreign_key_columns(
@@ -5680,7 +5691,7 @@ def _resolve_foreign_key_columns(
     source_name, source_display, source_display_expression = get_normalized_column_and_expr(display_col)
     reference_name, reference_display, _ = get_normalized_column_and_expr(display_ref_col)
     _, _, source_expression = get_normalized_column_and_expr(join_col)
-    _, reference_join_expression, reference_expression = get_normalized_column_and_expr(join_ref_col)
+    _, _, reference_expression = get_normalized_column_and_expr(join_ref_col)
     return _ForeignKeyColumns(
         source_name,
         source_display,
@@ -5689,9 +5700,24 @@ def _resolve_foreign_key_columns(
         reference_name,
         reference_display,
         reference_expression,
-        reference_join_expression,
+        _reference_cache_key(columns, ref_columns, null_safe),
         not_null_condition,
     )
+
+
+def _reference_cache_key(columns: list[str | Column], ref_columns: list[str | Column], null_safe: bool) -> str | None:
+    """
+    Return a key that identifies the reference expression of a foreign-key check, or None if it cannot be cached.
+
+    The key is built only from column names. *Column* inputs are not cached: their string form is a diagnostic
+    rendering, not a reliable identity, so two different expressions could share a key.
+    """
+    # composite and null-safe keys are structs whose field names come from the source columns
+    builds_struct = len(columns) > 1 or null_safe
+    key_columns = [*ref_columns, *columns] if builds_struct else ref_columns
+    if not all(isinstance(column, str) for column in key_columns):
+        return None
+    return repr((tuple(ref_columns), null_safe, tuple(columns) if builds_struct else ()))
 
 
 def _get_ref_df(

@@ -236,6 +236,7 @@ class DQRuleManager:
         """
         df = self.df if df is None else df
         if self.skip_message:
+            logger.warning(f"Skipping check '{self.check.name}': {self.skip_message}")
             if self.suppress_skipped:
                 # return null condition so this check produces no entry in _errors/_warnings
                 return DQCheckResult(condition=F.lit(None).cast(dq_result_item_schema), check_df=df)
@@ -326,20 +327,15 @@ class DQRuleManager:
         invalid_cols_message_parts = []
 
         if self.has_invalid_columns:
-            logger.warning(
-                f"Skipping check evaluation '{self.check.name}' due to invalid check columns: {self.invalid_columns}"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
             )
 
         if self.has_unsafe_filter:
             safe_filter = sanitize_for_logging(self._effective_filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
         elif self.has_invalid_filter:
             safe_filter = sanitize_for_logging(self.check.filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 
         if self.has_invalid_custom_message:
@@ -347,17 +343,11 @@ class DQRuleManager:
                 custom_message_detail = f": '{self.check.message_expr}'"
             else:
                 custom_message_detail = ""
-            logger.warning(
-                f"Skipping check '{self.check.name}' due to invalid custom message expression{custom_message_detail}"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid custom message expression{custom_message_detail}"
             )
 
         if self.invalid_sql_expression:
-            logger.warning(
-                f"Skipping check '{self.check.name}' due to invalid sql expression: '{self.invalid_sql_expression}'"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid sql expression: '{self.invalid_sql_expression}'"
             )
