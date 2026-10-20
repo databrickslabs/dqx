@@ -29,8 +29,9 @@ whose results expose a table Unity Catalog doesn't let them read.
 Caller authority inspection and grants use OBO SQL. Source-parent privileges
 for both scheduler identities are inspected using the app's effective-grants
 API, falling back to caller SQL, without impersonating the runner. Missing
-USE CATALOG or USE SCHEMA requires administrator remediation; this service
-never grants parent-container access. The grant is issued as a SQL
+USE CATALOG or USE SCHEMA is never granted on save: the preflight lists the
+statements, and only an explicit request (:meth:`ScheduleGrantService.apply_missing_grants`)
+runs them, as the signed-in user. The grant is issued as a SQL
 ``GRANT`` on the app's warehouse: the App's OBO token only carries read-only
 Unity Catalog API scopes, so the grants REST API rejects it, while the ``sql``
 scope lets the user run the statement under their own privileges. A user who cannot grant (no
@@ -55,6 +56,9 @@ from databricks.sdk.service.catalog import CatalogType
 from databricks.sdk.service.iam import ServicePrincipal
 from databricks.sdk.service.sql import StatementResponse, StatementState
 
+from databricks_labs_dqx_app.backend.setup.grant_application import run_grant_statements
+from databricks_labs_dqx_app.backend.setup.models import GrantErrorCode
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_fqn, quote_ident, validate_fqn, validate_identifier
 
 logger = logging.getLogger(__name__)
@@ -183,6 +187,41 @@ class TablePreflight:
     unverified_reason: InspectionFailureReason | None = None
 
 
+@dataclass(frozen=True)
+class ScheduleGrantFailure:
+    """A missing scheduler grant that could not be run, with a sanitized error code.
+
+    Args:
+        fqn: First requested table that needed the grant.
+        statement: The GRANT statement, as the preflight showed it.
+        error_code: *permission_denied*, *not_found*, *warehouse_unavailable* or *unknown*.
+    """
+
+    fqn: str
+    statement: str
+    error_code: GrantErrorCode
+
+
+@dataclass(frozen=True)
+class ScheduleGrantApplication:
+    """Outcome of running the missing scheduler grants as the signed-in user.
+
+    Args:
+        preflight: A fresh preflight of the requested tables, taken after the grants ran.
+        applied: Number of statements that ran successfully.
+        total: Number of distinct statements attempted.
+        failed: Statements that failed.
+        recheck_failed: The check after the grants couldn't run, so *preflight* is
+            the one taken before them.
+    """
+
+    preflight: list[TablePreflight]
+    applied: int
+    total: int
+    failed: tuple[ScheduleGrantFailure, ...]
+    recheck_failed: bool = False
+
+
 def _is_real_three_part_fqn(fqn: str) -> bool:
     """True iff *fqn* is a real three-part UC name (not a synthetic sql-check key).
 
@@ -219,6 +258,14 @@ class ScheduleGrantService:
         self._sp_ws = sp_ws
         self._job_id = (job_id or "").strip()
         self._warehouse_id = (warehouse_id or "").strip()
+        self.clear_caches()
+
+    def clear_caches(self) -> None:
+        """Forget everything this service has looked up, so the next check reads it all again.
+
+        The service memoizes identities, read probes and grants for one request. Clear them
+        after changing grants, so a check that follows sees the change.
+        """
         self._scheduler_can_read_cache: dict[str, bool] = {}
         self._user_can_read_cache: dict[str, bool] = {}
         # Per-request memoization of the (otherwise per-table) identity lookups.
@@ -997,12 +1044,66 @@ class ScheduleGrantService:
             granted.append(task_id)
         return granted
 
+    def apply_missing_grants(self, fqns: list[str], executor: SqlExecutor) -> ScheduleGrantApplication:
+        """Run the catalog and schema grants the preflight lists for *fqns*, as the signed-in user.
+
+        The statements are re-derived here by the preflight, never taken from the
+        client, and run through *executor*, which must be the caller's own SQL
+        executor so Unity Catalog decides whether they may grant. A statement shared
+        by several tables runs once, and a failure doesn't stop the rest. Tables are
+        then checked again with the caches cleared, so the result shows only what is
+        still missing.
+
+        Args:
+            fqns: Tables the schedule will run against.
+            executor: The signed-in user's SQL executor.
+
+        Returns:
+            The fresh preflight with how many statements ran and which failed. When
+            the check after the grants fails, the counts are still returned with
+            *recheck_failed* set and the preflight taken before the grants.
+
+        Raises:
+            WarehouseUnavailableError: If nothing could run because the SQL warehouse didn't
+                answer the check before the grants.
+        """
+        before = self.preflight(fqns)
+        table_of: dict[str, str] = {}
+        for table in before:
+            for grant in table.missing_grants:
+                table_of.setdefault(grant["remediation"], table.fqn)
+        if not table_of:
+            if any(table.access_unverified and table.unverified_reason == "warehouse" for table in before):
+                # The warehouse gave no answer, so there is no list of grants to run yet.
+                raise WarehouseUnavailableError("The SQL warehouse didn't answer the check before the grants.")
+            return ScheduleGrantApplication(preflight=before, applied=0, total=0, failed=())
+        run = run_grant_statements(list(table_of), executor)
+        failed = tuple(
+            ScheduleGrantFailure(fqn=table_of[f.statement], statement=f.statement, error_code=f.error_code)
+            for f in run.failed
+        )
+        # This service memoized the access it saw before the grants ran.
+        self.clear_caches()
+        try:
+            after = self.preflight(fqns)
+        except Exception as e:
+            # The grants already ran; report them rather than failing the request.
+            logger.warning(f"Re-checking schedule grants failed ({type(e).__name__})")
+            return ScheduleGrantApplication(
+                preflight=before, applied=run.applied, total=run.total, failed=failed, recheck_failed=True
+            )
+        return ScheduleGrantApplication(preflight=after, applied=run.applied, total=run.total, failed=failed)
+
     # ------------------------------------------------------------------
     # Async wrappers (SDK calls are blocking)
     # ------------------------------------------------------------------
 
     async def preflight_async(self, fqns: list[str]) -> list[TablePreflight]:
         return await asyncio.to_thread(self.preflight, fqns)
+
+    async def apply_missing_grants_async(self, fqns: list[str], executor: SqlExecutor) -> ScheduleGrantApplication:
+        """Async wrapper for :meth:`apply_missing_grants`."""
+        return await asyncio.to_thread(self.apply_missing_grants, fqns, executor)
 
     async def can_schedule_async(self, fqn: str) -> bool:
         return await asyncio.to_thread(self.can_schedule, fqn)
