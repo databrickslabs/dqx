@@ -435,9 +435,7 @@ def test_configuration_rejects_invalid_prefix_or_group_characters(
 
 
 @pytest.mark.parametrize("catalog", ["main.sales", "a`b", "back\\slash", "", "   "])
-def test_configuration_rejects_invalid_catalog_name(
-    client: TestClient, settings: MemorySettings, catalog: str
-) -> None:
+def test_configuration_rejects_invalid_catalog_name(client: TestClient, settings: MemorySettings, catalog: str) -> None:
     response = client.post(_CONFIG_URL, json={**_VALID, "catalog": catalog})
 
     assert response.status_code == 422

@@ -626,9 +626,7 @@ class SetupOrchestrator:
             The step's fresh result, or None for a step whose check never lists GRANT statements.
         """
         if step_id == SetupStepId.UNITY_CATALOG:
-            return await asyncio.to_thread(
-                partial(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws)
-            )
+            return await asyncio.to_thread(partial(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws))
         if step_id == SetupStepId.STORAGE:
             # Only inspects: storage that lacks grants already exists.
             return await asyncio.to_thread(partial(bound.checkers.ensure_storage, provision=False))
