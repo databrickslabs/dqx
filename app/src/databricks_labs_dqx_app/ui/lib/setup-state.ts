@@ -53,9 +53,18 @@ function configurableStep(status: SetupStatusResponse): SetupStep | undefined {
   );
 }
 
-/** Whether the caller may open the configuration form, now or by choosing to change it. */
-export function configurationAdvertised(status: SetupStatusResponse): boolean {
-  return configurableStep(status) !== undefined;
+/**
+ * Whether the configuration form's catalog and group lists should load: only while
+ * the form shows, not merely because the backend still offers to change saved choices.
+ */
+export function configurationListsWanted(
+  status: SetupStatusResponse | undefined,
+  acknowledgedWarnings: ReadonlySet<string> = new Set(),
+  editingConfiguration = false,
+): boolean {
+  if (!status) return false;
+  const view = setupView(status, acknowledgedWarnings, editingConfiguration);
+  return view.kind !== "ready" && view.showConfigurationForm;
 }
 
 /**

@@ -257,8 +257,8 @@ _RUN_AS_CODES = (
         (
             JobRunAs(service_principal_name=APP_APPLICATION_ID),
             "task_runner_run_as_matches_app",
-            "Studio's background job uses the app's own service principal. It needs a separate one. "
-            "Follow the three steps below.",
+            "Studio's background job is currently using the app's own service principal instead of a dedicated "
+            "task runner service principal. Follow the steps below to create one.",
         ),
         (
             JobRunAs(user_name="runner@example.com"),
@@ -407,6 +407,40 @@ def test_list_task_runner_principals_is_capped_and_sanitized() -> None:
 
     assert len(listing.principals) == 500
     assert all("\n" not in principal.display_name for principal in listing.principals)
+
+
+def test_list_task_runner_principals_reports_a_cut_list_and_stops_reading() -> None:
+    read: list[int] = []
+
+    def principals():
+        for index in range(700):
+            read.append(index)
+            yield _principal(f"runner {index:04d}", str(uuid.UUID(int=index + 1)), str(index))
+
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = principals()
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID, limit=500)
+
+    assert listing.truncated is True
+    assert len(listing.principals) == 500
+    assert len(read) == 501
+
+
+def test_list_task_runner_principals_is_not_cut_when_everything_fits() -> None:
+    # The app's own service principal doesn't count towards the limit.
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = iter(
+        [
+            _principal("app", APP_APPLICATION_ID, "0"),
+            *[_principal(f"runner {index}", str(uuid.UUID(int=index + 1)), str(index)) for index in range(1, 3)],
+        ]
+    )
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID, limit=2)
+
+    assert listing.truncated is False
+    assert len(listing.principals) == 2
 
 
 _RULE_SET_NAME = f"accounts/acct-1/servicePrincipals/{RUNNER_APPLICATION_ID}/ruleSets/default"

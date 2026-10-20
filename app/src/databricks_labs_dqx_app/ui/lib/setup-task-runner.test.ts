@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   accessResultMessageKeys,
   isApplicationId,
+  isResultForPick,
   principalMatches,
   runAsErrorMessageKey,
   servicePrincipalLink,
@@ -73,7 +74,17 @@ describe("taskRunnerPrincipalList", () => {
         isError: false,
         data: { available: true, principals: PRINCIPALS, app_name: "app-1a2b dqx-studio" },
       }),
-    ).toEqual({ status: "ready", principals: PRINCIPALS, appName: "app-1a2b dqx-studio" });
+    ).toEqual({ status: "ready", principals: PRINCIPALS, appName: "app-1a2b dqx-studio", truncated: false });
+  });
+
+  test("says when the list was cut short", () => {
+    const list = taskRunnerPrincipalList({
+      isPending: false,
+      isError: false,
+      data: { available: true, principals: PRINCIPALS, app_name: "dqx-studio", truncated: true },
+    });
+
+    expect(list).toMatchObject({ status: "ready", truncated: true });
   });
 
   test("falls back to pasting an ID when listing fails or finds nothing", () => {
@@ -248,5 +259,21 @@ describe("runAsErrorMessageKey", () => {
       "setup.taskRunner.apply.errors.default",
     );
     expect(runAsErrorMessageKey(undefined)).toBe("setup.taskRunner.apply.errors.default");
+  });
+});
+
+describe("isResultForPick", () => {
+  test("applies a result for the service principal still picked, ignoring case", () => {
+    expect(
+      isResultForPick({ applicationId: RUNNER, displayName: "runner" }, RUNNER.toUpperCase()),
+    ).toBe(true);
+  });
+
+  test("ignores a result that arrives after another service principal was picked", () => {
+    expect(isResultForPick({ applicationId: OTHER, displayName: "etl-runner" }, RUNNER)).toBe(false);
+  });
+
+  test("ignores a result once the pick is cleared", () => {
+    expect(isResultForPick(null, RUNNER)).toBe(false);
   });
 });

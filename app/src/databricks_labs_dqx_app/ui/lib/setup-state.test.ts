@@ -5,7 +5,12 @@ import es from "./i18n/locales/es.json";
 import fr from "./i18n/locales/fr.json";
 import it from "./i18n/locales/it.json";
 import ptBR from "./i18n/locales/pt-BR.json";
-import { setupView, unacknowledgedWarnings, warningKey } from "./setup-state";
+import {
+  configurationListsWanted,
+  setupView,
+  unacknowledgedWarnings,
+  warningKey,
+} from "./setup-state";
 import type { SetupActionId, SetupReport, SetupState, SetupStatusResponse, SetupStep } from "./api";
 
 function report(state: SetupState): SetupReport {
@@ -125,6 +130,34 @@ describe("configuration form visibility", () => {
 
     expect(view.showConfigurationForm).toBe(false);
     expect(view.canEditConfiguration).toBe(false);
+  });
+});
+
+describe("catalog and group listing for the configuration form", () => {
+  test("runs while the form shows", () => {
+    expect(configurationListsWanted(status(configurationReport("action_required"), true))).toBe(true);
+  });
+
+  test("doesn't run for saved choices while the form is closed, even though configure is advertised", () => {
+    expect(configurationListsWanted(status(configurationReport("passed"), true))).toBe(false);
+  });
+
+  test("runs once the administrator opens the form to change saved choices", () => {
+    expect(
+      configurationListsWanted(status(configurationReport("passed"), true), new Set(), true),
+    ).toBe(true);
+  });
+
+  test("doesn't run without a status, for non-administrators, or once Studio is ready", () => {
+    expect(configurationListsWanted(undefined)).toBe(false);
+    expect(configurationListsWanted(status(configurationReport("action_required"), false))).toBe(false);
+    expect(
+      configurationListsWanted(
+        status({ ...configurationReport("passed"), state: "ready" }, true),
+        new Set(),
+        true,
+      ),
+    ).toBe(false);
   });
 });
 

@@ -1,7 +1,8 @@
 /** Choices offered by a searchable picker in the setup configuration form (catalogs, groups). */
 export type SetupOptionList =
   | { status: "loading" }
-  | { status: "ready"; options: string[] }
+  /** *truncated*: the listing stopped at its cap, so a name may need typing. */
+  | { status: "ready"; options: string[]; truncated?: boolean }
   /** Listing failed or found nothing: the form falls back to a text input. */
   | { status: "unavailable" };
 
@@ -13,12 +14,13 @@ export function setupOptionList(query: {
   isPending: boolean;
   isError: boolean;
   options?: readonly string[];
+  truncated?: boolean;
 }): SetupOptionList {
   if (query.isError) return { status: "unavailable" };
   if (query.isPending) return { status: "loading" };
   const options = [...(query.options ?? [])];
   return options.length > 0
-    ? { status: "ready", options }
+    ? { status: "ready", options, truncated: !!query.truncated }
     : { status: "unavailable" };
 }
 

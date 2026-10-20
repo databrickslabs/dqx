@@ -9,7 +9,9 @@ from databricks.sdk.errors import (
     NotFound,
     PermissionDenied,
     ResourceDoesNotExist,
+    ResourceExhausted,
     TemporarilyUnavailable,
+    TooManyRequests,
 )
 
 from databricks_labs_dqx_app.backend.setup.grant_application import grant_error_code, run_grant_statements
@@ -32,10 +34,13 @@ _STATEMENTS = (
             "permission_denied",
         ),
         (SqlStatementError("SQL execution failed: PERMISSION_DENIED: nope\nSQL: GRANT", None), "permission_denied"),
-        # The Statement Execution API answers 404 when the warehouse itself is gone; a missing
-        # securable comes back as a failed statement instead.
-        (NotFound("gone"), "warehouse_unavailable"),
-        (ResourceDoesNotExist("gone"), "warehouse_unavailable"),
+        # Only a 404 that names the warehouse means the warehouse itself is gone.
+        (NotFound("Warehouse abc123 does not exist."), "warehouse_unavailable"),
+        (ResourceDoesNotExist("SQL warehouse abc123 was not found"), "warehouse_unavailable"),
+        (NotFound("gone"), "not_found"),
+        (ResourceDoesNotExist("Principal runner does not exist"), "not_found"),
+        (TooManyRequests("slow down"), "rate_limited"),
+        (ResourceExhausted("quota"), "rate_limited"),
         (SqlStatementError("SQL execution failed: [SCHEMA_NOT_FOUND] x\nSQL: GRANT", "42704"), "not_found"),
         (SqlStatementError("SQL execution failed: [PRINCIPAL_DOES_NOT_EXIST] x\nSQL: GRANT", None), "not_found"),
         (TemporarilyUnavailable("warehouse starting"), "warehouse_unavailable"),
@@ -108,3 +113,41 @@ def test_once_the_warehouse_is_unavailable_the_remaining_statements_are_not_atte
         SetupGrantFailure(statement=_STATEMENTS[1], error_code="warehouse_unavailable"),
         SetupGrantFailure(statement=_STATEMENTS[2], error_code="warehouse_unavailable"),
     )
+
+
+def test_a_missing_securable_does_not_stop_the_rest() -> None:
+    executor = create_autospec(SqlExecutor, instance=True)
+    executor.execute_no_schema.side_effect = [NotFound("Principal runner does not exist"), None, None]
+
+    result = run_grant_statements(_STATEMENTS, executor)
+
+    assert executor.execute_no_schema.call_count == 3
+    assert result.failed == (SetupGrantFailure(statement=_STATEMENTS[0], error_code="not_found"),)
+
+
+def test_a_rate_limited_statement_is_retried_once_after_a_pause() -> None:
+    executor = create_autospec(SqlExecutor, instance=True)
+    executor.execute_no_schema.side_effect = [None, TooManyRequests("slow down"), None, None]
+    pauses: list[float] = []
+
+    result = run_grant_statements(_STATEMENTS, executor, pause=pauses.append)
+
+    assert executor.execute_no_schema.call_args_list == [
+        call(_STATEMENTS[0][:-1]),
+        call(_STATEMENTS[1][:-1]),
+        call(_STATEMENTS[1][:-1]),
+        call(_STATEMENTS[2][:-1]),
+    ]
+    assert len(pauses) == 1 and pauses[0] > 0
+    assert (result.applied, result.failed) == (3, ())
+
+
+def test_a_statement_still_rate_limited_after_its_retry_fails_without_stopping_the_rest() -> None:
+    executor = create_autospec(SqlExecutor, instance=True)
+    executor.execute_no_schema.side_effect = [TooManyRequests("slow down"), TooManyRequests("slow down"), None, None]
+
+    result = run_grant_statements(_STATEMENTS, executor, pause=lambda seconds: None)
+
+    assert executor.execute_no_schema.call_count == 4
+    assert result.applied == 2
+    assert result.failed == (SetupGrantFailure(statement=_STATEMENTS[0], error_code="rate_limited"),)

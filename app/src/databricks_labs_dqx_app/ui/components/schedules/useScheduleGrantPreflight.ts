@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, type QueryClient, type UseMutationOptions } from "@tanstack/react-query";
+import { hashKey, useQuery, useQueryClient, type QueryClient, type UseMutationOptions } from "@tanstack/react-query";
 import axios, { type AxiosError, type AxiosResponse } from "axios";
 import {
   preflightScheduleGrants,
@@ -61,20 +61,34 @@ export function missingGrantTableFqns(missingGrantTables: readonly SchedulePrefl
   return missingGrantTables.map((table) => table.fqn);
 }
 
-/** After the grants run, show the backend's fresh check straight away, then refetch it. */
+/** The preflight key a run of the grants was started for, kept on the mutation. */
+export interface ScheduleGrantApplyContext {
+  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>;
+}
+
+/**
+ * After the grants run, show the backend's fresh check straight away, then refetch it.
+ * The check goes to the tables the run started for, even if the schedule's tables
+ * changed meanwhile. When the check after the grants failed, the response carries the
+ * check from before them, so it isn't shown as current: the check is only refetched.
+ */
 export function applyScheduleGrantsCallbacks(
   queryClient: QueryClient,
   queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>,
 ): UseMutationOptions<
   AxiosResponse<ScheduleGrantApplyOut>,
   AxiosError<HTTPValidationError>,
-  { data: ScheduleGrantApplyIn }
+  { data: ScheduleGrantApplyIn },
+  ScheduleGrantApplyContext
 > {
   return {
-    onSuccess: (response) => {
-      queryClient.setQueryData<SchedulePreflightOut>(queryKey, response.data.preflight);
+    onMutate: () => ({ queryKey }),
+    onSuccess: (response, _variables, context) => {
+      if (response.data.recheck_failed) return;
+      queryClient.setQueryData<SchedulePreflightOut>(context?.queryKey ?? queryKey, response.data.preflight);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
+    onSettled: (_data, _error, _variables, context) =>
+      queryClient.invalidateQueries({ queryKey: context?.queryKey ?? queryKey }),
   };
 }
 
@@ -89,6 +103,35 @@ export function scheduleGrantsRecheckFailure(
 export function applyScheduleGrantsFailure(error: unknown): GrantRunOutcome {
   const unavailable = axios.isAxiosError(error) && error.response?.status === 503;
   return { summary: null, failedSql: "", errorCodes: [unavailable ? "warehouse_unavailable" : "unknown"] };
+}
+
+/**
+ * What the last run of the grants shows for the schedule's current *tableFqns*. A run
+ * started for another set of tables shows nothing, so its failed SQL doesn't linger
+ * after the tables change.
+ */
+export function scheduleGrantApplyResult(
+  apply: {
+    isSuccess: boolean;
+    isError: boolean;
+    isPending: boolean;
+    data: { data: ScheduleGrantApplyOut } | undefined;
+    error: unknown;
+    context: ScheduleGrantApplyContext | undefined;
+  },
+  tableFqns: readonly string[],
+): Pick<ScheduleGrantPreflight, "applyOutcome" | "recheckFailed" | "isApplying"> {
+  const current =
+    !!apply.context && hashKey(apply.context.queryKey) === hashKey(scheduleGrantPreflightQueryKey(tableFqns));
+  if (!current) return { applyOutcome: null, recheckFailed: null, isApplying: false };
+  let applyOutcome: GrantRunOutcome | null = null;
+  if (apply.isSuccess && apply.data) applyOutcome = grantRunOutcome(apply.data.data);
+  else if (apply.isError) applyOutcome = applyScheduleGrantsFailure(apply.error);
+  return {
+    applyOutcome,
+    recheckFailed: apply.isSuccess && apply.data ? scheduleGrantsRecheckFailure(apply.data.data) : null,
+    isApplying: apply.isPending,
+  };
 }
 
 /**
@@ -115,11 +158,9 @@ export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled:
   });
   const apply = useApplyScheduleGrants({ mutation: applyScheduleGrantsCallbacks(queryClient, queryKey) });
   const split = splitPreflightTables(query.data?.tables ?? []);
-  let applyOutcome: GrantRunOutcome | null = null;
-  if (apply.isSuccess) applyOutcome = grantRunOutcome(apply.data.data);
-  else if (apply.isError) applyOutcome = applyScheduleGrantsFailure(apply.error);
   return {
     ...split,
+    ...scheduleGrantApplyResult(apply, tableFqns),
     isFetching: query.isFetching,
     retry: () => {
       // A fresh check replaces the outcome of the last run.
@@ -127,8 +168,5 @@ export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled:
       void query.refetch();
     },
     applyGrants: () => apply.mutate({ data: { table_fqns: missingGrantTableFqns(split.missingGrantTables) } }),
-    isApplying: apply.isPending,
-    applyOutcome,
-    recheckFailed: apply.isSuccess ? scheduleGrantsRecheckFailure(apply.data.data) : null,
   };
 }

@@ -130,13 +130,29 @@ async def list_setup_groups(
     if config.has_deployment_storage:
         raise _error(status.HTTP_409_CONFLICT, "configuration_managed_by_deployment")
     try:
-        listed = await asyncio.to_thread(lambda: list(sp_ws.groups.list(attributes="id,displayName")))
+        names, truncated = await asyncio.to_thread(_choosable_group_names, sp_ws, MAX_LISTED_GROUPS)
     except DatabricksError as error:
         logger.warning(f"Group listing failed: {type(error).__name__}")
         raise _error(status.HTTP_502_BAD_GATEWAY, "group_list_failed") from None
-    names = {group.display_name for group in listed if group.display_name}
-    choosable = sorted(name for name in names if name.casefold() not in _BUILT_IN_GROUP_NAMES)
-    return SetupGroupsResponse(groups=tuple(choosable[:MAX_LISTED_GROUPS]))
+    return SetupGroupsResponse(groups=tuple(sorted(names)), truncated=truncated)
+
+
+def _choosable_group_names(sp_ws: WorkspaceClient, limit: int) -> tuple[set[str], bool]:
+    """Read up to *limit* non-built-in group names, and whether the workspace has more.
+
+    Paging stops at the first name past *limit*, so a workspace with many groups isn't read
+    in full. A page is sized to hold the whole limit plus the built-in groups left out.
+    """
+    names: set[str] = set()
+    pages = sp_ws.groups.list(attributes="id,displayName", count=limit + len(_BUILT_IN_GROUP_NAMES) + 1)
+    for group in pages:
+        name = group.display_name
+        if not name or name.casefold() in _BUILT_IN_GROUP_NAMES or name in names:
+            continue
+        if len(names) == limit:
+            return names, True
+        names.add(name)
+    return names, False
 
 
 @router.post("/configuration", response_model=SetupReport, operation_id="configureSetup")
@@ -270,6 +286,7 @@ async def list_task_runner_service_principals(
         available=True,
         principals=listing.principals,
         app_name=listing.app_display_name or fallback_name,
+        truncated=listing.truncated,
     )
 
 

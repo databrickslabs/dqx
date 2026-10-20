@@ -105,7 +105,7 @@ class SetupReport(_ImmutableModel):
         raise LookupError(f"Setup report does not contain step {step_id.value!r}")
 
 
-GrantErrorCode = Literal["permission_denied", "warehouse_unavailable", "not_found", "unknown"]
+GrantErrorCode = Literal["permission_denied", "warehouse_unavailable", "not_found", "rate_limited", "unknown"]
 
 
 class SetupGrantFailure(_ImmutableModel):
@@ -147,9 +147,14 @@ class SetupConfigurationRequest(BaseModel):
 
 
 class SetupGroupsResponse(_ImmutableModel):
-    """Display names of the workspace groups an administrator can choose as the default user group."""
+    """Display names of the workspace groups an administrator can choose as the default user group.
+
+    *truncated* is true when the workspace has more groups than are listed, so the
+    administrator may need to type the name.
+    """
 
     groups: tuple[str, ...] = ()
+    truncated: bool = False
 
 
 class SetupOverrideRequest(BaseModel):
@@ -173,12 +178,15 @@ class TaskRunnerPrincipalsResponse(_ImmutableModel):
 
     *available* is false when Studio couldn't list them, so the administrator pastes an
     Application ID instead. *app_name* names the DQX Studio app so the administrator can
-    find it when giving it access to the chosen service principal.
+    find it when giving it access to the chosen service principal. *truncated* is true
+    when the workspace has more service principals than are listed, so the administrator
+    may need to paste the Application ID.
     """
 
     available: bool
     principals: tuple[TaskRunnerPrincipal, ...] = ()
     app_name: str = ""
+    truncated: bool = False
 
 
 class TaskRunnerPrincipalRequest(BaseModel):

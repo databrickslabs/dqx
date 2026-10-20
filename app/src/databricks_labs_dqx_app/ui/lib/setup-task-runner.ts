@@ -7,7 +7,8 @@ import type {
 /** Service principals offered by the task-runner step's picker. */
 export type TaskRunnerPrincipalList =
   | { status: "loading"; appName: string }
-  | { status: "ready"; principals: TaskRunnerPrincipal[]; appName: string }
+  /** *truncated*: the listing stopped at its cap, so an Application ID may need pasting. */
+  | { status: "ready"; principals: TaskRunnerPrincipal[]; appName: string; truncated?: boolean }
   /** Listing failed or found nothing: the step falls back to pasting an Application ID. */
   | { status: "unavailable"; appName: string };
 
@@ -48,6 +49,21 @@ export function isApplicationId(value: string): boolean {
   return APPLICATION_ID.test(value.trim());
 }
 
+/**
+ * Whether a step 2 result for *applicationId* still belongs to the picked service
+ * principal. A request can finish after the administrator picks another one; its
+ * result must not unlock the later steps for the new pick.
+ */
+export function isResultForPick(
+  picked: PickedPrincipal | null,
+  applicationId: string,
+): boolean {
+  return (
+    !!picked &&
+    picked.applicationId.trim().toLowerCase() === applicationId.trim().toLowerCase()
+  );
+}
+
 /** Map the service principal query onto what the picker should render. */
 export function taskRunnerPrincipalList(query: {
   isPending: boolean;
@@ -59,7 +75,7 @@ export function taskRunnerPrincipalList(query: {
   if (query.isPending) return { status: "loading", appName };
   const principals = [...(query.data?.principals ?? [])];
   return query.data?.available && principals.length > 0
-    ? { status: "ready", principals, appName }
+    ? { status: "ready", principals, appName, truncated: !!query.data?.truncated }
     : { status: "unavailable", appName };
 }
 

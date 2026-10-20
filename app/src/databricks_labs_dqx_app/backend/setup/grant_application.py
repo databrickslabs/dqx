@@ -7,7 +7,8 @@ raw error text is never returned or logged.
 """
 
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from databricks.sdk.errors import (
@@ -29,7 +30,10 @@ _PERMISSION_SQLSTATES = frozenset({"42501"})
 _NOT_FOUND_SQLSTATES = frozenset({"42704", "42P01", "42S02", "42883"})
 _PERMISSION_MARKERS = ("PERMISSION_DENIED", "INSUFFICIENT_PERMISSIONS", "INSUFFICIENT_PRIVILEGES")
 _NOT_FOUND_MARKERS = ("_NOT_FOUND", "DOES_NOT_EXIST")
-_WAREHOUSE_ERRORS = (TemporarilyUnavailable, DeadlineExceeded, ResourceExhausted, TooManyRequests, TimeoutError)
+_WAREHOUSE_ERRORS = (TemporarilyUnavailable, DeadlineExceeded, TimeoutError)
+_RATE_LIMIT_ERRORS = (TooManyRequests, ResourceExhausted)
+# How long to wait before running a rate-limited statement once more.
+RATE_LIMIT_PAUSE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -50,18 +54,24 @@ class GrantRun:
 def grant_error_code(error: Exception) -> GrantErrorCode:
     """Map a GRANT failure to a sanitized error code.
 
+    Only real warehouse unavailability is *warehouse_unavailable*, which stops the run:
+    the warehouse not answering, a statement that never finishes, or a 404 that names
+    the warehouse. Other 404s are *not_found*, and 429s are *rate_limited*.
+
     Args:
         error: Exception raised while running a GRANT statement.
 
     Returns:
-        *permission_denied*, *not_found*, *warehouse_unavailable* or *unknown*.
+        *permission_denied*, *not_found*, *warehouse_unavailable*, *rate_limited* or *unknown*.
     """
     if isinstance(error, PermissionDenied):
         return "permission_denied"
-    # The Statement Execution API only answers 404 when the warehouse itself can't be found;
-    # a missing catalog, schema or principal comes back as a failed statement instead.
-    if isinstance(error, (NotFound, *_WAREHOUSE_ERRORS)):
+    if isinstance(error, _RATE_LIMIT_ERRORS):
+        return "rate_limited"
+    if isinstance(error, _WAREHOUSE_ERRORS):
         return "warehouse_unavailable"
+    if isinstance(error, NotFound):
+        return "warehouse_unavailable" if "WAREHOUSE" in str(error).upper() else "not_found"
     if isinstance(error, SqlStatementError):
         if error.sqlstate in _PERMISSION_SQLSTATES:
             return "permission_denied"
@@ -80,16 +90,23 @@ def grant_error_code(error: Exception) -> GrantErrorCode:
     return "unknown"
 
 
-def run_grant_statements(statements: Sequence[str], executor: SqlExecutor | None) -> GrantRun:
+def run_grant_statements(
+    statements: Sequence[str],
+    executor: SqlExecutor | None,
+    *,
+    pause: Callable[[float], None] = time.sleep,
+) -> GrantRun:
     """Run each GRANT statement once through *executor*, continuing past failures.
 
-    Once the warehouse is unavailable, the remaining statements are reported as
-    *warehouse_unavailable* without being attempted, rather than each waiting out the
-    warehouse again.
+    A statement Databricks turns away as rate limited runs once more after a short
+    pause, then counts as failed. Once the warehouse is unavailable, the remaining
+    statements are reported as *warehouse_unavailable* without being attempted, rather
+    than each waiting out the warehouse again.
 
     Args:
         statements: Statements built by the server-side checks; anything that isn't a GRANT is skipped.
         executor: The signed-in user's SQL executor, or None when none could be built.
+        pause: Waits the given number of seconds before a rate-limited statement's retry.
 
     Returns:
         How many statements ran and which ones failed, with sanitized error codes.
@@ -101,11 +118,24 @@ def run_grant_statements(statements: Sequence[str], executor: SqlExecutor | None
         if executor is None or warehouse_unavailable:
             failed.append(SetupGrantFailure(statement=statement, error_code="warehouse_unavailable"))
             continue
-        try:
-            executor.execute_no_schema(statement.rstrip().removesuffix(";"))
-        except Exception as error:
-            code = grant_error_code(error)
-            logger.warning(f"A GRANT statement could not be run ({type(error).__name__}, {code})")
+        code = _run_grant(statement, executor, pause)
+        if code is not None:
             failed.append(SetupGrantFailure(statement=statement, error_code=code))
             warehouse_unavailable = code == "warehouse_unavailable"
     return GrantRun(applied=len(grants) - len(failed), total=len(grants), failed=tuple(failed))
+
+
+def _run_grant(statement: str, executor: SqlExecutor, pause: Callable[[float], None]) -> GrantErrorCode | None:
+    """Run one GRANT statement, retrying it once when rate limited; return its error code, or None."""
+    sql = statement.rstrip().removesuffix(";")
+    for attempt in range(2):
+        try:
+            executor.execute_no_schema(sql)
+            return None
+        except Exception as error:
+            code = grant_error_code(error)
+            logger.warning(f"A GRANT statement could not be run ({type(error).__name__}, {code})")
+            if code != "rate_limited" or attempt == 1:
+                return code
+        pause(RATE_LIMIT_PAUSE_SECONDS)
+    return "rate_limited"

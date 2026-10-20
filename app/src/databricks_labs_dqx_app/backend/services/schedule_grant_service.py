@@ -258,6 +258,14 @@ class ScheduleGrantService:
         self._sp_ws = sp_ws
         self._job_id = (job_id or "").strip()
         self._warehouse_id = (warehouse_id or "").strip()
+        self.clear_caches()
+
+    def clear_caches(self) -> None:
+        """Forget everything this service has looked up, so the next check reads it all again.
+
+        The service memoizes identities, read probes and grants for one request. Clear them
+        after changing grants, so a check that follows sees the change.
+        """
         self._scheduler_can_read_cache: dict[str, bool] = {}
         self._user_can_read_cache: dict[str, bool] = {}
         # Per-request memoization of the (otherwise per-table) identity lookups.
@@ -1043,7 +1051,7 @@ class ScheduleGrantService:
         client, and run through *executor*, which must be the caller's own SQL
         executor so Unity Catalog decides whether they may grant. A statement shared
         by several tables runs once, and a failure doesn't stop the rest. Tables are
-        then checked again on a fresh service, so the result shows only what is
+        then checked again with the caches cleared, so the result shows only what is
         still missing.
 
         Args:
@@ -1067,9 +1075,10 @@ class ScheduleGrantService:
             ScheduleGrantFailure(fqn=table_of[f.statement], statement=f.statement, error_code=f.error_code)
             for f in run.failed
         )
+        # This service memoized the access it saw before the grants ran.
+        self.clear_caches()
         try:
-            # Fresh instance: this one memoizes the usage it saw before the grants ran.
-            after = type(self)(self._obo, self._sp_ws, self._job_id, self._warehouse_id).preflight(fqns)
+            after = self.preflight(fqns)
         except Exception as e:
             # The grants already ran; report them rather than failing the request.
             logger.warning(f"Re-checking schedule grants failed ({type(e).__name__})")

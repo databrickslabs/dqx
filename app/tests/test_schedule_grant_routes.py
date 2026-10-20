@@ -600,12 +600,19 @@ class TestScheduleGrantApplyRoute:
             ["cat.sch"],
             ["cat.sch.t`1"],
             ["__sql_check__/orders_vs_payments"],
-            [f"cat.sch.t{i}" for i in range(201)],
         ],
     )
-    def test_only_a_bounded_list_of_real_table_names_is_accepted(self, table_fqns):
+    def test_only_real_table_names_are_accepted(self, table_fqns):
         with pytest.raises(ValidationError):
             ScheduleGrantApplyIn(table_fqns=table_fqns)
+
+    def test_a_collection_of_any_size_is_accepted_with_repeats_dropped(self):
+        # The preflight takes any number of tables, so the grants for all of them must run too.
+        fqns = [f"cat.sch.t{i}" for i in range(500)]
+
+        body = ScheduleGrantApplyIn(table_fqns=[*fqns, "cat.sch.t0", "cat.sch.t1"])
+
+        assert body.table_fqns == fqns
 
 
 class TestScheduleOverviewRoute:

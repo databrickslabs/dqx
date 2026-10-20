@@ -3,7 +3,6 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from itertools import islice
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
@@ -52,8 +51,8 @@ _RUN_AS_SUMMARIES = {
         "Follow the three steps below."
     ),
     "task_runner_run_as_matches_app": (
-        "Studio's background job uses the app's own service principal. It needs a separate one. "
-        "Follow the three steps below."
+        "Studio's background job is currently using the app's own service principal instead of a dedicated "
+        "task runner service principal. Follow the steps below to create one."
     ),
     "task_runner_run_as_not_service_principal": (
         "Studio's background job runs as a person, so it would stop working if they left. "
@@ -243,10 +242,14 @@ class TaskRunnerJobManager:
 
 @dataclass(frozen=True)
 class TaskRunnerPrincipalListing:
-    """Service principals offered for the task-runner job, and the app's own display name."""
+    """Service principals offered for the task-runner job, and the app's own display name.
+
+    *truncated* is true when the workspace has more service principals than were listed.
+    """
 
     principals: tuple[TaskRunnerPrincipal, ...]
     app_display_name: str | None
+    truncated: bool = False
 
 
 def normalize_application_id(value: str) -> str:
@@ -273,16 +276,18 @@ def list_task_runner_principals(
 
     The app's own service principal is left out (its display name is returned separately so
     the administrator can find the app), as are entries without an Application ID. At most
-    *limit* service principals are read. Listing errors propagate.
+    *limit* service principals are listed: reading stops at the first one past the limit,
+    which sets *truncated*. Listing errors propagate.
 
     Args:
         workspace: App service principal workspace client.
         app_application_id: Application ID of the app's own service principal.
-        limit: Most service principals to read.
+        limit: Most service principals to list.
     """
     principals: list[TaskRunnerPrincipal] = []
     app_display_name: str | None = None
-    for principal in islice(workspace.service_principals.list(attributes=_PRINCIPAL_ATTRIBUTES), limit + 1):
+    truncated = False
+    for principal in workspace.service_principals.list(attributes=_PRINCIPAL_ATTRIBUTES):
         application_id = (principal.application_id or "").strip()
         display_name = _display(principal.display_name or "") or application_id
         if not application_id:
@@ -290,16 +295,20 @@ def list_task_runner_principals(
         if _same_application_id(application_id, app_application_id):
             app_display_name = display_name
             continue
-        if len(principals) < limit:
-            principals.append(
-                TaskRunnerPrincipal(
-                    id=_display(principal.id or ""),
-                    display_name=display_name,
-                    application_id=_display(application_id),
-                )
+        if len(principals) == limit:
+            truncated = True
+            break
+        principals.append(
+            TaskRunnerPrincipal(
+                id=_display(principal.id or ""),
+                display_name=display_name,
+                application_id=_display(application_id),
             )
+        )
     principals.sort(key=lambda item: (item.display_name.casefold(), item.application_id))
-    return TaskRunnerPrincipalListing(principals=tuple(principals), app_display_name=app_display_name)
+    return TaskRunnerPrincipalListing(
+        principals=tuple(principals), app_display_name=app_display_name, truncated=truncated
+    )
 
 
 def _same_application_id(left: str, right: str) -> bool:

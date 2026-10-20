@@ -138,7 +138,7 @@ describe("ScheduleGrantWarning missing grants", () => {
     expect(markup.indexOf(escapeHtml(STATEMENT), message)).toBeGreaterThan(message);
   });
 
-  test.each(["warehouse_unavailable", "not_found", "unknown"] as const)(
+  test.each(["warehouse_unavailable", "not_found", "rate_limited", "unknown"] as const)(
     "has its own message for %s",
     (code) => {
       const markup = render(

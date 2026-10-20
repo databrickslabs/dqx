@@ -59,6 +59,7 @@
         "errors": {
           "permission_denied": "You don't have permission to share these tables. Send the commands below to the table's owner, or to a Databricks workspace admin, and ask them to run them in the SQL editor. The schedule will work once they have.",
           "warehouse_unavailable": "Studio couldn't reach a SQL warehouse to run these commands. Try again in a minute, or copy them and run them in the SQL editor.",
+          "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
           "not_found": "Something these commands refer to no longer exists, such as one of the tables or its schema. Click Try again to refresh the list.",
           "unknown": "These commands couldn't be run. Copy them and run them in the SQL editor, or ask the table's owner or a Databricks workspace admin for help."
         }
@@ -3183,6 +3184,7 @@
       "errors": {
         "permission_denied": "Your account isn't allowed to give this access. Send the commands above to whoever owns this catalog, or to a Databricks workspace admin, and ask them to run them in the SQL editor. Then click Verify again.",
         "warehouse_unavailable": "Studio couldn't reach a SQL warehouse to run these commands. Try again in a minute, or copy them and run them in the SQL editor.",
+        "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
         "not_found": "Something these commands refer to no longer exists. Click Verify again to refresh the list.",
         "unknown": "These commands couldn't be run. Copy them and run them in the SQL editor, or ask a workspace admin for help."
       }
@@ -3201,6 +3203,8 @@
       "groupPlaceholder": "Choose a group",
       "groupSearch": "Search or type a group name",
       "groupListUnavailable": "Studio couldn't list the groups in this workspace. Type the group name instead.",
+      "groupListTruncated_one": "Affichage de {{count}} groupe uniquement. Si le vôtre n'apparaît pas, saisissez son nom.",
+      "groupListTruncated_other": "Affichage des {{count}} premiers groupes. Si le vôtre n'apparaît pas, saisissez son nom.",
       "audience_groupHelp": "Un groupe de compte existant affecté à cet espace de travail. Ses membres peuvent utiliser Studio ; les rôles sont attribués séparément.",
       "schemas": "Schémas",
       "submit": "Enregistrer et continuer",
@@ -3247,6 +3251,8 @@
         "noMatches": "No service principals match. Paste its Application ID to use it.",
         "pastePlaceholder": "Application ID, for example 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
         "listUnavailable": "Studio couldn't load the list of service principals. Paste the service principal's Application ID instead. You'll find it on its page under Settings → Identity and access.",
+        "listTruncated_one": "Affichage de {{count}} service principal uniquement. Si le vôtre n'apparaît pas, collez son ID d'application.",
+        "listTruncated_other": "Affichage des {{count}} premiers service principals. Si le vôtre n'apparaît pas, collez son ID d'application.",
         "invalidId": "An Application ID looks like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Don't have one? Create it",
         "createStep1": "Open Settings → Identity and access → Service principals, click Add service principal, and create one named dqx-studio-task-runner.",

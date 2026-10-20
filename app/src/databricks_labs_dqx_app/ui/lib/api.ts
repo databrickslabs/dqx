@@ -4379,12 +4379,13 @@ export interface ScheduleConfigOut {
  * Body of ``POST /schedule-grants/apply``: only table names, never SQL.
 
 The server re-derives the GRANT statements from its own preflight of these tables.
+There is no size cap beyond the preflight's: the preflight takes any number of
+tables, and a statement shared by several tables runs only once.
  */
 export interface ScheduleGrantApplyIn {
   /**
    * Fully qualified names of the tables whose missing scheduler grants to run
    * @minItems 1
-   * @maxItems 200
    */
   table_fqns: string[];
 }
@@ -4410,6 +4411,7 @@ export const ScheduleGrantFailureOutErrorCode = {
   permission_denied: 'permission_denied',
   warehouse_unavailable: 'warehouse_unavailable',
   not_found: 'not_found',
+  rate_limited: 'rate_limited',
   unknown: 'unknown',
 } as const;
 
@@ -4705,6 +4707,7 @@ export const SetupGrantFailureErrorCode = {
   permission_denied: 'permission_denied',
   warehouse_unavailable: 'warehouse_unavailable',
   not_found: 'not_found',
+  rate_limited: 'rate_limited',
   unknown: 'unknown',
 } as const;
 
@@ -4718,9 +4721,13 @@ export interface SetupGrantFailure {
 
 /**
  * Display names of the workspace groups an administrator can choose as the default user group.
+
+*truncated* is true when the workspace has more groups than are listed, so the
+administrator may need to type the name.
  */
 export interface SetupGroupsResponse {
   groups?: string[];
+  truncated?: boolean;
 }
 
 /**
@@ -5102,12 +5109,15 @@ export interface TaskRunnerPrincipalRequest {
 
 *available* is false when Studio couldn't list them, so the administrator pastes an
 Application ID instead. *app_name* names the DQX Studio app so the administrator can
-find it when giving it access to the chosen service principal.
+find it when giving it access to the chosen service principal. *truncated* is true
+when the workspace has more service principals than are listed, so the administrator
+may need to paste the Application ID.
  */
 export interface TaskRunnerPrincipalsResponse {
   available: boolean;
   principals?: TaskRunnerPrincipal[];
   app_name?: string;
+  truncated?: boolean;
 }
 
 export type TestRowOutCells = {[key: string]: string | null};

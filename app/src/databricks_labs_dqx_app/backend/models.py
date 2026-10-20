@@ -2768,18 +2768,16 @@ class SchedulePreflightOut(BaseModel):
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
 
 
-MAX_SCHEDULE_GRANT_APPLY_TABLES = 200
-
-
 class ScheduleGrantApplyIn(BaseModel):
     """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
 
     The server re-derives the GRANT statements from its own preflight of these tables.
+    There is no size cap beyond the preflight's: the preflight takes any number of
+    tables, and a statement shared by several tables runs only once.
     """
 
     table_fqns: list[str] = Field(
         min_length=1,
-        max_length=MAX_SCHEDULE_GRANT_APPLY_TABLES,
         description="Fully qualified names of the tables whose missing scheduler grants to run",
     )
 
@@ -2790,7 +2788,7 @@ class ScheduleGrantApplyIn(BaseModel):
             validate_fqn(fqn)
             if len(fqn.split(".")) != 3:
                 raise ValueError("Each entry must be a catalog.schema.table name.")
-        return table_fqns
+        return list(dict.fromkeys(table_fqns))
 
 
 class ScheduleGrantFailureOut(BaseModel):

@@ -1711,6 +1711,7 @@ async def test_apply_grants_runs_the_step_statements_as_the_administrator_then_r
             harness.bound.results.pop(SetupStepId.TASK_RUNNER)
 
     executor.execute_no_schema.side_effect = run
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     result = await harness.orchestrator.apply_grants(
         SetupStepId.TASK_RUNNER,
@@ -1728,6 +1729,54 @@ async def test_apply_grants_runs_the_step_statements_as_the_administrator_then_r
 
 
 @pytest.mark.asyncio
+async def test_apply_grants_rederives_only_the_step_then_reverifies_once() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
+
+    await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    # Only the task-runner check runs before the statements, with the administrator's SQL;
+    # one full re-check follows them.
+    assert harness.events[0].startswith("runner:")
+    assert harness.events.count("identity") == 1
+    assert harness.events.index("identity") > 0
+    assert executor.execute_no_schema.call_count == len(_RUNNER_GRANTS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step_id", [SetupStepId.UNITY_CATALOG, SetupStepId.ACCESS])
+async def test_apply_grants_rederives_a_step_with_its_own_check(step_id: SetupStepId) -> None:
+    grant = "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;"
+    missing = SetupStep(
+        id=step_id,
+        state=StepState.ACTION_REQUIRED,
+        code="grants_missing",
+        summary="grants missing",
+        grant_statements=(grant,),
+        actions=(SetupActionId.VERIFY_AGAIN,),
+    )
+    harness = _harness(bound_results={step_id: missing})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
+
+    result = await harness.orchestrator.apply_grants(
+        step_id, setup_user="admin@example.com", reader_sql_factory=lambda resources: executor
+    )
+
+    assert result is not None
+    assert harness.events[0] == step_id.value
+    assert harness.events.count("identity") == 1
+    executor.execute_no_schema.assert_called_once_with(grant.removesuffix(";"))
+
+
+@pytest.mark.asyncio
 async def test_apply_grants_reports_a_failed_statement_and_runs_the_rest() -> None:
     harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
     executor = create_autospec(SqlExecutor, instance=True)
@@ -1739,6 +1788,7 @@ async def test_apply_grants_reports_a_failed_statement_and_runs_the_rest() -> No
         harness.bound.results[SetupStepId.TASK_RUNNER] = _missing_runner_grants((_RUNNER_GRANTS[1],))
 
     executor.execute_no_schema.side_effect = run
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     result = await harness.orchestrator.apply_grants(
         SetupStepId.TASK_RUNNER,
@@ -1762,6 +1812,7 @@ async def test_apply_grants_has_nothing_to_apply_for_a_step_without_statements()
         bound_results={SetupStepId.TASK_RUNNER: _action_required(SetupStepId.TASK_RUNNER, "task_runner_identity")}
     )
     executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
 
     result = await harness.orchestrator.apply_grants(
         SetupStepId.TASK_RUNNER,
@@ -1779,6 +1830,8 @@ async def test_apply_grants_has_nothing_to_apply_for_a_step_setup_never_reached(
         bound_results={SetupStepId.UNITY_CATALOG: _action_required(SetupStepId.UNITY_CATALOG, "catalog_missing")}
     )
     executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
 
     result = await harness.orchestrator.apply_grants(
         SetupStepId.ACCESS,
@@ -1788,6 +1841,8 @@ async def test_apply_grants_has_nothing_to_apply_for_a_step_setup_never_reached(
 
     assert result is None
     executor.execute_no_schema.assert_not_called()
+    # Nothing was checked again: the step isn't in the report the administrator saw.
+    assert harness.events == []
 
 
 # ---------------------------------------------------------------------------
@@ -2034,3 +2089,24 @@ async def test_picked_principal_access_needs_bound_storage() -> None:
 
     with pytest.raises(TaskRunnerJobUnavailableError):
         await harness.orchestrator.check_task_runner_access(_RUNNER_ID, reader_sql_factory=lambda resources: None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["check_task_runner_access", "apply_task_runner_grants"])
+async def test_picked_principal_access_and_grants_need_the_task_runner_job(action: str) -> None:
+    # Storage is bound, but setup stopped before it resolved the task-runner job.
+    harness = _harness(
+        bootstrap=_APP_CREATED,
+        app_sp_id=_APP_ID,
+        bound_results={SetupStepId.UNITY_CATALOG: _action_required(SetupStepId.UNITY_CATALOG, "catalog_missing")},
+    )
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    assert harness.orchestrator.bound is not None
+    harness.events.clear()
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    with pytest.raises(TaskRunnerJobUnavailableError):
+        await getattr(harness.orchestrator, action)(_RUNNER_ID, reader_sql_factory=lambda resources: executor)
+
+    assert harness.events == []
+    executor.execute_no_schema.assert_not_called()

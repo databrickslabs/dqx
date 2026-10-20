@@ -113,6 +113,11 @@ export function SetupConfigurationForm({
               {t(`setup.configuration.${PICKER_COPY[field]}ListUnavailable`)}
             </p>
           )}
+          {field === "audience_group" && groupList?.status === "ready" && groupList.truncated && (
+            <p className="text-xs text-muted-foreground">
+              {t("setup.configuration.groupListTruncated", { count: groupList.options.length })}
+            </p>
+          )}
         </div>
       ))}
       {errorCode && (

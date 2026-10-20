@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import type { SetupApplyGrantsResponse } from "./api";
+import { SetupGrantFailureErrorCode, type SetupApplyGrantsResponse } from "./api";
+import en from "./i18n/locales/en.json";
+import es from "./i18n/locales/es.json";
+import fr from "./i18n/locales/fr.json";
+import it from "./i18n/locales/it.json";
+import ptBR from "./i18n/locales/pt-BR.json";
 import {
   grantErrorMessageKey,
   grantRequestFailure,
@@ -101,5 +106,30 @@ describe("grantErrorMessageKey", () => {
     "unknown",
   ] as const)("has a message key for %s", (code) => {
     expect(grantErrorMessageKey(code)).toBe(`setup.grants.errors.${code}`);
+  });
+});
+
+describe("a rate-limited GRANT", () => {
+  const busy = "Databricks is busy right now. Wait a moment, then try again.";
+
+  test("has a plain message in setup and in schedules", () => {
+    expect(SetupGrantFailureErrorCode.rate_limited).toBe("rate_limited");
+    expect(en.setup.grants.errors.rate_limited).toBe(busy);
+    expect(en.schedule.grantWarning.apply.errors.rate_limited).toBe(busy);
+  });
+
+  test.each([
+    ["fr", fr],
+    ["es", es],
+    ["it", it],
+    ["pt-BR", ptBR],
+  ] as const)("is translated in %s", (_code, locale) => {
+    for (const message of [
+      locale.setup.grants.errors.rate_limited,
+      locale.schedule.grantWarning.apply.errors.rate_limited,
+    ]) {
+      expect(message).toContain("Databricks");
+      expect(message).not.toBe(busy);
+    }
   });
 });

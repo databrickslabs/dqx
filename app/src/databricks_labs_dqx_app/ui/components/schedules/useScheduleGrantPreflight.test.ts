@@ -5,6 +5,7 @@ import {
   applyScheduleGrantsCallbacks,
   applyScheduleGrantsFailure,
   missingGrantTableFqns,
+  scheduleGrantApplyResult,
   scheduleGrantPreflightQueryKey,
   scheduleGrantsRecheckFailure,
   splitPreflightTables,
@@ -163,5 +164,131 @@ describe("a failed re-check after the grants ran", () => {
     expect(
       scheduleGrantsRecheckFailure({ preflight: { tables: [] }, applied: 1, total: 1, failed: [] }),
     ).toBeNull();
+  });
+});
+
+function applyOptions(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>,
+  respond: () => Promise<unknown>,
+) {
+  return getApplyScheduleGrantsMutationOptions({
+    mutation: applyScheduleGrantsCallbacks(queryClient, queryKey),
+    axios: {
+      adapter: async (config) => ({
+        data: await respond(),
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      }),
+    },
+  });
+}
+
+function applyObserver(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>,
+  respond: () => Promise<unknown>,
+) {
+  return new MutationObserver(queryClient, applyOptions(queryClient, queryKey, respond));
+}
+
+describe("the run's outcome belongs to the tables it ran for", () => {
+  const failedRun = {
+    preflight: { tables: [] },
+    applied: 0,
+    total: 1,
+    failed: [{ fqn: "c.s.a", statement: STATEMENT, error_code: "permission_denied" as const }],
+  };
+
+  it("shows the outcome while the schedule's tables stay the same", () => {
+    const result = scheduleGrantApplyResult(
+      {
+        isSuccess: true,
+        isError: false,
+        isPending: false,
+        data: { data: failedRun },
+        error: null,
+        context: { queryKey: scheduleGrantPreflightQueryKey(["c.s.a", "c.s.b"]) },
+      },
+      ["c.s.a", "c.s.b"],
+    );
+    expect(result.applyOutcome?.failedSql).toBe(STATEMENT);
+    expect(result.isApplying).toBe(false);
+  });
+
+  it("drops the outcome, and the failed SQL, once the schedule's tables change", () => {
+    const apply = {
+      isSuccess: true,
+      isError: false,
+      isPending: false,
+      data: { data: { ...failedRun, recheck_failed: true } },
+      error: null,
+      context: { queryKey: scheduleGrantPreflightQueryKey(["c.s.a", "c.s.b"]) },
+    };
+    expect(scheduleGrantApplyResult(apply, ["c.s.a"])).toEqual({
+      applyOutcome: null,
+      recheckFailed: null,
+      isApplying: false,
+    });
+  });
+
+  it("doesn't show a run for other tables as still running", () => {
+    const result = scheduleGrantApplyResult(
+      {
+        isSuccess: false,
+        isError: false,
+        isPending: true,
+        data: undefined,
+        error: null,
+        context: { queryKey: scheduleGrantPreflightQueryKey(["c.s.a"]) },
+      },
+      ["c.s.b"],
+    );
+    expect(result.isApplying).toBe(false);
+  });
+
+  it("a run that finishes after the tables changed updates only its own tables' check", async () => {
+    const queryClient = new QueryClient();
+    const before = scheduleGrantPreflightQueryKey(["c.s.a"]);
+    const after = scheduleGrantPreflightQueryKey(["c.s.b"]);
+    const otherCheck = { tables: [{ fqn: "c.s.b", can_manage: true }] };
+    queryClient.setQueryData(after, otherCheck);
+    const fresh = { tables: [{ fqn: "c.s.a", can_manage: true }] };
+    let finish: (value: unknown) => void = () => undefined;
+    const respond = () => new Promise((resolve) => (finish = resolve));
+    const observer = applyObserver(queryClient, before, respond);
+
+    const running = observer.mutate({ data: { table_fqns: ["c.s.a"] } });
+    // The schedule's tables change while the grants run: the hook re-renders with the new key.
+    observer.setOptions(applyOptions(queryClient, after, respond));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    finish({ preflight: fresh, applied: 1, total: 1, failed: [] });
+    await running;
+
+    expect(queryClient.getQueryData(before)).toEqual(fresh);
+    expect(queryClient.getQueryData(after)).toEqual(otherCheck);
+  });
+});
+
+describe("a run whose re-check failed", () => {
+  it("doesn't show the check from before the grants as current; it refetches instead", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = scheduleGrantPreflightQueryKey(["c.s.a"]);
+    const cached = { tables: [missingGrantTable("c.s.a")] };
+    queryClient.setQueryData(queryKey, cached);
+    const observer = applyObserver(queryClient, queryKey, async () => ({
+      preflight: { tables: [missingGrantTable("c.s.a"), missingGrantTable("c.s.stale")] },
+      applied: 1,
+      total: 1,
+      failed: [],
+      recheck_failed: true,
+    }));
+
+    await observer.mutate({ data: { table_fqns: ["c.s.a"] } });
+
+    expect(queryClient.getQueryData(queryKey)).toEqual(cached);
+    expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
   });
 });

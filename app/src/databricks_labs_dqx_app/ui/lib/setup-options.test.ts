@@ -20,7 +20,18 @@ describe("setupOptionList", () => {
         isError: false,
         options: ["main", "sales"],
       }),
-    ).toEqual({ status: "ready", options: ["main", "sales"] });
+    ).toEqual({ status: "ready", options: ["main", "sales"], truncated: false });
+  });
+
+  test("says when the listing was cut short", () => {
+    expect(
+      setupOptionList({
+        isPending: false,
+        isError: false,
+        options: ["data-team"],
+        truncated: true,
+      }),
+    ).toEqual({ status: "ready", options: ["data-team"], truncated: true });
   });
 
   test("falls back to typing when listing fails", () => {

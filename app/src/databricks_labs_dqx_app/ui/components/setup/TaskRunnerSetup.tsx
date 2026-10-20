@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   useQueryClient,
   type QueryClient,
@@ -38,6 +38,7 @@ import {
   accessErrorMessageKey,
   accessResultMessageKeys,
   isApplicationId,
+  isResultForPick,
   runAsErrorMessageKey,
   servicePrincipalLink,
   taskRunnerPrincipalList,
@@ -102,20 +103,32 @@ export function TaskRunnerSetup({ workspaceHost, jobsLink, isBusy }: TaskRunnerS
     query: { retry: false, staleTime: 5 * 60_000 },
   });
   const [picked, setPicked] = useState<PickedPrincipal | null>(null);
+  // The latest pick, read when a request finishes: its result is dropped if the
+  // administrator picked another service principal meanwhile.
+  const pickedRef = useRef<PickedPrincipal | null>(null);
+  pickedRef.current = picked;
   const [access, setAccess] = useState<TaskRunnerAccessResult | null>(null);
   const checkAccess = useCheckTaskRunnerAccess({
-    mutation: { onSuccess: (response) => setAccess(accessResult(response.data)) },
+    mutation: {
+      onSuccess: (response, variables) => {
+        if (isResultForPick(pickedRef.current, variables.data.application_id)) {
+          setAccess(accessResult(response.data));
+        }
+      },
+    },
   });
   const applyGrants = useApplyTaskRunnerGrants({
     mutation: {
-      onSuccess: (response) =>
+      onSuccess: (response, variables) => {
+        if (!isResultForPick(pickedRef.current, variables.data.application_id)) return;
         setAccess((current) =>
           current && {
             ...current,
             grant_statements: response.data.grant_statements ?? [],
             grants_unverified: response.data.grants_unverified ?? false,
           },
-        ),
+        );
+      },
     },
   });
   const runAs = useSetTaskRunnerRunAs({ mutation: runAsCallbacks(queryClient) });
@@ -137,6 +150,7 @@ export function TaskRunnerSetup({ workspaceHost, jobsLink, isBusy }: TaskRunnerS
       })}
       picked={picked}
       onPick={(next) => {
+        pickedRef.current = next;
         setPicked(next);
         setAccess(null);
         checkAccess.reset();
@@ -286,6 +300,11 @@ export function TaskRunnerSteps({
               disabled={isBusy}
               onChange={onPick}
             />
+          )}
+          {principalList.status === "ready" && principalList.truncated && (
+            <p className="text-xs text-muted-foreground">
+              {t("setup.taskRunner.pick.listTruncated", { count: principalList.principals.length })}
+            </p>
           )}
         </div>
         <details className="text-sm">

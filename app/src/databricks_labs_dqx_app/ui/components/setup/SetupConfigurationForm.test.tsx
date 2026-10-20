@@ -123,6 +123,20 @@ describe("default user group field", () => {
     expect(html).not.toMatch(/<button[^>]*id="setup-audience_group"/);
   });
 
+  test("says when only the first groups are listed, and that a name can be typed", () => {
+    const html = renderForm({ groupList: { ...GROUPS, truncated: true } });
+
+    expect(html).toContain(
+      escapeHtml(en.setup.configuration.groupListTruncated_other.replace("{{count}}", "2")),
+    );
+  });
+
+  test("has no cut-list hint when every group is listed", () => {
+    const html = renderForm({ groupList: GROUPS });
+
+    expect(html).not.toContain(escapeHtml("If yours isn't listed, type its name."));
+  });
+
   test("leaves the catalog picker alone when only groups are listed", () => {
     const html = renderForm({ groupList: GROUPS });
 

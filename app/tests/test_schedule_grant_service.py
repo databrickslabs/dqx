@@ -1,6 +1,6 @@
 """Schedule authorization regressions through public APIs and SDK boundaries."""
 
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, patch
 
 import pytest
 from databricks.sdk import WorkspaceClient
@@ -38,7 +38,6 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     PrivilegeInspectionError,
     ScheduleGrantService,
     StatementFailedError,
-    TablePreflight,
     WarehouseUnavailableError,
     inspection_failure_detail,
     manage_block_detail,
@@ -829,30 +828,32 @@ def test_apply_runs_nothing_for_tables_that_need_no_grant(
     assert not result.recheck_failed
 
 
-class _RecheckFailsService(ScheduleGrantService):
-    """The check after the grants can't run (for example, the warehouse went away)."""
+def test_clearing_the_caches_makes_the_next_check_see_new_grants(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+    assert service.preflight([FQN])[0].missing_grants
+    executed.extend(_PARENT_GRANTS)
 
-    failure: Exception = RuntimeError("unset")
-    checks = 0
+    # The same instance remembers what it saw until its caches are cleared.
+    assert service.preflight([FQN])[0].missing_grants
+    service.clear_caches()
 
-    def preflight(self, fqns: list[str]) -> list[TablePreflight]:
-        type(self).checks += 1
-        if type(self).checks > 1:
-            raise type(self).failure
-        return super().preflight(fqns)
+    assert service.preflight([FQN])[0].missing_grants == []
 
 
 @pytest.mark.parametrize("failure", [WarehouseUnavailableError("cold"), RuntimeError("boom (secret detail)")])
 def test_apply_still_reports_the_grants_that_ran_when_the_recheck_fails(
-    obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor, failure: Exception
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor, failure: Exception
 ) -> None:
     obo.tables.get.return_value = TableInfo(owner="alice@example.com")
     executed = _grants_follow_executed_statements(sp, obo_sql)
-    _RecheckFailsService.failure = failure
-    _RecheckFailsService.checks = 0
-    service = _RecheckFailsService(obo, sp, "123", warehouse_id="warehouse-1")
-
-    result = service.apply_missing_grants([FQN], obo_sql)
+    before = service.preflight([FQN])
+    # Preflight turns every SDK failure into an unverified table, so no workspace response
+    # can make the check after the grants fail; only the check itself is replaced here.
+    with patch.object(service, "preflight", side_effect=[before, failure]):
+        result = service.apply_missing_grants([FQN], obo_sql)
 
     assert executed == _PARENT_GRANTS
     assert (result.applied, result.total, result.failed) == (4, 4, ())

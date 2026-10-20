@@ -192,6 +192,23 @@ describe("TaskRunnerSteps", () => {
     expect(html).toContain(escapeHtml(copy.pick.listUnavailable));
   });
 
+  test("says when only the first service principals are listed, and that an ID can be pasted", () => {
+    const html = renderSteps({
+      principalList: {
+        status: "ready",
+        appName: "dqx-studio",
+        principals: [{ id: "42", display_name: "dqx-studio-task-runner", application_id: RUNNER }],
+        truncated: true,
+      },
+    });
+
+    expect(html).toContain(escapeHtml(copy.pick.listTruncated_one.replace("{{count}}", "1")));
+  });
+
+  test("has no cut-list hint when every service principal is listed", () => {
+    expect(renderSteps()).not.toContain(escapeHtml("If yours isn't listed, paste its Application ID."));
+  });
+
   test("explains a refused access check without raw error text", () => {
     const html = renderSteps({ picked: PICKED, accessErrorCode: "task_runner_principal_is_app" });
 

@@ -1,5 +1,6 @@
 """HTTP contract tests for setup readiness and bootstrap administration."""
 
+import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, create_autospec
@@ -714,7 +715,20 @@ def test_service_principal_list_excludes_the_app_and_names_it(client: TestClient
         "available": True,
         "principals": [{"id": "1", "display_name": "dqx-studio-task-runner", "application_id": RUNNER_APPLICATION_ID}],
         "app_name": "app-1a2b dqx-studio",
+        "truncated": False,
     }
+
+
+def test_service_principal_list_says_when_it_was_cut(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.service_principals.list.return_value = iter(
+        ServicePrincipal(id=str(index), display_name=f"runner {index}", application_id=str(uuid.UUID(int=index + 1)))
+        for index in range(600)
+    )
+
+    body = client.get(_PRINCIPALS_URL).json()
+
+    assert body["truncated"] is True
+    assert len(body["principals"]) == 500
 
 
 @pytest.mark.parametrize("error", [PermissionDenied("internal detail"), InternalError("internal detail")])
@@ -938,17 +952,40 @@ def test_group_listing_excludes_builtins_sorts_and_names_only(client: TestClient
     response = client.get(_GROUPS_URL)
 
     assert response.status_code == 200
-    assert response.json() == {"groups": ["alpha", "data-team", "zeta"]}
-    sp_ws.groups.list.assert_called_once_with(attributes="id,displayName")
+    assert response.json() == {"groups": ["alpha", "data-team", "zeta"], "truncated": False}
+    assert sp_ws.groups.list.call_args.kwargs["attributes"] == "id,displayName"
 
 
-def test_group_listing_is_capped(client: TestClient, sp_ws: MagicMock) -> None:
-    sp_ws.groups.list.return_value = [SimpleNamespace(display_name=f"group-{index:05d}") for index in range(1500)]
+def test_group_listing_is_capped_reports_it_and_stops_paging(client: TestClient, sp_ws: MagicMock) -> None:
+    read: list[int] = []
 
-    groups = client.get(_GROUPS_URL).json()["groups"]
+    def groups():
+        for index in range(1500):
+            read.append(index)
+            yield SimpleNamespace(display_name=f"group-{index:05d}")
 
-    assert len(groups) == 1000
-    assert groups[0] == "group-00000"
+    sp_ws.groups.list.return_value = groups()
+
+    body = client.get(_GROUPS_URL).json()
+
+    assert len(body["groups"]) == 1000
+    assert body["groups"][0] == "group-00000"
+    assert body["truncated"] is True
+    assert len(read) == 1001
+    # One page holds the whole cap, plus the built-in groups that are left out.
+    assert sp_ws.groups.list.call_args.kwargs["count"] > 1000
+
+
+def test_group_listing_cap_ignores_built_in_and_repeated_groups(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [
+        SimpleNamespace(display_name=name)
+        for name in ["users", "admins", "account users", "team", "team", *[f"g{index}" for index in range(999)]]
+    ]
+
+    body = client.get(_GROUPS_URL).json()
+
+    assert len(body["groups"]) == 1000
+    assert body["truncated"] is False
 
 
 def test_group_listing_requires_setup_admin(client: TestClient, obo_ws: MagicMock, sp_ws: MagicMock) -> None:

@@ -417,10 +417,11 @@ class SetupOrchestrator:
     ) -> SetupApplyGrantsResponse | None:
         """Run the GRANT statements a step reports as the signed-in administrator, then re-verify.
 
-        Setup is re-checked first so the statements are re-derived by the same checks that
-        display them; nothing the client sends is executed. Each statement runs through the
-        administrator's own SQL executor (never the app service principal), and a failed
-        statement doesn't stop the rest.
+        Only a step in the current report can run. Its own check runs again first, so the
+        statements are re-derived by the same check that displayed them; nothing the client
+        sends is executed. Each statement runs through the administrator's own SQL executor
+        (never the app service principal), and a failed statement doesn't stop the rest.
+        Setup is then re-checked once.
 
         Args:
             step_id: Step whose GRANT statements to run.
@@ -432,17 +433,16 @@ class SetupOrchestrator:
             The re-verified report with how many statements ran and which failed, or None
             when the step has no GRANT statements to run.
         """
-        checked = await self.reconcile(
-            setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory
-        )
-        bound = self.bound
-        try:
-            statements = checked.step(step_id).grant_statements
-        except LookupError:
+        async with self.runtime.activation_lock:
+            bound = self.bound
+            shown = self.runtime.report()
+            if bound is None or step_id not in {step.id for step in shown.steps}:
+                return None
+            executor = reader_sql_factory(bound.resources)
+            checked = await self._grant_step_check(step_id, bound, shown, reader_ws, executor)
+        statements = checked.grant_statements if checked is not None else ()
+        if not any(statement.startswith(GRANT_PREFIX) for statement in statements):
             return None
-        if bound is None or not any(statement.startswith(GRANT_PREFIX) for statement in statements):
-            return None
-        executor = reader_sql_factory(bound.resources)
         run = await asyncio.to_thread(run_grant_statements, statements, executor)
         report = await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
         return SetupApplyGrantsResponse(report=report, applied=run.applied, total=run.total, failed=run.failed)
@@ -582,8 +582,13 @@ class SetupOrchestrator:
         return normalized
 
     def _task_runner_bound(self) -> BoundSetup:
+        """The bound storage, once setup has also resolved the task-runner job.
+
+        Raises:
+            TaskRunnerJobUnavailableError: If storage isn't bound or the job isn't resolved yet.
+        """
         bound = self.bound
-        if bound is None:
+        if bound is None or self.runtime.job_id is None:
             raise TaskRunnerJobUnavailableError()
         return bound
 
@@ -596,6 +601,56 @@ class SetupOrchestrator:
     ) -> RunnerGrants:
         executor = reader_sql_factory(bound.resources)
         return await asyncio.to_thread(partial(bound.checkers.runner_grants, principal, reader_ws, reader_sql=executor))
+
+    async def _grant_step_check(
+        self,
+        step_id: SetupStepId,
+        bound: BoundSetup,
+        shown: SetupReport,
+        reader_ws: WorkspaceClient | None,
+        reader_sql: SqlExecutor | None,
+    ) -> SetupStep | None:
+        """Run only *step_id*'s own check, the way setup runs it, to re-derive its GRANT statements.
+
+        Args:
+            step_id: Step whose statements to re-derive.
+            bound: Bound storage the check reads.
+            shown: The report the administrator is looking at.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+            reader_sql: The administrator's SQL executor, or None when none could be built.
+
+        Returns:
+            The step's fresh result, or None for a step whose check never lists GRANT statements.
+        """
+        if step_id == SetupStepId.UNITY_CATALOG:
+            return await asyncio.to_thread(
+                partial(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws)
+            )
+        if step_id == SetupStepId.STORAGE:
+            # Only inspects: storage that lacks grants already exists.
+            return await asyncio.to_thread(partial(bound.checkers.ensure_storage, provision=False))
+        if step_id == SetupStepId.TASK_RUNNER:
+            job_id = self.runtime.job_id
+            if job_id is None:
+                return None
+            # Once the Delta migrations ran, setup's task-runner check also covers the output tables.
+            include_outputs = any(
+                step.id == SetupStepId.MIGRATIONS and step.state == StepState.PASSED for step in shown.steps
+            )
+            return await asyncio.to_thread(
+                partial(
+                    bound.checkers.check_runner_access,
+                    job_id,
+                    reader_ws=reader_ws,
+                    reader_sql=reader_sql,
+                    include_outputs=include_outputs,
+                )
+            )
+        if step_id == SetupStepId.ACCESS:
+            return await asyncio.to_thread(bound.access.reconcile_access, reader_sql, reader_ws)
+        if step_id == SetupStepId.AI and bound.ai is not None:
+            return await asyncio.to_thread(bound.ai.check_ai_access, reader_ws)
+        return None
 
     async def _run_steps(
         self,

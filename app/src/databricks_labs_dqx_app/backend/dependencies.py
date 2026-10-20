@@ -609,9 +609,19 @@ async def get_ai_bootstrap(
     return AiBootstrap(embeddings=embeddings, registry=registry)
 
 
+async def get_obo_user_id(obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]) -> str:
+    """Identify the calling user for per-user cache keys: their user name, else their ID.
+
+    Every discovery service takes its user from here, so their cache keys always agree.
+    """
+    me = await asyncio.to_thread(obo_ws.current_user.me)
+    return me.user_name or me.id or "unknown"
+
+
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    user_id: Annotated[str, Depends(get_obo_user_id)],
 ) -> DiscoveryService:
     """Create a DiscoveryService using the OBO-authenticated WorkspaceClient.
 
@@ -621,13 +631,12 @@ async def get_discovery_service(
     tags from ``information_schema.column_tags`` (the reliable source) under the
     caller's Unity Catalog permissions.
     """
-    me = await asyncio.to_thread(obo_ws.current_user.me)
-    user_id = me.user_name or me.id or "unknown"
     return DiscoveryService(ws=obo_ws, user_id=user_id, sql=obo_sql)
 
 
 async def get_catalog_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_id: Annotated[str, Depends(get_obo_user_id)],
 ) -> DiscoveryService:
     """Create a DiscoveryService for catalog listing that needs only the OBO WorkspaceClient.
 
@@ -635,8 +644,6 @@ async def get_catalog_discovery_service(
     bound warehouse or storage and works before setup is ready (the setup form's
     catalog picker). It still runs on-behalf-of the calling user, never as the app SP.
     """
-    me = await asyncio.to_thread(obo_ws.current_user.me)
-    user_id = me.user_name or me.id or "unknown"
     return DiscoveryService(ws=obo_ws, user_id=user_id)
 
 

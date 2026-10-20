@@ -23,7 +23,7 @@ import {
   type SetupStepId,
 } from "@/lib/api";
 import {
-  configurationAdvertised,
+  configurationListsWanted,
   setupErrorCode,
   setupView,
   unacknowledgedWarnings,
@@ -154,18 +154,22 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
+  // Only list catalogs and groups while the configuration form shows.
+  const listsWanted = configurationListsWanted(
+    setupStatus.data?.data,
+    acknowledged,
+    editingConfiguration,
+  );
   const catalogs = useListCatalogs({
     query: {
-      enabled:
-        !!setupStatus.data && configurationAdvertised(setupStatus.data.data),
+      enabled: listsWanted,
       retry: false,
       staleTime: 5 * 60_000,
     },
   });
   const groups = useListSetupGroups({
     query: {
-      enabled:
-        !!setupStatus.data && configurationAdvertised(setupStatus.data.data),
+      enabled: listsWanted,
       retry: false,
       staleTime: 5 * 60_000,
     },
@@ -233,6 +237,7 @@ export function SetupGate({ children }: SetupGateProps) {
         isPending: groups.isPending,
         isError: groups.isError,
         options: groups.data?.data.groups,
+        truncated: groups.data?.data.truncated,
       })}
       onEditConfiguration={(editing) => {
         configuration.reset();

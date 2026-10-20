@@ -59,6 +59,7 @@
         "errors": {
           "permission_denied": "Your account isn't allowed to give this access. Send the commands below to the owner of the catalog or schema. You'll see the owner on its page under Catalog in the Databricks sidebar. Ask them to run the commands in the SQL editor, then click Try again.",
           "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
+          "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
           "not_found": "Something these commands refer to no longer exists, such as one of the tables or its schema. Click Try again to refresh the list.",
           "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the owner of the catalog or schema."
         }
@@ -3183,6 +3184,7 @@
       "errors": {
         "permission_denied": "Your account isn't allowed to give this access. Send the commands above to the owner of the catalog. You'll see the owner on the catalog's page under Catalog in the Databricks sidebar. Ask them to run the commands in the SQL editor, then click Verify again.",
         "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
+        "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
         "not_found": "Something these commands refer to no longer exists. Click Verify again to refresh the list.",
         "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the catalog's owner."
       }
@@ -3201,6 +3203,8 @@
       "groupPlaceholder": "Choose a group",
       "groupSearch": "Search or type a group name",
       "groupListUnavailable": "Studio couldn't list the groups in this workspace. Type the group name instead.",
+      "groupListTruncated_one": "Showing the first {{count}} group. If yours isn't listed, type its name.",
+      "groupListTruncated_other": "Showing the first {{count}} groups. If yours isn't listed, type its name.",
       "audience_groupHelp": "An existing account group (for example, dqx-users) for the people allowed to use Studio. You give Studio roles, such as administrator, later in Studio itself. To create a group, open your profile menu (top right) → Settings → Identity and access → Groups.",
       "schemas": "Schemas",
       "submit": "Save and continue",
@@ -3247,6 +3251,8 @@
         "noMatches": "No service principals match. Paste its Application ID to use it.",
         "pastePlaceholder": "Application ID, for example 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
         "listUnavailable": "Studio couldn't load the list of service principals. Paste the service principal's Application ID instead. You'll find it on the service principal's page: profile menu (top right) → Settings → Identity and access → Service principals.",
+        "listTruncated_one": "Showing the first {{count}} service principal. If yours isn't listed, paste its Application ID.",
+        "listTruncated_other": "Showing the first {{count}} service principals. If yours isn't listed, paste its Application ID.",
         "invalidId": "An Application ID looks like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Don't have one? Create it",
         "createStep1": "Open your profile menu (top right) → Settings → Identity and access → Service principals. Click Add service principal and create a new one named dqx-studio-task-runner.",
