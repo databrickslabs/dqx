@@ -1,0 +1,1063 @@
+"""Serialized, deployment-agnostic setup reconciliation for DQX Studio."""
+
+import asyncio
+import dataclasses
+import logging
+import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import partial
+from typing import Literal, Protocol
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
+
+from databricks_labs_dqx_app.backend.setup.configuration import (
+    ConfigurationSource,
+    ResolvedConfiguration,
+    SetupChoices,
+    SetupConfigurationStore,
+)
+from databricks_labs_dqx_app.backend.setup.checks import RunnerGrants
+from databricks_labs_dqx_app.backend.setup.errors import (
+    AppServicePrincipalChosenError,
+    RequiredViewSetupError,
+    TaskRunnerJobUnavailableError,
+    TaskRunnerManagedByDeploymentError,
+)
+from databricks_labs_dqx_app.backend.setup.grant_application import GRANT_PREFIX, run_grant_statements
+from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob, normalize_application_id
+from databricks_labs_dqx_app.backend.setup.overrides import OVERRIDABLE_STEPS, SetupOverrides, override_fingerprint
+from databricks_labs_dqx_app.backend.setup.models import (
+    SetupActionId,
+    SetupApplyGrantsResponse,
+    SetupConfigurationView,
+    SetupReport,
+    SetupState,
+    SetupStep,
+    SetupStepId,
+    StepState,
+    TaskRunnerAccessResponse,
+    TaskRunnerGrantsResponse,
+    TaskRunnerSpPermission,
+)
+from databricks_labs_dqx_app.backend.setup.resources import (
+    ActiveResources,
+    BootstrapResources,
+    build_active_resources,
+)
+from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
+from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+logger = logging.getLogger(__name__)
+
+_STEP_ORDER = tuple(SetupStepId)
+_BLOCKING_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.FAILED})
+_OVERRIDE_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.WARNING})
+_CONFIGURED_SUMMARY = "Studio's catalog, storage prefix and default user group are set."
+_OVERRIDDEN_SUMMARY = "An administrator confirmed this is set up, so Studio is continuing without checking it."
+ReaderSqlFactory = Callable[[ActiveResources], SqlExecutor | None]
+_SOURCE_VIEWS: dict[ConfigurationSource, Literal["deployment", "saved", "none"]] = {
+    ConfigurationSource.DEPLOYMENT: "deployment",
+    ConfigurationSource.SAVED: "saved",
+    ConfigurationSource.NONE: "none",
+}
+
+
+class BootstrapChecks(Protocol):
+    """Checks that run before any Studio storage is configured."""
+
+    def check_app_identity(self) -> SetupStep: ...
+
+    def check_lakebase(self) -> SetupStep: ...
+
+    def ensure_lakebase_schema(self) -> SetupStep: ...
+
+
+class BoundChecks(Protocol):
+    """Checks that need resolved Studio storage."""
+
+    def check_unity_catalog(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        *,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep: ...
+
+    def ensure_storage(self, *, provision: bool) -> SetupStep: ...
+
+    def check_warehouse(
+        self,
+        warehouse_id: str | None = None,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        include_audience: bool = True,
+    ) -> SetupStep: ...
+
+    def effective_warehouse_id(self) -> str: ...
+
+    def runner_grants(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+    ) -> RunnerGrants: ...
+
+    def check_runner_access(
+        self,
+        job_id: int,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+        include_outputs: bool = False,
+    ) -> SetupStep: ...
+
+
+class AccessChecks(Protocol):
+    """Audience access and app-sharing checks that run after activation."""
+
+    def reconcile_access(
+        self,
+        reader_sql: SqlExecutor | None = None,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupStep: ...
+
+    def check_app_sharing(self, reader_ws: WorkspaceClient | None = None) -> SetupStep: ...
+
+
+class AiChecks(Protocol):
+    """Non-blocking check that Studio users can use the AI model services."""
+
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None, *, inspect_only: bool = False) -> SetupStep: ...
+
+    def keep_enabled(self, *, user_email: str | None) -> None: ...
+
+    def model_names(self) -> tuple[str, ...]: ...
+
+
+class SetupJobs(Protocol):
+    """Task-runner management surface consumed by the orchestrator."""
+
+    def resolve(self, configured_job_id: str | None) -> ResolvedJob: ...
+
+    def exists(self, job_id: int) -> bool: ...
+
+    def grant_setup_admin(self, job_id: int, user_name: str) -> None: ...
+
+    def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep: ...
+
+    def configure(self, job_id: int, wheel_paths: list[str]) -> None: ...
+
+    def set_run_as(self, job_id: int, application_id: str) -> None: ...
+
+    def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission: ...
+
+
+class SetupMigrations(Protocol):
+    """Idempotent migration runner surface."""
+
+    def run_all(self) -> int: ...
+
+
+class SetupCompletionStore(Protocol):
+    """Post-migration setup completion persistence surface."""
+
+    def record_setup_completion(
+        self,
+        job_id: int,
+        completed_at: datetime,
+        user_name: str | None,
+    ) -> None: ...
+
+
+class StudioActivation(Protocol):
+    """Post-migration activation surface."""
+
+    async def activate(self) -> None: ...
+
+    async def start_background(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class BoundSetup:
+    """Collaborators bound to one resolved Studio storage and audience.
+
+    Args:
+        resources: Active resources the collaborators were built for.
+        checkers: Storage-dependent capability checks.
+        access: Audience access and app-sharing checks.
+        delta_migrations: Delta migration runner for the bound main schema.
+        publish_wheels: Publishes application wheels to the bound volume.
+        activation: Activates Studio for the bound resources.
+        ai: AI model access check; skipped when absent.
+    """
+
+    resources: ActiveResources
+    checkers: BoundChecks
+    access: AccessChecks
+    delta_migrations: SetupMigrations
+    publish_wheels: Callable[[], Awaitable[list[str]]]
+    activation: StudioActivation
+    ai: AiChecks | None = None
+
+
+class StorageBinder(Protocol):
+    """Build storage-bound collaborators for resolved resources.
+
+    Binding is asynchronous so an implementation can release collaborators bound to
+    previously resolved resources (for example, deactivate a running Studio) first.
+    """
+
+    async def bind(self, resources: ActiveResources) -> BoundSetup: ...
+
+
+class ConfigurationResolver(Protocol):
+    """Resolve and lock the Studio storage and audience configuration."""
+
+    def resolve(self) -> ResolvedConfiguration: ...
+
+    def lock(self, *, user_email: str | None) -> None: ...
+
+
+class SetupOrchestrator:
+    """Reconcile Studio-owned setup actions in order.
+
+    Lakebase is bootstrapped first so saved setup choices can be read before any
+    Unity Catalog storage exists; storage-bound collaborators are created once the
+    configuration resolves. An administrator can override steps whose requirement may
+    be met in a way Studio cannot see (for example a grant through a nested group);
+    overridden steps no longer block.
+    """
+
+    def __init__(
+        self,
+        *,
+        runtime: SetupRuntime,
+        bootstrap: BootstrapResources,
+        bootstrap_checks: BootstrapChecks,
+        pg_migrations: SetupMigrations,
+        configuration: ConfigurationResolver,
+        binder: StorageBinder,
+        jobs: SetupJobs,
+        app_settings: SetupCompletionStore,
+        app_sp_id: str,
+        overrides: SetupOverrides | None = None,
+    ) -> None:
+        self.runtime = runtime
+        self.bootstrap = bootstrap
+        self.bootstrap_checks = bootstrap_checks
+        self.pg_migrations = pg_migrations
+        self.configuration = configuration
+        self.binder = binder
+        self.jobs = jobs
+        self.app_settings = app_settings
+        self.app_sp_id = _sanitize_identity(app_sp_id) or ""
+        self.overrides = overrides
+        self.bound: BoundSetup | None = None
+        self._resolved: ResolvedConfiguration | None = None
+
+    def configuration_view(self) -> SetupConfigurationView:
+        """Return a sanitized view of the most recently resolved configuration."""
+        resolved = self._resolved
+        if resolved is None:
+            return SetupConfigurationView(source="none")
+        choices = resolved.choices
+        storage = resolved.storage
+        audience = resolved.audience
+        if choices is not None:
+            catalog, prefix, audience_group = choices.catalog, choices.prefix, choices.audience_group
+        else:
+            catalog = storage.catalog if storage is not None else ""
+            prefix = resolved.deployment_prefix
+            audience_group = ", ".join(audience.groups) if audience is not None else ""
+        return SetupConfigurationView(
+            source=_SOURCE_VIEWS[resolved.source],
+            catalog=_display(catalog),
+            prefix=_display(prefix),
+            audience_group=_display(audience_group),
+            schemas=tuple(_display(schema) for schema in storage.schemas) if storage is not None else (),
+            broad_audience=audience.broad if audience is not None else False,
+            locked=resolved.locked,
+        )
+
+    async def save_configuration(
+        self,
+        store: SetupConfigurationStore,
+        choices: SetupChoices,
+        *,
+        user_email: str | None,
+    ) -> Literal["saved", "unchanged", "locked"]:
+        """Persist setup choices unless storage was already provisioned.
+
+        The lock state is re-checked under the activation lock so a concurrent
+        reconcile cannot provision storage for different choices than the ones saved.
+
+        Args:
+            store: Persistence for the setup choices.
+            choices: Validated, normalized choices to save.
+            user_email: Administrator performing the change.
+
+        Returns:
+            *saved* when written, *unchanged* when locked with identical choices,
+            *locked* when locked with different choices.
+        """
+        async with self.runtime.activation_lock:
+            if await asyncio.to_thread(store.is_locked):
+                saved = await asyncio.to_thread(store.load)
+                return "unchanged" if saved == choices else "locked"
+            await asyncio.to_thread(partial(store.save, choices, user_email=user_email))
+            return "saved"
+
+    async def reconcile(
+        self,
+        setup_user: str | None = None,
+        reader_ws: WorkspaceClient | None = None,
+        reader_sql: SqlExecutor | None = None,
+        *,
+        reader_sql_factory: ReaderSqlFactory | None = None,
+    ) -> SetupReport:
+        """Run retry-safe setup actions serially and activate only after migrations.
+
+        A READY installation is returned unchanged for unattended calls. When an
+        administrator re-verifies a READY installation, every step is re-run while
+        the READY report stays visible; a blocking result publishes SETUP_REQUIRED.
+
+        Args:
+            setup_user: Authenticated administrator performing setup, if present.
+            reader_ws: Request-scoped administrator client for read-only privilege
+                inspection. Jobs operations and writes remain app-authenticated.
+            reader_sql: Request-scoped administrator SQL executor for inspecting grants.
+            reader_sql_factory: Builds the administrator SQL executor for the storage
+                bound during this run, when *reader_sql* is not given. Lets the first
+                check after new choices are saved inspect grants on the new storage.
+        """
+        async with self.runtime.activation_lock:
+            actor = _sanitize_identity(setup_user)
+            if self.runtime.report().state == SetupState.READY:
+                # An administrator's request always carries their client, even when their
+                # user record has no name; only unattended calls return the report unchanged.
+                if actor is None and reader_ws is None:
+                    return self.runtime.report()
+                if actor is not None:
+                    await self._refresh_job_admin(actor)
+                return await self._run_steps(
+                    actor=actor,
+                    grant_user=None,
+                    reader_ws=reader_ws,
+                    reader_sql=reader_sql,
+                    reader_sql_factory=reader_sql_factory,
+                    progress=False,
+                )
+            self.runtime.publish(SetupReport(state=SetupState.CHECKING, steps=()))
+            return await self._run_steps(
+                actor=actor,
+                grant_user=actor,
+                reader_ws=reader_ws,
+                reader_sql=reader_sql,
+                reader_sql_factory=reader_sql_factory,
+                progress=True,
+            )
+
+    async def override(
+        self,
+        step_id: SetupStepId,
+        *,
+        setup_user: str | None,
+        reader_ws: WorkspaceClient | None = None,
+        reader_sql_factory: ReaderSqlFactory | None = None,
+    ) -> SetupReport | None:
+        """Record that an administrator confirmed *step_id*, then re-run setup.
+
+        Only a step the current report offers an override for can be overridden. For
+        the AI step, the override also turns AI features on as the administrator's choice.
+
+        Args:
+            step_id: Step to override.
+            setup_user: Authenticated administrator confirming the step.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+            reader_sql_factory: Builds the administrator SQL executor for the bound storage.
+
+        Returns:
+            The report after re-running setup, or None when the step cannot be overridden.
+        """
+        actor = _sanitize_identity(setup_user)
+        async with self.runtime.activation_lock:
+            bound = self.bound
+            try:
+                step = self.runtime.report().step(step_id)
+            except LookupError:
+                return None
+            if (
+                self.overrides is None
+                or bound is None
+                or step_id not in OVERRIDABLE_STEPS
+                or SetupActionId.OVERRIDE not in step.actions
+            ):
+                return None
+            fingerprint = await asyncio.to_thread(self._override_fingerprint, step_id, bound)
+            if fingerprint is None:
+                return None
+            if step_id == SetupStepId.AI and bound.ai is not None:
+                await asyncio.to_thread(partial(bound.ai.keep_enabled, user_email=actor))
+            saved = await asyncio.to_thread(partial(self.overrides.record, step_id, fingerprint, user_email=actor))
+            if not saved:
+                return None
+        return await self.reconcile(setup_user=actor, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+
+    async def apply_grants(
+        self,
+        step_id: SetupStepId,
+        *,
+        setup_user: str | None,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> SetupApplyGrantsResponse | None:
+        """Run the GRANT statements a step reports as the signed-in administrator, then re-verify.
+
+        Only a step in the current report that lists GRANT statements can run. Its own check
+        runs again first, so the statements are re-derived by the same check that displayed
+        them; nothing the client sends is executed. Each statement runs through the
+        administrator's own SQL executor (never the app service principal), and a failed
+        statement doesn't stop the rest. Setup is then re-checked once. When the check finds
+        nothing left to grant (its own grants as the app may have fixed it), nothing runs but
+        setup is still re-checked, so the step shows its fresh state.
+
+        Args:
+            step_id: Step whose GRANT statements to run.
+            setup_user: Authenticated administrator running the statements.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Returns:
+            The re-verified report with how many statements ran and which failed, or None
+            when the step doesn't offer GRANT statements.
+        """
+        async with self.runtime.activation_lock:
+            bound = self.bound
+            shown = self.runtime.report()
+            shown_step = next((step for step in shown.steps if step.id == step_id), None)
+            if bound is None or shown_step is None or not _has_grants(shown_step.grant_statements):
+                return None
+            executor = reader_sql_factory(bound.resources)
+            checked = await self._grant_step_check(step_id, bound, shown, reader_ws, executor)
+        if checked is None:
+            return None
+        statements = checked.grant_statements if _has_grants(checked.grant_statements) else ()
+        run = await asyncio.to_thread(run_grant_statements, statements, executor)
+        report = await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+        return SetupApplyGrantsResponse(report=report, applied=run.applied, total=run.total, failed=run.failed)
+
+    @property
+    def job_managed_by_deployment(self) -> bool:
+        """Whether the task-runner job comes from the deployment bundle, which sets its run_as."""
+        return bool(self.bootstrap.job_id)
+
+    async def set_task_runner_run_as(
+        self,
+        application_id: str,
+        *,
+        setup_user: str | None,
+        reader_ws: WorkspaceClient | None = None,
+        reader_sql_factory: ReaderSqlFactory | None = None,
+    ) -> SetupReport:
+        """Make the task-runner job run as the chosen service principal, then re-verify setup.
+
+        The job is updated with the app service principal's client, which manages the job
+        Studio created; Databricks refuses until the app may use the chosen service principal.
+        A job from the deployment bundle is never changed, because the next deploy would undo it.
+
+        Args:
+            application_id: Application ID of the chosen service principal.
+            setup_user: Authenticated administrator making the choice.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+            reader_sql_factory: Builds the administrator SQL executor for the bound storage.
+
+        Returns:
+            The re-verified setup report.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own
+                (AppServicePrincipalChosenError).
+            TaskRunnerJobUnavailableError: If setup hasn't resolved a task-runner job yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        async with self.runtime.activation_lock:
+            job_id = self.runtime.job_id
+            if job_id is None:
+                raise TaskRunnerJobUnavailableError()
+            await asyncio.to_thread(self.jobs.set_run_as, job_id, normalized)
+        return await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
+
+    async def check_task_runner_access(
+        self,
+        application_id: str,
+        *,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> TaskRunnerAccessResponse:
+        """Check a picked service principal before the task-runner job runs as it.
+
+        Only inspects: reports whether the app may use the service principal and the GRANT
+        statements it still needs, split into those only a person can run and those setup runs
+        itself on Studio's own objects once the job runs as the service principal. Nothing is
+        granted and nothing about the job changes, so picking a service principal never gives
+        it access to Studio's data.
+
+        Args:
+            application_id: Application ID of the picked service principal.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own.
+            TaskRunnerJobUnavailableError: If setup hasn't reached the task-runner step yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        bound = self._task_runner_bound()
+        permission = await asyncio.to_thread(self.jobs.app_permission_on, normalized, self.app_sp_id)
+        grants = await self._picked_runner_grants(bound, normalized, reader_ws, reader_sql_factory)
+        return TaskRunnerAccessResponse(
+            sp_permission=permission,
+            grant_statements=grants.grant_statements,
+            automatic_grants=grants.automatic_grants,
+            grants_unverified=bool(grants.unreadable),
+        )
+
+    async def apply_task_runner_grants(
+        self,
+        application_id: str,
+        *,
+        reader_sql_factory: ReaderSqlFactory,
+        reader_ws: WorkspaceClient | None = None,
+    ) -> TaskRunnerGrantsResponse:
+        """Run the GRANT statements only a person can give a picked service principal, as the administrator.
+
+        The statements are re-derived here, by the same check that displayed them, and run
+        through the administrator's own SQL executor; a failed statement doesn't stop the rest.
+        Grants on Studio's own objects are left for setup to give once the job runs as the
+        service principal.
+
+        Args:
+            application_id: Application ID of the picked service principal.
+            reader_sql_factory: Builds the administrator's SQL executor for the bound storage.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+
+        Returns:
+            How many statements ran, which failed, and the statements still needed afterwards.
+
+        Raises:
+            TaskRunnerManagedByDeploymentError: If the job comes from the deployment bundle.
+            InvalidParameterError: If *application_id* isn't an Application ID, or is the app's own.
+            TaskRunnerJobUnavailableError: If setup hasn't reached the task-runner step yet.
+        """
+        normalized = self._task_runner_candidate(application_id)
+        bound = self._task_runner_bound()
+        executor = reader_sql_factory(bound.resources)
+        grants = await asyncio.to_thread(
+            partial(bound.checkers.runner_grants, normalized, reader_ws, reader_sql=executor)
+        )
+        if not grants.grant_statements:
+            return TaskRunnerGrantsResponse(applied=0, total=0, grants_unverified=bool(grants.unreadable))
+        run = await asyncio.to_thread(run_grant_statements, grants.grant_statements, executor)
+        remaining = await asyncio.to_thread(
+            partial(bound.checkers.runner_grants, normalized, reader_ws, reader_sql=executor)
+        )
+        return TaskRunnerGrantsResponse(
+            applied=run.applied,
+            total=run.total,
+            failed=run.failed,
+            grant_statements=remaining.grant_statements,
+            grants_unverified=bool(remaining.unreadable),
+        )
+
+    def _task_runner_candidate(self, application_id: str) -> str:
+        """Validate a picked service principal for an app-created task-runner job."""
+        if self.job_managed_by_deployment:
+            raise TaskRunnerManagedByDeploymentError()
+        normalized = normalize_application_id(application_id)
+        if normalized.casefold() == self.app_sp_id.casefold():
+            raise AppServicePrincipalChosenError()
+        return normalized
+
+    def _task_runner_bound(self) -> BoundSetup:
+        """The bound storage, once setup has also resolved the task-runner job.
+
+        Raises:
+            TaskRunnerJobUnavailableError: If storage isn't bound or the job isn't resolved yet.
+        """
+        bound = self.bound
+        if bound is None or self.runtime.job_id is None:
+            raise TaskRunnerJobUnavailableError()
+        return bound
+
+    @staticmethod
+    async def _picked_runner_grants(
+        bound: BoundSetup,
+        principal: str,
+        reader_ws: WorkspaceClient | None,
+        reader_sql_factory: ReaderSqlFactory,
+    ) -> RunnerGrants:
+        executor = reader_sql_factory(bound.resources)
+        return await asyncio.to_thread(partial(bound.checkers.runner_grants, principal, reader_ws, reader_sql=executor))
+
+    async def _grant_step_check(
+        self,
+        step_id: SetupStepId,
+        bound: BoundSetup,
+        shown: SetupReport,
+        reader_ws: WorkspaceClient | None,
+        reader_sql: SqlExecutor | None,
+    ) -> SetupStep | None:
+        """Run only *step_id*'s own check, the way setup runs it, to re-derive its GRANT statements.
+
+        Args:
+            step_id: Step whose statements to re-derive.
+            bound: Bound storage the check reads.
+            shown: The report the administrator is looking at.
+            reader_ws: Request-scoped administrator client for read-only inspection.
+            reader_sql: The administrator's SQL executor, or None when none could be built.
+
+        Returns:
+            The step's fresh result, or None for a step whose check never lists GRANT statements.
+        """
+        if step_id == SetupStepId.UNITY_CATALOG:
+            return await asyncio.to_thread(partial(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws))
+        if step_id == SetupStepId.STORAGE:
+            # Only inspects: storage that lacks grants already exists.
+            return await asyncio.to_thread(partial(bound.checkers.ensure_storage, provision=False))
+        if step_id == SetupStepId.TASK_RUNNER:
+            job_id = self.runtime.job_id
+            if job_id is None:
+                return None
+            # Once the Delta migrations ran, setup's task-runner check also covers the output tables.
+            include_outputs = any(
+                step.id == SetupStepId.MIGRATIONS and step.state == StepState.PASSED for step in shown.steps
+            )
+            return await asyncio.to_thread(
+                partial(
+                    bound.checkers.check_runner_access,
+                    job_id,
+                    reader_ws=reader_ws,
+                    reader_sql=reader_sql,
+                    include_outputs=include_outputs,
+                )
+            )
+        if step_id == SetupStepId.ACCESS:
+            return await asyncio.to_thread(bound.access.reconcile_access, reader_sql, reader_ws)
+        if step_id == SetupStepId.AI and bound.ai is not None:
+            # Only inspects: the re-check after the statements run decides the AI setting.
+            return await asyncio.to_thread(partial(bound.ai.check_ai_access, reader_ws, inspect_only=True))
+        return None
+
+    async def _run_steps(
+        self,
+        *,
+        actor: str | None,
+        grant_user: str | None,
+        reader_ws: WorkspaceClient | None,
+        reader_sql: SqlExecutor | None,
+        reader_sql_factory: ReaderSqlFactory | None,
+        progress: bool,
+    ) -> SetupReport:
+        steps: list[SetupStep] = []
+
+        def advance(step: SetupStep) -> SetupReport | None:
+            return self._record(steps, step, progress=progress)
+
+        async def advance_bound(step: SetupStep) -> SetupReport | None:
+            return advance(await asyncio.to_thread(self._apply_override, step))
+
+        step = await asyncio.to_thread(self.bootstrap_checks.check_app_identity)
+        if stopped := advance(step):
+            return stopped
+
+        for lakebase_check in (self.bootstrap_checks.check_lakebase, self.bootstrap_checks.ensure_lakebase_schema):
+            step = await asyncio.to_thread(lakebase_check)
+            if stopped := advance(step):
+                return stopped
+        if stopped := advance(await self._run_postgres_migrations()):
+            return stopped
+
+        resolved, step = await self._resolve_configuration()
+        if stopped := advance(step):
+            return stopped
+        bound = self.bound
+        if resolved is None or bound is None:
+            raise RuntimeError("Unreachable setup configuration state")
+        if reader_sql is None and reader_sql_factory is not None:
+            reader_sql = reader_sql_factory(bound.resources)
+
+        step = await asyncio.to_thread(bound.checkers.check_unity_catalog, reader_sql, reader_ws=reader_ws)
+        if stopped := await advance_bound(step):
+            return stopped
+
+        step = await self._ensure_storage(bound, resolved, actor)
+        if step.state == StepState.PASSED and not resolved.locked:
+            # Storage is now locked, so the saved choices can no longer be edited.
+            self._record(steps, _passed(SetupStepId.CONFIGURATION, _CONFIGURED_SUMMARY), progress=False)
+        if stopped := advance(step):
+            return stopped
+
+        step = await asyncio.to_thread(bound.checkers.check_warehouse)
+        if stopped := await advance_bound(step):
+            return stopped
+
+        if stopped := await advance_bound(await self._reconcile_job(bound, grant_user, reader_ws, reader_sql)):
+            return stopped
+
+        if stopped := advance(await self._reconcile_wheels(bound)):
+            return stopped
+
+        if stopped := advance(await self._run_delta_migrations(bound)):
+            return stopped
+
+        job_id = self.runtime.require_job_id()
+        step = await asyncio.to_thread(
+            bound.checkers.check_runner_access,
+            job_id,
+            reader_ws=reader_ws,
+            reader_sql=reader_sql,
+            include_outputs=True,
+        )
+        if stopped := await advance_bound(step):
+            return stopped
+        try:
+            await asyncio.to_thread(
+                self.app_settings.record_setup_completion,
+                job_id,
+                datetime.now(timezone.utc),
+                actor,
+            )
+        except Exception:
+            step = _failed(
+                SetupStepId.MIGRATIONS,
+                "setup_completion_persistence_failed",
+                "Studio couldn't record that setup finished.",
+            )
+            if stopped := advance(step):
+                return stopped
+            raise RuntimeError("Unreachable setup persistence state") from None
+
+        if stopped := advance(await self._activate(bound)):
+            return stopped
+
+        step = await asyncio.to_thread(bound.access.reconcile_access, reader_sql, reader_ws)
+        if stopped := await advance_bound(step):
+            return stopped
+
+        if bound.ai is not None:
+            step = await asyncio.to_thread(bound.ai.check_ai_access, reader_ws)
+            if stopped := await advance_bound(step):
+                return stopped
+
+        step = await asyncio.to_thread(bound.access.check_app_sharing, reader_ws)
+        if stopped := await advance_bound(step):
+            return stopped
+
+        report = SetupReport(state=SetupState.READY, steps=tuple(steps))
+        self.runtime.publish(report)
+        try:
+            await bound.activation.start_background()
+        except Exception:
+            logger.warning(
+                "Could not start Studio background services; the activated application remains available.",
+                exc_info=True,
+            )
+        return report
+
+    def _apply_override(self, step: SetupStep) -> SetupStep:
+        """Replace a step an administrator overrode with an overridden step.
+
+        A step that passes on its own clears its override, so a later regression blocks again.
+        """
+        bound = self.bound
+        if self.overrides is None or bound is None or step.id not in OVERRIDABLE_STEPS:
+            return step
+        if step.state == StepState.PASSED:
+            self.overrides.clear(step.id)
+            return step
+        if step.state not in _OVERRIDE_STATES or SetupActionId.OVERRIDE not in step.actions:
+            return step
+        fingerprint = self._override_fingerprint(step.id, bound)
+        if fingerprint is None or not self.overrides.is_overridden(step.id, fingerprint):
+            return step
+        return SetupStep(
+            id=step.id,
+            state=StepState.OVERRIDDEN,
+            code=step.code,
+            summary=f"{_OVERRIDDEN_SUMMARY} Studio's own check said: {step.summary}",
+            actions=(SetupActionId.VERIFY_AGAIN,),
+        )
+
+    @staticmethod
+    def _override_fingerprint(step_id: SetupStepId, bound: BoundSetup) -> str | None:
+        """Fingerprint what an override of *step_id* confirms, or None when it can't be determined."""
+        try:
+            if step_id == SetupStepId.WAREHOUSE:
+                subject = bound.checkers.effective_warehouse_id()
+            elif step_id == SetupStepId.AI and bound.ai is not None:
+                subject = ",".join(bound.ai.model_names())
+            else:
+                subject = ""
+        except Exception:
+            logger.warning("Could not determine what a setup override applies to.")
+            return None
+        return override_fingerprint(step_id, bound.resources, subject)
+
+    async def _refresh_job_admin(self, setup_user: str) -> None:
+        try:
+            await asyncio.to_thread(self.jobs.grant_setup_admin, self.runtime.require_job_id(), setup_user)
+        except Exception:
+            logger.warning(
+                "Could not refresh setup administrator access to the Studio task-runner job; "
+                "the ready application remains available."
+            )
+
+    async def _resolve_configuration(self) -> tuple[ResolvedConfiguration | None, SetupStep]:
+        try:
+            resolved = await asyncio.to_thread(self.configuration.resolve)
+        except Exception as error:
+            logger.warning(f"Could not resolve the Studio setup configuration ({type(error).__name__})")
+            return None, _failed(
+                SetupStepId.CONFIGURATION,
+                "configuration_resolution_failed",
+                "Studio couldn't read its catalog, storage prefix and default user group settings.",
+            )
+        self._resolved = resolved
+        try:
+            return resolved, await self._configuration_step(resolved)
+        except Exception as error:
+            logger.warning(f"Could not bind Studio setup collaborators ({type(error).__name__})")
+            return None, _failed(
+                SetupStepId.CONFIGURATION,
+                "configuration_binding_failed",
+                "Studio couldn't get ready to use the configured catalog and schemas.",
+            )
+
+    async def _configuration_step(self, resolved: ResolvedConfiguration) -> SetupStep:
+        if resolved.error is not None:
+            return SetupStep(
+                id=SetupStepId.CONFIGURATION,
+                state=StepState.ACTION_REQUIRED,
+                code=resolved.error,
+                summary="The Studio catalog, storage prefix or default user group isn't valid.",
+                actions=(SetupActionId.CONFIGURE,) if resolved.source != ConfigurationSource.DEPLOYMENT else (),
+            )
+        if resolved.storage is None or resolved.audience is None:
+            return SetupStep(
+                id=SetupStepId.CONFIGURATION,
+                state=StepState.ACTION_REQUIRED,
+                code="configuration_required",
+                summary="Choose the catalog, storage prefix and default user group for DQX Studio.",
+                actions=(SetupActionId.CONFIGURE,),
+            )
+        resources = build_active_resources(self.bootstrap, resolved.storage, resolved.audience)
+        if self.bound is None or self.bound.resources != resources:
+            # Clear first so a failed bind never leaves collaborators whose activation was released.
+            self.bound = None
+            self.bound = await self.binder.bind(resources)
+        if resolved.source == ConfigurationSource.SAVED and not resolved.locked:
+            # Saved choices stay editable until storage is provisioned and locked, so a
+            # storage collision or missing catalog privilege is never a dead end.
+            return SetupStep(
+                id=SetupStepId.CONFIGURATION,
+                state=StepState.PASSED,
+                summary=_CONFIGURED_SUMMARY,
+                actions=(SetupActionId.CONFIGURE,),
+            )
+        return _passed(SetupStepId.CONFIGURATION, _CONFIGURED_SUMMARY)
+
+    async def _ensure_storage(self, bound: BoundSetup, resolved: ResolvedConfiguration, actor: str | None) -> SetupStep:
+        step = await asyncio.to_thread(
+            partial(bound.checkers.ensure_storage, provision=resolved.source == ConfigurationSource.SAVED)
+        )
+        if step.state != StepState.PASSED or resolved.locked:
+            return step
+        try:
+            await asyncio.to_thread(partial(self.configuration.lock, user_email=actor))
+        except Exception as error:
+            logger.warning(f"Could not lock the Studio setup configuration ({type(error).__name__})")
+            return _failed(
+                SetupStepId.STORAGE,
+                "configuration_lock_failed",
+                "Studio couldn't save that its storage has been created.",
+            )
+        # Keep the published configuration view in step with the lock just recorded.
+        self._resolved = dataclasses.replace(resolved, locked=True)
+        return step
+
+    async def _activate(self, bound: BoundSetup) -> SetupStep:
+        try:
+            await bound.activation.activate()
+        except RequiredViewSetupError:
+            return SetupStep(
+                id=SetupStepId.ACTIVATION,
+                state=StepState.FAILED,
+                code="required_views_creation_failed",
+                summary="Studio couldn't create the views and tables it uses for scores, access and Genie.",
+                instructions=(
+                    "Check that the app's service principal can use the catalog and can create and replace "
+                    "tables and views in Studio's main and Genie schemas, then click Run setup.",
+                ),
+                actions=(SetupActionId.RECONCILE,),
+            )
+        except Exception:
+            return _failed(
+                SetupStepId.ACTIVATION,
+                "studio_activation_failed",
+                "Studio couldn't finish starting up.",
+            )
+        return _passed(SetupStepId.ACTIVATION, "DQX Studio is active.")
+
+    async def _reconcile_job(
+        self,
+        bound: BoundSetup,
+        setup_user: str | None,
+        reader_ws: WorkspaceClient | None,
+        reader_sql: SqlExecutor | None,
+    ) -> SetupStep:
+        configured = str(self.runtime.job_id) if self.runtime.job_id is not None else self.bootstrap.job_id
+        try:
+            resolved = await asyncio.to_thread(self.jobs.resolve, configured)
+            self.runtime.job_id = resolved.job_id
+            try:
+                if setup_user is not None:
+                    await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
+                step = await asyncio.to_thread(
+                    partial(
+                        self.jobs.validate_run_as,
+                        resolved.job_id,
+                        self.app_sp_id,
+                        managed_by_deployment=self.job_managed_by_deployment,
+                    )
+                )
+            except NotFound:
+                # NotFound can also mean an unknown principal; only forget a job that is really gone.
+                if await asyncio.to_thread(self.jobs.exists, resolved.job_id):
+                    raise
+                self.runtime.job_id = None
+                return _failed(
+                    SetupStepId.TASK_RUNNER,
+                    "task_runner_job_missing",
+                    (
+                        "Studio's task-runner job no longer exists. Redeploy the bundle to recreate it, "
+                        "then click Verify again."
+                        if self.bootstrap.job_id
+                        else "Studio's task-runner job no longer exists. Click Verify again to set up a new one."
+                    ),
+                )
+            if step.state != StepState.PASSED:
+                return step
+            return await asyncio.to_thread(
+                bound.checkers.check_runner_access, resolved.job_id, reader_ws=reader_ws, reader_sql=reader_sql
+            )
+        except Exception:
+            return _failed(
+                SetupStepId.TASK_RUNNER,
+                "task_runner_reconciliation_failed",
+                "Studio couldn't set up its task-runner job.",
+            )
+
+    async def _reconcile_wheels(self, bound: BoundSetup) -> SetupStep:
+        try:
+            wheel_paths = await bound.publish_wheels()
+            if not wheel_paths:
+                return _failed(
+                    SetupStepId.WHEELS,
+                    "application_wheels_missing",
+                    "This Studio build is missing the application files the task runner needs.",
+                )
+            await asyncio.to_thread(self.jobs.configure, self.runtime.require_job_id(), wheel_paths)
+            return _passed(SetupStepId.WHEELS, "The task runner has the latest application files.")
+        except Exception:
+            return _failed(
+                SetupStepId.WHEELS,
+                "wheel_publication_failed",
+                "Studio couldn't upload its application files to the wheels volume.",
+            )
+
+    async def _run_postgres_migrations(self) -> SetupStep:
+        try:
+            await asyncio.to_thread(self.pg_migrations.run_all)
+        except Exception as error:
+            logger.error(f"Lakebase migration failed ({_diagnostic(error)})")
+            return _failed(
+                SetupStepId.LAKEBASE,
+                "lakebase_migration_failed",
+                "Studio couldn't update its Lakebase tables.",
+            )
+        return _passed(SetupStepId.LAKEBASE, "Lakebase is connected and its tables are up to date.")
+
+    async def _run_delta_migrations(self, bound: BoundSetup) -> SetupStep:
+        try:
+            await asyncio.to_thread(bound.delta_migrations.run_all)
+        except Exception as error:
+            logger.error(f"Delta migration failed ({_diagnostic(error)})")
+            return _failed(
+                SetupStepId.MIGRATIONS,
+                "delta_migration_failed",
+                "Studio couldn't update its Delta tables.",
+            )
+        return _passed(SetupStepId.MIGRATIONS, "Studio's Delta tables are up to date.")
+
+    def _record(self, steps: list[SetupStep], step: SetupStep, *, progress: bool) -> SetupReport | None:
+        """Record *step*, replacing an earlier result for the same step, and stop when it blocks."""
+        existing_index = next((index for index, existing in enumerate(steps) if existing.id == step.id), None)
+        if existing_index is not None:
+            steps[existing_index] = step
+        else:
+            steps.append(step)
+        if step.state in _BLOCKING_STATES:
+            report = SetupReport(state=SetupState.SETUP_REQUIRED, current_step=step.id, steps=tuple(steps))
+            self.runtime.publish(report)
+            return report
+        if progress:
+            self.runtime.publish(
+                SetupReport(state=SetupState.INITIALIZING, current_step=_next_step(step.id), steps=tuple(steps))
+            )
+        return None
+
+
+def _next_step(step_id: SetupStepId) -> SetupStepId | None:
+    index = _STEP_ORDER.index(step_id) + 1
+    return _STEP_ORDER[index] if index < len(_STEP_ORDER) else None
+
+
+def _diagnostic(error: Exception) -> str:
+    sqlstate = getattr(error, "sqlstate", None)
+    suffix = f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
+    return f"{type(error).__name__}{suffix}"
+
+
+def _display(value: str) -> str:
+    return replace_control_characters(value).strip()
+
+
+def _passed(step_id: SetupStepId, summary: str) -> SetupStep:
+    return SetupStep(id=step_id, state=StepState.PASSED, summary=summary)
+
+
+def _failed(step_id: SetupStepId, code: str, summary: str) -> SetupStep:
+    return SetupStep(
+        id=step_id,
+        state=StepState.FAILED,
+        code=code,
+        summary=summary,
+        actions=(SetupActionId.RECONCILE,),
+    )
+
+
+def _has_grants(statements: tuple[str, ...]) -> bool:
+    return any(statement.startswith(GRANT_PREFIX) for statement in statements)
+
+
+def _sanitize_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    sanitized = replace_control_characters(value)
+    return sanitized.strip() or None
