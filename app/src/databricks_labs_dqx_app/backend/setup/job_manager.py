@@ -48,18 +48,16 @@ _USE_ROLES = frozenset({"roles/servicePrincipal.user", "roles/servicePrincipal.m
 _INVALID_APPLICATION_ID = "A service principal Application ID is a value like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d."
 _RUN_AS_SUMMARIES = {
     "task_runner_run_as_missing": (
-        "Studio runs scheduled checks in a background job. That job needs its own service principal: a "
-        "non-human Databricks identity for automated work, separate from the one the app itself uses. Follow "
-        "the three steps below."
+        "Studio's background job needs its own service principal, separate from the app's. "
+        "Follow the three steps below."
     ),
     "task_runner_run_as_matches_app": (
-        "Studio's background job is set to use the app's own service principal. Scheduled checks need a "
-        "separate service principal (a non-human Databricks identity for automated work). Follow the three "
-        "steps below."
+        "Studio's background job uses the app's own service principal. It needs a separate one. "
+        "Follow the three steps below."
     ),
     "task_runner_run_as_not_service_principal": (
-        "Studio's background job is set to run as a person, not a service principal (a non-human Databricks "
-        "identity), so it would stop working if that person left. Follow the three steps below."
+        "Studio's background job runs as a person, so it would stop working if they left. "
+        "It needs a service principal. Follow the three steps below."
     ),
 }
 _DEPLOYMENT_RUN_AS_SUMMARY = (

@@ -45,7 +45,7 @@
       "missingGrantsDescriptionTable": "Scheduled runs read this table as Studio's service principals, and they can't use its catalog or schema yet.",
       "missingGrantsDescriptionCollection": "Scheduled runs read these tables as Studio's service principals, and they can't use some of their catalogs or schemas yet.",
       "missingGrant": "{{name}} needs {{privilege}} on {{securable}}",
-      "missingGrantsInstructions": "Click the Run button (▶) at the top right of the commands below to give this access using your own Databricks permissions. Studio checks again automatically. If your account isn't allowed to, copy the commands and send them to the owner of the catalog or schema, then click Try again once they've run them.",
+      "missingGrantsInstructions": "Run the following commands to give this access. If you lack permissions, have the owner of the catalog or schema run them. Then click Try again.",
       "unverifiedPermissionsTitle": "Couldn't check permissions",
       "unverifiedPermissionsDescriptionTable": "Studio couldn't read the permissions on this table, so it can't tell whether you can set up a schedule. Try again, or ask the table's owner to set it up.",
       "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up.",
@@ -3178,7 +3178,7 @@
     "instructions": "How to resolve this",
     "grants": {
       "partial": "Done: {{applied}} of {{total}}.",
-      "leadRun": "Click the Run button (▶) at the top right of the commands below to give this access using your own Databricks permissions. Studio checks again automatically. If your account isn't allowed to, copy the commands and send them to the catalog's owner.",
+      "leadRun": "Run the following commands to give this access. If you lack permissions, have the catalog's owner run them. Then reverify.",
       "leadCopy": "Copy the commands below and send them to the catalog's owner or a Databricks admin. Once they've run them in the SQL editor, click Verify again.",
       "errors": {
         "permission_denied": "Your account isn't allowed to give this access. Send the commands above to the owner of the catalog. You'll see the owner on the catalog's page under Catalog in the Databricks sidebar. Ask them to run the commands in the SQL editor, then click Verify again.",
@@ -3266,7 +3266,7 @@
           "permissionConfirmed": "Studio can use this service principal.",
           "missing": "The DQX Studio app doesn't have CAN USE on this service principal yet. Add it on the Permissions tab (step b above), then click Confirm access again. If you're sure Studio already has this permission (for example through an admin group), you can continue to step 3.",
           "unverified": "Studio can't check this service principal's permissions itself. Make sure you've done steps a and b, then continue. Step 3 will confirm it.",
-          "grantsPending": "This service principal also needs access to Studio's data. Click the Run button (▶) on the commands below, or copy them and send them to the catalog's owner.",
+          "grantsPending": "This service principal also needs access to Studio's data. Run the following commands. If you lack permissions, have the catalog's owner run them.",
           "automaticGrants": "Studio will set up the rest of this service principal's access automatically once it's assigned to the job.",
           "grantsUnverified": "Studio couldn't check all of this service principal's access to Studio's data. Setup checks it again after step 3."
         },
