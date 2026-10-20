@@ -182,7 +182,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
-        result_df = self._create_results_array(
+        result_df, skipped_error_checks = self._create_results_array(
             df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
@@ -190,7 +190,7 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
         )
-        result_df = self._create_results_array(
+        result_df, skipped_warning_checks = self._create_results_array(
             result_df,
             warning_checks,
             self._result_column_names[ColumnArguments.WARNINGS],
@@ -201,8 +201,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         # Duplicate check names are intentionally preserved — if two rules share a name,
         # check_metrics will report each occurrence separately so the user can spot the overlap.
-        check_names = [check.name for check in checks]
-        observed_result = self._observe_metrics(result_df, check_names)
+        observed_result = self._observe_metrics(result_df, checks, skipped_error_checks | skipped_warning_checks)
 
         if isinstance(observed_result, tuple):
             observed_df, observation = observed_result
@@ -562,7 +561,7 @@ class DQEngineCore(DQEngineCoreBase):
         dest_info_col: str,
         ref_dfs: dict[str, DataFrame] | None = None,
         rule_set_fingerprint: str | None = None,
-    ) -> DataFrame:
+    ) -> tuple[DataFrame, set[str]]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
 
@@ -580,14 +579,16 @@ class DQEngineCore(DQEngineCoreBase):
             rule_set_fingerprint: Fingerprint of the rule set
 
         Returns:
-            DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
+            DataFrame with an added array column (*dest_col*) containing the results of the applied checks, and the
+            fingerprints of checks whose evaluation was skipped.
         """
         if not checks:
             # No checks then just append a null array result
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
-            return df.select("*", empty_result)
+            return df.select("*", empty_result), set()
 
         check_conditions = []
+        skipped_checks: set[str] = set()
         info_col_names: list[str] = []
         current_df = df
         original_columns = set(df.columns)
@@ -610,6 +611,8 @@ class DQEngineCore(DQEngineCoreBase):
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
+            if manager.is_skipped:
+                skipped_checks.add(check.rule_fingerprint)
             if result.info_column_name:
                 # dataset-level checks can optionally add an info column to the result DataFrame
                 info_col_names.append(result.info_column_name)
@@ -643,17 +646,18 @@ class DQEngineCore(DQEngineCoreBase):
         if columns_to_drop:
             result_df = result_df.drop(*columns_to_drop)
 
-        return result_df
+        return result_df, skipped_checks
 
     def _observe_metrics(
-        self, df: DataFrame, check_names: list[str] | None = None
+        self, df: DataFrame, checks: list[DQRule] | None = None, skipped_checks: set[str] | None = None
     ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Adds Spark observable metrics to the input DataFrame.
 
         Args:
             df: Input DataFrame
-            check_names: Optional list of check names to include per-check metrics.
+            checks: Optional list of applied checks to include per-check metrics.
+            skipped_checks: Optional fingerprints of checks whose evaluation was skipped.
 
         Returns:
             The unmodified DataFrame with observed metrics and the corresponding Spark Observation
@@ -674,7 +678,7 @@ class DQEngineCore(DQEngineCoreBase):
             )
             return df
 
-        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(check_names)]
+        metric_exprs = [F.expr(m) for m in self.observer.get_metrics(checks, df, skipped_checks)]
         if not metric_exprs:
             return df
 
@@ -1837,9 +1841,10 @@ class DQEngine(DQEngineBase):
             checks: Optional metadata checks that were applied (the same list of dicts passed to
                 *apply_checks_by_metadata*). When provided, a per-check breakdown (*check_metrics*) is
                 included covering every applied check, including checks with zero violations. The breakdown
-                is derived from the check names and cannot be reconstructed from data alone, so pass the
-                same checks used when applying. When omitted (and no *checks_location* is given), only
-                dataset-level metrics (row counts and any observer custom metrics) are produced.
+                is derived from the applied checks (names, fingerprints, and filters) and cannot be
+                reconstructed from data alone, so pass the same checks used when applying. When omitted
+                (and no *checks_location* is given), only dataset-level metrics (row counts and any observer
+                custom metrics) are produced.
             custom_check_functions: Optional custom check functions used to resolve metadata checks. Pass the
                 *same* functions that were used when the checks were applied — if the applied checks referenced a
                 custom function and it is not supplied here, deserialization fails or resolves a different check
@@ -1892,15 +1897,22 @@ class DQEngine(DQEngineBase):
             )
             checks = storage_handler.load(storage_config)
 
-        check_names: list[str] | None = None
-        rule_set_fingerprint: str | None = None
-        if checks:
-            rules = deserialize_checks(checks, custom_check_functions)
-            # Duplicate check names are preserved so check_metrics reports each occurrence separately.
-            check_names = [rule.name for rule in rules]
-            rule_set_fingerprint = compute_rule_set_fingerprint(rules)
+        rules = deserialize_checks(checks, custom_check_functions) if checks else []
+        rule_set_fingerprint = compute_rule_set_fingerprint(rules) if rules else None
+        skipped_checks = {
+            rule.rule_fingerprint
+            for rule in rules
+            if DQRuleManager(
+                check=rule,
+                df=checked_df,
+                spark=self.spark,
+                engine_user_metadata=self._engine.engine_user_metadata,
+                run_time_overwrite=self._engine.run_time_overwrite,
+                run_id=self._engine.run_id,
+            ).is_skipped
+        }
 
-        aggregated_df = checked_df.selectExpr(*observer.get_metrics(check_names))
+        aggregated_df = checked_df.selectExpr(*observer.get_metrics(rules, checked_df, skipped_checks))
         observation = self._build_metrics_observation(
             input_config=input_config,
             output_config=output_config,
