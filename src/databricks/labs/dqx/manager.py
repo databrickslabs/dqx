@@ -1,4 +1,3 @@
-import inspect
 import logging
 from datetime import datetime
 from dataclasses import dataclass
@@ -80,31 +79,6 @@ class DQRuleManager:
         return safe_filter_expr(self.check.filter)
 
     @cached_property
-    def _effective_filter(self) -> str | None:
-        """
-        Returns the filter string that will be applied for this check, or None.
-
-        This is the single source of truth for "what filter runs" so the skip decision covers every way a
-        filter can reach a check function: the check-level *filter*, and a *row_filter* passed through
-        *check_func_kwargs* or positionally via *check_func_args*. Resolving from the check function's bound
-        arguments (rather than only *check.filter* / the kwarg) ensures no supply path slips past the guard.
-        """
-        if self.check.filter:
-            return self.check.filter
-        args, kwargs = self.check.prepare_check_func_args_and_kwargs()
-        row_filter = kwargs.get("row_filter")
-        if row_filter is None:
-            # row_filter may have been supplied positionally; bind against the signature to locate it.
-            sig = inspect.signature(self.check.check_func)
-            if "row_filter" in sig.parameters:
-                try:
-                    bound = sig.bind_partial(*args, **kwargs)
-                    row_filter = bound.arguments.get("row_filter")
-                except TypeError:
-                    row_filter = None
-        return row_filter if isinstance(row_filter, str) else None
-
-    @cached_property
     def has_unsafe_filter(self) -> bool:
         """
         Returns True if the check filter contains unsafe SQL (e.g. a destructive statement keyword).
@@ -113,7 +87,7 @@ class DQRuleManager:
         invalid filter) rather than aborting evaluation of the whole rule set. Note this does not apply to
         the *sql_query* check, whose query runs via *spark.sql* and is still hard-rejected in the executor.
         """
-        filter_expr = self._effective_filter
+        filter_expr = self.check.effective_filter
         if not filter_expr:
             return False
         return not is_sql_query_safe(filter_expr)
@@ -165,7 +139,7 @@ class DQRuleManager:
         """
         if self.has_unsafe_filter:
             return True
-        return self._is_invalid_column(self.filter_condition)
+        return self._is_invalid_column(safe_filter_expr(self.check.effective_filter))
 
     @cached_property
     def has_invalid_custom_message(self) -> bool:
@@ -282,6 +256,18 @@ class DQRuleManager:
 
         return F.when(condition.isNotNull(), message_expr).otherwise(F.lit(None).cast("string"))
 
+    @cached_property
+    def is_skipped(self) -> bool:
+        """
+        Returns True if the check evaluation is skipped, e.g. due to invalid columns, filter, or custom message.
+        """
+        return bool(
+            self.has_invalid_columns
+            or self.has_invalid_filter
+            or self.has_invalid_custom_message
+            or self.invalid_sql_expression
+        )
+
     def _get_invalid_cols_message(self) -> str:
         """
         Returns invalid columns message containing info about invalid columns to check should be applied to or filter.
@@ -297,11 +283,11 @@ class DQRuleManager:
             )
 
         if self.has_unsafe_filter:
-            safe_filter = sanitize_for_logging(self._effective_filter or "")
+            safe_filter = sanitize_for_logging(self.check.effective_filter or "")
             logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
         elif self.has_invalid_filter:
-            safe_filter = sanitize_for_logging(self.check.filter or "")
+            safe_filter = sanitize_for_logging(self.check.effective_filter or "")
             logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 

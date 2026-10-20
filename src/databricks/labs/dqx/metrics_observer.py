@@ -7,8 +7,10 @@ from uuid import uuid4
 
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
+from pyspark.sql.types import StructType
 
-from databricks.labs.dqx.utils import escape_sql_string_literal
+from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.utils import escape_sql_string_literal, is_sql_query_safe
 
 
 OBSERVATION_TABLE_SCHEMA = (
@@ -85,13 +87,25 @@ class DQMetricsObserver:
         """
         return self.id_overwrite or str(uuid4())
 
-    def get_metrics(self, check_names: list[str] | None = None) -> list[str]:
+    def get_metrics(
+        self,
+        checks: list[DQRule] | list[str] | None = None,
+        df: DataFrame | None = None,
+        skipped_checks: set[str] | None = None,
+    ) -> list[str]:
         """
         Gets the observer metrics as Spark SQL expressions.
 
         Args:
-            check_names: Optional list of check names from the applied quality rules.
-                When provided, a per-check breakdown (*check_metrics*) is included.
+            checks: Optional list of applied quality rules. When provided, a per-check breakdown (*check_metrics*)
+                is included. Check names are also accepted and produce entries with only *check_name*,
+                *error_count*, and *warning_count*.
+            df: Optional DataFrame the metrics are computed over. When its result columns have no
+                *rule_fingerprint* field (results written before DQX 0.14.0), error and warning counts are matched
+                by check name instead.
+            skipped_checks: Optional fingerprints of checks whose evaluation was skipped. These checks report a
+                *checked_count* of 0. A check whose filter cannot be resolved against the data must be listed here
+                (the engine does this automatically), otherwise the metric fails Spark analysis.
 
         Returns:
             A list of Spark SQL expressions defining the observer metrics (default, per-check, and custom).
@@ -102,13 +116,15 @@ class DQMetricsObserver:
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
-        if check_names:
-            metrics.append(self._build_check_metrics_expr(check_names))
+        if checks:
+            metrics.append(self._build_check_metrics_expr(checks, df, skipped_checks or set()))
         if self.custom_metrics:
             metrics.extend(self.custom_metrics)
         return metrics
 
-    def _build_check_metrics_expr(self, check_names: list[str]) -> str:
+    def _build_check_metrics_expr(
+        self, checks: list[DQRule] | list[str], df: DataFrame | None, skipped_checks: set[str]
+    ) -> str:
         """Build a single SQL expression that produces a per-check breakdown.
 
         Produces the canonical JSON array string directly from SQL using concat and
@@ -125,28 +141,103 @@ class DQMetricsObserver:
             of strings carrying struct data, so we stay in plain string territory.
 
         Args:
-            check_names: List of check names to include in the expression.
+            checks: List of quality rules or check names to include in the expression.
+            df: Optional DataFrame used to detect whether result entries carry *rule_fingerprint*.
+            skipped_checks: Fingerprints of checks whose evaluation was skipped.
 
         Returns:
             A Spark SQL expression string aliased as *check_metrics*.
         """
-        fragments: list[str] = []
-        for check_name in check_names:
-            check_name_escaped = escape_sql_string_literal(check_name)
-            # JSON-encode the check name (handles embedded quotes, backslashes, control chars),
-            # then escape it again for safe inclusion in a SQL string literal.
-            json_check_name_sql_esc = escape_sql_string_literal(json.dumps(check_name))
-            err = self._error_column_name
-            warn = self._warning_column_name
-            fragments.append(
-                f"concat("
-                f"'{{\"check_name\":{json_check_name_sql_esc},\"error_count\":',"
-                f"cast(count(case when exists({err}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
-                f"',\"warning_count\":',"
-                f"cast(count(case when exists({warn}, x -> x.name = '{check_name_escaped}') then 1 end) as string),"
-                f"'}}')"
+        match_field = self._get_match_field(df)
+        fragments = [
+            (
+                self._build_check_name_fragment(check)
+                if isinstance(check, str)
+                else self._build_check_fragment(check, match_field, skipped_checks)
             )
+            for check in checks
+        ]
         return f"concat('[', concat_ws(',', {', '.join(fragments)}), ']') as check_metrics"
+
+    def _build_check_name_fragment(self, check_name: str) -> str:
+        """Builds the SQL expression for a *check_metrics* entry identified only by check name.
+
+        Args:
+            check_name: Name of the check.
+
+        Returns:
+            A Spark SQL expression producing the JSON object for the check.
+        """
+        parts = [
+            _sql_text(f'{{"check_name":{json.dumps(check_name)},"error_count":'),
+            self._count_matches(self._error_column_name, "name", check_name),
+            _sql_text(',"warning_count":'),
+            self._count_matches(self._warning_column_name, "name", check_name),
+            _sql_text("}"),
+        ]
+        return f"concat({', '.join(parts)})"
+
+    def _build_check_fragment(self, check: DQRule, match_field: str, skipped_checks: set[str]) -> str:
+        """Builds the SQL expression for a *check_metrics* entry of a quality rule.
+
+        Error and warning counts match result entries by *rule_fingerprint* (or by *name* for results without it),
+        so checks sharing a name are counted separately. *checked_count* counts the rows matching the check filter
+        (all rows when the check has no filter) and is 0 for skipped checks. Rule-level *user_metadata* is included
+        only when set.
+
+        Args:
+            check: Quality rule to build the entry for.
+            match_field: Result entry field used to match the check (*rule_fingerprint* or *name*).
+            skipped_checks: Fingerprints of checks whose evaluation was skipped.
+
+        Returns:
+            A Spark SQL expression producing the JSON object for the check.
+        """
+        head = f'{{"check_name":{json.dumps(check.name)},"rule_fingerprint":{json.dumps(check.rule_fingerprint)}'
+        match_value = getattr(check, match_field)
+        parts = [
+            _sql_text(f'{head},"error_count":'),
+            self._count_matches(self._error_column_name, match_field, match_value),
+            _sql_text(',"warning_count":'),
+            self._count_matches(self._warning_column_name, match_field, match_value),
+            _sql_text(',"checked_count":'),
+            f"cast({_build_checked_count_expr(check, skipped_checks)} as string)",
+        ]
+        if check.user_metadata:
+            parts += [_sql_text(',"user_metadata":'), _build_user_metadata_json_expr(check.user_metadata)]
+        return f"concat({', '.join([*parts, _sql_text('}')])})"
+
+    @staticmethod
+    def _count_matches(column: str, field: str, value: str) -> str:
+        """Builds the SQL aggregate counting rows whose result entries contain a matching check.
+
+        Args:
+            column: Result column name (e.g. *_errors*).
+            field: Result entry field to match on (*rule_fingerprint* or *name*).
+            value: Value the field must equal.
+
+        Returns:
+            A Spark SQL expression producing the count as a string.
+        """
+        return (
+            f"cast(count(case when exists({column}, x -> x.{field} = '{escape_sql_string_literal(value)}') "
+            f"then 1 end) as string)"
+        )
+
+    def _get_match_field(self, df: DataFrame | None) -> str:
+        """Gets the result entry field used to match checks.
+
+        Args:
+            df: Optional DataFrame holding the result columns.
+
+        Returns:
+            *rule_fingerprint* when the result entries carry it (or *df* is not provided), otherwise *name*.
+        """
+        if df is None:
+            return "rule_fingerprint"
+        entry_type = getattr(df.schema[self._error_column_name].dataType, "elementType", None)
+        has_fingerprint = isinstance(entry_type, StructType) and "rule_fingerprint" in entry_type.fieldNames()
+        return "rule_fingerprint" if has_fingerprint else "name"
 
     @property
     def observation(self) -> Observation:
@@ -293,3 +384,71 @@ class DQMetricsObserver:
             F.lit(observation.warning_column_name).cast("string").alias("warning_column_name"),
             user_metadata.alias("user_metadata"),
         )
+
+
+def _sql_text(value: str) -> str:
+    """Builds a Spark SQL string literal.
+
+    Args:
+        value: Raw string.
+
+    Returns:
+        The single-quoted, escaped SQL literal.
+    """
+    return f"'{escape_sql_string_literal(value)}'"
+
+
+def _sql_literal(value: Any) -> str:
+    """Builds a Spark SQL literal with the same type *F.lit* infers for the value.
+
+    Args:
+        value: Python value (None, bool, int, float, or any value rendered as a string).
+
+    Returns:
+        A Spark SQL literal expression.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"cast({_sql_text(repr(value))} as double)"
+    return _sql_text(str(value))
+
+
+def _build_user_metadata_json_expr(user_metadata: dict[str, Any]) -> str:
+    """Builds the SQL expression rendering rule-level user metadata as a JSON object.
+
+    Keys and values are cast to string exactly like the *user_metadata* map in the row-level results.
+
+    Args:
+        user_metadata: Rule-level user metadata.
+
+    Returns:
+        A Spark SQL expression producing the JSON object.
+    """
+    entries = [
+        f"cast({_sql_literal(key)} as string), cast({_sql_literal(value)} as string)"
+        for key, value in user_metadata.items()
+    ]
+    return f"to_json(map({', '.join(entries)}))"
+
+
+def _build_checked_count_expr(check: DQRule, skipped_checks: set[str]) -> str:
+    """Builds the SQL aggregate counting the rows a check is applied to.
+
+    Args:
+        check: Quality rule.
+        skipped_checks: Fingerprints of checks whose evaluation was skipped.
+
+    Returns:
+        A Spark SQL aggregate expression, or *0* when the check is skipped or its filter is unsafe.
+    """
+    check_filter = check.effective_filter
+    if check.rule_fingerprint in skipped_checks or (check_filter and not is_sql_query_safe(check_filter)):
+        return "0"
+    if not check_filter:
+        return "count(1)"
+    return f"count(case when (\n{check_filter}\n) then 1 end)"
