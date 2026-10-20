@@ -8,31 +8,14 @@ from uuid import uuid4
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.utils import escape_sql_string_literal
+
 
 OBSERVATION_TABLE_SCHEMA = (
     "run_id string, run_name string, input_location string, output_location string, quarantine_location string, "
     "checks_location string, rule_set_fingerprint string, metric_name string, metric_value string, run_time timestamp, "
     "error_column_name string, warning_column_name string, user_metadata map<string, string>"
 )
-
-
-def _sql_literal_escape(value: str) -> str:
-    """Escape a string for inclusion in a single-quoted Spark SQL literal.
-
-    Spark's parser honours backslash escapes inside string literals by default
-    (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
-
-      * The backslash must be doubled, or the parser consumes it — collapsing a JSON-encoded
-        ``\\"`` back to a bare ``"`` and yielding malformed JSON for a check name containing a
-        double quote.
-      * The single quote must be escaped as ``\\'``, not doubled as ``''``. ANSI doubling is *not*
-        honoured in this mode: Spark drops the pair outright, so a check named ``it's_valid`` is
-        reported as ``its_valid``.
-
-    Both behaviours are verified by the round-trip integration test in
-    *tests/integration/test_summary_metrics.py*.
-    """
-    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 @dataclass(frozen=True)
@@ -149,10 +132,10 @@ class DQMetricsObserver:
         """
         fragments: list[str] = []
         for check_name in check_names:
-            check_name_escaped = _sql_literal_escape(check_name)
+            check_name_escaped = escape_sql_string_literal(check_name)
             # JSON-encode the check name (handles embedded quotes, backslashes, control chars),
             # then escape it again for safe inclusion in a SQL string literal.
-            json_check_name_sql_esc = _sql_literal_escape(json.dumps(check_name))
+            json_check_name_sql_esc = escape_sql_string_literal(json.dumps(check_name))
             err = self._error_column_name
             warn = self._warning_column_name
             fragments.append(

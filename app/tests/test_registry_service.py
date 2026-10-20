@@ -395,6 +395,35 @@ class TestCreateRule:
 
 
 class TestUpdateDraft:
+    @pytest.mark.parametrize(("clear_polarity", "expected"), [(True, None), (False, "pass")])
+    def test_switching_a_sql_rule_to_a_function_without_negate(self, svc, sql, clear_polarity, expected):
+        """A SQL rule stored with "pass" and switched to is_not_in_list keeps that
+        polarity only if the caller doesn't ask to clear it."""
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="sql",
+            status="draft",
+            version=0,
+            polarity="pass",
+            definition=RuleDefinition.model_validate(
+                {"body": {"predicate": "{{column}} IS NOT NULL"}, "slots": _native_definition().slots}
+            ),
+        )
+        sql.query.return_value = [_row_for(draft)]
+        not_in_list = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_not_in_list", "arguments": {"column": "{{column}}", "forbidden": ["x"]}},
+                "slots": _native_definition().slots,
+                "parameters": [],
+            }
+        )
+        updated = svc.update_draft(
+            "r1", user_email="alice@x", mode="dqx_native", definition=not_in_list, clear_polarity=clear_polarity
+        )
+        assert updated.polarity == expected
+
     def test_updates_draft_rule(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 

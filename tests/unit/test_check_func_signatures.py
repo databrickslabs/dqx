@@ -57,7 +57,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_data_fresh": ("column", "max_age_minutes", "base_timestamp"),
     "has_no_outliers": ("column", "row_filter"),
     "is_in_distribution": ("column", "distribution", "distance", "case_sensitive", "row_filter"),
-    "is_unique": ("columns", "nulls_distinct", "row_filter"),
+    "is_unique": ("columns", "nulls_distinct", "row_filter", "trim_strings"),
     "foreign_key": (
         "columns",
         "ref_columns",
