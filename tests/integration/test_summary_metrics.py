@@ -3298,9 +3298,12 @@ def test_check_metrics_user_metadata_excludes_engine_level_metadata(ws, spark, m
     engine_metadata = {"env": "prod", "owner": "engine"}
     rule_metadata = {"owner": "rule"}
     checks = [
-        DQRowRule(
-            name="id_is_not_null", criticality="error", check_func=is_not_null, column="id", user_metadata=rule_metadata
-        )
+        {
+            "name": "id_is_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            "user_metadata": rule_metadata,
+        }
     ]
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(
@@ -3310,7 +3313,7 @@ def test_check_metrics_user_metadata_excludes_engine_level_metadata(ws, spark, m
         extra_params=replace(EXTRA_PARAMS, user_metadata=engine_metadata),
     )
 
-    checked_df, observation = dq_engine.apply_checks(_standard_test_df(spark), checks)
+    checked_df, observation = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), checks)
     [row] = (
         checked_df.where("id is null")
         .select(F.col("_errors").getItem(0).getField("user_metadata").alias("m"))
