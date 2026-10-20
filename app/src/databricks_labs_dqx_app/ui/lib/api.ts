@@ -7037,7 +7037,9 @@ export const useOverrideSetupStep = <TError = AxiosError<HTTPValidationError>,
 /**
  * Run a step's GRANT statements as the signed-in administrator, then re-verify setup.
 
-The request carries only the step; the statements are re-derived on the server.
+The request carries only the step; the statements are re-derived on the server. A failure
+while re-deriving them or re-checking setup afterwards is reported as *setup_grants_failed*,
+without the error's text.
  * @summary Apply Setup Step Grants
  */
 export const applySetupStepGrants = (
