@@ -16,7 +16,7 @@ void testI18n.init({
 
 const SQL =
   "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;\nGRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `data-team`;";
-const RUN_LABEL = 'aria-label="Run these commands with your Databricks access"';
+const RUN_LABEL = `aria-label="${en.sqlCodeBlock.run}"`;
 
 function render(element: React.ReactNode): string {
   return renderToStaticMarkup(

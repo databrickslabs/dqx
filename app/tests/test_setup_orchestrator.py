@@ -1911,7 +1911,7 @@ _AUTOMATIC_GRANTS = (f"GRANT SELECT ON SCHEMA `main`.`studio_tmp` TO `{_RUNNER_I
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("permission", ["confirmed", "missing", "unverified"])
-async def test_confirming_access_applies_studio_grants_then_reports_what_the_picked_principal_still_needs(
+async def test_confirming_access_only_inspects_and_reports_what_the_picked_principal_still_needs(
     permission: str,
 ) -> None:
     harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)

@@ -2808,6 +2808,10 @@ class ScheduleGrantApplyOut(BaseModel):
     applied: int
     total: int
     failed: list[ScheduleGrantFailureOut] = Field(default_factory=list)
+    recheck_failed: bool = Field(
+        default=False,
+        description="The check after the grants couldn't run, so preflight is the one taken before them",
+    )
 
 
 # ---------------------------------------------------------------------------

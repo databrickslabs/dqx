@@ -1,8 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from databricks.sdk.errors import NotFound
-from databricks.sdk.errors import InvalidParameterValue
+from databricks.sdk.errors import InvalidParameterValue, NotFound
 from databricks.sdk.service.catalog import EntityTagAssignment
 from databricks.sdk.service.tags import TagAssignment
 

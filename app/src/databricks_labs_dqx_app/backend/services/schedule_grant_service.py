@@ -211,12 +211,15 @@ class ScheduleGrantApplication:
         applied: Number of statements that ran successfully.
         total: Number of distinct statements attempted.
         failed: Statements that failed.
+        recheck_failed: The check after the grants couldn't run, so *preflight* is
+            the one taken before them.
     """
 
     preflight: list[TablePreflight]
     applied: int
     total: int
     failed: tuple[ScheduleGrantFailure, ...]
+    recheck_failed: bool = False
 
 
 def _is_real_three_part_fqn(fqn: str) -> bool:
@@ -1048,7 +1051,9 @@ class ScheduleGrantService:
             executor: The signed-in user's SQL executor.
 
         Returns:
-            The fresh preflight with how many statements ran and which failed.
+            The fresh preflight with how many statements ran and which failed. When
+            the check after the grants fails, the counts are still returned with
+            *recheck_failed* set and the preflight taken before the grants.
         """
         before = self.preflight(fqns)
         table_of: dict[str, str] = {}
@@ -1058,12 +1063,19 @@ class ScheduleGrantService:
         if not table_of:
             return ScheduleGrantApplication(preflight=before, applied=0, total=0, failed=())
         run = run_grant_statements(list(table_of), executor)
-        # Fresh instance: this one memoizes the usage it saw before the grants ran.
-        after = ScheduleGrantService(self._obo, self._sp_ws, self._job_id, self._warehouse_id).preflight(fqns)
         failed = tuple(
             ScheduleGrantFailure(fqn=table_of[f.statement], statement=f.statement, error_code=f.error_code)
             for f in run.failed
         )
+        try:
+            # Fresh instance: this one memoizes the usage it saw before the grants ran.
+            after = type(self)(self._obo, self._sp_ws, self._job_id, self._warehouse_id).preflight(fqns)
+        except Exception as e:
+            # The grants already ran; report them rather than failing the request.
+            logger.warning(f"Re-checking schedule grants failed ({type(e).__name__})")
+            return ScheduleGrantApplication(
+                preflight=before, applied=run.applied, total=run.total, failed=failed, recheck_failed=True
+            )
         return ScheduleGrantApplication(preflight=after, applied=run.applied, total=run.total, failed=failed)
 
     # ------------------------------------------------------------------

@@ -29,6 +29,7 @@
     },
     "grantWarning": {
       "title": "Non puoi configurare questa pianificazione",
+      "missingGrantsTitle": "This schedule needs access first",
       "descriptionTable": "Le pianificazioni richiedono il privilegio MANAGE su questa tabella, che non hai.",
       "descriptionCollection": "Le pianificazioni richiedono il privilegio MANAGE su ogni tabella che leggono, e non lo hai su una o più di queste tabelle.",
       "holdersLabel": "Chiedi a chi lo ha di configurare la pianificazione:",
@@ -54,6 +55,7 @@
       "apply": {
         "run": "Give the scheduler read access to these tables, using your Databricks access",
         "partial": "Done: {{applied}} of {{total}}.",
+        "recheckFailed": "Done: {{applied}} of {{total}}. Studio couldn't check the result just now. Click Try again to refresh.",
         "errors": {
           "permission_denied": "You don't have permission to share these tables. Send the commands below to the table's owner, or to a Databricks workspace admin, and ask them to run them in the SQL editor. The schedule will work once they have.",
           "warehouse_unavailable": "Studio couldn't reach a SQL warehouse to run these commands. Try again in a minute, or copy them and run them in the SQL editor.",
@@ -3176,6 +3178,8 @@
     "instructions": "Come risolvere",
     "grants": {
       "partial": "Done: {{applied}} of {{total}}.",
+      "leadRun": "Click the Run button (▶) at the top right of the commands below to give this access using your own Databricks permissions. Studio checks again automatically. If your account isn't allowed to, copy the commands and send them to the catalog's owner.",
+      "leadCopy": "Copy the commands below and send them to the catalog's owner or a Databricks admin. Once they've run them in the SQL editor, click Verify again.",
       "errors": {
         "permission_denied": "Your account isn't allowed to give this access. Send the commands above to whoever owns this catalog, or to a Databricks workspace admin, and ask them to run them in the SQL editor. Then click Verify again.",
         "warehouse_unavailable": "Studio couldn't reach a SQL warehouse to run these commands. Try again in a minute, or copy them and run them in the SQL editor.",
@@ -3246,8 +3250,7 @@
         "invalidId": "An Application ID looks like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Don't have one? Create it",
         "createStep1": "Open Settings → Identity and access → Service principals, click Add service principal, and create one named dqx-studio-task-runner.",
-        "createStep2": "On its Permissions tab, give yourself CAN MANAGE and CAN USE.",
-        "createStep3": "Come back here and pick it above.",
+        "createStep2": "Come back here and pick it above.",
         "openServicePrincipals": "Open service principals"
       },
       "access": {

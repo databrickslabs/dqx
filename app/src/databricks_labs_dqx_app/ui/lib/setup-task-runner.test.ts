@@ -203,10 +203,12 @@ describe("taskRunnerSteps", () => {
     });
   });
 
-  test("blocks applying while the app is known to lack CAN USE", () => {
-    expect(taskRunnerSteps({ selected: true, access: access("missing") })).toMatchObject({
-      applyEnabled: false,
-      applyHint: "confirmFirst",
+  test("a missing role is only a warning: step 3 stays enabled, and setting Run as proves it", () => {
+    expect(taskRunnerSteps({ selected: true, access: access("missing") })).toEqual({
+      confirmEnabled: true,
+      applyEnabled: true,
+      applyHint: null,
+      grantsStillMissing: false,
     });
   });
 

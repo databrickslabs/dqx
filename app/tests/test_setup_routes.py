@@ -906,6 +906,26 @@ def test_run_as_maps_databricks_failures_to_codes_without_raw_text(
     assert "internal detail" not in response.text
 
 
+@pytest.mark.parametrize(
+    ("url", "method", "code"),
+    [
+        (_ACCESS_URL, "check_task_runner_access", "task_runner_access_failed"),
+        (_RUNNER_GRANTS_URL, "apply_task_runner_grants", "task_runner_grants_failed"),
+    ],
+)
+@pytest.mark.parametrize("error", [PermissionDenied("internal detail"), InternalError("internal detail")])
+def test_task_runner_access_and_grants_map_databricks_failures_to_codes_without_raw_text(
+    client: TestClient, orchestrator: MagicMock, url: str, method: str, code: str, error: Exception
+) -> None:
+    setattr(orchestrator, method, AsyncMock(side_effect=error))
+
+    response = client.post(url, json={"application_id": RUNNER_APPLICATION_ID})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": code}
+    assert "internal detail" not in response.text
+
+
 _GROUPS_URL = "/api/v1/setup/groups"
 
 

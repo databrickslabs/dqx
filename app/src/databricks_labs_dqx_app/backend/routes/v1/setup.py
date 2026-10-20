@@ -302,6 +302,9 @@ async def check_task_runner_access(
         )
     except _TASK_RUNNER_REFUSALS as error:
         raise _task_runner_refusal(error) from None
+    except DatabricksError as error:
+        logger.warning(f"Could not check the task-runner service principal ({type(error).__name__})")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "task_runner_access_failed") from None
 
 
 @router.post("/task-runner/grants", response_model=TaskRunnerGrantsResponse, operation_id="applyTaskRunnerGrants")
@@ -322,6 +325,9 @@ async def apply_task_runner_grants(
         )
     except _TASK_RUNNER_REFUSALS as error:
         raise _task_runner_refusal(error) from None
+    except DatabricksError as error:
+        logger.warning(f"Could not run the task-runner service principal's grants ({type(error).__name__})")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "task_runner_grants_failed") from None
 
 
 @router.post("/task-runner/run-as", response_model=SetupReport, operation_id="setTaskRunnerRunAs")

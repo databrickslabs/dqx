@@ -400,7 +400,7 @@ def test_runner_permission_lookup_failure_blocks_setup_without_raw_error(
     assert result.code == "task_runner_permission_check_failed"
     assert "sensitive platform payload" not in str(result)
     assert "Verify" in " ".join(result.instructions)
-    assert "metastore admin" in " ".join(result.instructions)
+    assert "Databricks admin" in " ".join(result.instructions)
     assert not any(instruction.startswith("GRANT") for instruction in result.instructions)
     assert result.grant_statements == ()
 
@@ -754,7 +754,7 @@ def test_catalog_check_unknown_when_grants_unreadable(checkers: ResourceCheckers
     step = checkers.check_unity_catalog()
 
     assert step.code == "catalog_permission_check_failed"
-    assert "metastore admin" in "\n".join(step.instructions)
+    assert "Databricks admin" in "\n".join(step.instructions)
 
 
 def test_catalog_check_reports_missing_group_usage_when_only_show_grants_is_readable(
@@ -1418,7 +1418,7 @@ def test_missing_catalog_privilege_blocks_despite_memo(
     assert step.code == "catalog_permission_check_failed"
     assert "confirmed by an administrator" not in step.summary
     assert "GRANT CREATE_SCHEMA ON CATALOG `main` TO `app-sp-id`;" in step.grant_statements
-    assert any("metastore admin" in instruction for instruction in step.instructions)
+    assert any("Databricks admin" in instruction for instruction in step.instructions)
 
 
 def test_unattended_catalog_check_with_failing_settings_store_requires_verification(

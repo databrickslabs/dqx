@@ -30,6 +30,8 @@ export interface ScheduleGrantPreflight {
   isApplying: boolean;
   /** What went wrong in the last run, or null when nothing did (or nothing ran yet). */
   applyOutcome: GrantRunOutcome | null;
+  /** How many grants ran when the check after them failed, or null when it ran. */
+  recheckFailed: { applied: number; total: number } | null;
 }
 
 /** Split preflight rows into denied (needs a MANAGE holder), missing scheduler
@@ -76,6 +78,13 @@ export function applyScheduleGrantsCallbacks(
   };
 }
 
+/** The counts of a run whose re-check failed, so the card can still say how many ran. */
+export function scheduleGrantsRecheckFailure(
+  result: ScheduleGrantApplyOut,
+): { applied: number; total: number } | null {
+  return result.recheck_failed ? { applied: result.applied, total: result.total } : null;
+}
+
 /** Describe a request that failed before any statement ran. */
 export function applyScheduleGrantsFailure(error: unknown): GrantRunOutcome {
   const unavailable = axios.isAxiosError(error) && error.response?.status === 503;
@@ -85,7 +94,7 @@ export function applyScheduleGrantsFailure(error: unknown): GrantRunOutcome {
 /**
  * Schedule-grant preflight shared by every schedule form (table tab,
  * collection tab, New schedule page). Scheduled runs read tables as a
- * service account, so setting a schedule needs the caller to be able to
+ * service principal, so setting a schedule needs the caller to be able to
  * grant those SPs SELECT; the backend hard-blocks the save otherwise.
  *
  * *enabled* should be gated on scheduling intent (a cron is set) as well as
@@ -120,5 +129,6 @@ export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled:
     applyGrants: () => apply.mutate({ data: { table_fqns: missingGrantTableFqns(split.missingGrantTables) } }),
     isApplying: apply.isPending,
     applyOutcome,
+    recheckFailed: apply.isSuccess ? scheduleGrantsRecheckFailure(apply.data.data) : null,
   };
 }

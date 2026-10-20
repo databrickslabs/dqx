@@ -99,6 +99,7 @@ async def apply_schedule_grants(
         failed=[
             ScheduleGrantFailureOut(fqn=f.fqn, statement=f.statement, error_code=f.error_code) for f in result.failed
         ],
+        recheck_failed=result.recheck_failed,
     )
 
 

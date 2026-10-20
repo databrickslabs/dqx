@@ -6,6 +6,7 @@ import {
   applyScheduleGrantsFailure,
   missingGrantTableFqns,
   scheduleGrantPreflightQueryKey,
+  scheduleGrantsRecheckFailure,
   splitPreflightTables,
 } from "./useScheduleGrantPreflight";
 import { getApplyScheduleGrantsMutationOptions, type SchedulePreflightTableOut } from "@/lib/api";
@@ -142,5 +143,25 @@ describe("applying the missing scheduler grants", () => {
     expect(failure(503)).toEqual(["warehouse_unavailable"]);
     expect(failure(500)).toEqual(["unknown"]);
     expect(applyScheduleGrantsFailure(new Error("network")).errorCodes).toEqual(["unknown"]);
+  });
+});
+
+describe("a failed re-check after the grants ran", () => {
+  it("keeps the counts so the card can say how many ran", () => {
+    expect(
+      scheduleGrantsRecheckFailure({
+        preflight: { tables: [] },
+        applied: 2,
+        total: 3,
+        failed: [],
+        recheck_failed: true,
+      }),
+    ).toEqual({ applied: 2, total: 3 });
+  });
+
+  it("is null when the re-check ran", () => {
+    expect(
+      scheduleGrantsRecheckFailure({ preflight: { tables: [] }, applied: 1, total: 1, failed: [] }),
+    ).toBeNull();
   });
 });

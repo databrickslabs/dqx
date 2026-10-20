@@ -173,7 +173,7 @@ def test_access_reports_uninspectable_grants_separately(workspace, sql) -> None:
 
     assert step.code == "audience_grant_check_failed"
     assert "denied" not in " ".join(step.instructions)
-    assert "metastore admin" in step.instructions[0]
+    assert "Databricks admin" in step.instructions[0]
     assert step.actions == (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 
 

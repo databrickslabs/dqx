@@ -295,7 +295,6 @@ export function TaskRunnerSteps({
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
             <li>{t("setup.taskRunner.pick.createStep1")}</li>
             <li>{t("setup.taskRunner.pick.createStep2")}</li>
-            <li>{t("setup.taskRunner.pick.createStep3")}</li>
           </ol>
           {servicePrincipalsHref && (
             <a
@@ -356,7 +355,7 @@ export function TaskRunnerSteps({
             {accessResultMessageKeys(access).map((key) => (
               <p
                 key={key}
-                className={`text-sm${key.endsWith(".missing") ? " text-destructive" : ""}`}
+                className={`text-sm${key.endsWith(".missing") ? " text-amber-600 dark:text-amber-500" : ""}`}
               >
                 {t(key, { appName })}
               </p>

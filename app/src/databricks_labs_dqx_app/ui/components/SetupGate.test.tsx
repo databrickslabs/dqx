@@ -710,7 +710,7 @@ describe("setup grant statements", () => {
             state: "action_required",
             code: "task_runner_permissions_missing",
             summary: "The task runner doesn't have all the permissions it needs.",
-            instructions: ["Ask the owner of these objects to run the following:"],
+            instructions: ["Studio needs the access below before it can continue."],
             grant_statements: GRANTS,
             actions: ["verify_again"],
           },
@@ -738,9 +738,10 @@ describe("setup grant statements", () => {
   test("shows the prose and every statement in one copyable code block", () => {
     const markup = renderGrants();
 
-    expect(markup).toContain("Ask the owner of these objects to run the following:");
+    expect(markup).toContain("Studio needs the access below before it can continue.");
     expect(markup).toContain(GRANTS.join("\n"));
-    expect(markup.split("<pre").length - 1).toBe(2);
+    // The prose is plain text; only the statements are a code block.
+    expect(markup.split("<pre").length - 1).toBe(1);
     expect(markup).toContain(`aria-label="${en.common.copy}"`);
     expect(markup).toContain(RUN_LABEL);
   });
@@ -749,6 +750,13 @@ describe("setup grant statements", () => {
     expect(renderGate(grantStatus(false))).not.toContain(RUN_LABEL);
     expect(renderGate(grantStatus(false))).toContain(GRANTS[0]);
     expect(renderGrants({ onApplyGrants: undefined })).not.toContain(RUN_LABEL);
+  });
+
+  test("the line above the statements points to the Run button only when it's there", () => {
+    const escape = (text: string) => text.replace(/'/g, "&#x27;");
+    expect(renderGrants()).toContain(escape(en.setup.grants.leadRun));
+    expect(renderGrants({ onApplyGrants: undefined })).toContain(escape(en.setup.grants.leadCopy));
+    expect(renderGrants({ onApplyGrants: undefined })).not.toContain(escape(en.setup.grants.leadRun));
   });
 
   test("shows a spinner on the step whose statements are running", () => {

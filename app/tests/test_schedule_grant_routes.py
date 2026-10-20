@@ -554,6 +554,22 @@ class TestScheduleGrantApplyRoute:
         assert [(f.fqn, f.statement, f.error_code) for f in out.failed] == [
             ("cat.sch.t1", statement, "permission_denied")
         ]
+        assert not out.recheck_failed
+
+    async def test_a_failed_recheck_still_returns_the_counts(self, grant_svc):
+        grant_svc.apply_missing_grants_async.return_value = ScheduleGrantApplication(
+            preflight=[TablePreflight(fqn="cat.sch.t1", can_manage=False, manage_holders=[])],
+            applied=2,
+            total=2,
+            failed=(),
+            recheck_failed=True,
+        )
+
+        out = await apply_schedule_grants(
+            ScheduleGrantApplyIn(table_fqns=["cat.sch.t1"]), grant_svc, create_autospec(SqlExecutor, instance=True)
+        )
+
+        assert (out.applied, out.total, out.failed, out.recheck_failed) == (2, 2, [], True)
 
     async def test_an_inconclusive_check_is_a_503_without_raw_error_text(self, grant_svc):
         grant_svc.apply_missing_grants_async.side_effect = WarehouseUnavailableError(_LEAKY)

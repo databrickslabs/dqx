@@ -129,9 +129,11 @@ export function accessResultMessageKeys(
 }
 
 /**
- * Which of the task-runner steps can be used. Step 3 needs a step 2 result that doesn't
- * show the app lacking CAN USE; data grants still pending don't block it, because setup
- * re-checks them once the job runs as the service principal.
+ * Which of the task-runner steps can be used. Step 3 needs a step 2 result. A role that
+ * looks missing is only a warning, because Studio can't see every way the app may hold it
+ * (for example through an admin group); setting Run as in step 3 is the real proof. Data
+ * grants still pending don't block it either, because setup re-checks them once the job
+ * runs as the service principal.
  */
 export function taskRunnerSteps(state: {
   selected: boolean;
@@ -144,11 +146,11 @@ export function taskRunnerSteps(state: {
   grantsStillMissing: boolean;
 } {
   const { selected, access, busy = false } = state;
-  const confirmed = !!access && access.sp_permission !== "missing";
+  const checked = !!access;
   return {
     confirmEnabled: selected && !busy,
-    applyEnabled: selected && confirmed && !busy,
-    applyHint: !selected ? "pickFirst" : confirmed ? null : "confirmFirst",
+    applyEnabled: selected && checked && !busy,
+    applyHint: !selected ? "pickFirst" : checked ? null : "confirmFirst",
     grantsStillMissing: selected && !!access && access.grant_statements.length > 0,
   };
 }

@@ -32,7 +32,7 @@ _RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
 _STUDIO_GRANTED_KINDS = frozenset({"SCHEMA", "VOLUME"})
 _ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Verify again to re-check it."
 _OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
-RUN_GRANTS_AS_OWNER = "Ask the owner of these objects to run the following in a SQL editor, then click Verify again:"
+RUN_GRANTS_AS_OWNER = "Studio needs the access below before it can continue."
 logger = logging.getLogger(__name__)
 
 
@@ -214,8 +214,9 @@ class ResourceCheckers:
                 code="task_runner_identity_unresolved",
                 summary="Studio couldn't find the service principal that runs its jobs.",
                 instructions=(
-                    "Set the task-runner job to run as a service principal other than the app's own "
-                    "(Jobs > the Studio task runner > Run as), then click Verify again.",
+                    "Click Open task-runner job below. In the Job details panel, change Run as (the identity the "
+                    "job runs under) to a service principal other than the DQX Studio app's own, then click "
+                    "Verify again.",
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
@@ -517,8 +518,11 @@ class ResourceCheckers:
             code="storage_collision",
             summary="A schema with the name Studio wants to use already exists, and Studio doesn't manage it.",
             instructions=tuple(
-                f"Schema {catalog}.{instruction_identifier(schema)} already exists. Choose a different storage "
-                "prefix, or rename or drop that schema, then click Verify again."
+                f"Studio wants to create schema {catalog}.{instruction_identifier(schema)}, but a schema with that "
+                "name already exists and wasn't created by Studio. Click Change on the Studio configuration step "
+                "above and pick a different storage prefix. If you own that schema and no longer need it, you can "
+                "instead rename or delete it in Catalog Explorer. Deleting it deletes everything in it. Then click "
+                "Verify again."
                 for schema in schemas
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
@@ -761,8 +765,10 @@ def _catalog_grant_statements(catalog: str, missing: list[tuple[str, frozenset[s
 
 def _read_permissions_instruction(kind: str, quoted_name: str) -> str:
     return (
-        f"Sign in as the owner of {kind} {quoted_name} or a metastore admin, then click Verify again "
-        "so Studio can read its permissions. You also need access to Studio's SQL warehouse."
+        f"Studio couldn't check who has access to {kind} {quoted_name}, because your account isn't allowed to "
+        f"view its permissions. Ask the {kind}'s owner (shown on its page under Catalog in the Databricks "
+        "sidebar) or a Databricks admin to open this page and click Verify again. They also need permission to "
+        "use Studio's SQL warehouse, the Databricks compute that runs Studio's queries."
     )
 
 

@@ -130,15 +130,15 @@ describe("TaskRunnerSteps", () => {
     expect(html).toContain(`href="${HOST}/jobs/7"`);
   });
 
-  test("keeps applying disabled while the app lacks CAN USE", () => {
+  test("warns when the app seems to lack CAN USE, but still lets step 3 prove it", () => {
     const html = renderSteps({
       picked: PICKED,
       access: { sp_permission: "missing", grant_statements: [], automatic_grants: [], grants_unverified: false },
     });
 
     expect(html).toContain(escapeHtml(copy.access.result.missing));
-    expect(button(html, copy.apply.button)).toContain('disabled=""');
-    expect(html).toContain(copy.apply.confirmFirst);
+    expect(button(html, copy.apply.button)).not.toContain('disabled=""');
+    expect(html).not.toContain(copy.apply.confirmFirst);
   });
 
   test("lets an unverifiable permission continue to step 3", () => {
@@ -159,7 +159,7 @@ describe("TaskRunnerSteps", () => {
 
     expect(html).toContain(escapeHtml(copy.access.result.grantsPending));
     expect(html).toContain(escapeHtml(GRANT));
-    expect(html).toContain('aria-label="Run these commands with your Databricks access"');
+    expect(html).toContain(`aria-label="${en.sqlCodeBlock.run}"`);
     expect(html).toContain(escapeHtml(copy.apply.grantsStillMissing));
     expect(button(html, copy.apply.button)).not.toContain('disabled=""');
   });

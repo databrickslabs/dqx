@@ -346,13 +346,22 @@ function StepCard({
               <div className="space-y-2">
                 <p className="text-sm font-medium">{t("setup.instructions")}</p>
                 {step.instructions?.map((instruction, index) => (
-                  <pre
+                  <p
                     key={`${step.id}-${index}`}
-                    className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed"
+                    className="whitespace-pre-wrap break-words text-sm leading-relaxed"
                   >
                     {instruction}
-                  </pre>
+                  </p>
                 ))}
+                {grantStatements.length > 0 && (
+                  <p className="text-sm">
+                    {t(
+                      canManage && onApplyGrants
+                        ? "setup.grants.leadRun"
+                        : "setup.grants.leadCopy",
+                    )}
+                  </p>
+                )}
                 {grantStatements.length > 0 && (
                   <SqlCodeBlock
                     sql={grantStatementsSql(grantStatements)}

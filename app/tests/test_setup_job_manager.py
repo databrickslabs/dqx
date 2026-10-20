@@ -251,20 +251,22 @@ _RUN_AS_CODES = (
         (
             None,
             "task_runner_run_as_missing",
-            "Studio runs scheduled checks under a dedicated service principal, separate from the app itself. "
-            "Follow the three steps below.",
+            "Studio runs scheduled checks in a background job. That job needs its own service principal: a "
+            "non-human Databricks identity for automated work, separate from the one the app itself uses. Follow "
+            "the three steps below.",
         ),
         (
             JobRunAs(service_principal_name=APP_APPLICATION_ID),
             "task_runner_run_as_matches_app",
-            "Studio's background job is using the app's own account. Scheduled checks need a separate service "
-            "principal. Follow the three steps below.",
+            "Studio's background job is set to use the app's own service principal. Scheduled checks need a "
+            "separate service principal (a non-human Databricks identity for automated work). Follow the three "
+            "steps below.",
         ),
         (
             JobRunAs(user_name="runner@example.com"),
             "task_runner_run_as_not_service_principal",
-            "Studio's background job is set to run as a person rather than a service principal, so it would stop "
-            "working if that person left. Follow the three steps below.",
+            "Studio's background job is set to run as a person, not a service principal (a non-human Databricks "
+            "identity), so it would stop working if that person left. Follow the three steps below.",
         ),
     ],
 )
@@ -303,9 +305,10 @@ def test_validate_run_as_points_bundle_managed_jobs_to_the_deployment_variable(
 
     assert step.code in _RUN_AS_CODES
     assert step.summary == (
-        "This job's service principal is set when Studio is deployed. Set the "
-        "dqx_service_principal_application_id deployment variable to the Application ID of a service "
-        "principal (not the app's own), redeploy, then click Verify again."
+        "Studio was installed with a deployment bundle, so this job's service principal is chosen at install "
+        "time and can't be changed here. Ask whoever installed Studio to set dqx_service_principal_application_id "
+        "in the bundle's settings to the Application ID of a service principal (not the app's own), then deploy "
+        "Studio again. After that, click Verify again."
     )
     assert step.actions == (SetupActionId.VERIFY_AGAIN,)
 

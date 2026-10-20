@@ -57,6 +57,7 @@ function preflight(
     applyGrants: () => undefined,
     isApplying: false,
     applyOutcome: null,
+    recheckFailed: null,
     ...overrides,
   };
 }
@@ -74,6 +75,12 @@ function runButton(markup: string): string {
   return markup.slice(start, markup.indexOf("</button>", start));
 }
 
+function retryButton(markup: string): string {
+  const label = markup.indexOf(`>${en.schedule.grantWarning.retry}</button>`);
+  const start = markup.lastIndexOf("<button", label);
+  return markup.slice(start, label);
+}
+
 describe("ScheduleGrantWarning missing grants", () => {
   test("shows the statements with a run icon that explains what it does", () => {
     const markup = render(preflight());
@@ -88,6 +95,24 @@ describe("ScheduleGrantWarning missing grants", () => {
 
     expect(button).toContain('disabled=""');
     expect(button).toContain("animate-spin");
+  });
+
+  test("Try again is disabled while the grants run", () => {
+    expect(retryButton(render(preflight()))).not.toContain('disabled=""');
+    expect(retryButton(render(preflight({ isApplying: true })))).toContain('disabled=""');
+    expect(retryButton(render(preflight({ isFetching: true })))).toContain('disabled=""');
+  });
+
+  test("a failed re-check still says how many grants ran", () => {
+    const markup = render(preflight({ recheckFailed: { applied: 2, total: 3 } }));
+
+    expect(markup).toContain(
+      escapeHtml(
+        en.schedule.grantWarning.apply.recheckFailed
+          .replace("{{applied}}", "2")
+          .replace("{{total}}", "3"),
+      ),
+    );
   });
 
   test("a permission failure explains who can help and keeps the SQL visible", () => {

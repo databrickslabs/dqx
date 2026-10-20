@@ -4398,6 +4398,8 @@ export interface ScheduleGrantApplyOut {
   applied: number;
   total: number;
   failed?: ScheduleGrantFailureOut[];
+  /** The check after the grants couldn't run, so preflight is the one taken before them */
+  recheck_failed?: boolean;
 }
 
 export type ScheduleGrantFailureOutErrorCode = typeof ScheduleGrantFailureOutErrorCode[keyof typeof ScheduleGrantFailureOutErrorCode];

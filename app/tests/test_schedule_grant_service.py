@@ -38,6 +38,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     PrivilegeInspectionError,
     ScheduleGrantService,
     StatementFailedError,
+    TablePreflight,
     WarehouseUnavailableError,
     inspection_failure_detail,
     manage_block_detail,
@@ -825,3 +826,37 @@ def test_apply_runs_nothing_for_tables_that_need_no_grant(
     obo_sql.execute_no_schema.assert_not_called()
     assert (result.applied, result.total, result.failed) == (0, 0, ())
     assert [(t.can_manage, t.missing_grants) for t in result.preflight] == [(True, [])]
+    assert not result.recheck_failed
+
+
+class _RecheckFailsService(ScheduleGrantService):
+    """The check after the grants can't run (for example, the warehouse went away)."""
+
+    failure: Exception = RuntimeError("unset")
+    checks = 0
+
+    def preflight(self, fqns: list[str]) -> list[TablePreflight]:
+        type(self).checks += 1
+        if type(self).checks > 1:
+            raise type(self).failure
+        return super().preflight(fqns)
+
+
+@pytest.mark.parametrize("failure", [WarehouseUnavailableError("cold"), RuntimeError("boom (secret detail)")])
+def test_apply_still_reports_the_grants_that_ran_when_the_recheck_fails(
+    obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor, failure: Exception
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+    _RecheckFailsService.failure = failure
+    _RecheckFailsService.checks = 0
+    service = _RecheckFailsService(obo, sp, "123", warehouse_id="warehouse-1")
+
+    result = service.apply_missing_grants([FQN], obo_sql)
+
+    assert executed == _PARENT_GRANTS
+    assert (result.applied, result.total, result.failed) == (4, 4, ())
+    assert result.recheck_failed
+    # The check taken before the grants is returned, so the commands stay on screen.
+    assert [g["remediation"] for g in result.preflight[0].missing_grants] == [g + ";" for g in _PARENT_GRANTS]
+    assert "secret detail" not in repr(result)

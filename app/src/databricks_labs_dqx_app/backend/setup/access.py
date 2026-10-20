@@ -290,8 +290,10 @@ class AudienceAccess:
                 privileges = inspector.privileges(kind, full_name, principal, required=frozenset(required))
                 if privileges is None:
                     guidance = (
-                        f"Sign in as the owner of {kind.lower()} {quoted_name} or a metastore admin, then click "
-                        "Verify again so Studio can read its permissions."
+                        f"Studio couldn't check who has access to {kind.lower()} {quoted_name}, because your "
+                        f"account isn't allowed to view its permissions. Ask the {kind.lower()}'s owner (shown on "
+                        "its page under Catalog in the Databricks sidebar) or a Databricks admin to open this page "
+                        "and click Verify again."
                     )
                     if guidance not in unknown:
                         unknown.append(guidance)

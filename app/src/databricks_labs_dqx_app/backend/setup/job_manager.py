@@ -48,22 +48,25 @@ _USE_ROLES = frozenset({"roles/servicePrincipal.user", "roles/servicePrincipal.m
 _INVALID_APPLICATION_ID = "A service principal Application ID is a value like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d."
 _RUN_AS_SUMMARIES = {
     "task_runner_run_as_missing": (
-        "Studio runs scheduled checks under a dedicated service principal, separate from the app itself. "
-        "Follow the three steps below."
+        "Studio runs scheduled checks in a background job. That job needs its own service principal: a "
+        "non-human Databricks identity for automated work, separate from the one the app itself uses. Follow "
+        "the three steps below."
     ),
     "task_runner_run_as_matches_app": (
-        "Studio's background job is using the app's own account. Scheduled checks need a separate service "
-        "principal. Follow the three steps below."
+        "Studio's background job is set to use the app's own service principal. Scheduled checks need a "
+        "separate service principal (a non-human Databricks identity for automated work). Follow the three "
+        "steps below."
     ),
     "task_runner_run_as_not_service_principal": (
-        "Studio's background job is set to run as a person rather than a service principal, so it would stop "
-        "working if that person left. Follow the three steps below."
+        "Studio's background job is set to run as a person, not a service principal (a non-human Databricks "
+        "identity), so it would stop working if that person left. Follow the three steps below."
     ),
 }
 _DEPLOYMENT_RUN_AS_SUMMARY = (
-    "This job's service principal is set when Studio is deployed. Set the dqx_service_principal_application_id "
-    "deployment variable to the Application ID of a service principal (not the app's own), redeploy, then click "
-    "Verify again."
+    "Studio was installed with a deployment bundle, so this job's service principal is chosen at install time "
+    "and can't be changed here. Ask whoever installed Studio to set dqx_service_principal_application_id in the "
+    "bundle's settings to the Application ID of a service principal (not the app's own), then deploy Studio "
+    "again. After that, click Verify again."
 )
 
 
@@ -176,7 +179,8 @@ class TaskRunnerJobManager:
         when the app is granted a role that lets it use the service principal, *missing* when
         the rule set shows no such grant to the app or to any group, and *unverified* when the
         rule set can't be read (or a group grant might include the app). Setting the job's
-        run_as is what finally proves it, so a failed read never blocks.
+        run_as is what finally proves it, so no answer blocks: *missing* is only a warning,
+        since the app may hold the role in a way the rule set doesn't show.
 
         Args:
             application_id: Application ID of the chosen service principal.

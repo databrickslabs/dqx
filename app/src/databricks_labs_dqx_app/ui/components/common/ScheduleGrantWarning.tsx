@@ -1,6 +1,6 @@
 /** Yellow warning card shown above the schedule settings when the current user
  *  cannot grant the scheduler read access to the table(s) a schedule would run
- *  against (Task 12). Scheduled runs read the source table as a service account,
+ *  against (Task 12). Scheduled runs read the source table as a service principal,
  *  so setting up a schedule requires the MANAGE privilege (or ownership) to
  *  grant that account SELECT. When the user lacks it we hard-block the save and
  *  render this card naming the users/groups that DO hold MANAGE, asking the user
@@ -150,7 +150,7 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div className="space-y-1">
-          <h4 className="text-sm font-medium">{t("schedule.grantWarning.title")}</h4>
+          <h4 className="text-sm font-medium">{t("schedule.grantWarning.missingGrantsTitle")}</h4>
           <p className="text-xs text-amber-800 dark:text-amber-200/90">
             {single
               ? t("schedule.grantWarning.missingGrantsDescriptionTable")
@@ -179,10 +179,26 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
             runLabel={t("schedule.grantWarning.apply.run")}
             isRunning={preflight.isApplying}
             runDisabled={preflight.isFetching}
-            result={preflight.applyOutcome && <ApplyOutcomeNotice outcome={preflight.applyOutcome} />}
+            result={
+              (preflight.recheckFailed || preflight.applyOutcome) && (
+                <div className="space-y-2">
+                  {preflight.recheckFailed && (
+                    <p role="status" className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                      {t("schedule.grantWarning.apply.recheckFailed", preflight.recheckFailed)}
+                    </p>
+                  )}
+                  {preflight.applyOutcome && <ApplyOutcomeNotice outcome={preflight.applyOutcome} />}
+                </div>
+              )
+            }
           />
         </div>
-        <Button size="sm" variant="outline" onClick={preflight.retry} disabled={preflight.isFetching}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={preflight.retry}
+          disabled={preflight.isFetching || preflight.isApplying}
+        >
           {t("schedule.grantWarning.retry")}
         </Button>
       </div>
