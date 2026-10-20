@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { HelpTooltip } from "@/components/HelpTooltip";
+import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
 import Logo from "@/components/layout/Logo";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { ThemeProvider } from "@/components/layout/theme-provider";
@@ -26,6 +27,10 @@ import {
   type SetupConfigurationValues,
 } from "@/components/setup/SetupConfigurationForm";
 import type { SetupConfigurationView, SetupStep, StepState } from "@/lib/api";
+import type { SetupOptionList } from "@/lib/setup-options";
+import { GrantOutcomeNotice } from "@/components/setup/GrantOutcomeNotice";
+import { TaskRunnerSetup } from "@/components/setup/TaskRunnerSetup";
+import { grantStatementsSql, type StepGrantOutcome } from "@/lib/setup-grants";
 import type { SetupViewAction, SetupViewModel } from "@/lib/setup-state";
 
 type SetupWizardProps = {
@@ -40,6 +45,16 @@ type SetupWizardProps = {
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring?: boolean;
   configurationError?: string;
+  catalogList?: SetupOptionList;
+  groupList?: SetupOptionList;
+  /** Opens (true) or closes (false) the form for changing saved choices. */
+  onEditConfiguration?: (editing: boolean) => void;
+  /** Runs a step's GRANT statements as the signed-in administrator. */
+  onApplyGrants?: (stepId: SetupStep["id"]) => void;
+  /** Step whose GRANT statements are running. */
+  applyingGrantsStepId?: SetupStep["id"];
+  /** Outcome of the last GRANT run, shown under that step's statements. */
+  grantOutcome?: StepGrantOutcome;
 };
 
 function progressSteps(view: SetupViewModel): SetupStep[] {
@@ -218,31 +233,51 @@ function StepCard({
   actions,
   canManage,
   jobsLink,
+  workspaceHost,
   isReconciling,
   onReconcile,
   onOverride,
   configuration,
   showConfigurationForm,
+  canEditConfiguration,
   onConfigure,
   isConfiguring,
   configurationError,
+  catalogList,
+  groupList,
+  onEditConfiguration,
+  onApplyGrants,
+  applyingGrantsStepId,
+  grantOutcome,
 }: {
   step: SetupStep;
   actions: SetupViewAction[];
   canManage: boolean;
   jobsLink: JobsLink | null;
+  workspaceHost?: string;
   isReconciling: boolean;
   onReconcile: () => void;
   onOverride?: (stepId: SetupStep["id"]) => void;
   configuration: SetupConfigurationView | null;
   showConfigurationForm: boolean;
+  canEditConfiguration: boolean;
   onConfigure?: (values: SetupConfigurationValues) => void;
   isConfiguring: boolean;
   configurationError?: string;
+  catalogList?: SetupOptionList;
+  groupList?: SetupOptionList;
+  onEditConfiguration?: (editing: boolean) => void;
+  onApplyGrants?: (stepId: SetupStep["id"]) => void;
+  applyingGrantsStepId?: SetupStep["id"];
+  grantOutcome?: StepGrantOutcome;
 }) {
   const { t } = useTranslation();
   const isConfigurationStep = step.id === "configuration";
   const showForm = isConfigurationStep && showConfigurationForm;
+  const showEdit =
+    isConfigurationStep && canEditConfiguration && !!onEditConfiguration;
+  // A passed step's form is open only because the administrator chose to change it.
+  const isEditingSaved = showForm && step.state === "passed";
   const showSummary =
     isConfigurationStep &&
     !!configuration &&
@@ -258,6 +293,16 @@ function StepCard({
       : step.summary;
   const canOverride =
     !!onOverride && stepActions.some((action) => action.id === "override");
+  const grantStatements = step.grant_statements ?? [];
+  const choosesTaskRunner =
+    canManage &&
+    stepActions.some((action) => action.id === "choose_task_runner");
+  // Choosing the task runner is the step's own guided form, which links the job itself.
+  const buttonActions = stepActions.filter(
+    (action) => action.id !== "choose_task_runner",
+  );
+  const showJobsLink =
+    canManage && step.id === "task_runner" && !!jobsLink && !choosesTaskRunner;
 
   return (
     <li className="relative pl-10 sm:pl-12">
@@ -283,32 +328,71 @@ function StepCard({
         </CardHeader>
         {(step.code ||
           step.instructions?.length ||
-          stepActions.length > 0 ||
+          grantStatements.length > 0 ||
+          buttonActions.length > 0 ||
+          choosesTaskRunner ||
           canOverride ||
           showForm ||
+          showEdit ||
           showSummary ||
-          (canManage && step.id === "task_runner" && jobsLink)) && (
+          showJobsLink) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
             {step.code && (
               <p className="font-mono text-xs text-muted-foreground break-all">
                 {t("setup.diagnosticCode", { code: step.code })}
               </p>
             )}
-            {step.instructions?.length ? (
+            {step.instructions?.length || grantStatements.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-sm font-medium">{t("setup.instructions")}</p>
-                {step.instructions.map((instruction, index) => (
-                  <pre
+                {step.instructions?.map((instruction, index) => (
+                  <p
                     key={`${step.id}-${index}`}
-                    className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed"
+                    className="whitespace-pre-wrap break-words text-sm leading-relaxed"
                   >
                     {instruction}
-                  </pre>
+                  </p>
                 ))}
+                {grantStatements.length > 0 && (
+                  <p className="text-sm">
+                    {t(
+                      canManage && onApplyGrants
+                        ? "setup.grants.leadRun"
+                        : "setup.grants.leadCopy",
+                    )}
+                  </p>
+                )}
+                {grantStatements.length > 0 && (
+                  <SqlCodeBlock
+                    sql={grantStatementsSql(grantStatements)}
+                    onRun={
+                      canManage && onApplyGrants
+                        ? () => onApplyGrants(step.id)
+                        : undefined
+                    }
+                    isRunning={applyingGrantsStepId === step.id}
+                    runDisabled={isReconciling}
+                    result={
+                      grantOutcome?.stepId === step.id ? (
+                        <GrantOutcomeNotice outcome={grantOutcome.outcome} />
+                      ) : undefined
+                    }
+                  />
+                )}
               </div>
             ) : null}
-            {showSummary && configuration && (
+            {showSummary && configuration && !isEditingSaved && (
               <ConfigurationSummary configuration={configuration} />
+            )}
+            {showEdit && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onEditConfiguration?.(true)}
+              >
+                {t("setup.configuration.edit")}
+              </Button>
             )}
             {showForm && (
               <SetupConfigurationForm
@@ -318,9 +402,23 @@ function StepCard({
                 isSubmitting={isConfiguring}
                 errorCode={configurationError}
                 onSubmit={(values) => onConfigure?.(values)}
+                catalogList={catalogList}
+                groupList={groupList}
+                onCancel={
+                  isEditingSaved && onEditConfiguration
+                    ? () => onEditConfiguration(false)
+                    : undefined
+                }
               />
             )}
-            {canManage && step.id === "task_runner" && jobsLink && (
+            {choosesTaskRunner && (
+              <TaskRunnerSetup
+                workspaceHost={workspaceHost}
+                jobsLink={jobsLink}
+                isBusy={isReconciling}
+              />
+            )}
+            {showJobsLink && jobsLink && (
               <a
                 href={jobsLink.href}
                 target="_blank"
@@ -338,10 +436,10 @@ function StepCard({
                 {t(`setup.override.help.${overrideCopyKey(step.id)}`)}
               </p>
             )}
-            {stepActions.length > 0 && (
+            {buttonActions.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 <StepActions
-                  actions={stepActions}
+                  actions={buttonActions}
                   isBusy={isReconciling}
                   onReconcile={onReconcile}
                   onOverride={onOverride}
@@ -405,6 +503,12 @@ export function SetupWizard({
   onConfigure,
   isConfiguring = false,
   configurationError,
+  catalogList,
+  groupList,
+  onEditConfiguration,
+  onApplyGrants,
+  applyingGrantsStepId,
+  grantOutcome,
 }: SetupWizardProps) {
   const { t } = useTranslation();
   const isWaiting = view.kind === "waiting";
@@ -479,14 +583,24 @@ export function SetupWizard({
               actions={view.actions}
               canManage={view.canManage}
               jobsLink={jobsLink}
-              isReconciling={isReconciling || isOverriding}
+              workspaceHost={workspaceHost}
+              isReconciling={
+                isReconciling || isOverriding || !!applyingGrantsStepId
+              }
               onReconcile={onReconcile}
               onOverride={onOverride}
               configuration={view.configuration}
               showConfigurationForm={view.showConfigurationForm}
+              canEditConfiguration={view.canEditConfiguration}
               onConfigure={onConfigure}
               isConfiguring={isConfiguring}
               configurationError={configurationError}
+              catalogList={catalogList}
+              groupList={groupList}
+              onEditConfiguration={onEditConfiguration}
+              onApplyGrants={onApplyGrants}
+              applyingGrantsStepId={applyingGrantsStepId}
+              grantOutcome={grantOutcome}
             />
           ))}
         </ol>
@@ -494,7 +608,7 @@ export function SetupWizard({
           <div className="flex justify-end">
             <Button
               type="button"
-              disabled={isReconciling || isOverriding}
+              disabled={isReconciling || isOverriding || !!applyingGrantsStepId}
               onClick={onAcknowledgeWarnings}
             >
               {t("setup.warningsReview.acknowledge")}

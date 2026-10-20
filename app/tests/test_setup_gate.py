@@ -53,6 +53,34 @@ def gated_app() -> tuple[FastAPI, SetupRuntime, list[str]]:
     def override() -> dict[str, str]:
         return {"state": runtime.report().state}
 
+    @app.post("/api/v1/setup/steps/{step_id}/apply-grants")
+    def apply_grants(step_id: str) -> dict[str, str]:
+        return {"step_id": step_id}
+
+    @app.get("/api/v1/setup/task-runner/service-principals")
+    def task_runner_principals() -> dict[str, str]:
+        return {}
+
+    @app.get("/api/v1/setup/groups")
+    def setup_groups() -> dict[str, list[str]]:
+        return {"groups": []}
+
+    @app.post("/api/v1/setup/task-runner/access")
+    def task_runner_access() -> dict[str, str]:
+        return {}
+
+    @app.post("/api/v1/setup/task-runner/grants")
+    def task_runner_grants() -> dict[str, str]:
+        return {}
+
+    @app.post("/api/v1/setup/task-runner/run-as")
+    def task_runner_run_as() -> dict[str, str]:
+        return {}
+
+    @app.get("/api/v1/discovery/catalogs")
+    def discovery_catalogs() -> list[dict[str, str]]:
+        return []
+
     @app.get("/api/v1/config/workspace-host")
     def workspace_host() -> dict[str, str]:
         return {"workspace_host": "https://workspace.example.com"}
@@ -97,6 +125,8 @@ def test_gate_allows_exact_setup_authentication_and_health_routes(gated_client: 
     assert gated_client.post("/api/v1/setup/configuration").status_code == 200
     # Overriding a blocked step is how an administrator gets past it, so it must work before READY.
     assert gated_client.post("/api/v1/setup/override").status_code == 200
+    # The configuration form lists catalogs before storage exists.
+    assert gated_client.get("/api/v1/discovery/catalogs").status_code == 200
     assert gated_client.get("/api/v1/config/workspace-host").status_code == 200
 
 
@@ -114,6 +144,29 @@ def test_gate_blocks_database_backed_current_user_role(
 def test_gate_does_not_prefix_match_allowed_routes(gated_client: TestClient) -> None:
     assert gated_client.get("/api/v1/setup/status/extra").status_code == 503
     assert gated_client.post("/api/v1/setup/status").status_code == 503
+
+
+def test_gate_allows_running_a_known_step_grants_before_ready(gated_client: TestClient) -> None:
+    """Running a blocked step's GRANTs is how an administrator gets past it, so it must work before READY."""
+    assert gated_client.post("/api/v1/setup/steps/task_runner/apply-grants").status_code == 200
+    assert gated_client.post("/api/v1/setup/steps/access/apply-grants").status_code == 200
+    assert gated_client.post("/api/v1/setup/steps/unknown/apply-grants").status_code == 503
+    assert gated_client.get("/api/v1/setup/steps/task_runner/apply-grants").status_code == 503
+
+
+def test_gate_allows_choosing_the_task_runner_service_principal_before_ready(gated_client: TestClient) -> None:
+    """The task-runner step blocks setup, so picking and applying its service principal must work before READY."""
+    assert gated_client.get("/api/v1/setup/task-runner/service-principals").status_code == 200
+    assert gated_client.post("/api/v1/setup/task-runner/access").status_code == 200
+    assert gated_client.post("/api/v1/setup/task-runner/grants").status_code == 200
+    assert gated_client.post("/api/v1/setup/task-runner/run-as").status_code == 200
+    assert gated_client.get("/api/v1/setup/task-runner/run-as").status_code == 503
+    assert gated_client.post("/api/v1/setup/task-runner/service-principals").status_code == 503
+
+
+def test_gate_allows_listing_groups_for_the_setup_form_before_ready(gated_client: TestClient) -> None:
+    assert gated_client.get("/api/v1/setup/groups").status_code == 200
+    assert gated_client.post("/api/v1/setup/groups").status_code == 503
 
 
 def test_gate_keeps_static_ui_available(gated_client: TestClient) -> None:

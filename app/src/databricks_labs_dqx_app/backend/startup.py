@@ -555,9 +555,12 @@ async def _run_post_migration_startup(
     targets = startup_tag_targets(
         resources,
         include_bundle_resources=conf.tag_bundle_owned_resources,
+        app_name=conf.app_slug_name,
     )
     await asyncio.to_thread(resource_tagger.reconcile, targets)
-    await asyncio.to_thread(_ensure_genie_space, workspace, resources, oltp)
+    space_id = await asyncio.to_thread(_ensure_genie_space, workspace, resources, oltp)
+    # The space may only exist from this call on (first setup), so tag it here.
+    await asyncio.to_thread(resource_tagger.tag_genie_space, space_id)
 
     settings = AppSettingsService(sql=oltp)
     try:
@@ -655,11 +658,11 @@ def _ensure_genie_space(
     workspace: WorkspaceClient,
     resources: ActiveResources,
     oltp: OltpExecutorProtocol,
-) -> None:
+) -> str | None:
     try:
         from databricks_labs_dqx_app.backend.services.genie_space_service import ensure_dq_genie_space
 
-        ensure_dq_genie_space(
+        return ensure_dq_genie_space(
             settings=AppSettingsService(sql=oltp),
             ws=workspace,
             warehouse_id=resources.warehouse_id,
@@ -669,6 +672,7 @@ def _ensure_genie_space(
         )
     except Exception:
         logger.warning("Could not provision the DQ Genie space")
+        return None
 
 
 async def _build_scheduler_data_product_service(
