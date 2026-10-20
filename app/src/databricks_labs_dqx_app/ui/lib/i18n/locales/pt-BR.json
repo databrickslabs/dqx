@@ -53,7 +53,7 @@
       "unverifiedConfigurationTitle": "Não foi possível verificar o acesso da programação",
       "unverifiedConfigurationDescription": "A configuração do Studio está incompleta (por exemplo, ele não encontra a entidade de serviço do job de execução de tarefas), então não consegue verificar se esta programação pode ser configurada. Peça a um administrador do Studio para verificar a página de configuração.",
       "apply": {
-        "run": "Dar às entidades de serviço do Studio acesso a estes catálogos e esquemas, com suas permissões do Databricks",
+        "run": "Executar SQL",
         "partial": "Concluído: {{applied}} de {{total}}.",
         "recheckFailed": "Concluído: {{applied}} de {{total}}. O Studio não conseguiu verificar o resultado agora. Clique em Tentar novamente para atualizar.",
         "errors": {
@@ -3105,7 +3105,7 @@
     "alreadyImported": "Esta regra já foi importada"
   },
   "sqlCodeBlock": {
-    "run": "Executar estes comandos agora, com suas permissões do Databricks",
+    "run": "Executar SQL",
     "copyFailed": "Não foi possível copiar. Selecione os comandos e copie você mesmo."
   },
   "setup": {

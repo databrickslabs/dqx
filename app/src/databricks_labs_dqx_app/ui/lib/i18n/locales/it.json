@@ -53,7 +53,7 @@
       "unverifiedConfigurationTitle": "Impossibile verificare l'accesso della pianificazione",
       "unverifiedConfigurationDescription": "La configurazione di Studio è incompleta (ad esempio, non trova l'entità servizio del job di esecuzione delle attività), quindi non può verificare se questa pianificazione può essere configurata. Chiedi a un amministratore di Studio di controllare la pagina di configurazione.",
       "apply": {
-        "run": "Concedi alle entità servizio di Studio l'accesso a questi cataloghi e schemi, con le tue autorizzazioni Databricks",
+        "run": "Esegui SQL",
         "partial": "Fatto: {{applied}} su {{total}}.",
         "recheckFailed": "Fatto: {{applied}} su {{total}}. Studio non è riuscito a controllare il risultato in questo momento. Fai clic su Riprova per aggiornare.",
         "errors": {
@@ -3105,7 +3105,7 @@
     "alreadyImported": "Questa regola è già stata importata"
   },
   "sqlCodeBlock": {
-    "run": "Esegui questi comandi ora, con le tue autorizzazioni Databricks",
+    "run": "Esegui SQL",
     "copyFailed": "Impossibile copiare. Seleziona i comandi e copiali tu stesso."
   },
   "setup": {

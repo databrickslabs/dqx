@@ -53,7 +53,7 @@
       "unverifiedConfigurationTitle": "Couldn't check schedule access",
       "unverifiedConfigurationDescription": "Studio's setup is incomplete (for example, it can't find the task-runner job's service principal), so it can't check whether this schedule can be set up. Ask a Studio administrator to check the setup page.",
       "apply": {
-        "run": "Give Studio's service principals access to these catalogs and schemas, using your Databricks permissions",
+        "run": "Run SQL",
         "partial": "Done: {{applied}} of {{total}}.",
         "recheckFailed": "Done: {{applied}} of {{total}}. Studio couldn't check the result just now. Click Try again to refresh.",
         "errors": {
@@ -3105,7 +3105,7 @@
     "alreadyImported": "This rule is already imported"
   },
   "sqlCodeBlock": {
-    "run": "Run these commands now, using your Databricks permissions",
+    "run": "Run SQL",
     "copyFailed": "Couldn't copy. Select the commands and copy them yourself."
   },
   "setup": {
