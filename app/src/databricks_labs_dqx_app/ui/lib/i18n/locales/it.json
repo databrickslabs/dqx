@@ -29,6 +29,7 @@
     },
     "grantWarning": {
       "title": "Non puoi configurare questa pianificazione",
+      "missingGrantsTitle": "Questa pianificazione ha prima bisogno di accesso",
       "descriptionTable": "Le pianificazioni richiedono il privilegio MANAGE su questa tabella, che non hai.",
       "descriptionCollection": "Le pianificazioni richiedono il privilegio MANAGE su ogni tabella che leggono, e non lo hai su una o più di queste tabelle.",
       "holdersLabel": "Chiedi a chi lo ha di configurare la pianificazione:",
@@ -36,7 +37,7 @@
       "noHolders": "Nessun utente o gruppo con l'autorizzazione necessaria è stato trovato. Contatta l'amministratore dell'area di lavoro o il proprietario della tabella.",
       "typeUser": "utente",
       "typeGroup": "gruppo",
-      "typeServicePrincipal": "service principal",
+      "typeServicePrincipal": "entità servizio",
       "unverifiedTitle": "Impossibile verificare l'accesso alla tabella",
       "unverifiedDescriptionTable": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere questa tabella. Potrebbe essere ancora in fase di avvio.",
       "unverifiedDescriptionCollection": "Il SQL warehouse non ha risposto in tempo, quindi non è stato possibile verificare se le esecuzioni pianificate possono leggere queste tabelle. Potrebbe essere ancora in fase di avvio.",
@@ -50,7 +51,19 @@
       "unverifiedPermissionsDescriptionCollection": "Studio non è riuscito a leggere le autorizzazioni di queste tabelle, quindi non sa se puoi configurare una pianificazione. Riprova o chiedi ai proprietari delle tabelle di configurarla.",
       "missingGrantsForTable": "Per {{fqn}}:",
       "unverifiedConfigurationTitle": "Impossibile verificare l'accesso della pianificazione",
-      "unverifiedConfigurationDescription": "La configurazione di Studio è incompleta (ad esempio, non trova l'entità servizio del job di esecuzione delle attività), quindi non può verificare se questa pianificazione può essere configurata. Chiedi a un amministratore di Studio di controllare la pagina di configurazione."
+      "unverifiedConfigurationDescription": "La configurazione di Studio è incompleta (ad esempio, non trova l'entità servizio del job di esecuzione delle attività), quindi non può verificare se questa pianificazione può essere configurata. Chiedi a un amministratore di Studio di controllare la pagina di configurazione.",
+      "apply": {
+        "run": "Esegui SQL",
+        "partial": "Fatto: {{applied}} su {{total}}.",
+        "recheckFailed": "Fatto: {{applied}} su {{total}}. Studio non è riuscito a controllare il risultato in questo momento. Fai clic su Riprova per aggiornare.",
+        "errors": {
+          "permission_denied": "Il tuo account non può concedere questo accesso. Chiedi a un proprietario del catalogo o dello schema di eseguire i comandi qui sopra nell'editor SQL.",
+          "warehouse_unavailable": "Studio non è riuscito ad avviare il warehouse SQL (il calcolo Databricks che esegue questi comandi). Potrebbe essere ancora in avvio. Riprova tra un minuto, oppure copia i comandi ed eseguili tu stesso nel SQL Editor (nella barra laterale di Databricks).",
+          "rate_limited": "Databricks è occupato in questo momento. Attendi un momento, poi riprova.",
+          "not_found": "Qualcosa a cui questi comandi fanno riferimento non esiste più, ad esempio una delle tabelle o il suo schema. Fai clic su Riprova per aggiornare l'elenco.",
+          "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo o dello schema."
+        }
+      }
     }
   },
   "lifecycle": {
@@ -3091,6 +3104,10 @@
     "added": "Aggiunta",
     "alreadyImported": "Questa regola è già stata importata"
   },
+  "sqlCodeBlock": {
+    "run": "Esegui SQL",
+    "copyFailed": "Impossibile copiare. Seleziona i comandi e copiali tu stesso."
+  },
   "setup": {
     "title": "Configura DQX Studio",
     "description": "Completa i passaggi richiesti di seguito per rendere disponibile DQX Studio.",
@@ -3160,19 +3177,45 @@
       "acknowledge": "Ho capito, continua su Studio"
     },
     "instructions": "Come risolvere",
+    "grants": {
+      "partial": "Fatto: {{applied}} su {{total}}.",
+      "leadRun": "Esegui i comandi seguenti per concedere questo accesso. Se non hai le autorizzazioni, chiedi al proprietario del catalogo di eseguirli. Poi verifica di nuovo.",
+      "leadCopy": "Copia i comandi qui sotto e inviali al proprietario del catalogo o a un amministratore Databricks. Dopo che li avrà eseguiti nell'editor SQL, fai clic su Verifica di nuovo.",
+      "errors": {
+        "permission_denied": "Il tuo account non può concedere questo accesso. Chiedi a un proprietario del catalogo o dello schema di eseguire i comandi qui sopra nell'editor SQL.",
+        "warehouse_unavailable": "Studio non è riuscito ad avviare il warehouse SQL (il calcolo Databricks che esegue questi comandi). Potrebbe essere ancora in avvio. Riprova tra un minuto, oppure copia i comandi ed eseguili tu stesso nel SQL Editor (nella barra laterale di Databricks).",
+        "rate_limited": "Databricks è occupato in questo momento. Attendi un momento, poi riprova.",
+        "not_found": "Qualcosa a cui questi comandi fanno riferimento non esiste più. Fai clic su Verifica di nuovo per aggiornare l'elenco.",
+        "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo.",
+        "setup_grants_failed": "Studio non è riuscito a completare questi comandi né a controllarne il risultato, quindi parte dell'accesso potrebbe essere già stata concessa. Fai clic su Verifica di nuovo per vedere cosa manca ancora, oppure copia i comandi e inviali al proprietario del catalogo."
+      }
+    },
     "diagnosticCode": "Codice: {{code}}",
     "configuration": {
       "catalog": "Catalogo",
       "catalogHelp": "Un catalogo Unity Catalog esistente. Studio crea qui i propri schemi.",
+      "catalogPlaceholder": "Scegli un catalogo",
+      "catalogSearch": "Cerca o digita il nome di un catalogo",
+      "useTyped": "Usa \"{{name}}\"",
+      "catalogListUnavailable": "Studio non è riuscito a elencare i cataloghi che puoi vedere. Digita invece il nome del catalogo.",
       "prefix": "Prefisso di archiviazione",
       "prefixHelp": "Lettere minuscole, cifre e trattini bassi. Schemi: <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
       "audience_group": "Gruppo di destinatari",
+      "groupPlaceholder": "Scegli un gruppo",
+      "groupSearch": "Cerca o digita il nome di un gruppo",
+      "groupListUnavailable": "Studio non è riuscito a elencare i gruppi di questo workspace. Digita invece il nome del gruppo.",
+      "groupListTruncated_one": "Viene mostrato solo {{count}} gruppo. Se il tuo non è nell'elenco, digitane il nome.",
+      "groupListTruncated_other": "Vengono mostrati i primi {{count}} gruppi. Se il tuo non è nell'elenco, digitane il nome.",
       "audience_groupHelp": "Un gruppo di account esistente assegnato a questa area di lavoro. I membri possono usare Studio; i ruoli vengono assegnati separatamente.",
       "schemas": "Schemi",
       "submit": "Salva e continua",
+      "edit": "Modifica",
       "broadAudience": "Pubblico ampio: tutti gli utenti dell'area di lavoro",
       "errors": {
         "configuration_invalid": "Controlla il catalogo, il prefisso e il nome del gruppo.",
+        "audience_group_builtin": "I gruppi predefiniti come \"users\", \"account users\" e \"admins\" non possono essere usati. Scegli un gruppo di account dedicato, ad esempio dqx-users.",
+        "catalog_invalid": "I nomi dei cataloghi non possono contenere punti, apici inversi o barre rovesciate. Scegli un catalogo dall'elenco oppure controlla il nome che hai digitato.",
+        "audience_group_required": "Inserisci il nome di un gruppo di account esistente.",
         "catalog_not_found": "Il catalogo non esiste o non hai accesso.",
         "audience_group_not_found": "Il gruppo non esiste in questa area di lavoro.",
         "configuration_locked": "L'archiviazione è già stata predisposta; la configurazione non può più cambiare.",
@@ -3192,6 +3235,70 @@
         "default": "Studio vede solo le autorizzazioni concesse direttamente a un utente o a un gruppo, o a tutti gli utenti dell'area di lavoro. Se hai concesso questo accesso tramite un altro gruppo padre, o l'hai configurato a mano nell'area di lavoro, qui potrebbe sembrare mancante. Se sei sicuro che sia configurato, puoi continuare comunque.",
         "app_sharing": "Studio non può leggere con chi è condivisa l'app, quindi non può verificarlo da solo. Dopo aver condiviso l'app con i tuoi utenti, confermalo qui.",
         "ai": "Se i tuoi utenti possono già usare questo modello di IA (ad esempio tramite un gruppo padre), puoi mantenere attive le funzionalità IA."
+      }
+    },
+    "taskRunner": {
+      "pickFirst": "Scegli prima un'entità servizio.",
+      "steps": {
+        "pick": "Scegli un'entità servizio",
+        "access": "Conferma l'accesso",
+        "apply": "Applicalo al job di esecuzione"
+      },
+      "pick": {
+        "label": "Entità servizio per i controlli pianificati",
+        "placeholder": "Scegli un'entità servizio",
+        "search": "Cerca per nome o per ID applicazione",
+        "useTyped": "Usa l'ID applicazione {{id}}",
+        "noMatches": "Nessuna entità servizio corrisponde. Incolla il suo ID applicazione per usarla.",
+        "pastePlaceholder": "ID applicazione, ad esempio 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "listUnavailable": "Studio non è riuscito a caricare l'elenco delle entità servizio. Incolla invece l'ID applicazione dell'entità servizio. La trovi nella sua pagina, sotto Settings → Identity and access.",
+        "listTruncated_one": "Viene mostrata solo {{count}} entità servizio. Se la tua non è nell'elenco, incolla il suo ID applicazione.",
+        "listTruncated_other": "Vengono mostrate le prime {{count}} entità servizio. Se la tua non è nell'elenco, incolla il suo ID applicazione.",
+        "invalidId": "Un ID applicazione ha questo aspetto: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
+        "createTitle": "Non ne hai una? Creala",
+        "createStep1": "Apri il menu del profilo (in alto a destra) → Settings → Identity and access → Service principals. Fai clic su Add service principal e creane una nuova chiamata dqx-studio-task-runner.",
+        "createStep2": "Torna qui e sceglila qui sopra. Imposterai le sue autorizzazioni al passaggio 2.",
+        "openServicePrincipals": "Apri le entità servizio"
+      },
+      "access": {
+        "intro": "Nella scheda Permissions di questa entità servizio (menu del profilo (in alto a destra) → Settings → Identity and access → Service principals → {{name}} → Permissions):",
+        "nameFallback": "la tua entità servizio",
+        "self": "Fai clic su Grant access, trova te stesso e assegnati CAN USE (mostrato come \"Service Principal: User\" nella scheda Permissions) e CAN MANAGE (mostrato come \"Service Principal: Manager\"). Se li hai già, salta questo passaggio.",
+        "app": "Fai clic su Grant access, trova l'app DQX Studio ({{appName}}) e assegnale CAN USE.",
+        "appFallback": "l'entità servizio dell'app",
+        "openServicePrincipal": "Apri questa entità servizio",
+        "button": "Conferma accesso",
+        "result": {
+          "confirmed": "Accesso confermato. Studio può usare questa entità servizio.",
+          "permissionConfirmed": "Studio può usare questa entità servizio.",
+          "missing": "L'app DQX Studio non ha ancora CAN USE su questa entità servizio. Aggiungila nella scheda Permissions (passaggio b qui sopra), poi fai di nuovo clic su Conferma accesso. Se sei sicuro che Studio abbia già questa autorizzazione (ad esempio tramite un gruppo di amministratori), puoi passare al passaggio 3.",
+          "unverified": "Studio non può controllare da solo le autorizzazioni di questa entità servizio. Assicurati di aver completato i passaggi a e b, poi continua. Il passaggio 3 lo confermerà.",
+          "grantsPending": "Questa entità servizio ha bisogno anche dell'accesso ai dati di Studio. Esegui i comandi seguenti. Se non hai le autorizzazioni, chiedi al proprietario del catalogo di eseguirli.",
+          "automaticGrants": "Studio configurerà automaticamente il resto dell'accesso di questa entità servizio una volta assegnata al job.",
+          "grantsUnverified": "Studio non è riuscito a controllare tutto l'accesso di questa entità servizio ai dati di Studio. La configurazione lo controlla di nuovo dopo il passaggio 3."
+        },
+        "errors": {
+          "task_runner_principal_invalid": "Questo non è un ID applicazione. Scegli di nuovo l'entità servizio oppure incolla il suo ID applicazione.",
+          "task_runner_principal_is_app": "Questa è l'entità servizio dell'app DQX Studio. Scegline un'altra.",
+          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio di questo job viene scelta all'installazione e non può essere modificata qui. Chiedi a chi ha installato Studio di impostare dqx_service_principal_application_id nelle impostazioni del bundle con l'ID applicazione di un'entità servizio (non quella dell'app) e di eseguire di nuovo il deployment di Studio. Poi fai clic su Verifica di nuovo.",
+          "task_runner_job_unavailable": "Il job di esecuzione di Studio non è ancora pronto. Fai clic su Verifica di nuovo, poi riprova.",
+          "default": "Studio non è riuscito a controllare questa entità servizio. Riprova tra un minuto."
+        }
+      },
+      "apply": {
+        "help": "Studio imposta il suo job di esecuzione, il job in background che esegue i controlli pianificati, in modo che usi questa entità servizio, poi controlla di nuovo la configurazione.",
+        "button": "Usa questa entità servizio",
+        "confirmFirst": "Conferma prima l'accesso.",
+        "grantsStillMissing": "Manca ancora una parte dell'accesso ai dati. Puoi continuare. La configurazione lo elencherà di nuovo dopo questo passaggio.",
+        "errors": {
+          "task_runner_run_as_forbidden": "Studio non è ancora autorizzato a usare questa entità servizio. Di solito significa che l'app DQX Studio non ha CAN USE su di essa (passaggio 2b). Aggiungila, poi fai di nuovo clic su Usa questa entità servizio. Oppure fai clic su Apri il job di esecuzione qui sotto, trova Run as (l'identità con cui viene eseguito il job) nel pannello Job details, scegli questa entità servizio, poi fai clic su Verifica di nuovo.",
+          "task_runner_principal_not_found": "Studio non ha trovato questa entità servizio. Controlla che sia stata creata in questo workspace, poi sceglila di nuovo.",
+          "task_runner_principal_invalid": "Questo non è un ID applicazione. Scegli di nuovo l'entità servizio oppure incolla il suo ID applicazione.",
+          "task_runner_principal_is_app": "Questa è l'entità servizio dell'app DQX Studio. Scegline un'altra.",
+          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio di questo job viene scelta all'installazione e non può essere modificata qui. Chiedi a chi ha installato Studio di impostare dqx_service_principal_application_id nelle impostazioni del bundle con l'ID applicazione di un'entità servizio (non quella dell'app) e di eseguire di nuovo il deployment di Studio. Poi fai clic su Verifica di nuovo.",
+          "task_runner_job_unavailable": "Il job di esecuzione di Studio non è ancora pronto. Fai clic su Verifica di nuovo, poi riprova.",
+          "default": "Studio non è riuscito ad aggiornare il suo job di esecuzione. Riprova, oppure apri il job e imposta tu stesso la sua impostazione Run as su questa entità servizio, poi fai clic su Verifica di nuovo."
+        }
       }
     }
   },

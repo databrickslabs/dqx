@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from databricks_labs_dqx_app.backend.setup.models import SetupState
+from databricks_labs_dqx_app.backend.setup.models import SetupState, SetupStepId
 from databricks_labs_dqx_app.backend.setup.runtime import SetupRuntime
 
 _ALLOWED_BEFORE_READY = frozenset(
@@ -20,6 +20,17 @@ _ALLOWED_BEFORE_READY = frozenset(
         ("POST", "/api/v1/setup/reconcile"),
         ("POST", "/api/v1/setup/configuration"),
         ("POST", "/api/v1/setup/override"),
+        # The setup form's catalog picker lists catalogs as the signed-in user.
+        ("GET", "/api/v1/discovery/catalogs"),
+        # The setup form's default user group picker lists the workspace's groups.
+        ("GET", "/api/v1/setup/groups"),
+        # The task-runner step blocks setup until its service principal is picked, checked and applied.
+        ("GET", "/api/v1/setup/task-runner/service-principals"),
+        ("POST", "/api/v1/setup/task-runner/access"),
+        ("POST", "/api/v1/setup/task-runner/grants"),
+        ("POST", "/api/v1/setup/task-runner/run-as"),
+        # Running a blocked step's GRANT statements is one way an administrator gets past it.
+        *(("POST", f"/api/v1/setup/steps/{step_id.value}/apply-grants") for step_id in SetupStepId),
     }
 )
 
