@@ -1,9 +1,11 @@
 import json
 import time
+from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import Column, DataFrame
 from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx.check_funcs import make_condition
@@ -65,8 +67,8 @@ EXPECTED_CHECKS_FROM_TABLE_LOAD = [{**check, "name": check.get("name")} for chec
 
 
 @register_rule("dataset")
-def custom_dataset_check(col_name: str):
-    def apply(df, _ref_dfs):
+def custom_dataset_check(col_name: str) -> tuple[Column, Callable]:
+    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame]) -> DataFrame:
         return df.withColumn("tmp_cond", F.lit(True))
 
     return make_condition(condition=F.col("tmp_cond"), message=f"{col_name} failed", alias="tmp_alias"), apply

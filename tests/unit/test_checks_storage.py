@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -480,7 +481,7 @@ def test_save_checks_to_installation_table_uses_custom_check_functions():
 
 
 @register_rule("dataset")
-def custom_dataset_check(col_name: str):
+def custom_dataset_check(col_name: str) -> tuple[Column, Callable]:
     def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame]) -> DataFrame:
         return df.withColumn("tmp_cond", lit(False))
 

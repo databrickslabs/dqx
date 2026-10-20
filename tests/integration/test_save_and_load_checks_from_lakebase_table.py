@@ -235,8 +235,12 @@ def test_save_checks_to_lakebase_with_custom_check_stores_applied_name_and_finge
 
     handler = LakebaseChecksStorageHandler(ws=ws, spark=spark)
     table = LakebaseChecksStorageHandler.get_table_definition(config.schema_name, config.table_name)
-    with handler.get_engine(config).connect() as conn:
-        stored = conn.execute(select(table.c.name, table.c.rule_fingerprint)).one()
+    engine = handler.get_engine(config)
+    try:
+        with engine.connect() as conn:
+            stored = conn.execute(select(table.c.name, table.c.rule_fingerprint)).one()
+    finally:
+        engine.dispose()
 
     test_df = spark.createDataFrame([[None]], "col_1: int")
     applied = dq_engine.apply_checks_by_metadata(test_df, loaded, custom_check_functions)
