@@ -1,0 +1,295 @@
+"""Service for managing schedule configurations in their own Delta table.
+
+Each schedule is stored as a separate row in ``dq_schedule_configs`` with its
+config serialized as JSON.  Every mutation is recorded in
+``dq_schedule_configs_history`` for auditability.
+"""
+
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
+
+logger = logging.getLogger(__name__)
+
+# Reserved prefixes used internally by ``SchedulerService`` for namespaced
+# schedule tracker keys: ``f"product:{product_id}"`` for Data Products (Task 5)
+# and ``f"table:{binding_id}"`` for monitored-table schedules (P21 item 14) —
+# see scheduler_service.py. User-authored schedule names are now allowed to
+# contain ``:`` (see ``validate_schedule_name``), so without these guards a
+# user could save a schedule literally named ``product:<uuid>`` /
+# ``table:<uuid>`` and silently hijack — or be overwritten by — a product's or
+# table's tracker row in ``dq_schedule_runs``.
+PRODUCT_SCHEDULE_PREFIX = "product:"
+TABLE_SCHEDULE_PREFIX = "table:"
+_RESERVED_SCHEDULE_PREFIXES = (PRODUCT_SCHEDULE_PREFIX, TABLE_SCHEDULE_PREFIX)
+
+
+@dataclass
+class ScheduleConfigEntry:
+    schedule_name: str
+    config: dict[str, Any]
+    version: int = 1
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass
+class ScheduleTrackerEntry:
+    schedule_name: str
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_run_id: str | None = None
+    status: str | None = None
+    paused: bool = False
+
+
+class ScheduleConfigService:
+    """CRUD for per-schedule configuration rows in ``dq_schedule_configs``."""
+
+    def __init__(self, sql: OltpExecutorProtocol) -> None:
+        self._sql = sql
+        self._table = sql.fqn("dq_schedule_configs")
+        self._history_table = sql.fqn("dq_schedule_configs_history")
+        self._rules_table = sql.fqn("dq_resolved_rules")
+        self._runs_table = sql.fqn("dq_schedule_runs")
+
+    def resolve_scope_table_fqns(self, config: dict[str, Any]) -> list[str]:
+        """Resolve the real table FQNs a scope-config schedule would run against.
+
+        Mirrors the FQN-based filters of ``SchedulerService._resolve_scope``
+        (``scope_mode`` + ``scope_catalogs`` / ``scope_schemas`` / ``scope_tables``)
+        so the schedule-save grant gate (Task 12) covers exactly the tables the
+        scheduler will read. The run-time ``scope_labels`` narrowing is a
+        secondary filter and is intentionally not reproduced here — omitting it
+        only *widens* the gate set (grants are idempotent, and the user must be
+        able to manage each table anyway), never narrows it. Synthetic
+        cross-table keys (``__sql_check__/<name>``) carry no physical table and
+        are excluded.
+        """
+        rows = self._sql.query(
+            f"SELECT DISTINCT table_fqn FROM {self._rules_table} WHERE status = 'approved'"
+        )  # noqa: S608
+        fqns = [r[0] for r in rows if r[0] and not str(r[0]).startswith("__sql_check__/")]
+
+        mode = config.get("scope_mode", "all")
+        if mode == "catalog":
+            catalogs = set(config.get("scope_catalogs") or [])
+            fqns = [f for f in fqns if f.split(".")[0] in catalogs]
+        elif mode == "schema":
+            schemas = set(config.get("scope_schemas") or [])
+            fqns = [f for f in fqns if ".".join(f.split(".")[:2]) in schemas]
+        elif mode == "tables":
+            tables = set(config.get("scope_tables") or [])
+            fqns = [f for f in fqns if f in tables]
+
+        return fqns
+
+    def list_trackers(self) -> dict[str, ScheduleTrackerEntry]:
+        """Return scheduler run pointers keyed by namespaced schedule identity."""
+        ts = self._sql.ts_text
+        rows = self._sql.query(
+            f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "  # noqa: S608
+            f"last_run_id, status, paused FROM {self._runs_table}"
+        )
+        return {
+            str(row[0]): ScheduleTrackerEntry(
+                schedule_name=str(row[0]),
+                last_run_at=row[1],
+                next_run_at=row[2],
+                last_run_id=row[3],
+                status=row[4],
+                paused=len(row) > 5 and row[5] in (True, "true", "t", 1),
+            )
+            for row in rows
+            if row and row[0]
+        }
+
+    def set_tracker_paused(self, schedule_name: str, paused: bool) -> None:
+        """Pause or resume a table/collection schedule without discarding its cron.
+
+        Only the ``paused`` flag changes: the last run's ``status`` and the
+        ``next_run_at`` pointer are left for the scheduler, which never writes
+        ``paused``, so a pause can't be overwritten by a run finishing.
+        """
+        self._sql.upsert(
+            self._runs_table,
+            key_cols={"schedule_name": schedule_name},
+            value_cols={"paused": paused, "updated_at": RawSql("now()")},
+        )
+
+    def list_schedules(self) -> list[ScheduleConfigEntry]:
+        ts = self._sql.ts_text
+        sql = (
+            f"SELECT schedule_name, config_json, version, created_by, "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
+            f"FROM {self._table} ORDER BY schedule_name"
+        )
+        rows = self._sql.query(sql)
+        return [self._row_to_entry(row) for row in rows]
+
+    def get(self, name: str) -> ScheduleConfigEntry | None:
+        validate_schedule_name(name)
+        escaped = escape_sql_string(name)
+        ts = self._sql.ts_text
+        sql = (
+            f"SELECT schedule_name, config_json, version, created_by, "
+            f"{ts('created_at')}, updated_by, {ts('updated_at')} "
+            f"FROM {self._table} WHERE schedule_name = '{escaped}'"
+        )
+        rows = self._sql.query(sql)
+        if not rows:
+            return None
+        return self._row_to_entry(rows[0])
+
+    def save(
+        self,
+        name: str,
+        config: dict[str, Any],
+        user_email: str,
+    ) -> ScheduleConfigEntry:
+        """Upsert a schedule config row, incrementing ``version`` on update.
+
+        Dialect-agnostic via :meth:`OltpExecutorProtocol.upsert_with_audit`:
+
+        - ``preserve_created=True`` keeps the original ``created_*``
+          on UPDATE,
+        - ``increment_on_update="version"`` rewrites the version
+          column's UPDATE branch to ``existing + 1`` using the
+          dialect-appropriate self-reference (``target.version + 1``
+          on Delta MERGE, bare ``"version" + 1`` on Postgres
+          ON CONFLICT).
+        """
+        validate_schedule_name(name)
+        for prefix in _RESERVED_SCHEDULE_PREFIXES:
+            if name.startswith(prefix):
+                raise ValueError(
+                    f"Invalid schedule name: '{name}'. Names starting with "
+                    f"'{prefix}' are reserved for internal schedules."
+                )
+        config_json = json.dumps(config)
+
+        now = RawSql("now()")
+        self._sql.upsert_with_audit(
+            table=self._table,
+            key_cols={"schedule_name": name},
+            value_cols={
+                "config_json": config_json,
+                "version": 1,  # initial INSERT value; UPDATE branch increments via increment_on_update
+                "created_by": user_email,
+                "created_at": now,
+                "updated_by": user_email,
+                "updated_at": now,
+            },
+            preserve_created=True,
+            increment_on_update="version",
+        )
+        self._record_history(name, config_json, user_email, "save")
+        logger.info("Saved schedule config: %s (user=%s)", name, user_email)
+
+        entry = self.get(name)
+        if entry is None:
+            now = datetime.now(timezone.utc).isoformat()
+            return ScheduleConfigEntry(
+                schedule_name=name,
+                config=config,
+                version=1,
+                created_by=user_email,
+                created_at=now,
+                updated_by=user_email,
+                updated_at=now,
+            )
+        return entry
+
+    def delete(self, name: str, user_email: str) -> None:
+        validate_schedule_name(name)
+        existing = self.get(name)
+        if existing:
+            self._record_history(
+                name,
+                json.dumps(existing.config),
+                user_email,
+                "delete",
+                version=existing.version,
+            )
+        escaped = escape_sql_string(name)
+        sql = f"DELETE FROM {self._table} WHERE schedule_name = '{escaped}'"
+        self._sql.execute(sql)
+        logger.info("Deleted schedule config: %s (user=%s)", name, user_email)
+
+    def get_history(self, name: str) -> list[dict[str, Any]]:
+        validate_schedule_name(name)
+        escaped = escape_sql_string(name)
+        sql = (
+            f"SELECT schedule_name, config_json, version, action, changed_by, "
+            f"{self._sql.ts_text('changed_at')} "
+            f"FROM {self._history_table} "
+            f"WHERE schedule_name = '{escaped}' "
+            "ORDER BY changed_at DESC"
+        )
+        rows = self._sql.query(sql)
+        result = []
+        for row in rows:
+            try:
+                cfg = json.loads(row[1]) if row[1] else {}
+            except json.JSONDecodeError:
+                cfg = {}
+            result.append(
+                {
+                    "schedule_name": row[0],
+                    "config": cfg,
+                    "version": int(row[2]) if row[2] else 0,
+                    "action": row[3],
+                    "changed_by": row[4],
+                    "changed_at": row[5],
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _record_history(
+        self,
+        name: str,
+        config_json: str,
+        user_email: str,
+        action: str,
+        version: int = 0,
+    ) -> None:
+        try:
+            escaped_name = escape_sql_string(name)
+            escaped_json = escape_sql_string(config_json)
+            escaped_user = escape_sql_string(user_email)
+            escaped_action = escape_sql_string(action)
+            sql = (
+                f"INSERT INTO {self._history_table} "
+                "(schedule_name, config_json, version, action, changed_by, changed_at) "
+                f"VALUES ('{escaped_name}', '{escaped_json}', {version}, '{escaped_action}', "
+                f"'{escaped_user}', now())"
+            )
+            self._sql.execute(sql)
+        except Exception:
+            logger.warning("Failed to record history for %s (non-fatal)", name, exc_info=True)
+
+    def _row_to_entry(self, row: list[str]) -> ScheduleConfigEntry:
+        try:
+            config = json.loads(row[1]) if row[1] else {}
+        except json.JSONDecodeError:
+            config = {}
+        return ScheduleConfigEntry(
+            schedule_name=row[0],
+            config=config,
+            version=int(row[2]) if row[2] else 1,
+            created_by=row[3],
+            created_at=row[4],
+            updated_by=row[5],
+            updated_at=row[6],
+        )
