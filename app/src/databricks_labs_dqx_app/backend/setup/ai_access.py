@@ -24,7 +24,11 @@ from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AiEnabledSource
 from databricks_labs_dqx_app.backend.services.model_services import ModelServices
-from databricks_labs_dqx_app.backend.setup.checks import instruction_identifier
+from databricks_labs_dqx_app.backend.setup.checks import (
+    grant_statement,
+    instruction_identifier,
+    unsafe_name_instruction,
+)
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, effective_privilege_names, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
@@ -34,7 +38,7 @@ from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 _PROBLEM_ORDER = ("ai_endpoint_missing", "ai_access_missing", "ai_access_unverified")
 _GRANT_GUIDANCE = (
     "Some Studio users can't use the AI models. A metastore admin (or anyone with MANAGE on the "
-    "model services) needs to run these statements in a SQL editor, then click Verify again:"
+    "model services) needs to run the commands below, then click Verify again."
 )
 logger = logging.getLogger(__name__)
 _GrantCache = dict[tuple[str, str, str], frozenset[str] | None]
@@ -79,12 +83,14 @@ class AiAccess:
         self._settings = settings
         self._app_sp = app_sp_id.strip()
 
-    def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None, *, inspect_only: bool = False) -> SetupStep:
         """Verify every audience group can use the AI models, and report the grants they lack.
 
         Args:
             reader_ws: Setup administrator's client, used to read grants when the app
                 service principal cannot.
+            inspect_only: Only report, like an unattended check: never turn AI features on or
+                off. Used to re-derive the GRANT statements just before running them.
 
         Returns:
             A passed step, or a non-blocking warning listing the GRANT statements to run.
@@ -119,10 +125,11 @@ class AiAccess:
                 problems.append(problem)
             statements.extend(statement for statement in missing if statement not in statements)
         if statements:
-            problems.append(("ai_access_missing", (f"{_GRANT_GUIDANCE}\n" + "\n".join(statements),)))
+            problems.append(("ai_access_missing", (_GRANT_GUIDANCE,)))
         if not chat_model:
             problems.append(("ai_endpoint_missing", ("No AI model is selected. Choose one in Settings > AI.",)))
-        attended = reader_ws is not None
+        # Only an administrator's own check may change the AI setting.
+        attended = reader_ws is not None and not inspect_only
         if not problems:
             if not enabled and attended and self._save_enabled(True):
                 return _passed("Studio users can use the AI models again, so AI features are back on.")
@@ -168,6 +175,7 @@ class AiAccess:
             code=code,
             summary=summary,
             instructions=instructions,
+            grant_statements=tuple(statements),
             actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
         )
 
@@ -225,23 +233,29 @@ class AiAccess:
 
         catalog, schema = parts[0], ".".join(parts[:2])
         requirements = (
-            ("CATALOG", catalog, "USE_CATALOG", _quote_name(catalog)),
-            ("SCHEMA", schema, "USE_SCHEMA", _quote_name(schema)),
-            ("MODEL_SERVICE", name, "EXECUTE", _quote_name(name)),
+            ("CATALOG", catalog, "USE_CATALOG", tuple(parts[:1])),
+            ("SCHEMA", schema, "USE_SCHEMA", tuple(parts[:2])),
+            ("MODEL_SERVICE", name, "EXECUTE", tuple(parts)),
         )
         statements: list[str] = []
         unreadable: list[str] = []
+        unsafe = False
         for principal in principals:
-            for kind, full_name, privilege, quoted in requirements:
+            for kind, full_name, privilege, securable in requirements:
                 privileges = self._privileges(kind, full_name, principal, reader_ws, grant_cache)
                 if privileges is None:
                     if principal not in unreadable:
                         unreadable.append(principal)
                     continue
                 if not has_privilege(privileges, privilege):
-                    statements.append(
-                        f"GRANT {privilege} ON {kind.replace('_', ' ')} {quoted} TO {instruction_identifier(principal)};"
-                    )
+                    statement = grant_statement(privilege, kind.replace("_", " "), securable, principal)
+                    if statement is None:
+                        unsafe = True
+                    else:
+                        statements.append(statement)
+        if unsafe:
+            # Left out rather than quoted unsafely, so access can't be confirmed until it's given by hand.
+            return ("ai_access_unverified", (unsafe_name_instruction("AI model", label),)), statements
         # Only owners and MANAGE holders can read grants on system.ai, so on most installs
         # they are unreadable. The app SP only sees model services it can access, and it gets
         # that access the same way users do (account users), so its visibility stands in.

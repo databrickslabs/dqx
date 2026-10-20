@@ -7,6 +7,10 @@ import { ScheduleGrantWarning } from "./ScheduleGrantWarning";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 import type { SchedulePreflightTableOut } from "@/lib/api";
 import en from "@/lib/i18n/locales/en.json";
+import es from "@/lib/i18n/locales/es.json";
+import fr from "@/lib/i18n/locales/fr.json";
+import it from "@/lib/i18n/locales/it.json";
+import ptBR from "@/lib/i18n/locales/pt-BR.json";
 
 const testI18n = i18next.createInstance();
 void testI18n.init({
@@ -107,12 +111,21 @@ describe("ScheduleGrantWarning missing grants", () => {
     const markup = render(preflight({ recheckFailed: { applied: 2, total: 3 } }));
 
     expect(markup).toContain(
-      escapeHtml(
-        en.schedule.grantWarning.apply.recheckFailed
-          .replace("{{applied}}", "2")
-          .replace("{{total}}", "3"),
-      ),
+      escapeHtml("Done: 2 of 3. Studio couldn't check the result just now. Click Try again to refresh."),
     );
+  });
+
+  test.each([
+    ["fr", fr],
+    ["es", es],
+    ["it", it],
+    ["pt-BR", ptBR],
+  ] as const)("the failed re-check keeps its counts in %s", (_code, locale) => {
+    const message = locale.schedule.grantWarning.apply.recheckFailed;
+
+    expect(message).toContain("{{applied}}");
+    expect(message).toContain("{{total}}");
+    expect(message).not.toBe(en.schedule.grantWarning.apply.recheckFailed);
   });
 
   test("a permission failure explains who can help and keeps the SQL visible", () => {

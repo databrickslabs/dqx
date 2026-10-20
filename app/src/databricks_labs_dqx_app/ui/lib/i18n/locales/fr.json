@@ -3186,7 +3186,8 @@
         "warehouse_unavailable": "Studio n'a pas pu démarrer l'entrepôt SQL (le calcul Databricks qui exécute ces commandes). Il est peut-être encore en cours de démarrage. Réessayez dans une minute, ou copiez les commandes et exécutez-les vous-même dans le SQL Editor (dans la barre latérale de Databricks).",
         "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
         "not_found": "Un élément auquel ces commandes se réfèrent n'existe plus. Cliquez sur Vérifier à nouveau pour actualiser la liste.",
-        "unknown": "Ces commandes n'ont pas pu être exécutées. Copiez-les et exécutez-les dans le SQL Editor (dans la barre latérale de Databricks), ou envoyez-les au propriétaire du catalogue."
+        "unknown": "Ces commandes n'ont pas pu être exécutées. Copiez-les et exécutez-les dans le SQL Editor (dans la barre latérale de Databricks), ou envoyez-les au propriétaire du catalogue.",
+        "setup_grants_failed": "Studio n'a pas pu terminer l'exécution de ces commandes ni vérifier le résultat : une partie de l'accès est peut-être déjà en place. Cliquez sur Vérifier à nouveau pour voir ce qu'il reste à faire, ou copiez les commandes et envoyez-les au propriétaire du catalogue."
       }
     },
     "diagnosticCode": "Code : {{code}}",

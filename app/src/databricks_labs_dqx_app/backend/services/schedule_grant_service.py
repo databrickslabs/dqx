@@ -1062,6 +1062,10 @@ class ScheduleGrantService:
             The fresh preflight with how many statements ran and which failed. When
             the check after the grants fails, the counts are still returned with
             *recheck_failed* set and the preflight taken before the grants.
+
+        Raises:
+            WarehouseUnavailableError: If nothing could run because the SQL warehouse didn't
+                answer the check before the grants.
         """
         before = self.preflight(fqns)
         table_of: dict[str, str] = {}
@@ -1069,6 +1073,9 @@ class ScheduleGrantService:
             for grant in table.missing_grants:
                 table_of.setdefault(grant["remediation"], table.fqn)
         if not table_of:
+            if any(table.access_unverified and table.unverified_reason == "warehouse" for table in before):
+                # The warehouse gave no answer, so there is no list of grants to run yet.
+                raise WarehouseUnavailableError("The SQL warehouse didn't answer the check before the grants.")
             return ScheduleGrantApplication(preflight=before, applied=0, total=0, failed=())
         run = run_grant_statements(list(table_of), executor)
         failed = tuple(

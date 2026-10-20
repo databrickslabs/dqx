@@ -7,6 +7,7 @@ raw error text is never returned or logged.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -30,6 +31,14 @@ _PERMISSION_SQLSTATES = frozenset({"42501"})
 _NOT_FOUND_SQLSTATES = frozenset({"42704", "42P01", "42S02", "42883"})
 _PERMISSION_MARKERS = ("PERMISSION_DENIED", "INSUFFICIENT_PERMISSIONS", "INSUFFICIENT_PRIVILEGES")
 _NOT_FOUND_MARKERS = ("_NOT_FOUND", "DOES_NOT_EXIST")
+# The Statement Execution API's 404 for a missing warehouse starts by naming the warehouse,
+# such as "Warehouse abc123 does not exist." A securable whose name only contains "warehouse"
+# (a catalog called data_warehouse, say) is an ordinary 404.
+_MISSING_WAREHOUSE = re.compile(
+    r"\A\s*(?:(?:sql\s+)?warehouse\s+\S+\s+(?:does\s+not\s+exist|(?:was\s+)?not\s+found)"
+    r"|no\s+(?:sql\s+)?warehouse\s+(?:was\s+)?found)",
+    re.IGNORECASE,
+)
 _WAREHOUSE_ERRORS = (TemporarilyUnavailable, DeadlineExceeded, TimeoutError)
 _RATE_LIMIT_ERRORS = (TooManyRequests, ResourceExhausted)
 # How long to wait before running a rate-limited statement once more.
@@ -55,8 +64,9 @@ def grant_error_code(error: Exception) -> GrantErrorCode:
     """Map a GRANT failure to a sanitized error code.
 
     Only real warehouse unavailability is *warehouse_unavailable*, which stops the run:
-    the warehouse not answering, a statement that never finishes, or a 404 that names
-    the warehouse. Other 404s are *not_found*, and 429s are *rate_limited*.
+    the warehouse not answering, a statement that never finishes, or the Statement
+    Execution API's 404 for a missing warehouse. Other 404s, including one about a
+    securable whose name contains "warehouse", are *not_found*, and 429s are *rate_limited*.
 
     Args:
         error: Exception raised while running a GRANT statement.
@@ -71,7 +81,7 @@ def grant_error_code(error: Exception) -> GrantErrorCode:
     if isinstance(error, _WAREHOUSE_ERRORS):
         return "warehouse_unavailable"
     if isinstance(error, NotFound):
-        return "warehouse_unavailable" if "WAREHOUSE" in str(error).upper() else "not_found"
+        return "warehouse_unavailable" if _MISSING_WAREHOUSE.match(str(error)) else "not_found"
     if isinstance(error, SqlStatementError):
         if error.sqlstate in _PERMISSION_SQLSTATES:
             return "permission_denied"

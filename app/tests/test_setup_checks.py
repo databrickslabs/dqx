@@ -22,6 +22,7 @@ from databricks.sdk.service.jobs import Job, JobRunAs, JobSettings
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, ResourceCheckers
+from databricks_labs_dqx_app.backend.setup.grant_application import run_grant_statements
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from databricks_labs_dqx_app.backend.setup.verification_memo import VerificationMemo
@@ -1668,4 +1669,66 @@ def test_grant_runner_access_grants_studio_objects_to_a_given_service_principal(
         f"GRANT SELECT, MODIFY ON SCHEMA `main`.`dqx_studio` TO `{_PICKED}`",
         f"GRANT USE_SCHEMA, SELECT ON SCHEMA `main`.`dqx_studio_tmp` TO `{_PICKED}`",
         f"GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `{_PICKED}`",
+    ]
+
+
+def test_runner_grant_for_a_name_that_cant_be_quoted_safely_is_left_out_and_unverified(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=JobRunAs(service_principal_name="runner`sp")))
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: _effective_permissions(
+        principal=principal
+    )
+
+    step = checkers.check_runner_access(42)
+
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "task_runner_permission_check_failed"
+    assert step.grant_statements == ()
+    assert any("can't write a safe" in instruction for instruction in step.instructions)
+
+
+def test_picked_runner_grants_never_list_a_statement_for_a_name_that_cant_be_quoted_safely(
+    checkers: ResourceCheckers, workspace: MagicMock
+) -> None:
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: _effective_permissions(
+        principal=principal
+    )
+
+    grants = checkers.runner_grants("runner`sp")
+
+    assert grants.grant_statements == ()
+    assert grants.automatic_grants == ()
+    assert grants.unreadable
+
+
+@pytest.mark.parametrize("principal", ["data`team", "data\u0085team", "data\nGRANT ALL"])
+def test_catalog_grant_for_a_name_that_cant_be_quoted_safely_is_left_out_and_unverified(
+    resources: ActiveResources, workspace: MagicMock, sql: MagicMock, compute: MagicMock, principal: str
+) -> None:
+    audience = replace(resources.audience, uc_principals=(principal, "data-team"))
+    checkers = ResourceCheckers(
+        resources=replace(resources, audience=audience),
+        workspace=workspace,
+        sql=sql,
+        compute=compute,
+        app_sp_id="app-sp-id",
+    )
+    workspace.grants.get_effective.side_effect = lambda kind, name, *, principal: (
+        _effective_permissions(Privilege.USE_CATALOG, Privilege.CREATE_SCHEMA)
+        if principal == "app-sp-id"
+        else _effective_permissions(principal=principal)
+    )
+
+    step = checkers.check_unity_catalog()
+
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "catalog_permission_check_failed"
+    assert step.grant_statements == ("GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;",)
+    assert any("can't write a safe" in instruction for instruction in step.instructions)
+    assert not any(char in "".join(step.instructions) for char in ("\n", "\u0085"))
+    executor = create_autospec(SqlExecutor, instance=True)
+    run_grant_statements(step.grant_statements, executor)
+    assert [call.args[0] for call in executor.execute_no_schema.call_args_list] == [
+        "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`"
     ]

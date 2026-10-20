@@ -3186,7 +3186,8 @@
         "warehouse_unavailable": "Studio non è riuscito ad avviare il warehouse SQL (il calcolo Databricks che esegue questi comandi). Potrebbe essere ancora in avvio. Riprova tra un minuto, oppure copia i comandi ed eseguili tu stesso nel SQL Editor (nella barra laterale di Databricks).",
         "rate_limited": "Databricks è occupato in questo momento. Attendi un momento, poi riprova.",
         "not_found": "Qualcosa a cui questi comandi fanno riferimento non esiste più. Fai clic su Verifica di nuovo per aggiornare l'elenco.",
-        "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo."
+        "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo.",
+        "setup_grants_failed": "Studio non è riuscito a completare questi comandi né a controllarne il risultato, quindi parte dell'accesso potrebbe essere già stata concessa. Fai clic su Verifica di nuovo per vedere cosa manca ancora, oppure copia i comandi e inviali al proprietario del catalogo."
       }
     },
     "diagnosticCode": "Codice: {{code}}",

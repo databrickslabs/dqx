@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     StatementFailedError,
     WarehouseUnavailableError,
     inspection_failure_detail,
+    inspection_failure_reason,
     manage_block_detail,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -826,6 +827,18 @@ def test_apply_runs_nothing_for_tables_that_need_no_grant(
     assert (result.applied, result.total, result.failed) == (0, 0, ())
     assert [(t.can_manage, t.missing_grants) for t in result.preflight] == [(True, [])]
     assert not result.recheck_failed
+
+
+def test_apply_says_the_warehouse_is_unavailable_when_the_check_before_it_could_not_run(
+    service: ScheduleGrantService, obo: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.CANCELED)
+
+    with pytest.raises(WarehouseUnavailableError) as raised:
+        service.apply_missing_grants([FQN], obo_sql)
+
+    obo_sql.execute_no_schema.assert_not_called()
+    assert inspection_failure_reason(raised.value) == "warehouse"
 
 
 def test_clearing_the_caches_makes_the_next_check_see_new_grants(

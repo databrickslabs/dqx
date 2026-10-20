@@ -244,14 +244,20 @@ async def apply_setup_step_grants(
 ) -> SetupApplyGrantsResponse:
     """Run a step's GRANT statements as the signed-in administrator, then re-verify setup.
 
-    The request carries only the step; the statements are re-derived on the server.
+    The request carries only the step; the statements are re-derived on the server. A failure
+    while re-deriving them or re-checking setup afterwards is reported as *setup_grants_failed*,
+    without the error's text.
     """
-    result = await orchestrator.apply_grants(
-        step_id,
-        setup_user=access.user_name,
-        reader_ws=reader_ws,
-        reader_sql_factory=reader_sql_factory,
-    )
+    try:
+        result = await orchestrator.apply_grants(
+            step_id,
+            setup_user=access.user_name,
+            reader_ws=reader_ws,
+            reader_sql_factory=reader_sql_factory,
+        )
+    except Exception as error:
+        logger.warning(f"Could not run a setup step's grants ({type(error).__name__})")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "setup_grants_failed") from None
     if result is None:
         raise _error(status.HTTP_409_CONFLICT, "nothing_to_apply")
     return result

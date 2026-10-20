@@ -1,7 +1,7 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -19,7 +19,7 @@ from databricks_labs_dqx_app.backend.setup.verification_memo import (
     requirement_fingerprint,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident, validate_fqn, validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
@@ -30,6 +30,8 @@ _VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
 _RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
 # Securables grant_runner_access gives the runner itself: Studio's schemas and wheels volume.
 _STUDIO_GRANTED_KINDS = frozenset({"SCHEMA", "VOLUME"})
+# Marks an inspection that left out a statement because a name in it can't be quoted safely.
+_UNSAFE_NAME = "UNSAFE_NAME"
 _ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Verify again to re-check it."
 _OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
 RUN_GRANTS_AS_OWNER = "Studio needs the access below before it can continue."
@@ -152,18 +154,27 @@ class ResourceCheckers:
                     missing = frozenset()
             if missing:
                 missing_by_principal.append((principal, missing))
-        if uninspectable:
+        grant_statements, unsafe = _catalog_grant_statements(catalog, missing_by_principal)
+        if uninspectable or unsafe:
             if not missing_by_principal and self._reuses_verification(
                 SetupStepId.UNITY_CATALOG.value, fingerprint, reader_sql, reader_ws
             ):
                 return _passed(SetupStepId.UNITY_CATALOG, "Catalog access" + _ADMIN_VERIFIED_SUFFIX)
+            label = instruction_identifier(catalog)
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permission_check_failed",
-                summary="Studio couldn't read the permissions on its catalog.",
-                instructions=(_read_permissions_instruction("catalog", instruction_identifier(catalog)),),
-                grant_statements=_catalog_grant_statements(catalog, missing_by_principal),
+                summary=(
+                    "Studio couldn't read the permissions on its catalog."
+                    if uninspectable
+                    else "Studio couldn't confirm that its users have the permissions they need on the catalog."
+                ),
+                instructions=(
+                    *((_read_permissions_instruction("catalog", label),) if uninspectable else ()),
+                    *((unsafe_name_instruction("catalog", label),) if unsafe else ()),
+                ),
+                grant_statements=grant_statements,
                 actions=_OVERRIDABLE,
             )
         if missing_by_principal:
@@ -173,7 +184,7 @@ class ResourceCheckers:
                 code="catalog_permissions_missing",
                 summary="Studio or its users don't have the permissions they need on the catalog.",
                 instructions=(RUN_GRANTS_AS_OWNER,),
-                grant_statements=_catalog_grant_statements(catalog, missing_by_principal),
+                grant_statements=grant_statements,
                 actions=_OVERRIDABLE,
             )
         self._record_verification(SetupStepId.UNITY_CATALOG.value, fingerprint)
@@ -321,24 +332,18 @@ class ResourceCheckers:
         include_outputs: bool,
     ) -> _RunnerInspection:
         volume = self._resources.volume
-        catalog = instruction_identifier(volume.catalog)
-        schema = f"{catalog}.{instruction_identifier(volume.schema)}"
-        quoted_volume = f"{schema}.{instruction_identifier(volume.volume)}"
-        quoted_principal = instruction_identifier(principal)
+        catalog = (volume.catalog,)
+        schema = (volume.catalog, volume.schema)
+        wheels = (volume.catalog, volume.schema, volume.volume)
+        tmp = (volume.catalog, self._resources.tmp_schema)
         requirements = [
             ("CATALOG", volume.catalog, "USE_CATALOG", "USE_CATALOG", catalog),
             ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE_SCHEMA", schema),
             *(
-                (
-                    "SCHEMA",
-                    f"{volume.catalog}.{self._resources.tmp_schema}",
-                    privilege,
-                    grant,
-                    f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
-                )
+                ("SCHEMA", f"{volume.catalog}.{self._resources.tmp_schema}", privilege, grant, tmp)
                 for privilege, grant in (("USE_SCHEMA", "USE_SCHEMA"), ("SELECT", "SELECT"))
             ),
-            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ_VOLUME", quoted_volume),
+            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ_VOLUME", wheels),
         ]
         if include_outputs:
             requirements.extend(
@@ -351,7 +356,8 @@ class ResourceCheckers:
         unknown_kinds: set[str] = set()
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
         inspector = GrantInspector(self._workspace, reader_sql)
-        for kind, full_name, privilege, grant, quoted_name in requirements:
+        for kind, full_name, privilege, grant, parts in requirements:
+            quoted_name = ".".join(instruction_identifier(part) for part in parts)
             key = (kind, full_name)
             if key not in inspected:
                 required = frozenset(item[2] for item in requirements if item[:2] == key)
@@ -371,7 +377,14 @@ class ResourceCheckers:
                 if guidance not in unknown:
                     unknown.append(guidance)
                 continue
-            statement = f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};"
+            statement = grant_statement(grant, kind, parts, principal)
+            if statement is None:
+                # Never reused from an earlier verification: the access can't be granted from here.
+                unknown_kinds.add(_UNSAFE_NAME)
+                guidance = unsafe_name_instruction(kind.lower(), quoted_name)
+                if guidance not in unknown:
+                    unknown.append(guidance)
+                continue
             grant_statements.append(statement)
             if kind in _STUDIO_GRANTED_KINDS:
                 automatic_grants.append(statement)
@@ -529,20 +542,24 @@ class ResourceCheckers:
         )
 
     def _schema_permissions_step(self, incomplete: list[tuple[str, frozenset[str]]], app_sp: str) -> SetupStep:
-        catalog = instruction_identifier(self._resources.volume.catalog)
-        principal = instruction_identifier(app_sp)
+        catalog = self._resources.volume.catalog
+        statements: list[str] = []
+        instructions = [RUN_GRANTS_AS_OWNER]
+        for schema, missing in incomplete:
+            names = ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
+            statement = grant_statement(names, "SCHEMA", (catalog, schema), app_sp)
+            if statement is None:
+                label = f"{instruction_identifier(catalog)}.{instruction_identifier(schema)}"
+                instructions.append(unsafe_name_instruction("schema", label))
+            else:
+                statements.append(statement)
         return SetupStep(
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
             code="storage_permissions_missing",
             summary="Studio needs more permissions on one of its schemas.",
-            instructions=(RUN_GRANTS_AS_OWNER,),
-            grant_statements=tuple(
-                "GRANT "
-                + ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
-                + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
-                for schema, missing in incomplete
-            ),
+            instructions=tuple(instructions),
+            grant_statements=tuple(statements),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
@@ -580,19 +597,16 @@ class ResourceCheckers:
         missing = [name for name in _VOLUME_PRIVILEGE_ORDER if not has_privilege(privileges, name)]
         if missing and not self._is_owner("VOLUME", full_name, app_sp):
             volume = self._resources.volume
-            quoted_volume = ".".join(
-                instruction_identifier(part) for part in (volume.catalog, volume.schema, volume.volume)
-            )
+            parts = (volume.catalog, volume.schema, volume.volume)
+            statement = grant_statement(", ".join(missing), "VOLUME", parts, app_sp)
+            label = ".".join(instruction_identifier(part) for part in parts)
             return SetupStep(
                 id=SetupStepId.STORAGE,
                 state=StepState.ACTION_REQUIRED,
                 code="volume_permissions_missing",
                 summary="Studio needs permission to read and write its wheels volume.",
-                instructions=(RUN_GRANTS_AS_OWNER,),
-                grant_statements=(
-                    f"GRANT {', '.join(p for p in missing)} ON VOLUME {quoted_volume} "
-                    f"TO {instruction_identifier(app_sp)};",
-                ),
+                instructions=(RUN_GRANTS_AS_OWNER if statement else unsafe_name_instruction("volume", label),),
+                grant_statements=(statement,) if statement else (),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
         return _passed(SetupStepId.STORAGE, "Studio's schemas and wheels volume are ready.")
@@ -754,13 +768,18 @@ class ResourceCheckers:
         return f"{volume.catalog}.{volume.schema}"
 
 
-def _catalog_grant_statements(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
-    quoted_catalog = instruction_identifier(catalog)
-    return tuple(
-        f"GRANT {', '.join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
-        f"ON CATALOG {quoted_catalog} TO {instruction_identifier(principal)};"
-        for principal, privileges in missing
-    )
+def _catalog_grant_statements(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[tuple[str, ...], bool]:
+    """Return the catalog GRANT statements for *missing*, and whether any was left out as unsafe."""
+    statements: list[str] = []
+    unsafe = False
+    for principal, privileges in missing:
+        names = ", ".join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)
+        statement = grant_statement(names, "CATALOG", (catalog,), principal)
+        if statement is None:
+            unsafe = True
+        else:
+            statements.append(statement)
+    return tuple(statements), unsafe
 
 
 def _read_permissions_instruction(kind: str, quoted_name: str) -> str:
@@ -819,6 +838,56 @@ def _identity_required(step_id: SetupStepId) -> SetupStep:
 
 def _validated_identifier(value: str) -> str:
     return validate_identifier(value)
+
+
+def grant_statement(privileges: str, kind: str, securable: Sequence[str], principal: str) -> str | None:
+    """Build a GRANT statement that can be run, from validated and quoted names.
+
+    Each part of *securable* and *principal* must pass *validate_identifier*, the per-part
+    check behind *validate_fqn* (a three-part name also passes *validate_fqn* itself), and
+    must not hold any control character, then is quoted with *quote_ident*, part by part as
+    *quote_fqn* does. A name with a backtick, a backslash or a control character can't be
+    quoted safely, so no statement is built for it.
+
+    Args:
+        privileges: Comma-separated privilege names, from Studio's own constants.
+        kind: Securable type in GRANT syntax, such as *CATALOG* or *MODEL SERVICE*.
+        securable: The securable's name parts, such as (catalog, schema).
+        principal: Principal to grant to.
+
+    Returns:
+        The statement, ending with a semicolon, or None when a name can't be quoted safely.
+    """
+    names = (*securable, principal)
+    try:
+        for name in names:
+            validate_identifier(name)
+        if len(securable) == 3:
+            validate_fqn(".".join(securable))
+    except ValueError:
+        return None
+    # validate_identifier allows C1 control characters and a trailing newline.
+    if not securable or any(_has_control_characters(name) for name in names):
+        return None
+    quoted = ".".join(quote_ident(part) for part in securable)
+    return f"GRANT {privileges} ON {kind} {quoted} TO {quote_ident(principal)};"
+
+
+def unsafe_name_instruction(kind: str, label: str) -> str:
+    """Explain a grant Studio left out because a name in it can't be quoted safely.
+
+    Args:
+        kind: Securable type in plain words, such as *catalog*.
+        label: The securable, as *instruction_identifier* shows it.
+
+    Returns:
+        Prose telling the administrator to give the access by hand.
+    """
+    return (
+        f"Studio can't write a safe command to give access to {kind} {label}, because a name in it contains "
+        "characters Studio won't put in SQL (a backtick, a backslash or an invisible character). Give the access "
+        f"by hand on the {kind}'s Permissions tab (under Catalog in the Databricks sidebar), then click Verify again."
+    )
 
 
 def instruction_identifier(value: str) -> str:

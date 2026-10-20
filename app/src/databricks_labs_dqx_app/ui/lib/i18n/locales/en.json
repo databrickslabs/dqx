@@ -3186,7 +3186,8 @@
         "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
         "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
         "not_found": "Something these commands refer to no longer exists. Click Verify again to refresh the list.",
-        "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the catalog's owner."
+        "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the catalog's owner.",
+        "setup_grants_failed": "Studio couldn't finish running these commands or check the result, so some of the access may already be in place. Click Verify again to see what's still needed, or copy the commands and send them to the catalog's owner."
       }
     },
     "diagnosticCode": "Code: {{code}}",

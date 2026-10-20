@@ -131,7 +131,7 @@ class AccessChecks(Protocol):
 class AiChecks(Protocol):
     """Non-blocking check that Studio users can use the AI model services."""
 
-    def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep: ...
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None, *, inspect_only: bool = False) -> SetupStep: ...
 
     def keep_enabled(self, *, user_email: str | None) -> None: ...
 
@@ -417,11 +417,13 @@ class SetupOrchestrator:
     ) -> SetupApplyGrantsResponse | None:
         """Run the GRANT statements a step reports as the signed-in administrator, then re-verify.
 
-        Only a step in the current report can run. Its own check runs again first, so the
-        statements are re-derived by the same check that displayed them; nothing the client
-        sends is executed. Each statement runs through the administrator's own SQL executor
-        (never the app service principal), and a failed statement doesn't stop the rest.
-        Setup is then re-checked once.
+        Only a step in the current report that lists GRANT statements can run. Its own check
+        runs again first, so the statements are re-derived by the same check that displayed
+        them; nothing the client sends is executed. Each statement runs through the
+        administrator's own SQL executor (never the app service principal), and a failed
+        statement doesn't stop the rest. Setup is then re-checked once. When the check finds
+        nothing left to grant (its own grants as the app may have fixed it), nothing runs but
+        setup is still re-checked, so the step shows its fresh state.
 
         Args:
             step_id: Step whose GRANT statements to run.
@@ -431,18 +433,19 @@ class SetupOrchestrator:
 
         Returns:
             The re-verified report with how many statements ran and which failed, or None
-            when the step has no GRANT statements to run.
+            when the step doesn't offer GRANT statements.
         """
         async with self.runtime.activation_lock:
             bound = self.bound
             shown = self.runtime.report()
-            if bound is None or step_id not in {step.id for step in shown.steps}:
+            shown_step = next((step for step in shown.steps if step.id == step_id), None)
+            if bound is None or shown_step is None or not _has_grants(shown_step.grant_statements):
                 return None
             executor = reader_sql_factory(bound.resources)
             checked = await self._grant_step_check(step_id, bound, shown, reader_ws, executor)
-        statements = checked.grant_statements if checked is not None else ()
-        if not any(statement.startswith(GRANT_PREFIX) for statement in statements):
+        if checked is None:
             return None
+        statements = checked.grant_statements if _has_grants(checked.grant_statements) else ()
         run = await asyncio.to_thread(run_grant_statements, statements, executor)
         report = await self.reconcile(setup_user=setup_user, reader_ws=reader_ws, reader_sql_factory=reader_sql_factory)
         return SetupApplyGrantsResponse(report=report, applied=run.applied, total=run.total, failed=run.failed)
@@ -649,7 +652,8 @@ class SetupOrchestrator:
         if step_id == SetupStepId.ACCESS:
             return await asyncio.to_thread(bound.access.reconcile_access, reader_sql, reader_ws)
         if step_id == SetupStepId.AI and bound.ai is not None:
-            return await asyncio.to_thread(bound.ai.check_ai_access, reader_ws)
+            # Only inspects: the re-check after the statements run decides the AI setting.
+            return await asyncio.to_thread(partial(bound.ai.check_ai_access, reader_ws, inspect_only=True))
         return None
 
     async def _run_steps(
@@ -1048,6 +1052,10 @@ def _failed(step_id: SetupStepId, code: str, summary: str) -> SetupStep:
         summary=summary,
         actions=(SetupActionId.RECONCILE,),
     )
+
+
+def _has_grants(statements: tuple[str, ...]) -> bool:
+    return any(statement.startswith(GRANT_PREFIX) for statement in statements)
 
 
 def _sanitize_identity(value: str | None) -> str | None:

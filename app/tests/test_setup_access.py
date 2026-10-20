@@ -1,5 +1,6 @@
 """Audience and administrator access reconciliation."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
 
@@ -189,6 +190,36 @@ def test_unknown_grants_take_precedence_over_missing_grants(workspace, sql) -> N
 
     assert step.code == "audience_grant_check_failed"
     assert "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio_tmp` TO `data-team`;" in step.grant_statements
+
+
+def test_access_grant_for_a_name_that_cant_be_quoted_safely_is_left_out_and_unverified(workspace, sql) -> None:
+    lakebase = LakebaseConnection(
+        "projects/p/branches/b/endpoints/e", None, 5432, "databricks_postgres", None, None, "dqx_studio"
+    )
+    resources = build_active_resources(
+        BootstrapResources(lakebase, "wh", None),
+        derive_storage("main", "dqx_studio"),
+        resolve_audience(["data-team"], "admins", allow_broad=False),
+    )
+    unsafe = "data`team\nGRANT ALL"
+    resources = replace(resources, audience=replace(resources.audience, uc_principals=(unsafe,)))
+    access = AudienceAccess(
+        resources=resources,
+        workspace=workspace,
+        sql=sql,
+        settings=MemorySettings(),
+        app_name="dqx-studio",
+        dashboard_id="",
+    )
+    workspace.grants.get_effective.return_value = _grants()
+
+    step = access.reconcile_access()
+
+    assert step.state == StepState.ACTION_REQUIRED
+    assert step.code == "audience_grant_check_failed"
+    assert step.grant_statements == ()
+    assert any("can't write a safe" in instruction for instruction in step.instructions)
+    assert not any("\n" in instruction for instruction in step.instructions)
 
 
 def test_grant_failures_are_ignored_and_verification_decides(workspace, sql) -> None:

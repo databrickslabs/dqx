@@ -37,8 +37,14 @@ _STATEMENTS = (
         # Only a 404 that names the warehouse means the warehouse itself is gone.
         (NotFound("Warehouse abc123 does not exist."), "warehouse_unavailable"),
         (ResourceDoesNotExist("SQL warehouse abc123 was not found"), "warehouse_unavailable"),
+        (NotFound("Warehouse 'abc123' not found"), "warehouse_unavailable"),
         (NotFound("gone"), "not_found"),
         (ResourceDoesNotExist("Principal runner does not exist"), "not_found"),
+        # A securable whose name only contains "warehouse" is still an ordinary 404.
+        (NotFound("Catalog 'data_warehouse' does not exist."), "not_found"),
+        (NotFound("Table sales_warehouse.orders.daily was not found"), "not_found"),
+        (ResourceDoesNotExist("Schema `main`.`warehouse` does not exist"), "not_found"),
+        (NotFound("Principal warehouse-admins does not exist"), "not_found"),
         (TooManyRequests("slow down"), "rate_limited"),
         (ResourceExhausted("quota"), "rate_limited"),
         (SqlStatementError("SQL execution failed: [SCHEMA_NOT_FOUND] x\nSQL: GRANT", "42704"), "not_found"),

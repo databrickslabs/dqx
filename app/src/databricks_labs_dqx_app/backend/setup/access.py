@@ -32,7 +32,12 @@ from databricks_labs_dqx_app.backend.setup.acl import (
     missing_principals,
     reconcile_group_acl,
 )
-from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, instruction_identifier
+from databricks_labs_dqx_app.backend.setup.checks import (
+    RUN_GRANTS_AS_OWNER,
+    grant_statement,
+    instruction_identifier,
+    unsafe_name_instruction,
+)
 from databricks_labs_dqx_app.backend.setup.configuration import SetupSettings
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
@@ -284,7 +289,6 @@ class AudienceAccess:
         unknown: list[str] = []
         missing: list[str] = []
         for principal in principals:
-            quoted_principal = instruction_identifier(principal)
             for (kind, full_name), required in objects.items():
                 quoted_name = ".".join(instruction_identifier(part) for part in full_name.split("."))
                 privileges = inspector.privileges(kind, full_name, principal, required=frozenset(required))
@@ -298,11 +302,17 @@ class AudienceAccess:
                     if guidance not in unknown:
                         unknown.append(guidance)
                     continue
-                missing.extend(
-                    f"GRANT {privilege} ON {kind} {quoted_name} TO {quoted_principal};"
-                    for privilege in required
-                    if not has_privilege(privileges, privilege)
-                )
+                for privilege in required:
+                    if has_privilege(privileges, privilege):
+                        continue
+                    statement = grant_statement(privilege, kind, full_name.split("."), principal)
+                    if statement is not None:
+                        missing.append(statement)
+                        continue
+                    # Left out rather than quoted unsafely; the step can't be confirmed until it's granted.
+                    guidance = unsafe_name_instruction(kind.lower(), quoted_name)
+                    if guidance not in unknown:
+                        unknown.append(guidance)
         return unknown, missing
 
     def _genie_space_id(self) -> str | None:

@@ -665,6 +665,22 @@ def test_apply_grants_with_nothing_to_apply_is_a_conflict(client: TestClient, or
     assert response.json()["detail"]["code"] == "nothing_to_apply"
 
 
+@pytest.mark.parametrize(
+    "error", [PermissionDenied("internal detail"), InternalError("internal detail"), RuntimeError("internal detail")]
+)
+def test_apply_grants_maps_failures_to_a_code_without_raw_text(
+    client: TestClient, orchestrator: MagicMock, error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    orchestrator.apply_grants = AsyncMock(side_effect=error)
+
+    response = client.post(_APPLY_GRANTS_URL)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": "setup_grants_failed"}
+    assert "internal detail" not in response.text
+    assert "internal detail" not in caplog.text
+
+
 def test_apply_grants_requires_setup_admin(client: TestClient, orchestrator: MagicMock, obo_ws: MagicMock) -> None:
     obo_ws.current_user.me.return_value = user_in_groups("users")
     orchestrator.apply_grants = AsyncMock()

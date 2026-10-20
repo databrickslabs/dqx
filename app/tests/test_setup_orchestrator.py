@@ -197,9 +197,11 @@ class FakeAi:
     result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.AI))
     kept_enabled_by: list[str | None] = field(default_factory=list)
     endpoints: tuple[str, ...] = ("chat-endpoint",)
+    inspect_only_calls: list[bool] = field(default_factory=list)
 
-    def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None, *, inspect_only: bool = False) -> SetupStep:
         self.events.append("ai")
+        self.inspect_only_calls.append(inspect_only)
         return self.result
 
     def keep_enabled(self, *, user_email: str | None) -> None:
@@ -1822,6 +1824,59 @@ async def test_apply_grants_has_nothing_to_apply_for_a_step_without_statements()
 
     assert result is None
     executor.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_reconciles_when_the_steps_own_check_already_fixed_it() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    assert harness.runtime.report().state != SetupState.READY
+    # The task-runner check gives Studio's own grants itself, so re-deriving it finds nothing left.
+    harness.bound.results.pop(SetupStepId.TASK_RUNNER)
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is not None
+    assert (result.applied, result.total, result.failed) == (0, 0, ())
+    executor.execute_no_schema.assert_not_called()
+    assert result.report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert result.report.state == SetupState.READY
+    assert harness.runtime.report() == result.report
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_for_the_ai_step_runs_its_statements_and_rederives_it_inspection_only() -> None:
+    grant = "GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`chat` TO `data-team`;"
+    events: list[str] = []
+    ai = FakeAi(
+        events,
+        result=SetupStep(
+            id=SetupStepId.AI,
+            state=StepState.WARNING,
+            code="ai_access_missing",
+            summary="AI access missing",
+            grant_statements=(grant,),
+            actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
+        ),
+    )
+    harness = _harness(events, ai=ai)
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    ai.inspect_only_calls.clear()
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.AI, setup_user="admin@example.com", reader_sql_factory=lambda resources: executor
+    )
+
+    assert result is not None
+    executor.execute_no_schema.assert_called_once_with(grant.removesuffix(";"))
+    # Only the final re-check may change the AI setting; re-deriving the statements only inspects.
+    assert ai.inspect_only_calls == [True, False]
 
 
 @pytest.mark.asyncio

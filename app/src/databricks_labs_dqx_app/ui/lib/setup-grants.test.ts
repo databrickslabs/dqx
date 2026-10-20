@@ -43,6 +43,10 @@ describe("grantRunOutcome", () => {
     expect(grantRunOutcome(response(3, 3))).toBeNull();
   });
 
+  test("has nothing to show when nothing was left to run, so the refreshed step shows", () => {
+    expect(grantRunOutcome(response(0, 0))).toBeNull();
+  });
+
   test("lists only the failed statements with a summary of the rest", () => {
     const outcome = grantRunOutcome(
       response(2, 3, [{ statement: SECOND, error_code: "permission_denied" }]),
@@ -88,6 +92,28 @@ describe("grantRequestFailure", () => {
       failedSql: "",
       errorCodes: ["not_found"],
     });
+  });
+
+  test("explains a run Studio couldn't finish or check", () => {
+    const outcome = grantRequestFailure("setup_grants_failed");
+
+    expect(outcome.errorCodes).toEqual(["setup_grants_failed"]);
+    expect(grantErrorMessageKey("setup_grants_failed")).toBe(
+      "setup.grants.errors.setup_grants_failed",
+    );
+  });
+
+  test.each([
+    ["en", en],
+    ["fr", fr],
+    ["es", es],
+    ["it", it],
+    ["pt-BR", ptBR],
+  ] as const)("has a message for an unfinished run in %s", (code, locale) => {
+    const message = locale.setup.grants.errors.setup_grants_failed;
+
+    expect(message.length).toBeGreaterThan(0);
+    if (code !== "en") expect(message).not.toBe(en.setup.grants.errors.setup_grants_failed);
   });
 
   test.each([undefined, "something_else"])(

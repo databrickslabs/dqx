@@ -2,15 +2,14 @@ import { AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
-import type { SetupGrantFailureErrorCode } from "@/lib/api";
-import { grantErrorMessageKey, type GrantRunOutcome } from "@/lib/setup-grants";
+import { grantErrorMessageKey, type GrantOutcomeCode, type GrantRunOutcome } from "@/lib/setup-grants";
 
 type GrantOutcomeNoticeProps = {
   outcome: GrantRunOutcome;
   /** i18n key for the "Done: N of M." summary. */
   summaryKey?: string;
   /** Maps an error code to the i18n key of its message. */
-  messageKey?: (code: SetupGrantFailureErrorCode) => string;
+  messageKey?: (code: GrantOutcomeCode) => string;
   /** Repeat the failed statements. Only when no code cell above already shows them. */
   showFailedSql?: boolean;
 };
