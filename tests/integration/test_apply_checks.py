@@ -6326,7 +6326,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     # Geo checks are executed in a separate test as they require specific DBR
 
-    dq_engine = DQEngine(ws)
+    dq_engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
 
@@ -6458,7 +6458,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "US-CA",
                 "en",
                 "https://example.com/a",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -6485,7 +6484,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "GB-ENG",
                 "en",
                 "https://sub.example.org/p?q=1",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -6512,7 +6510,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "DE-BY",
                 "de",
                 "ftp://files.example.org/f.txt",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7371,7 +7368,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
     ]
 
-    dq_engine = DQEngine(ws)
+    dq_engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
@@ -7493,7 +7490,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "US-CA",
                 "en",
                 "https://example.com/a",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7518,7 +7514,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GB-ENG",
                 "en",
                 "https://sub.example.org/p?q=1",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
@@ -7543,7 +7538,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "DE-BY",
                 "de",
                 "ftp://files.example.org/f.txt",
-                None,
                 [col10_distribution_violation],
                 None,
             ],
