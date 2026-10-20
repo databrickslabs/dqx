@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
@@ -3288,6 +3289,44 @@ def test_check_metrics_user_metadata_matches_row_level_results(ws, spark):
     [check_metrics] = json.loads(observation.get["check_metrics"])
     assert check_metrics["user_metadata"] == row["m"]
     assert check_metrics["user_metadata"]["flag"] == "true"
+
+
+@pytest.mark.parametrize("metrics_source", ["observer", "compute_summary_metrics"])
+def test_check_metrics_user_metadata_excludes_engine_level_metadata(ws, spark, metrics_source):
+    """Test that check_metrics carries only rule-level user_metadata, while engine-level user_metadata is merged
+    into the row-level results and reported on the summary metrics row instead."""
+    engine_metadata = {"env": "prod", "owner": "engine"}
+    rule_metadata = {"owner": "rule"}
+    checks = [
+        DQRowRule(
+            name="id_is_not_null", criticality="error", check_func=is_not_null, column="id", user_metadata=rule_metadata
+        )
+    ]
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(
+        workspace_client=ws,
+        spark=spark,
+        observer=observer,
+        extra_params=replace(EXTRA_PARAMS, user_metadata=engine_metadata),
+    )
+
+    checked_df, observation = dq_engine.apply_checks(_standard_test_df(spark), checks)
+    [row] = (
+        checked_df.where("id is null")
+        .select(F.col("_errors").getItem(0).getField("user_metadata").alias("m"))
+        .collect()
+    )
+    if metrics_source == "observer":
+        check_metrics_value = observation.get["check_metrics"]
+    else:
+        metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=checks)
+        [metrics_row] = metrics_df.where("metric_name = 'check_metrics'").collect()
+        assert metrics_row["user_metadata"] == engine_metadata
+        check_metrics_value = metrics_row["metric_value"]
+
+    [check_metrics] = json.loads(check_metrics_value)
+    assert row["m"] == {"env": "prod", "owner": "rule"}  # the rule's value wins over the engine's
+    assert check_metrics["user_metadata"] == rule_metadata
 
 
 @pytest.mark.parametrize("metrics_source", ["observer", "compute_summary_metrics"])
