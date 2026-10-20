@@ -130,12 +130,12 @@ describe("ScheduleGrantWarning missing grants", () => {
       escapeHtml(en.schedule.grantWarning.apply.errors.permission_denied),
     );
     expect(markup).toContain("Done: 1 of 2.");
-    expect(markup).toContain(escapeHtml(STATEMENT));
-    // The message refers to "the commands below": the failed SQL follows it.
+    // The commands stay visible once, in the code cell the message points at ("the above commands").
+    expect(markup.split(escapeHtml(STATEMENT)).length - 1).toBe(1);
     const message = markup.indexOf(
       escapeHtml(en.schedule.grantWarning.apply.errors.permission_denied),
     );
-    expect(markup.indexOf(escapeHtml(STATEMENT), message)).toBeGreaterThan(message);
+    expect(markup.indexOf(escapeHtml(STATEMENT))).toBeLessThan(message);
   });
 
   test.each(["warehouse_unavailable", "not_found", "rate_limited", "unknown"] as const)(

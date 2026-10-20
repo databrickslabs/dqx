@@ -23,8 +23,9 @@ import { AlertTriangle, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
+import { GrantOutcomeNotice } from "@/components/setup/GrantOutcomeNotice";
 import type { SchedulePreflightTableOut } from "@/lib/api";
-import { grantStatementsSql, type GrantRunOutcome } from "@/lib/setup-grants";
+import { grantStatementsSql } from "@/lib/setup-grants";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 
 type Entity = "table" | "collection";
@@ -110,29 +111,6 @@ function MissingGrantList({ grants }: { grants: NonNullable<SchedulePreflightTab
   );
 }
 
-/** What went wrong when the user ran the grants: how many ran, the statements
- *  that didn't, and one plain message per reason. */
-function ApplyOutcomeNotice({ outcome }: { outcome: GrantRunOutcome }) {
-  const { t } = useTranslation();
-  return (
-    <div
-      role="alert"
-      className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive"
-    >
-      {outcome.summary && <p className="font-medium">{t("schedule.grantWarning.apply.partial", outcome.summary)}</p>}
-      {/* The messages point at "the commands below", so they come first. */}
-      {outcome.errorCodes.map((code) => (
-        <p key={code}>{t(`schedule.grantWarning.apply.errors.${code}`)}</p>
-      ))}
-      {outcome.failedSql && (
-        <div className="text-foreground">
-          <SqlCodeBlock sql={outcome.failedSql} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Amber card for tables whose catalog or schema Studio's service principals
  *  can't use yet. Lists the missing grants (per table for a collection), then
  *  every distinct GRANT statement once. The user can copy them for an owner,
@@ -187,7 +165,13 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
                       {t("schedule.grantWarning.apply.recheckFailed", preflight.recheckFailed)}
                     </p>
                   )}
-                  {preflight.applyOutcome && <ApplyOutcomeNotice outcome={preflight.applyOutcome} />}
+                  {preflight.applyOutcome && (
+                    <GrantOutcomeNotice
+                      outcome={preflight.applyOutcome}
+                      summaryKey="schedule.grantWarning.apply.partial"
+                      messageKey={(code) => `schedule.grantWarning.apply.errors.${code}`}
+                    />
+                  )}
                 </div>
               )
             }

@@ -57,7 +57,7 @@
         "partial": "Done: {{applied}} of {{total}}.",
         "recheckFailed": "Done: {{applied}} of {{total}}. Studio couldn't check the result just now. Click Try again to refresh.",
         "errors": {
-          "permission_denied": "Your account isn't allowed to give this access. Send the commands below to the owner of the catalog or schema. You'll see the owner on its page under Catalog in the Databricks sidebar. Ask them to run the commands in the SQL editor, then click Try again.",
+          "permission_denied": "Your account isn't allowed to give this access. Have an owner of the catalog or schema run the above commands in the SQL editor.",
           "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
           "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
           "not_found": "Something these commands refer to no longer exists, such as one of the tables or its schema. Click Try again to refresh the list.",
@@ -3182,7 +3182,7 @@
       "leadRun": "Run the following commands to give this access. If you lack permissions, have the catalog's owner run them. Then reverify.",
       "leadCopy": "Copy the commands below and send them to the catalog's owner or a Databricks admin. Once they've run them in the SQL editor, click Verify again.",
       "errors": {
-        "permission_denied": "Your account isn't allowed to give this access. Send the commands above to the owner of the catalog. You'll see the owner on the catalog's page under Catalog in the Databricks sidebar. Ask them to run the commands in the SQL editor, then click Verify again.",
+        "permission_denied": "Your account isn't allowed to give this access. Have an owner of the catalog or schema run the above commands in the SQL editor.",
         "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
         "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
         "not_found": "Something these commands refer to no longer exists. Click Verify again to refresh the list.",

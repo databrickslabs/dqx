@@ -57,7 +57,7 @@
         "partial": "Terminé : {{applied}} sur {{total}}.",
         "recheckFailed": "Terminé : {{applied}} sur {{total}}. Studio n'a pas pu vérifier le résultat à l'instant. Cliquez sur Réessayer pour actualiser.",
         "errors": {
-          "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Envoyez les commandes ci-dessous au propriétaire du catalogue ou du schéma. Vous le trouverez sur sa page, sous Catalog dans la barre latérale de Databricks. Demandez-lui d'exécuter les commandes dans l'éditeur SQL, puis cliquez sur Réessayer.",
+          "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Demandez à un propriétaire du catalogue ou du schéma d'exécuter les commandes ci-dessus dans l'éditeur SQL.",
           "warehouse_unavailable": "Studio n'a pas pu démarrer l'entrepôt SQL (le calcul Databricks qui exécute ces commandes). Il est peut-être encore en cours de démarrage. Réessayez dans une minute, ou copiez les commandes et exécutez-les vous-même dans le SQL Editor (dans la barre latérale de Databricks).",
           "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
           "not_found": "Un élément auquel ces commandes se réfèrent n'existe plus, par exemple l'une des tables ou son schéma. Cliquez sur Réessayer pour actualiser la liste.",
@@ -3182,7 +3182,7 @@
       "leadRun": "Exécutez les commandes suivantes pour accorder cet accès. Si vous n'avez pas les autorisations nécessaires, demandez au propriétaire du catalogue de les exécuter. Puis vérifiez à nouveau.",
       "leadCopy": "Copiez les commandes ci-dessous et envoyez-les au propriétaire du catalogue ou à un administrateur Databricks. Une fois qu'il les a exécutées dans l'éditeur SQL, cliquez sur Vérifier à nouveau.",
       "errors": {
-        "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Envoyez les commandes ci-dessus au propriétaire du catalogue. Vous le trouverez sur la page du catalogue, sous Catalog dans la barre latérale de Databricks. Demandez-lui d'exécuter les commandes dans l'éditeur SQL, puis cliquez sur Vérifier à nouveau.",
+        "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Demandez à un propriétaire du catalogue ou du schéma d'exécuter les commandes ci-dessus dans l'éditeur SQL.",
         "warehouse_unavailable": "Studio n'a pas pu démarrer l'entrepôt SQL (le calcul Databricks qui exécute ces commandes). Il est peut-être encore en cours de démarrage. Réessayez dans une minute, ou copiez les commandes et exécutez-les vous-même dans le SQL Editor (dans la barre latérale de Databricks).",
         "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
         "not_found": "Un élément auquel ces commandes se réfèrent n'existe plus. Cliquez sur Vérifier à nouveau pour actualiser la liste.",

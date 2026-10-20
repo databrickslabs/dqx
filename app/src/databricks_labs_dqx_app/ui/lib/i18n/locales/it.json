@@ -57,7 +57,7 @@
         "partial": "Fatto: {{applied}} su {{total}}.",
         "recheckFailed": "Fatto: {{applied}} su {{total}}. Studio non è riuscito a controllare il risultato in questo momento. Fai clic su Riprova per aggiornare.",
         "errors": {
-          "permission_denied": "Il tuo account non può concedere questo accesso. Invia i comandi qui sotto al proprietario del catalogo o dello schema. Lo trovi nella sua pagina, sotto Catalog nella barra laterale di Databricks. Chiedigli di eseguire i comandi nell'editor SQL, poi fai clic su Riprova.",
+          "permission_denied": "Il tuo account non può concedere questo accesso. Chiedi a un proprietario del catalogo o dello schema di eseguire i comandi qui sopra nell'editor SQL.",
           "warehouse_unavailable": "Studio non è riuscito ad avviare il warehouse SQL (il calcolo Databricks che esegue questi comandi). Potrebbe essere ancora in avvio. Riprova tra un minuto, oppure copia i comandi ed eseguili tu stesso nel SQL Editor (nella barra laterale di Databricks).",
           "rate_limited": "Databricks è occupato in questo momento. Attendi un momento, poi riprova.",
           "not_found": "Qualcosa a cui questi comandi fanno riferimento non esiste più, ad esempio una delle tabelle o il suo schema. Fai clic su Riprova per aggiornare l'elenco.",
@@ -3182,7 +3182,7 @@
       "leadRun": "Esegui i comandi seguenti per concedere questo accesso. Se non hai le autorizzazioni, chiedi al proprietario del catalogo di eseguirli. Poi verifica di nuovo.",
       "leadCopy": "Copia i comandi qui sotto e inviali al proprietario del catalogo o a un amministratore Databricks. Dopo che li avrà eseguiti nell'editor SQL, fai clic su Verifica di nuovo.",
       "errors": {
-        "permission_denied": "Il tuo account non può concedere questo accesso. Invia i comandi qui sopra al proprietario del catalogo. Lo trovi nella pagina del catalogo, sotto Catalog nella barra laterale di Databricks. Chiedigli di eseguire i comandi nell'editor SQL, poi fai clic su Verifica di nuovo.",
+        "permission_denied": "Il tuo account non può concedere questo accesso. Chiedi a un proprietario del catalogo o dello schema di eseguire i comandi qui sopra nell'editor SQL.",
         "warehouse_unavailable": "Studio non è riuscito ad avviare il warehouse SQL (il calcolo Databricks che esegue questi comandi). Potrebbe essere ancora in avvio. Riprova tra un minuto, oppure copia i comandi ed eseguili tu stesso nel SQL Editor (nella barra laterale di Databricks).",
         "rate_limited": "Databricks è occupato in questo momento. Attendi un momento, poi riprova.",
         "not_found": "Qualcosa a cui questi comandi fanno riferimento non esiste più. Fai clic su Verifica di nuovo per aggiornare l'elenco.",

@@ -57,7 +57,7 @@
         "partial": "Concluído: {{applied}} de {{total}}.",
         "recheckFailed": "Concluído: {{applied}} de {{total}}. O Studio não conseguiu verificar o resultado agora. Clique em Tentar novamente para atualizar.",
         "errors": {
-          "permission_denied": "Sua conta não tem permissão para dar este acesso. Envie os comandos abaixo ao proprietário do catálogo ou do esquema. Você o encontra na página dele, em Catalog na barra lateral do Databricks. Peça que ele execute os comandos no editor SQL e depois clique em Tentar novamente.",
+          "permission_denied": "Sua conta não tem permissão para dar este acesso. Peça a um proprietário do catálogo ou do esquema para executar os comandos acima no editor SQL.",
           "warehouse_unavailable": "O Studio não conseguiu iniciar o armazém SQL (a computação do Databricks que executa estes comandos). Ele pode ainda estar iniciando. Tente novamente em um minuto, ou copie os comandos e execute-os você mesmo no SQL Editor (na barra lateral do Databricks).",
           "rate_limited": "O Databricks está ocupado agora. Aguarde um momento e tente novamente.",
           "not_found": "Algo a que estes comandos se referem não existe mais, como uma das tabelas ou o esquema dela. Clique em Tentar novamente para atualizar a lista.",
@@ -3182,7 +3182,7 @@
       "leadRun": "Execute os comandos a seguir para dar este acesso. Se você não tiver permissões, peça ao proprietário do catálogo que os execute. Depois, verifique novamente.",
       "leadCopy": "Copie os comandos abaixo e envie-os ao proprietário do catálogo ou a um administrador do Databricks. Depois que ele os executar no editor SQL, clique em Verificar novamente.",
       "errors": {
-        "permission_denied": "Sua conta não tem permissão para dar este acesso. Envie os comandos acima ao proprietário do catálogo. Você o encontra na página do catálogo, em Catalog na barra lateral do Databricks. Peça que ele execute os comandos no editor SQL e depois clique em Verificar novamente.",
+        "permission_denied": "Sua conta não tem permissão para dar este acesso. Peça a um proprietário do catálogo ou do esquema para executar os comandos acima no editor SQL.",
         "warehouse_unavailable": "O Studio não conseguiu iniciar o armazém SQL (a computação do Databricks que executa estes comandos). Ele pode ainda estar iniciando. Tente novamente em um minuto, ou copie os comandos e execute-os você mesmo no SQL Editor (na barra lateral do Databricks).",
         "rate_limited": "O Databricks está ocupado agora. Aguarde um momento e tente novamente.",
         "not_found": "Algo a que estes comandos se referem não existe mais. Clique em Verificar novamente para atualizar a lista.",

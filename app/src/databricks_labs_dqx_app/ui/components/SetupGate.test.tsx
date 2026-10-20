@@ -766,7 +766,7 @@ describe("setup grant statements", () => {
     expect(markup).toContain('disabled=""');
   });
 
-  test("lists the commands that failed under a partial-success summary", () => {
+  test("explains a partial failure without repeating the step's commands", () => {
     const markup = renderGrants({
       grantOutcome: {
         stepId: "task_runner",
@@ -781,9 +781,8 @@ describe("setup grant statements", () => {
     expect(markup).toContain("Done: 2 of 3.");
     expect(markup).toContain(escapeHtml(en.setup.grants.errors.permission_denied));
     expect(markup).toContain('role="alert"');
-    const alert = markup.slice(markup.indexOf('role="alert"'));
-    expect(alert).toContain(GRANTS[1]);
-    expect(alert).not.toContain(GRANTS[0]);
+    // The step's own code cell already shows the commands; the notice doesn't repeat them.
+    expect(markup.split(GRANTS[1]).length - 1).toBe(1);
   });
 
   test("keeps another step's outcome off this step", () => {

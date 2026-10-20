@@ -388,7 +388,7 @@ export function TaskRunnerSteps({
                 result={grantOutcome ? <GrantOutcomeNotice outcome={grantOutcome} /> : undefined}
               />
             )}
-            {pending.length === 0 && grantOutcome && <GrantOutcomeNotice outcome={grantOutcome} />}
+            {pending.length === 0 && grantOutcome && <GrantOutcomeNotice outcome={grantOutcome} showFailedSql />}
           </div>
         )}
       </SubStep>
