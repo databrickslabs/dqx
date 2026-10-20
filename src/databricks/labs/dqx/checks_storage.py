@@ -267,7 +267,7 @@ class DataFrameConverter:
                 "arguments": json_arguments,
             }
 
-            name, rule_fingerprint = DataFrameConverter._resolve_name_and_fingerprint(
+            name, rule_fingerprint = DataFrameConverter.resolve_name_and_fingerprint(
                 original_check, check, custom_checks
             )
 
@@ -295,7 +295,7 @@ class DataFrameConverter:
         return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
 
     @staticmethod
-    def _resolve_name_and_fingerprint(
+    def resolve_name_and_fingerprint(
         original_check: dict, normalized_check: dict, custom_checks: dict[str, Callable] | None = None
     ) -> tuple[str | None, str]:
         """Resolve the stored name and rule_fingerprint so they match what apply writes into _errors/_warnings.
@@ -671,10 +671,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions)
 
         normalized_checks = []
-        for check in normalized_for_serialization:
+        for original_check, check in zip(checks, normalized_for_serialization):
+            name, rule_fingerprint = DataFrameConverter.resolve_name_and_fingerprint(
+                original_check, check, custom_check_functions
+            )
             user_metadata = check.get("user_metadata")
             normalized_check = {
-                "name": check.get("name"),
+                "name": name,
                 "criticality": check.get("criticality", "error"),
                 "check": check.get("check"),
                 "filter": check.get("filter"),
@@ -682,7 +685,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 "user_metadata": null() if user_metadata is None else user_metadata,
                 "message_expr": check.get("message_expr"),
                 "created_at": created_at,
-                "rule_fingerprint": compute_rule_fingerprint(check),
+                "rule_fingerprint": rule_fingerprint,
                 "rule_set_fingerprint": rule_set_fingerprint,
             }
             normalized_checks.append(normalized_check)

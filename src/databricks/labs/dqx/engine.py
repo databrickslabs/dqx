@@ -1763,7 +1763,10 @@ class DQEngine(DQEngineBase):
         if semantic_validation_mode is not None:
             ChecksSemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
         handler = self._checks_handler_factory.create(config)
-        handler.save(resolved_checks, config, custom_check_functions)
+        if custom_check_functions is None:
+            handler.save(resolved_checks, config)
+        else:
+            handler.save(resolved_checks, config, custom_check_functions)
 
     def _build_metrics_observation(
         self,
