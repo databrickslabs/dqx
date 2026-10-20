@@ -1720,6 +1720,7 @@ class DQEngine(DQEngineBase):
         config: BaseChecksStorageConfig,
         variables: dict[str, VariableValue] | None = None,
         semantic_validation_mode: str | None = ChecksSemanticValidationMode.WARN,
+        custom_check_functions: dict[str, Callable] | None = None,
     ) -> None:
         """Persist DQ rules (checks) to the storage backend described by *config*.
 
@@ -1750,6 +1751,9 @@ class DQEngine(DQEngineBase):
                 Use *ChecksSemanticValidationMode.WARN* (default) to log warnings and continue,
                 *ChecksSemanticValidationMode.FAIL* to abort saving if issues are found, or
                 *None* to skip semantic validation entirely.
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+                Used by table and Lakebase storage to validate and fingerprint checks that reference custom functions.
+                Ignored by file-based storage.
 
         Returns:
             None
@@ -1763,7 +1767,10 @@ class DQEngine(DQEngineBase):
         if semantic_validation_mode is not None:
             ChecksSemanticValidator.apply(resolved_checks, mode=semantic_validation_mode)
         handler = self._checks_handler_factory.create(config)
-        handler.save(resolved_checks, config)
+        if custom_check_functions is None:
+            handler.save(resolved_checks, config)
+        else:
+            handler.save(resolved_checks, config, custom_check_functions)
 
     def _build_metrics_observation(
         self,
