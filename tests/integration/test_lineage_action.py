@@ -1092,22 +1092,30 @@ def test_end_to_end_streaming_via_dqengine(
     _wait_for_sink()
 
 
-def test_source_table_with_trailing_backslash_is_escaped(
+@pytest.mark.parametrize(
+    "source",
+    [
+        "cat.sch.weird_tbl\\",  # adversarial: trailing backslash
+        "cat.sch.o'brien_tbl",  # a doubled '' quote would be concatenated away by Spark
+    ],
+)
+def test_source_table_with_special_characters_is_escaped(
     spark: SparkSession,
     ws: WorkspaceClient,
     patched_lineage_constants: _StubLineageLocations,
     make_lineage_sink,
+    source: str,
 ) -> None:
-    """A source table / input_location ending in a backslash must be inlined as a *valid* SQL
-    string literal (backslash doubled).
+    """A source table / input_location with a backslash or single quote must be inlined as a SQL
+    string literal that decodes back to the same name.
 
     Without the backslash escape in *_sql_str_literal* the trailing ``\\`` escapes the literal's
     closing quote, the recursive-CTE query fails to parse, the read is swallowed by the walker's
-    broad except, and the edge is silently dropped. Seeding goes through *createDataFrame* so the
-    backslash is a literal character rather than a SQL escape at insert time; the walk then has to
-    match it against the inlined literal through the real Spark parser.
+    broad except, and the edge is silently dropped. A quote doubled as ``''`` instead of ``\\'``
+    is concatenated away, so the walk looks up the wrong table. Seeding goes through
+    *createDataFrame* so the characters are literal rather than SQL escapes at insert time; the walk
+    then has to match them against the inlined literal through the real Spark parser.
     """
-    source = "cat.sch.weird_tbl\\"  # adversarial: trailing backslash
     target = "cat.sch.plain_target"
     spark.createDataFrame(
         [(source, target, None, None, datetime.now(timezone.utc))],
