@@ -1,17 +1,26 @@
 """Prepare feature metadata and apply feature engineering for anomaly scoring."""
 
+import collections.abc
 import uuid
+from typing import cast
 
+import pandas as pd
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
-    apply_feature_engineering,
+    apply_feature_engineering_from_metadata,
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import quote_column_name
+
+
+def collect_feature_matrix(df: DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Collect literal feature columns in their model-defined order."""
+    return cast(pd.DataFrame, df.select(*[F.col(quote_column_name(name)) for name in columns]).toPandas())
 
 
 def prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTypeInfo], SparkFeatureMetadata]:
@@ -19,6 +28,35 @@ def prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTyp
     feature_metadata = SparkFeatureMetadata.from_json(feature_metadata_json)
     column_infos = reconstruct_column_infos(feature_metadata)
     return column_infos, feature_metadata
+
+
+def scoring_input_columns(
+    feature_cols: collections.abc.Iterable[str],
+    merge_columns: collections.abc.Iterable[str],
+    feature_metadata: SparkFeatureMetadata,
+    passthrough_columns: collections.abc.Iterable[str] | None = None,
+) -> list[str]:
+    """The columns the scoring transform must be handed, in the order it expects them.
+
+    A comparison basis is not a feature, but it is still *read*: the grouping columns say what a metric is
+    compared against and the time column is the axis it is measured along, so both have to survive the
+    narrowing even though feature engineering drops them again before the model sees anything. Leaving
+    either off does not degrade the score, it fails the query outright on an unresolved column.
+
+    Deduplicated while preserving order, since a column may legitimately appear in more than one role.
+    """
+    time_cols = [feature_metadata.baseline_over_time] if feature_metadata.baseline_over_time else []
+    return list(
+        dict.fromkeys(
+            [
+                *feature_cols,
+                *feature_metadata.baseline_by,
+                *time_cols,
+                *merge_columns,
+                *(passthrough_columns or []),
+            ]
+        )
+    )
 
 
 def apply_feature_engineering_for_scoring(
@@ -44,14 +82,10 @@ def apply_feature_engineering_for_scoring(
             "Ensure the anomaly check is applied to the same DataFrame instance."
         )
 
-    cols_to_select = list(dict.fromkeys([*feature_cols, *merge_columns, *(passthrough_columns or [])]))
+    cols_to_select = scoring_input_columns(feature_cols, merge_columns, feature_metadata, passthrough_columns)
 
-    engineered_df, _ = apply_feature_engineering(
-        df.select(*cols_to_select),
-        column_infos,
-        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    engineered_df, _ = apply_feature_engineering_from_metadata(
+        df.select(*[F.col(quote_column_name(c)) for c in cols_to_select]), feature_metadata, column_infos=column_infos
     )
 
     return engineered_df
@@ -77,7 +111,7 @@ def apply_feature_engineering_with_row_passthrough(
         The engineered DataFrame and the name of the struct column holding the original row.
     """
     original_row_col = f"__dqx_orig_{uuid.uuid4().hex}"
-    packed = df.withColumn(original_row_col, F.struct(*[F.col(c) for c in df.columns]))
+    packed = df.withColumn(original_row_col, F.struct(*[F.col(quote_column_name(c)) for c in df.columns]))
     engineered_df = apply_feature_engineering_for_scoring(
         packed,
         feature_cols,

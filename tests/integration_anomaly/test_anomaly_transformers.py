@@ -7,11 +7,13 @@ import pytest
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from databricks.labs.dqx.anomaly.segment_utils import BASELINE_KEY_COLUMN
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     ColumnTypeClassifier,
     SparkFeatureMetadata,
     apply_feature_engineering,
+    apply_feature_engineering_from_metadata,
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -123,7 +125,7 @@ def test_apply_feature_engineering_all_types_with_metadata(spark):
     engineered_cols = set(engineered_df.columns)
 
     # OneHot for category, frequency for user_id
-    assert any(col.startswith("category_") for col in engineered_cols)
+    assert any(col.startswith("__dqx_onehot_") for col in engineered_cols)
     assert "user_id_freq" in engineered_cols
 
     # Null indicators
@@ -318,8 +320,8 @@ def test_categorical_onehot_vs_frequency_encoding(spark):
     engineered_cols = set(engineered_df.columns)
 
     # Low cardinality should use OneHot (creates multiple columns)
-    assert any(col.startswith("low_card_") for col in engineered_cols)
-    assert "low_card_cat_0" in engineered_cols or "low_card_cat_1" in engineered_cols
+    assert set(metadata.onehot_categories["low_card"].values()).issubset(engineered_cols)
+    assert set(metadata.onehot_categories["low_card"]) == {"cat_0", "cat_1", "cat_2"}
 
     # High cardinality should use Frequency (creates single _freq column)
     assert "high_card_freq" in engineered_cols
@@ -510,7 +512,7 @@ def test_mixed_column_types_in_single_dataframe(spark):
     assert "float_col" in engineered_cols
 
     # Categorical (OneHot due to low cardinality)
-    assert any(col.startswith("category_") for col in engineered_cols)
+    assert any(col.startswith("__dqx_onehot_") for col in engineered_cols)
 
     # Boolean
     assert "flag_bool" in engineered_cols
@@ -528,3 +530,153 @@ def test_mixed_column_types_in_single_dataframe(spark):
 
     # Extra columns preserved
     assert "id" in engineered_cols
+
+
+# ============================================================================
+# One-hot encoding: an unseen value must be distinguishable, and names must be stable
+# ============================================================================
+
+
+def test_a_binary_column_keeps_both_categories(spark):
+    """Dropping one of a binary pair made an unexpected value invisible.
+
+    The textbook reason to drop one is the dummy-variable trap, but the cost here was a blind spot: the
+    omitted reference category and any value never seen in training both encode as all-zeros, so a brand
+    new value in a binary column produced no signal whatsoever. With both retained, every known value
+    sets exactly one indicator.
+    """
+    df = spark.createDataFrame([("open",), ("open",), ("closed",), ("closed",)], "status string")
+
+    _, metadata = apply_feature_engineering(
+        df, [ColumnTypeInfo(name="status", spark_type=T.StringType(), category="categorical", cardinality=2)]
+    )
+
+    assert list(metadata.onehot_categories["status"]) == ["closed", "open"]
+
+
+def test_an_unseen_value_encodes_differently_from_every_trained_category(spark):
+    """The property retaining the category buys, asserted on scoring rather than on the category list.
+
+    The source column is dropped by projection, so an id column rides along to identify the rows: it is
+    neither a feature nor a comparison basis, so it survives as an extra column.
+    """
+    train_df = spark.createDataFrame([("open",), ("open",), ("closed",), ("closed",)], "status string")
+    infos = [ColumnTypeInfo(name="status", spark_type=T.StringType(), category="categorical", cardinality=2)]
+
+    _, metadata = apply_feature_engineering(train_df, infos)
+
+    score_df = spark.createDataFrame(
+        [(1, "open"), (2, "closed"), (3, "escalated")],
+        "rid int, status string",
+    )
+    scored, _ = apply_feature_engineering_from_metadata(score_df, metadata)
+
+    indicators = list(metadata.onehot_categories["status"].values())
+    encodings = {
+        row["rid"]: tuple(row[name] for name in indicators) for row in scored.select("rid", *indicators).collect()
+    }
+
+    assert all(value == 0.0 for value in encodings[3]), f"an unseen value must set no indicator: {encodings[3]}"
+    assert sum(encodings[1]) == 1.0, f"a trained value must set exactly one: {encodings[1]}"
+    assert sum(encodings[2]) == 1.0, f"a trained value must set exactly one: {encodings[2]}"
+    assert encodings[1] != encodings[2], "the two trained values must be told apart"
+
+
+def test_the_same_table_trained_twice_preserves_category_order(spark):
+    """``distinct().collect()`` has no ordering, and engineered_feature_names is positional.
+
+    Without sorting, two training runs over identical data produced the same features in different
+    positions, and for a binary column a different category could survive each time. Harmless inside one
+    model, since the list is persisted with it, but it made a model irreproducible from its own inputs.
+    """
+    df = spark.createDataFrame(
+        [(value,) for value in ("delta", "alpha", "charlie", "bravo", "alpha", "delta")],
+        "grade string",
+    )
+    infos = [ColumnTypeInfo(name="grade", spark_type=T.StringType(), category="categorical", cardinality=4)]
+
+    _, first = apply_feature_engineering(df, infos)
+    _, second = apply_feature_engineering(df, infos)
+
+    assert list(first.onehot_categories["grade"]) == list(second.onehot_categories["grade"])
+    assert list(first.onehot_categories["grade"]) == ["alpha", "bravo", "charlie", "delta"]
+    restored = SparkFeatureMetadata.from_json(first.to_json())
+    assert restored.engineered_feature_names == first.engineered_feature_names
+    assert restored.onehot_categories == first.onehot_categories
+
+
+@pytest.mark.parametrize("source", ["status", "anomaly_score", "status.with`punctuation"])
+def test_categorical_aliases_distinguish_literal_values_and_replay_after_reload(spark, source):
+    values = ["OPEN", "open", "v1.0", "tick`value", "雪", "", "freq", "is_null", "rel_baseline"]
+    schema = T.StructType([T.StructField("rid", T.LongType()), T.StructField(source, T.StringType())])
+    df = spark.createDataFrame(list(enumerate(values)), schema)
+    infos = [ColumnTypeInfo(name=source, spark_type=T.StringType(), category="categorical", cardinality=len(values))]
+    fitted, metadata = apply_feature_engineering(df, infos)
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    replayed, _ = apply_feature_engineering_from_metadata(df, restored)
+    aliases = restored.onehot_categories[source]
+    assert list(aliases) == sorted(values)
+    assert len({name.casefold() for name in aliases.values()}) == len(values)
+    assert fitted.orderBy("rid").collect() == replayed.orderBy("rid").collect()
+    for row in replayed.collect():
+        actual = values[row.rid]
+        assert row[aliases[actual]] == 1.0
+        assert sum(row[name] for name in aliases.values()) == 1.0
+
+
+def test_all_null_categorical_vocabulary_is_valid_and_fixed_on_reload(spark):
+    df = spark.createDataFrame([(float(i), None) for i in range(10)], "amount double, status string")
+    infos, _ = ColumnTypeClassifier().analyze_columns(df, ["amount", "status"])
+    fitted, metadata = apply_feature_engineering(df, infos)
+    assert metadata.onehot_categories["status"] == {}
+    assert metadata.engineered_feature_names == ["status_is_null", "amount"]
+    restored = SparkFeatureMetadata.from_json(metadata.to_json())
+    scored, replayed = apply_feature_engineering_from_metadata(
+        spark.createDataFrame([(1.0, None), (2.0, "new")], "amount double, status string"), restored
+    )
+    assert replayed.engineered_feature_names == metadata.engineered_feature_names
+    assert replayed.onehot_categories == {"status": {}}
+    assert [row.status_is_null for row in scored.orderBy("amount").collect()] == [1.0, 0.0]
+    assert fitted.count() == 10
+
+
+def test_grouped_categorical_and_boolean_features_keep_a_non_feature_group_key(spark):
+    df = spark.createDataFrame(
+        [("North", "open", True), (None, "closed", False)], "region string, status string, enabled boolean"
+    )
+    infos, _ = ColumnTypeClassifier().analyze_columns(df, ["status", "enabled"])
+    fitted, metadata = apply_feature_engineering(df, infos, baseline_by=["region"])
+    assert BASELINE_KEY_COLUMN in fitted.columns
+    assert BASELINE_KEY_COLUMN not in metadata.engineered_feature_names
+    assert "region" not in fitted.columns
+    assert not metadata.baseline_medians
+    replayed, _ = apply_feature_engineering_from_metadata(df, SparkFeatureMetadata.from_json(metadata.to_json()))
+    assert set(row[BASELINE_KEY_COLUMN] for row in replayed.collect()) == set(
+        row[BASELINE_KEY_COLUMN] for row in fitted.collect()
+    )
+
+
+def test_the_width_warning_counts_the_derived_comparison_features(spark):
+    """Twenty numeric columns with both bases build sixty features, not twenty.
+
+    The estimate counted one per numeric column and was never told about the comparison bases, so it
+    reported twenty and stayed silent under the default recommended maximum of fifty -- on exactly the
+    configuration it exists to flag.
+    """
+    metrics = [f"m{i}" for i in range(20)]
+    schema = ", ".join([*(f"{m} double" for m in metrics), "region string", "event_ts timestamp"])
+    df = spark.createDataFrame([tuple([1.0] * 20 + ["eu", datetime(2025, 1, 6)])], schema)
+
+    classifier = ColumnTypeClassifier()
+    _, warned = classifier.analyze_columns(df, metrics, baseline_by=["region"], baseline_over_time="event_ts")
+    _, quiet = classifier.analyze_columns(df, metrics)
+
+    # Matched on the width warning's own opening words. "recommended max" alone also appears in the
+    # max_input_columns warning, which twenty columns trips either way.
+    def width_warnings(warnings_list: list[str]) -> list[str]:
+        return [w for w in warnings_list if w.startswith("Feature engineering will create")]
+
+    assert width_warnings(warned), f"expected a feature-width warning, got {warned}"
+    assert "60 features" in width_warnings(warned)[0], width_warnings(warned)[0]
+    assert "20 baseline_by comparisons" in width_warnings(warned)[0], "the breakdown must name the bases"
+    assert not width_warnings(quiet), "twenty metrics without a basis stay under the limit of fifty"

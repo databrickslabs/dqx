@@ -1,28 +1,14 @@
-"""
-Integration tests for anomaly feature explainability.
+"""Integration tests for public anomaly feature contributions and rendered messages."""
 
-NOTE: These tests require SHAP library (shap>=0.42.0,<0.46) installed on the cluster.
-If using DATABRICKS_CLUSTER_ID, install the library via:
-  Cluster -> Libraries -> Install New -> PyPI -> shap>=0.42.0,<0.46
+import math
 
-OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, shared_3d_model, 
-shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
-"""
-
-import numpy as np
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, DoubleType, MapType, StringType, StructField, StructType
-from sklearn.ensemble import IsolationForest
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from databricks.labs.dqx.anomaly import explainability as explainability_mod
 from databricks.labs.dqx.anomaly.explainability import (
     add_top_contributors_to_message,
-    compute_contributions_for_matrix,
-    create_optimal_tree_explainer,
-    format_contributions_map,
 )
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -155,12 +141,15 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
         extract_score=False,
     )
 
-    # Verify anomaly_contributions column does NOT exist
+    rows = result_df.collect()
+    assert len(rows) == test_df.count()
+    assert all(row["_dq_info"][0]["anomaly"]["contributions"] is None for row in rows)
+    assert all(row["_dq_info"][0]["anomaly"]["basis_contributions"] is None for row in rows)
     assert "anomaly_contributions" not in result_df.columns
 
 
 def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
-    """Test that the top contributor makes sense for the anomaly."""
+    """The only perturbed feature dominates attribution independently of calibration."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
@@ -169,34 +158,43 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     test_df = test_df_factory(
         spark,
         normal_rows=[],
-        anomaly_rows=[(OUTLIER_AMOUNT, 2.0, 0.15)],  # Extreme amount
+        anomaly_rows=[(OUTLIER_AMOUNT, 30.0, 0.3)],  # Only amount is outside the training distribution
         columns_schema="amount double, quantity double, discount double",
     )
 
-    # Use anomaly_scorer with enable_contributions
+    # This tests attribution, not whether the sampled model ranks the probe above
+    # severity 95. Threshold zero admits the row regardless of calibration.
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=0.0,
         enable_contributions=True,
         extract_score=False,
     )
-    row = result_df.collect()[0]
-
-    # Extract contributions map from _dq_info[0].anomaly.contributions
-    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
+    rows = result_df.collect()
+    assert len(rows) == 1
+    assert len(rows[0]["_dq_info"]) == 1
+    info = rows[0]["_dq_info"][0]["anomaly"]
+    assert info["score"] is not None and math.isfinite(info["score"])
+    assert info["severity_percentile"] is not None and math.isfinite(info["severity_percentile"])
+    assert info["is_anomaly"] is True
+    contribs = info["contributions"]
+    assert contribs is not None, "a flagged probe must have contributions when attribution is enabled"
+    assert set(contribs) == set(shared_3d_model["columns"])
 
     # Filter out None values
     valid_contribs = {k: v for k, v in contribs.items() if v is not None}
 
+    assert valid_contribs, "the perturbed probe must have attribution evidence"
+    assert all(math.isfinite(value) and value >= 0.0 for value in valid_contribs.values())
+
     # Find top contributor
     top_feature = max(valid_contribs, key=lambda k: valid_contribs[k])
 
-    # Amount should likely be the top contributor (or at least significant)
-    # Since amount is the most anomalous feature
-    assert top_feature in {"amount", "discount", "quantity"}
-    assert valid_contribs[top_feature] > 20.0  # Should have significant contribution
+    # Only amount was perturbed; it must dominate the other features combined.
+    assert top_feature == "amount", f"only amount was perturbed, but attribution ranked {valid_contribs}"
+    assert valid_contribs["amount"] > sum(value for name, value in valid_contribs.items() if name != "amount")
 
 
 def test_add_top_contributors_message(spark: SparkSession):
@@ -212,28 +210,9 @@ def test_add_top_contributors_message(spark: SparkSession):
     result = add_top_contributors_to_message(df, threshold=60.0, top_n=2)
     assert "_top_contributors" in result.columns
 
-    rendered = format_contributions_map({"amount": 80.0, "quantity": 20.0}, 2)
-    assert "amount" in rendered
-    assert "quantity" in rendered
-    assert format_contributions_map({"amount": 90.0, "quantity": 10.0}, 2) != ""
-
-
-def test_add_top_contributors_handles_null_map():
-    """Null or empty contributions should yield empty contributor message."""
-    assert format_contributions_map(None, 2) == ""
-    assert format_contributions_map({}, 2) == ""
-
-
-def test_create_optimal_tree_explainer():
-    """TreeExplainer is created when SHAP is available, otherwise ImportError."""
-    if explainability_mod.SHAP is None:
-        with pytest.raises(ImportError):
-            create_optimal_tree_explainer(object())
-        return
-
-    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-    explainer = create_optimal_tree_explainer(model)
-    assert explainer is not None
+    rows = result.orderBy("severity_percentile").collect()
+    assert rows[0]["_top_contributors"] == ""
+    assert rows[1]["_top_contributors"] == "amount (80%), quantity (20%)"
 
 
 def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
@@ -265,47 +244,6 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
     assert "amount" in contribs and "quantity" in contribs
 
 
-def test_compute_contributions_helper():
-    """Compute contributions directly for a small matrix."""
-    if explainability_mod.SHAP is None:
-        pytest.skip("Explainability dependencies not available")
-
-    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-    feature_matrix = np.array([[0.0, 0.1], [2.0, 2.1]])
-    contributions = compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
-
-    assert len(contributions) == 2
-    assert set(contributions[0].keys()) == {"amount", "quantity"}
-
-
-def test_compute_contributions_pipeline_and_nan():
-    """Pipeline models and NaN rows are handled correctly."""
-    if explainability_mod.SHAP is None:
-        pytest.skip("Explainability dependencies not available")
-
-    pipeline = Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("model", IsolationForest(random_state=42)),
-        ]
-    )
-    pipeline.fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
-
-    feature_matrix = np.array([[np.nan, 0.1], [2.0, 2.1]])
-    contributions = compute_contributions_for_matrix(pipeline, feature_matrix, ["amount", "quantity"])
-
-    assert contributions[0] == {"amount": None, "quantity": None}
-    assert set(contributions[1].keys()) == {"amount", "quantity"}
-
-
-def test_format_contributions_map():
-    """Formatting helper should handle None and sort by magnitude."""
-    assert format_contributions_map(None, 2) == ""
-    assert format_contributions_map({}, 2) == ""
-    rendered = format_contributions_map({"a": 70.0, "b": None, "c": 20.0}, 2)
-    assert "a" in rendered
-
-
 def test_add_top_contributors_uses_dq_info(spark: SparkSession):
     """Top contributors can be derived from _dq_info[0].anomaly.severity_percentile (array of struct)."""
     # _dq_info is array<struct<anomaly: struct<...>>>
@@ -332,6 +270,5 @@ def test_add_top_contributors_uses_dq_info(spark: SparkSession):
 
     result = add_top_contributors_to_message(df, threshold=60.0, top_n=2)
     assert "_top_contributors" in result.columns
-    if "pyspark.sql.connect" not in spark.__class__.__module__:
-        row = result.collect()[0]
-        assert row["_top_contributors"] != ""
+    row = result.collect()[0]
+    assert row["_top_contributors"] == "amount (70%), quantity (30%)"

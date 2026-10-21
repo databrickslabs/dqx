@@ -65,7 +65,6 @@ if not warnings_logger.handlers:
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
-logging.getLogger("mlflow").setLevel(logging.ERROR)
 # pyspark.pandas attaches a JVM-backed usage logger on import; under Spark Connect there is
 # no local JVM, so the attach fails and emits a harmless WARNING on every import. Suppress it.
 logging.getLogger("pyspark.pandas.usage_logger").setLevel(logging.ERROR)
@@ -73,8 +72,18 @@ logging.getLogger("pyspark.pandas.usage_logger").setLevel(logging.ERROR)
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported
+_mlflow_logger = logging.getLogger("mlflow")
+_previous_mlflow_level = _mlflow_logger.level
 try:
-    import mlflow
+    # Suppress this third-party class-definition warning only while importing MLflow.
+    # The caller's own pydantic classes must still emit the same warning afterward.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"""Field ["']model_name["'].*(conflict|conflicts) with protected namespace""",
+            category=UserWarning,
+        )
+        import mlflow
 
     # Disable the mlflow tracing and notebook display widget
     mlflow.tracing.disable_notebook_display()
@@ -82,8 +91,13 @@ try:
     mlflow.langchain.autolog(disable=True)
 except Exception:
     # MLflow not installed, tracing not available, or configuration failed
-    # (e.g., Databricks auth not available in CI)
+    # (e.g., Databricks auth not available in CI).
     pass
+finally:
+    # MLflow can configure its logger during import. Preserve an explicit level
+    # selected by the application before DQX caused that import.
+    if _previous_mlflow_level != logging.NOTSET:
+        _mlflow_logger.setLevel(_previous_mlflow_level)
 
 ua.semver_pattern = re.compile(
     r"^"

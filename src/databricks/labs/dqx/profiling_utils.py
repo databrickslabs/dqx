@@ -7,6 +7,8 @@ import collections.abc
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
+from databricks.labs.dqx.utils import quote_column_name
+
 
 def compute_null_and_distinct_counts(
     df: DataFrame,
@@ -20,13 +22,20 @@ def compute_null_and_distinct_counts(
     column_names = list(column_names)
     distinct_columns = list(distinct_columns)
 
-    null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in column_names]
+    null_exprs = [
+        F.count(F.when(F.col(quote_column_name(col_name)).isNull(), 1)).alias(f"{col_name}__nulls")
+        for col_name in column_names
+    ]
     if approx:
         distinct_exprs = [
-            F.approx_count_distinct(col_name, rsd=rsd).alias(f"{col_name}__distinct") for col_name in distinct_columns
+            F.approx_count_distinct(F.col(quote_column_name(col_name)), rsd=rsd).alias(f"{col_name}__distinct")
+            for col_name in distinct_columns
         ]
     else:
-        distinct_exprs = [F.countDistinct(col_name).alias(f"{col_name}__distinct") for col_name in distinct_columns]
+        distinct_exprs = [
+            F.countDistinct(F.col(quote_column_name(col_name))).alias(f"{col_name}__distinct")
+            for col_name in distinct_columns
+        ]
 
     stats_row = df.agg(*null_exprs, *distinct_exprs).first()
     assert stats_row is not None, "Failed to compute column statistics"
@@ -45,7 +54,7 @@ def compute_exact_distinct_counts(
     columns = list(columns)
     if not columns:
         return {}
-    distinct_exprs = [F.countDistinct(col_name).alias(col_name) for col_name in columns]
+    distinct_exprs = [F.countDistinct(F.col(quote_column_name(col_name))).alias(col_name) for col_name in columns]
     stats_row = df.agg(*distinct_exprs).first()
     assert stats_row is not None, "Failed to compute distinct counts"
     return {col_name: stats_row[col_name] for col_name in columns}

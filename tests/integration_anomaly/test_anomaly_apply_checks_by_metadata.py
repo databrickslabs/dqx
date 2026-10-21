@@ -420,11 +420,11 @@ def test_apply_anomaly_check_by_metadata_criticality_warn(ws, spark: SparkSessio
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
 
-def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkSession, make_schema, make_random):
+def test_apply_anomaly_check_by_metadata_with_filter_grouped(ws, spark: SparkSession, make_schema, make_random):
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
 
-    # Training data: region + amount, quantity (for segment_by=["region"])
+    # Training data: region + amount, quantity (for baseline_by=["region"])
     data = []
     for region in SEGMENT_REGIONS:
         base = 100 if region == "US" else (200 if region == "EU" else 150)
@@ -439,7 +439,7 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
     engine.train(
         df=train_df,
         columns=["amount", "quantity"],
-        segment_by=["region"],
+        baseline_by=["region"],
         model_name=model_name,
         registry_table=registry_table,
     )

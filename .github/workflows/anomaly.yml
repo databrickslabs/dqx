@@ -21,9 +21,12 @@ jobs:
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: >-
+      (github.event_name == 'merge_group' && startsWith(github.event.merge_group.head_ref, 'refs/heads/gh-readonly-queue/')) ||
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.head.repo.fork)
     steps:
-      - run: echo "Not a fork PR, proceeding"
+      - run: echo "Trusted pull request or merge queue, proceeding"
 
   anomaly-tests:
     needs: not-a-fork
@@ -54,10 +57,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -73,9 +78,11 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
@@ -111,10 +118,12 @@ jobs:
           source = ../../src
           relative_files = true
           parallel = true
+          branch = true
           EOF
 
       - name: Run anomaly integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # acceptance/v0.4.6
+        id: anomaly
+        uses: databrickslabs/sandbox/acceptance@83461e5dd7021feabb1a9ca3ee10d6f46b72092a # pinned wrapper downloads acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 3h
@@ -131,9 +140,11 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "9"
       - name: Merge coverage reports and convert them to XML
+        if: ${{ always() && (steps.anomaly.outcome == 'success' || steps.anomaly.outcome == 'failure') }}
         run: make combine-coverage
 
       - name: Publish test coverage
+        if: ${{ always() && hashFiles('coverage-combined.xml') != '' }}
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true

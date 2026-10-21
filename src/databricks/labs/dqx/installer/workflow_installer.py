@@ -10,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from packaging.requirements import InvalidRequirement, Requirement
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout as RequestsReadTimeout
 
@@ -542,6 +543,7 @@ class WorkflowDeployment(InstallationMixin):
             "databricks_sdk",
             "databricks_labs_lsql",
             "sqlalchemy",
+            "packaging",
         ]
 
     @staticmethod
@@ -575,6 +577,27 @@ class WorkflowDeployment(InstallationMixin):
         unique_prefixes = list(dict.fromkeys(prefixes))
         logger.info(f"Discovered {len(unique_prefixes)} dependencies from package metadata (including extras)")
         return unique_prefixes
+
+    @staticmethod
+    def _get_anomaly_dependencies() -> list[str]:
+        """Read the anomaly extra's requirements without importing optional packages."""
+        try:
+            requires = importlib.metadata.requires("databricks-labs-dqx") or []
+            requirements = [Requirement(requirement) for requirement in requires]
+        except (importlib.metadata.PackageNotFoundError, InvalidRequirement):
+            raise InvalidConfigError("Cannot read DQX package metadata to install anomaly dependencies.") from None
+
+        dependencies = []
+        for requirement in requirements:
+            marker = requirement.marker
+            if marker is None or not marker.evaluate({"extra": "anomaly"}) or marker.evaluate({"extra": ""}):
+                continue
+            # The extra selects dependencies here; pip must not re-evaluate it as an empty extra.
+            requirement.marker = None
+            dependencies.append(str(requirement))
+        if not dependencies:
+            raise InvalidConfigError("DQX package metadata does not declare anomaly dependencies.")
+        return list(dict.fromkeys(dependencies))
 
     def _upload_wheel(self):
         wheel_paths = []
@@ -741,6 +764,13 @@ class WorkflowDeployment(InstallationMixin):
 
         # Classic cluster, add libraries
         libraries = [compute.Library(whl=wheel) for wheel in remote_wheels]
+        if workflow == "anomaly-trainer" and not self._config.upload_dependencies:
+            # Classic wheel libraries cannot request extras. Install the declared requirements
+            # explicitly, instead of relying on incompatible runtime-bundled ML packages.
+            libraries.extend(
+                compute.Library(pypi=compute.PythonPyPiLibrary(package=requirement))
+                for requirement in self._get_anomaly_dependencies()
+            )
         return replace(
             jobs_task,
             job_cluster_key=jobs_task.job_cluster_key,
