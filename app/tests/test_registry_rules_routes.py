@@ -470,6 +470,37 @@ class TestBatchImport:
         assert result.reused[0].rule.rule_id == "r1"
         svc.create_rule.assert_called_once()
 
+    def test_skip_duplicates_keeps_rules_that_differ_only_in_filter(self):
+        # Same check on different rows is two rules: the second must not be
+        # reported as reused (and inherit the first rule's filter).
+        svc = MagicMock()
+        svc.compute_definition_fingerprint.side_effect = ["fp100", "fp200"]
+        svc.get_active_rule_by_fingerprint.return_value = None
+        svc.create_rule.side_effect = [(_rule("r100"), None), (_rule("r200"), None)]
+        code_100 = _definition().model_copy(update={"filter": "error_code = 100"})
+        code_200 = _definition().model_copy(update={"filter": "error_code = 200"})
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=code_100),
+                CreateRegistryRuleIn(mode="dqx_native", definition=code_200),
+            ],
+            skip_duplicates=True,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [c.rule.rule_id for c in result.created] == ["r100", "r200"]
+        assert result.reused == []
+        assert [call.kwargs["definition"].filter for call in svc.create_rule.call_args_list] == [
+            "error_code = 100",
+            "error_code = 200",
+        ]
+
     def test_skip_duplicates_off_never_dedupes(self):
         # Default posture: no fingerprinting, both identical rules are created.
         svc = MagicMock()

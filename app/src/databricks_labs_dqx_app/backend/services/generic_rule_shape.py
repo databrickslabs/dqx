@@ -41,20 +41,31 @@ def rename_slots(definition: RuleDefinition, renames: dict[str, str]) -> RuleDef
     """Copy of *definition* with slots renamed per *renames* (old -> new), body included."""
     renamed = definition.model_copy(deep=True)
     renamed.body = _rename_placeholders(renamed.body, renames)
+    if renamed.filter:
+        renamed.filter = _rename_placeholders(renamed.filter, renames)
     for slot in renamed.slots:
         slot.name = renames.get(slot.name, slot.name)
     return renamed
 
 
 def shape_key(mode: str, definition: RuleDefinition, polarity: str | None) -> str:
-    """Hash of the rule's structure with slots renamed to their position."""
+    """Hash of the rule's structure with slots renamed to their position.
+
+    The rule-level *filter* is part of the shape: two rules that run the same
+    check on different rows are different rules (matching registry_fingerprint).
+    """
     ordered = _ordered_slots(definition.slots)
     positional = {s.name: f"__slot_{i}" for i, s in enumerate(ordered)}
-    body = _rename_placeholders(definition.body, positional) if mode in _RENAMEABLE_MODES else definition.body
+    renameable = mode in _RENAMEABLE_MODES
+    body = _rename_placeholders(definition.body, positional) if renameable else definition.body
+    rule_filter = (definition.filter or "").strip()
+    if renameable:
+        rule_filter = _rename_placeholders(rule_filter, positional)
     payload = {
         "mode": mode,
         "polarity": polarity,
         "body": body,
+        "filter": rule_filter,
         "slots": (
             [positional[s.name] + ":" + s.cardinality for s in ordered]
             if mode in _RENAMEABLE_MODES
