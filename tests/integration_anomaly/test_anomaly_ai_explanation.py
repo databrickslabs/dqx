@@ -231,7 +231,9 @@ _AI_QUERY_REGRESSION_ENDPOINTS = [
     "databricks-llama-4-maverick",
     "databricks-gemma-3-12b",
     "databricks-meta-llama-3-3-70b-instruct",
-    "databricks-claude-3-7-sonnet",
+    # Replaces the retired databricks-claude-3-7-sonnet. One behind the newest Sonnet (5.5), so the matrix
+    # tracks a model that is broadly available rather than the latest release.
+    "databricks-claude-sonnet-5",
     "databricks-gpt-oss-20b",
 ]
 

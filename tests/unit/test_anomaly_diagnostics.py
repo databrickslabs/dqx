@@ -108,6 +108,66 @@ def test_endpoint_permission_and_legacy_http_errors_are_classified() -> None:
     )
 
 
+_MISSING_ENDPOINT_MESSAGE = (
+    "[AI_FUNCTION_COMPILATION_ERROR] An error occurred while compiling the AI function: INVALID_ARGUMENT: "
+    "'private-endpoint-name' does not exist or is not accessible. SQLSTATE: 42883; line 1 pos 7"
+)
+
+
+@pytest.mark.parametrize(
+    "error_class,message",
+    [
+        ("AI_FUNCTION_COMPILATION_ERROR", _MISSING_ENDPOINT_MESSAGE),
+        (None, _MISSING_ENDPOINT_MESSAGE),
+        ("AI_FUNCTION_COMPILATION_ERROR.ENDPOINT_NOT_FOUND", _MISSING_ENDPOINT_MESSAGE),
+        (
+            None,
+            _MISSING_ENDPOINT_MESSAGE.replace("[AI_FUNCTION_COMPILATION_ERROR]", "[AI_FUNCTION_COMPILATION_ERROR.X]"),
+        ),
+        ("AI_FUNCTION_COMPILATION_ERROR", _MISSING_ENDPOINT_MESSAGE.replace("does not exist", "Does Not Exist")),
+    ],
+)
+def test_a_missing_or_retired_endpoint_reported_at_compile_time_is_classified(
+    error_class: str | None, message: str
+) -> None:
+    """A retired endpoint (Claude 3.7 Sonnet) now fails while ai_query compiles, not with an HTTP status.
+
+    An exact match on the classifier's own wording is also what proves the endpoint name is not echoed.
+    """
+    assert (
+        endpoint_unavailable_reason(error_class, message)
+        == "Model serving endpoint does not exist or is not accessible"
+    )
+
+
+@pytest.mark.parametrize("error_class", ["AI_FUNCTION_COMPILATION_ERROR", None])
+def test_other_ai_function_compilation_errors_cannot_be_skipped(error_class: str | None) -> None:
+    message = "[AI_FUNCTION_COMPILATION_ERROR] INVALID_ARGUMENT: modelParameters has an unsupported key 'tokens'"
+
+    assert endpoint_unavailable_reason(error_class, message) is None
+
+
+@pytest.mark.parametrize("error_class", ["AI_FUNCTION_COMPILATION_ERROR", None])
+def test_a_compilation_error_wrapping_an_http_failure_keeps_its_status(error_class: str | None) -> None:
+    """The endpoint lookup's own HTTP failure, surfaced while compiling, is still an availability failure."""
+    message = (
+        "[AI_FUNCTION_COMPILATION_ERROR] An error occurred while compiling the AI function: "
+        "[REMOTE_FUNCTION_HTTP_FAILED_ERROR] request failed with status code 503, private-response-body"
+    )
+
+    assert (
+        endpoint_unavailable_reason(error_class, message)
+        == "Model serving endpoint is temporarily unavailable (HTTP 503)"
+    )
+
+
+def test_an_http_failure_subclass_is_classified_like_its_parent() -> None:
+    message = "[REMOTE_FUNCTION_HTTP_FAILED_ERROR.TIMEOUT] request failed with code 404"
+
+    assert endpoint_unavailable_reason("REMOTE_FUNCTION_HTTP_FAILED_ERROR.TIMEOUT", message) is not None
+    assert endpoint_unavailable_reason(None, message) is not None
+
+
 def test_worker_traceback_keeps_innermost_frames_with_bounded_output() -> None:
     message = (
         "\n".join(f'  File "/runtime/site-packages/pyspark/worker.py", line {line}, in invoke' for line in range(1, 51))
