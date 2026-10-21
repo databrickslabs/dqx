@@ -5631,6 +5631,43 @@ def test_warning_sql_query_refers_to_error_results(ws, spark: SparkSession):
     }
 
 
+@pytest.mark.parametrize("limit, expected_count_errors", [(3, []), (2, ["row_count_at_most_limit"])])
+def test_sql_query_with_non_unique_merge_columns_preserves_rows_for_later_aggregate(
+    ws, spark: SparkSession, limit: int, expected_count_errors: list[str]
+):
+    # "key" is not unique in the input, and the query returns several rows per key (UNION ALL)
+    df = spark.createDataFrame([(1, "a"), (2, "a"), (3, "b")], "id int, key string")
+    checks = [
+        DQDatasetRule(
+            name="key_is_a",
+            criticality="error",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs={
+                "query": "SELECT key, key = 'a' AS condition FROM {{ input_view }} "
+                "UNION ALL SELECT key, false AS condition FROM {{ input_view }}",
+                "merge_columns": ["key"],
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="row_count_at_most_limit",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": limit},
+        ),
+    ]
+
+    checked_df = DQEngine(ws).apply_checks(df, checks)
+
+    assert sorted(row["id"] for row in checked_df.select("id").collect()) == [1, 2, 3]
+    assert _issue_names(checked_df) == {
+        1: (["key_is_a", *expected_count_errors], []),
+        2: (["key_is_a", *expected_count_errors], []),
+        3: (expected_count_errors, []),
+    }
+
+
 @pytest.mark.parametrize("trim_strings", [False, True])
 @pytest.mark.parametrize("nulls_distinct", [False, True])
 @pytest.mark.parametrize("composite", [False, True])
