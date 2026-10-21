@@ -847,7 +847,7 @@ def test_sql_query_registers_only_referenced_dataframes():
     unused_ref.createOrReplaceTempView.assert_not_called()
 
 
-def test_foreign_key_checks_share_reference_projection():
+def test_foreign_key_checks_share_reference_projection() -> None:
     current_df = create_autospec(DataFrame)
     original_df = create_autospec(DataFrame)
     reference_df = create_autospec(DataFrame)
@@ -892,7 +892,7 @@ def test_foreign_key_checks_share_reference_projection():
 )
 def test_foreign_key_reference_projection_is_shared_only_for_the_same_column_names(
     first_kwargs, second_kwargs, reference_reads
-):
+) -> None:
     current_df = create_autospec(DataFrame)
     reference_df = create_autospec(DataFrame)
     spark = create_autospec(SparkSession)

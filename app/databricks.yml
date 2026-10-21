@@ -55,7 +55,7 @@ variables:
   # by docs/dqx/sync_versions.py (make fmt). The pin and the wheel filename below
   # both derive from it, so a bump only edits this one value.
   dqx_version:
-    default: "0.16.0"
+    default: "0.17.0"
   # Filename uv build produces for databricks-labs-dqx at ${var.dqx_version}. Used by
   # the development dqx_task_dependency override (see target.dev.yml.example): the app
   # publishes this wheel to the wheels volume at startup and the runner installs it.
