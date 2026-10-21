@@ -42,7 +42,12 @@ You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#d
 The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 </Admonition>
 
-The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. A `row_filter` passed in the check function arguments (for example to dataset-level checks such as `is_unique`) is validated the same way as `filter`. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/docs/guide/additional_configuration#suppressing-skipped-check-entries).
+
+<Admonition type="note" title="Unresolvable row_filter now skips the check (since 0.17.0)">
+Before 0.17.0, only the check-level `filter` was validated. A `row_filter` in the check function arguments that referenced a missing column raised an `AnalysisException` when the checks were applied. The check is now skipped and reported like an invalid `filter`, with a `checked_count` of `0` in the [summary metrics](/docs/guide/summary_metrics). With `suppress_skipped` enabled it leaves no entry in the results, so review skipped checks if you rely on the earlier error to catch typos.
+</Admonition>
+
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform standalone validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-quality-checks).
 

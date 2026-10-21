@@ -1,9 +1,13 @@
 """Behavioural tests for task-runner job reconciliation."""
 
-from unittest.mock import MagicMock
+import uuid
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
+from databricks.sdk.service.iam import GrantRule, RuleSetResponse, ServicePrincipal
 from databricks.sdk.service.jobs import (
     Job,
     JobAccessControlResponse,
@@ -14,7 +18,12 @@ from databricks.sdk.service.jobs import (
     JobSettings,
 )
 
-from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob, TaskRunnerJobManager
+from databricks_labs_dqx_app.backend.setup.job_manager import (
+    ResolvedJob,
+    TaskRunnerJobManager,
+    list_task_runner_principals,
+    normalize_application_id,
+)
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStepId, StepState
 
 
@@ -224,4 +233,280 @@ def test_validate_run_as_requires_a_distinct_service_principal(
     assert step.id == SetupStepId.TASK_RUNNER
     assert step.state == expected_state
     if expected_state == StepState.ACTION_REQUIRED:
-        assert step.actions == (SetupActionId.VERIFY_AGAIN,)
+        assert SetupActionId.VERIFY_AGAIN in step.actions
+
+
+RUNNER_APPLICATION_ID = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
+APP_APPLICATION_ID = "11111111-2222-4333-8444-555555555555"
+_RUN_AS_CODES = (
+    "task_runner_run_as_missing",
+    "task_runner_run_as_matches_app",
+    "task_runner_run_as_not_service_principal",
+)
+
+
+@pytest.mark.parametrize(
+    ("run_as", "code", "summary"),
+    [
+        (
+            None,
+            "task_runner_run_as_missing",
+            "Studio's background job needs its own service principal, separate from the app's. "
+            "Follow the three steps below.",
+        ),
+        (
+            JobRunAs(service_principal_name=APP_APPLICATION_ID),
+            "task_runner_run_as_matches_app",
+            "Studio's background job is currently using the app's own service principal instead of a dedicated "
+            "task runner service principal. Follow the steps below to create one.",
+        ),
+        (
+            JobRunAs(user_name="runner@example.com"),
+            "task_runner_run_as_not_service_principal",
+            "Studio's background job runs as a person, so it would stop working if they left. "
+            "It needs a service principal. Follow the three steps below.",
+        ),
+    ],
+)
+def test_validate_run_as_offers_choosing_a_service_principal_for_an_app_created_job(
+    manager: TaskRunnerJobManager, run_as: JobRunAs | None, code: str, summary: str
+) -> None:
+    """A job Studio created gets plain guidance and the in-Studio service principal picker."""
+    manager.workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=run_as))
+
+    step = manager.validate_run_as(42, APP_APPLICATION_ID)
+
+    assert step.code == code
+    assert step.summary == summary
+    assert step.actions == (SetupActionId.CHOOSE_TASK_RUNNER, SetupActionId.VERIFY_AGAIN)
+
+
+def test_validate_run_as_ready_offers_no_action(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = job_with_run_as(RUNNER_APPLICATION_ID)
+
+    step = manager.validate_run_as(42, APP_APPLICATION_ID)
+
+    assert step.code == "task_runner_run_as_ready"
+    assert step.actions == ()
+
+
+@pytest.mark.parametrize(
+    "run_as", [None, JobRunAs(service_principal_name=APP_APPLICATION_ID), JobRunAs(user_name="runner@example.com")]
+)
+def test_validate_run_as_points_bundle_managed_jobs_to_the_deployment_variable(
+    manager: TaskRunnerJobManager, run_as: JobRunAs | None
+) -> None:
+    """A bundle-managed job's run_as is set at deploy time, so Studio never offers to change it."""
+    manager.workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=run_as))
+
+    step = manager.validate_run_as(42, APP_APPLICATION_ID, managed_by_deployment=True)
+
+    assert step.code in _RUN_AS_CODES
+    assert step.summary == (
+        "Studio was installed with a deployment bundle, so this job's service principal is chosen at install "
+        "time and can't be changed here. Ask whoever installed Studio to set dqx_service_principal_application_id "
+        "in the bundle's settings to the Application ID of a service principal (not the app's own), then deploy "
+        "Studio again. After that, click Verify again."
+    )
+    assert step.actions == (SetupActionId.VERIFY_AGAIN,)
+
+
+def test_validate_run_as_passes_a_bundle_managed_job_with_its_own_service_principal(
+    manager: TaskRunnerJobManager,
+) -> None:
+    manager.workspace.jobs.get.return_value = job_with_run_as(RUNNER_APPLICATION_ID)
+
+    step = manager.validate_run_as(42, APP_APPLICATION_ID, managed_by_deployment=True)
+
+    assert step.state == StepState.PASSED
+    assert step.actions == ()
+
+
+def test_set_run_as_updates_only_the_job_run_as(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=None))
+
+    manager.set_run_as(42, RUNNER_APPLICATION_ID)
+
+    manager.workspace.jobs.update.assert_called_once()
+    call = manager.workspace.jobs.update.call_args.kwargs
+    assert call["job_id"] == 42
+    settings = call["new_settings"]
+    assert settings.run_as.service_principal_name == RUNNER_APPLICATION_ID
+    assert settings.as_dict() == {"run_as": {"service_principal_name": RUNNER_APPLICATION_ID}}
+
+
+def test_set_run_as_with_the_same_service_principal_is_a_no_op(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = job_with_run_as(RUNNER_APPLICATION_ID)
+
+    manager.set_run_as(42, RUNNER_APPLICATION_ID)
+
+    manager.workspace.jobs.update.assert_not_called()
+
+
+def test_set_run_as_lets_permission_errors_propagate(manager: TaskRunnerJobManager) -> None:
+    manager.workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=None))
+    manager.workspace.jobs.update.side_effect = PermissionDenied("missing servicePrincipal.user")
+
+    with pytest.raises(PermissionDenied):
+        manager.set_run_as(42, RUNNER_APPLICATION_ID)
+
+
+def test_configure_after_set_run_as_never_sends_run_as(manager: TaskRunnerJobManager) -> None:
+    """Studio's routine job update leaves the chosen (or bundle-set) run_as alone."""
+    manager.workspace.jobs.get.return_value = Job(settings=JobSettings(run_as=None))
+    manager.set_run_as(42, RUNNER_APPLICATION_ID)
+    manager.workspace.jobs.get.return_value = job_with_run_as(RUNNER_APPLICATION_ID)
+
+    manager.configure(42, ["/Volumes/c/s/v/runner.whl"])
+
+    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
+    assert settings.run_as is None
+    assert "run_as" not in settings.as_dict()
+
+
+@pytest.mark.parametrize("value", ["", "not-a-uuid", "6f1c2d3e4a5b", "admin@example.com", "6f1c2d3e-4a5b-4c6d-8e7f"])
+def test_application_id_must_be_a_uuid(value: str) -> None:
+    with pytest.raises(InvalidParameterError):
+        normalize_application_id(value)
+
+
+def test_application_id_is_normalized() -> None:
+    assert normalize_application_id(f"  {RUNNER_APPLICATION_ID.upper()} ") == RUNNER_APPLICATION_ID
+
+
+def _principal(display_name: str | None, application_id: str | None, principal_id: str = "1") -> ServicePrincipal:
+    return ServicePrincipal(id=principal_id, display_name=display_name, application_id=application_id)
+
+
+def test_list_task_runner_principals_excludes_the_app_and_sorts_by_name() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = iter(
+        [
+            _principal("zeta-runner", "22222222-2222-4222-8222-222222222222", "3"),
+            _principal("app-xyz dqx-studio", APP_APPLICATION_ID, "2"),
+            _principal("Alpha runner", RUNNER_APPLICATION_ID, "1"),
+            _principal("no application id", None, "4"),
+        ]
+    )
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID.upper())
+
+    workspace.service_principals.list.assert_called_once_with(attributes="id,displayName,applicationId")
+    assert [principal.display_name for principal in listing.principals] == ["Alpha runner", "zeta-runner"]
+    assert APP_APPLICATION_ID not in {principal.application_id for principal in listing.principals}
+    assert listing.app_display_name == "app-xyz dqx-studio"
+
+
+def test_list_task_runner_principals_is_capped_and_sanitized() -> None:
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = iter(
+        [_principal(f"runner\n{index:04d}", str(uuid.UUID(int=index + 1)), str(index)) for index in range(700)]
+    )
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID, limit=500)
+
+    assert len(listing.principals) == 500
+    assert all("\n" not in principal.display_name for principal in listing.principals)
+
+
+def test_list_task_runner_principals_reports_a_cut_list_and_stops_reading() -> None:
+    read: list[int] = []
+
+    def principals():
+        for index in range(700):
+            read.append(index)
+            yield _principal(f"runner {index:04d}", str(uuid.UUID(int=index + 1)), str(index))
+
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = principals()
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID, limit=500)
+
+    assert listing.truncated is True
+    assert len(listing.principals) == 500
+    assert len(read) == 501
+
+
+def test_list_task_runner_principals_is_not_cut_when_everything_fits() -> None:
+    # The app's own service principal doesn't count towards the limit.
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.service_principals.list.return_value = iter(
+        [
+            _principal("app", APP_APPLICATION_ID, "0"),
+            *[_principal(f"runner {index}", str(uuid.UUID(int=index + 1)), str(index)) for index in range(1, 3)],
+        ]
+    )
+
+    listing = list_task_runner_principals(workspace, APP_APPLICATION_ID, limit=2)
+
+    assert listing.truncated is False
+    assert len(listing.principals) == 2
+
+
+_RULE_SET_NAME = f"accounts/acct-1/servicePrincipals/{RUNNER_APPLICATION_ID}/ruleSets/default"
+
+
+def _rule_set(*rules: GrantRule) -> RuleSetResponse:
+    return RuleSetResponse(name=_RULE_SET_NAME, etag="etag", grant_rules=list(rules))
+
+
+@pytest.fixture
+def rule_set_manager() -> TaskRunnerJobManager:
+    """A job manager whose app client knows its Databricks account."""
+    workspace = create_autospec(WorkspaceClient, instance=True)
+    workspace.config.account_id = "acct-1"
+    return TaskRunnerJobManager(workspace=workspace)
+
+
+@pytest.mark.parametrize("role", ["roles/servicePrincipal.user", "roles/servicePrincipal.manager"])
+def test_app_permission_is_confirmed_when_the_app_holds_a_role_that_lets_it_use_the_service_principal(
+    rule_set_manager: TaskRunnerJobManager, role: str
+) -> None:
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.return_value = _rule_set(
+        GrantRule(role=role, principals=["users/admin@example.com", f"servicePrincipals/{APP_APPLICATION_ID}"])
+    )
+
+    outcome = rule_set_manager.app_permission_on(RUNNER_APPLICATION_ID, APP_APPLICATION_ID.upper())
+
+    assert outcome == "confirmed"
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.assert_called_once_with(
+        name=_RULE_SET_NAME, etag=""
+    )
+
+
+def test_app_permission_is_missing_when_the_readable_rule_set_has_no_role_for_the_app(
+    rule_set_manager: TaskRunnerJobManager,
+) -> None:
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.return_value = _rule_set(
+        GrantRule(role="roles/servicePrincipal.manager", principals=["users/admin@example.com"]),
+        GrantRule(role="roles/servicePrincipal.user", principals=["servicePrincipals/someone-else"]),
+    )
+
+    assert rule_set_manager.app_permission_on(RUNNER_APPLICATION_ID, APP_APPLICATION_ID) == "missing"
+
+
+def test_app_permission_is_unverified_when_a_group_could_give_the_app_the_role(
+    rule_set_manager: TaskRunnerJobManager,
+) -> None:
+    """Studio can't see the app's group memberships here, so a group grant can't be ruled out."""
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.return_value = _rule_set(
+        GrantRule(role="roles/servicePrincipal.user", principals=["groups/automation"]),
+    )
+
+    assert rule_set_manager.app_permission_on(RUNNER_APPLICATION_ID, APP_APPLICATION_ID) == "unverified"
+
+
+@pytest.mark.parametrize("error", [PermissionDenied("no access"), NotFound("no rule set"), ValueError("unsupported")])
+def test_app_permission_is_unverified_when_the_rule_set_cannot_be_read(
+    rule_set_manager: TaskRunnerJobManager, error: Exception
+) -> None:
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.side_effect = error
+
+    assert rule_set_manager.app_permission_on(RUNNER_APPLICATION_ID, APP_APPLICATION_ID) == "unverified"
+
+
+def test_app_permission_is_unverified_without_a_known_account(rule_set_manager: TaskRunnerJobManager) -> None:
+    rule_set_manager.workspace.config.account_id = None
+
+    assert rule_set_manager.app_permission_on(RUNNER_APPLICATION_ID, APP_APPLICATION_ID) == "unverified"
+    rule_set_manager.workspace.account_access_control_proxy.get_rule_set.assert_not_called()

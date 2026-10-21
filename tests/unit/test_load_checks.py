@@ -432,6 +432,50 @@ def test_save_checks_variables_none():
     mock_handler.save.assert_called_once_with(raw_checks, config)
 
 
+def test_save_checks_forwards_custom_check_functions():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [{"criticality": "error", "check": {"function": "custom_func", "arguments": {"column": "id"}}}]
+    custom_check_functions = {"custom_func": lambda column: column}
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config, custom_check_functions=custom_check_functions)
+
+    mock_handler.save.assert_called_once_with(raw_checks, config, custom_check_functions)
+
+
+def test_save_checks_supports_handler_without_custom_check_functions():
+    class TwoArgHandler:
+        def __init__(self):
+            self.saved: list[tuple[list[dict], FileChecksStorageConfig]] = []
+
+        def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
+            self.saved.append((checks, config))
+
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+
+    handler = TwoArgHandler()
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_factory.create.return_value = handler
+
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    engine.save_checks(raw_checks, config)
+
+    assert handler.saved == [(raw_checks, config)]
+
+
 def test_save_checks_with_engine_default_variables():
     ws = create_autospec(WorkspaceClient)
     mock_spark = create_autospec(SparkSession)

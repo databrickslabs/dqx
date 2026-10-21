@@ -1,11 +1,15 @@
 import json
 import time
+from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import Column, DataFrame
 from pyspark.testing.utils import assertDataFrameEqual
 
+from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.checks_serializer import serialize_checks
 from databricks.labs.dqx.checks_storage import DataFrameConverter
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.config import (
@@ -15,7 +19,8 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidConfigError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, UnsafeSqlQueryError
+from databricks.labs.dqx.rule import DQDatasetRule, register_rule
 from databricks.sdk.errors import NotFound
 
 
@@ -59,6 +64,14 @@ INPUT_CHECKS = [
 
 # When loading from a table, missing name becomes None; all other fields are preserved.
 EXPECTED_CHECKS_FROM_TABLE_LOAD = [{**check, "name": check.get("name")} for check in INPUT_CHECKS]
+
+
+@register_rule("dataset")
+def custom_dataset_check(col_name: str) -> tuple[Column, Callable]:
+    def apply(df: DataFrame) -> DataFrame:
+        return df.withColumn("tmp_cond", F.lit(True))
+
+    return make_condition(condition=F.col("tmp_cond"), message=f"{col_name} failed", alias="tmp_alias"), apply
 
 
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
@@ -281,6 +294,43 @@ def test_save_and_load_checks_from_table_preserves_message_expr(ws, make_schema,
 
     assert len(loaded) == 1
     assert loaded[0]["message_expr"] == "'custom message'"
+
+
+def test_save_and_load_checks_from_table_with_custom_dataset_rule(ws, make_schema, make_random, spark):
+    """A serialized custom dataset rule saves and loads through table storage when custom_check_functions is passed."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, mode="append")
+    custom_check_functions = {"custom_dataset_check": custom_dataset_check}
+    checks = serialize_checks(
+        [
+            DQDatasetRule(
+                criticality="error",
+                check_func=custom_dataset_check,
+                name="test custom check",
+                check_func_kwargs={"col_name": "x"},
+            )
+        ]
+    )
+
+    with pytest.raises(InvalidCheckError, match="custom_dataset_check"):
+        engine.save_checks(checks, config=config)
+
+    engine.save_checks(checks, config=config, custom_check_functions=custom_check_functions)
+    loaded = engine.load_checks(config=config)
+
+    assert loaded == checks
+
+    test_df = spark.createDataFrame([[1]], "x: int")
+    applied = engine.apply_checks_by_metadata(test_df, loaded, custom_check_functions)
+    stored = spark.read.table(table_name).select("name", "rule_fingerprint").first()
+    applied_error = applied.select(F.explode("_errors").alias("e")).select("e.name", "e.rule_fingerprint").first()
+
+    assert applied_error["name"] == stored["name"] == "test custom check"
+    assert applied_error["rule_fingerprint"] == stored["rule_fingerprint"]
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):

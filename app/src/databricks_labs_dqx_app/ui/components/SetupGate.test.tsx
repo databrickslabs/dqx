@@ -10,17 +10,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   SetupGate,
+  applyGrantsCallbacks,
   invalidateSetupStatus,
   reconciliationMutationOptions,
   setupPollingInBackground,
   setupPollingInterval,
 } from "./SetupGate";
 import { SetupShell, SetupWizard, workspaceJobsLink } from "./setup/SetupWizard";
-import { getGetSetupStatusQueryKey, type SetupStatusResponse } from "@/lib/api";
+import {
+  getApplySetupStepGrantsMutationOptions,
+  getGetSetupStatusQueryKey,
+  type SetupStatusResponse,
+} from "@/lib/api";
 import { getWorkspaceHostQueryKey } from "@/lib/api-custom";
 import { useTheme } from "@/components/layout/theme-provider";
 import en from "@/lib/i18n/locales/en.json";
 import { setupView } from "@/lib/setup-state";
+import type { SetupOptionList } from "@/lib/setup-options";
 
 Object.defineProperty(globalThis, "__APP_NAME__", { value: "DQX Studio" });
 Object.defineProperty(globalThis, "localStorage", {
@@ -195,7 +201,7 @@ describe("SetupGate", () => {
       id: "configuration",
       state: "action_required",
       code: "configuration_required",
-      summary: "Choose the catalog, storage prefix and audience group for DQX Studio.",
+      summary: "Choose the catalog, storage prefix and default user group for DQX Studio.",
       actions: ["configure"],
     });
 
@@ -215,14 +221,14 @@ describe("SetupGate", () => {
       id: "configuration",
       state: "action_required",
       code: "saved_configuration_invalid",
-      summary: "The Studio catalog, storage prefix or audience group isn't valid.",
+      summary: "The Studio catalog, storage prefix or default user group isn't valid.",
     });
 
     const markup = renderGate(status);
 
     expect(markup).toContain(en.setup.notAdmin.configurationPending);
     expect(markup).toContain("saved_configuration_invalid");
-    expect(markup).not.toContain("storage prefix or audience group isn");
+    expect(markup).not.toContain("storage prefix or default user group isn");
   });
 
   test.each(["failed", "warning"] as const)(
@@ -233,7 +239,7 @@ describe("SetupGate", () => {
         id: "configuration",
         state,
         code: "configuration_unreadable",
-        summary: "Fix the catalog, storage prefix or audience group, then click Verify again.",
+        summary: "Fix the catalog, storage prefix or default user group, then click Verify again.",
       });
 
       const markup = renderGate(status);
@@ -406,13 +412,21 @@ function configurationStatus(canManage: boolean): SetupStatusResponse {
   };
 }
 
-function renderWizard(status: SetupStatusResponse): string {
+function renderWizard(
+  status: SetupStatusResponse,
+  {
+    editingConfiguration = false,
+    catalogList,
+  }: { editingConfiguration?: boolean; catalogList?: SetupOptionList } = {},
+): string {
   return renderSetup(
     <SetupWizard
-      view={setupView(status)}
+      view={setupView(status, new Set(), editingConfiguration)}
       isReconciling={false}
       onReconcile={() => undefined}
       reconciliationFailed={false}
+      catalogList={catalogList}
+      onEditConfiguration={() => undefined}
     />,
   );
 }
@@ -423,6 +437,14 @@ describe("setup configuration", () => {
     expect(html).toContain('name="catalog"');
     expect(html).toContain('value="dqx_studio"');
     expect(html).toContain('name="audience_group"');
+  });
+
+  test("the form picks the catalog from the listed catalogs", () => {
+    const html = renderWizard(configurationStatus(true), {
+      catalogList: { status: "ready", options: ["main"] },
+    });
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain('name="catalog"');
   });
 
   test("non-admins never see the form", () => {
@@ -549,21 +571,33 @@ describe("editable saved configuration", () => {
     return status;
   }
 
-  test("a passed configuration step that advertises configure shows a prefilled form", () => {
+  test("after saving, the passed step shows the saved choices and a change button, not the form", () => {
     const html = renderWizard(savedStatus());
+
+    expect(html).not.toContain('name="catalog"');
+    expect(html).not.toContain(`>${en.setup.configuration.submit}<`);
+    expect(html).toContain("custom_prefix_tmp");
+    expect(html).toContain(`>${en.setup.configuration.edit}</button>`);
+  });
+
+  test("choosing to change saved choices opens a prefilled form that can be cancelled", () => {
+    const html = renderWizard(savedStatus(), { editingConfiguration: true });
 
     expect(html).toContain('name="catalog"');
     expect(html).toContain('value="main"');
     expect(html).toContain('value="custom_prefix"');
     expect(html).toContain('value="data-team"');
-    expect(html).toContain("custom_prefix_tmp");
+    expect(html).toContain(`>${en.common.cancel}</button>`);
+    expect(html).not.toContain(`>${en.setup.configuration.edit}</button>`);
   });
 
   test("a saved configuration without configure stays read-only", () => {
     const status = savedStatus();
     status.report.steps[1] = { id: "configuration", state: "passed" };
 
-    expect(renderWizard(status)).not.toContain('name="catalog"');
+    const html = renderWizard(status);
+    expect(html).not.toContain('name="catalog"');
+    expect(html).not.toContain(`>${en.setup.configuration.edit}</button>`);
   });
 });
 
@@ -652,5 +686,152 @@ describe("setup overrides", () => {
     const markup = renderWithOverride(status);
 
     expect(markup).toContain(en.setup.states.overridden);
+  });
+});
+
+describe("setup grant statements", () => {
+  const GRANTS = [
+    "GRANT USE_CATALOG ON CATALOG `main` TO `runner`;",
+    "GRANT USE_SCHEMA ON SCHEMA `main`.`dqx_studio` TO `runner`;",
+    "GRANT READ_VOLUME ON VOLUME `main`.`dqx_studio`.`wheels` TO `runner`;",
+  ];
+  const RUN_LABEL = `aria-label="${en.sqlCodeBlock.run}"`;
+
+  function grantStatus(canManage = true): SetupStatusResponse {
+    return {
+      can_manage: canManage,
+      admin_group: "dqx-admins",
+      report: {
+        state: "setup_required",
+        current_step: "task_runner",
+        steps: [
+          {
+            id: "task_runner",
+            state: "action_required",
+            code: "task_runner_permissions_missing",
+            summary: "The task runner doesn't have all the permissions it needs.",
+            instructions: ["Studio needs the access below before it can continue."],
+            grant_statements: GRANTS,
+            actions: ["verify_again"],
+          },
+        ],
+      },
+    };
+  }
+
+  function renderGrants(
+    props: Partial<React.ComponentProps<typeof SetupWizard>> = {},
+    status: SetupStatusResponse = grantStatus(),
+  ): string {
+    return renderSetup(
+      <SetupWizard
+        view={setupView(status)}
+        isReconciling={false}
+        onReconcile={() => undefined}
+        reconciliationFailed={false}
+        onApplyGrants={() => undefined}
+        {...props}
+      />,
+    );
+  }
+
+  test("shows the prose and every statement in one copyable code block", () => {
+    const markup = renderGrants();
+
+    expect(markup).toContain("Studio needs the access below before it can continue.");
+    expect(markup).toContain(GRANTS.join("\n"));
+    // The prose is plain text; only the statements are a code block.
+    expect(markup.split("<pre").length - 1).toBe(1);
+    expect(markup).toContain(`aria-label="${en.common.copy}"`);
+    expect(markup).toContain(RUN_LABEL);
+  });
+
+  test("only administrators can run the statements", () => {
+    expect(renderGate(grantStatus(false))).not.toContain(RUN_LABEL);
+    expect(renderGate(grantStatus(false))).toContain(GRANTS[0]);
+    expect(renderGrants({ onApplyGrants: undefined })).not.toContain(RUN_LABEL);
+  });
+
+  test("the line above the statements points to the Run button only when it's there", () => {
+    const escape = (text: string) => text.replace(/'/g, "&#x27;");
+    expect(renderGrants()).toContain(escape(en.setup.grants.leadRun));
+    expect(renderGrants({ onApplyGrants: undefined })).toContain(escape(en.setup.grants.leadCopy));
+    expect(renderGrants({ onApplyGrants: undefined })).not.toContain(escape(en.setup.grants.leadRun));
+  });
+
+  test("shows a spinner on the step whose statements are running", () => {
+    const markup = renderGrants({ applyingGrantsStepId: "task_runner" });
+
+    expect(markup).toContain("animate-spin");
+    expect(markup).toContain('disabled=""');
+  });
+
+  test("explains a partial failure without repeating the step's commands", () => {
+    const markup = renderGrants({
+      grantOutcome: {
+        stepId: "task_runner",
+        outcome: {
+          summary: { applied: 2, total: 3 },
+          failedSql: GRANTS[1],
+          errorCodes: ["permission_denied"],
+        },
+      },
+    });
+
+    expect(markup).toContain("Done: 2 of 3.");
+    expect(markup).toContain(escapeHtml(en.setup.grants.errors.permission_denied));
+    expect(markup).toContain('role="alert"');
+    // The step's own code cell already shows the commands; the notice doesn't repeat them.
+    expect(markup.split(GRANTS[1]).length - 1).toBe(1);
+  });
+
+  test("keeps another step's outcome off this step", () => {
+    const markup = renderGrants({
+      grantOutcome: {
+        stepId: "access",
+        outcome: { summary: null, failedSql: "", errorCodes: ["unknown"] },
+      },
+    });
+
+    expect(markup).not.toContain(escapeHtml(en.setup.grants.errors.unknown));
+  });
+
+  test("the run icon calls the step's apply-grants endpoint and updates the report", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(getGetSetupStatusQueryKey(), { data: grantStatus() });
+    const requests: { method?: string; url?: string; data?: unknown }[] = [];
+    const nextReport = { state: "ready" as const, steps: [] };
+    const mutation = new MutationObserver(
+      queryClient,
+      getApplySetupStepGrantsMutationOptions({
+        mutation: applyGrantsCallbacks(queryClient),
+        axios: {
+          adapter: async (config) => {
+            requests.push({ method: config.method, url: config.url, data: config.data });
+            return {
+              data: { report: nextReport, applied: 3, total: 3, failed: [] },
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              config,
+            };
+          },
+        },
+      }),
+    );
+
+    await mutation.mutate({ stepId: "task_runner" });
+
+    expect(requests).toEqual([
+      { method: "post", url: "/api/v1/setup/steps/task_runner/apply-grants", data: undefined },
+    ]);
+    const cached = queryClient.getQueryData<{ data: SetupStatusResponse }>(
+      getGetSetupStatusQueryKey(),
+    );
+    expect(cached?.data.report).toEqual(nextReport);
+    expect(cached?.data.can_manage).toBe(true);
+    expect(
+      queryClient.getQueryState(getGetSetupStatusQueryKey())?.isInvalidated,
+    ).toBe(true);
   });
 });
