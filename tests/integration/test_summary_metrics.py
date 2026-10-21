@@ -1,9 +1,11 @@
 import json
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from pyspark.testing.utils import assertDataFrameEqual
 
@@ -15,11 +17,13 @@ from databricks.labs.dqx.config import (
     RunConfig,
     TableChecksStorageConfig,
 )
+from databricks.labs.dqx.check_funcs import is_not_null
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
 from databricks.labs.dqx.reporting_columns import ColumnArguments
+from databricks.labs.dqx.rule import DQRowRule
 
 from tests.constants import TEST_CATALOG
 from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME
@@ -49,10 +53,87 @@ TEST_CHECKS_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(TEST
 TEST_OBSERVER_NAME = "test_observer"
 # Expected check_metrics JSON value for TEST_CHECKS with standard 4-row test data
 # (row 3 has id=None → error, row 4 has name=None → warning)
-TEST_CHECK_METRICS_VALUE = (
-    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
-    '{"check_name":"name_is_not_null_and_not_empty","error_count":0,"warning_count":1}]'
-)
+TEST_CHECKS_RULE_FINGERPRINTS = [rule.rule_fingerprint for rule in deserialize_checks(TEST_CHECKS)]
+TEST_CHECK_METRICS = [
+    {
+        "check_name": "id_is_not_null",
+        "rule_fingerprint": TEST_CHECKS_RULE_FINGERPRINTS[0],
+        "error_count": 1,
+        "warning_count": 0,
+        "checked_count": 4,
+    },
+    {
+        "check_name": "name_is_not_null_and_not_empty",
+        "rule_fingerprint": TEST_CHECKS_RULE_FINGERPRINTS[1],
+        "error_count": 0,
+        "warning_count": 1,
+        "checked_count": 4,
+    },
+]
+TEST_CHECK_METRICS_VALUE = json.dumps(TEST_CHECK_METRICS, separators=(",", ":"))
+
+
+ENRICHED_CHECKS = [
+    {
+        "name": "id_is_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        "user_metadata": {"owner": "data-eng", "team": "ingest"},
+    },
+    {
+        "name": "name_check",
+        "criticality": "warn",
+        "filter": "age > 26",
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
+    },
+    {
+        "name": "name_check",
+        "criticality": "error",
+        "filter": "age < 28",
+        "check": {"function": "is_not_null", "arguments": {"column": "name"}},
+    },
+    {
+        "name": "salary_sum_within_limit",
+        "criticality": "error",
+        "filter": "age > 26",
+        "check": {
+            "function": "is_aggr_not_greater_than",
+            "arguments": {"column": "salary", "aggr_type": "sum", "limit": 100000},
+        },
+    },
+]
+ENRICHED_CHECKS_RULE_FINGERPRINTS = [rule.rule_fingerprint for rule in deserialize_checks(ENRICHED_CHECKS)]
+ENRICHED_CHECK_METRICS = [
+    {
+        "check_name": "id_is_not_null",
+        "rule_fingerprint": ENRICHED_CHECKS_RULE_FINGERPRINTS[0],
+        "error_count": 1,
+        "warning_count": 0,
+        "checked_count": 4,
+        "user_metadata": {"owner": "data-eng", "team": "ingest"},
+    },
+    {
+        "check_name": "name_check",
+        "rule_fingerprint": ENRICHED_CHECKS_RULE_FINGERPRINTS[1],
+        "error_count": 0,
+        "warning_count": 1,
+        "checked_count": 3,
+    },
+    {
+        "check_name": "name_check",
+        "rule_fingerprint": ENRICHED_CHECKS_RULE_FINGERPRINTS[2],
+        "error_count": 0,
+        "warning_count": 0,
+        "checked_count": 1,
+    },
+    {
+        "check_name": "salary_sum_within_limit",
+        "rule_fingerprint": ENRICHED_CHECKS_RULE_FINGERPRINTS[3],
+        "error_count": 3,
+        "warning_count": 0,
+        "checked_count": 3,
+    },
+]
 
 
 def test_observer_custom_column_names(ws, spark):
@@ -2998,10 +3079,7 @@ def test_observer_check_metrics(ws, spark, apply_checks_method):
 
     # Per-check metrics as compact JSON
     check_metrics = json.loads(actual_metrics["check_metrics"])
-    assert check_metrics == [
-        {"check_name": "id_is_not_null", "error_count": 1, "warning_count": 0},
-        {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 1},
-    ]
+    assert check_metrics == TEST_CHECK_METRICS
 
 
 @pytest.mark.parametrize(
@@ -3017,13 +3095,12 @@ def test_observer_check_metrics(ws, spark, apply_checks_method):
 def test_observer_check_metrics_name_round_trip(ws, spark, check_name):
     """Test that check names survive the SQL literal round-trip into check_metrics.
 
-    ``check_metrics`` is assembled as a SQL string expression, so the check name is embedded in a
-    single-quoted literal twice over (once JSON-encoded, once as an exists() comparison). Spark's
-    parser honours backslash escapes there, which broke two name shapes:
+    ``check_metrics`` is assembled as a SQL string expression, so the check name is embedded
+    JSON-encoded in a single-quoted literal. Spark's parser honours backslash escapes there, which
+    broke two name shapes:
 
       * a single quote was dropped (``it's_valid`` reported as ``its_valid``) because ANSI ''
-        doubling is not honoured in this mode, so the exists() comparison never matched and the
-        check was reported as passing;
+        doubling is not honoured in this mode;
       * a double quote produced malformed JSON, because the backslash json.dumps adds was consumed
         by the parser, so json.loads on the metric raised.
     """
@@ -3044,7 +3121,15 @@ def test_observer_check_metrics_name_round_trip(ws, spark, check_name):
 
     # json.loads must not raise, and the name must come back byte-for-byte.
     check_metrics = json.loads(observation.get["check_metrics"])
-    assert check_metrics == [{"check_name": check_name, "error_count": 1, "warning_count": 0}]
+    assert check_metrics == [
+        {
+            "check_name": check_name,
+            "rule_fingerprint": deserialize_checks(checks)[0].rule_fingerprint,
+            "error_count": 1,
+            "warning_count": 0,
+            "checked_count": 2,
+        }
+    ]
 
 
 @pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
@@ -3120,6 +3205,198 @@ def test_observer_check_metrics_change_between_runs(ws, spark):
     checked_df2, observation2 = dq_engine2.apply_checks_by_metadata(test_df, [TEST_CHECKS[0]])
     checked_df2.count()
     _assert_check_metrics(observation2.get, ["id_is_not_null"])
+
+
+def test_observer_check_metrics_with_filters_metadata_and_duplicate_names(ws, spark):
+    """Test that check_metrics carries fingerprints, rule-level metadata, and filter-scoped checked counts."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    checked_df, observation = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), ENRICHED_CHECKS)
+    checked_df.count()
+
+    assert json.loads(observation.get["check_metrics"]) == ENRICHED_CHECK_METRICS
+
+
+def test_compute_summary_metrics_check_metrics_with_filters_metadata_and_duplicate_names(ws, spark):
+    """Test that compute_summary_metrics produces the same enriched check_metrics as the observer."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    checked_df, _ = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), ENRICHED_CHECKS)
+    metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=ENRICHED_CHECKS)
+
+    [row] = metrics_df.where("metric_name = 'check_metrics'").collect()
+    assert json.loads(row["metric_value"]) == ENRICHED_CHECK_METRICS
+
+
+@pytest.mark.parametrize("metrics_source", ["observer", "compute_summary_metrics"])
+def test_check_metrics_report_zero_checked_count_for_skipped_checks(ws, spark, metrics_source):
+    """Test that checks skipped for an unresolvable filter, row_filter, or invalid columns report a checked count of 0."""
+    checks = [
+        {
+            "name": "unresolvable_filter",
+            "criticality": "error",
+            "filter": "missing_column > 1",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+        {
+            "name": "invalid_column",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "missing_column"}},
+        },
+        {
+            "name": "unresolvable_row_filter",
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["id"], "row_filter": "missing_column > 1"}},
+        },
+        {
+            "name": "id_is_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+    ]
+
+    check_metrics = _get_check_metrics(ws, spark, _standard_test_df(spark), checks, metrics_source)
+
+    assert [m["checked_count"] for m in check_metrics] == [0, 0, 0, 4]
+
+
+def test_check_metrics_user_metadata_matches_row_level_results(ws, spark):
+    """Test that check_metrics renders rule-level user_metadata exactly like the row-level result map."""
+    user_metadata = {
+        "it's \"quoted\"": "back\\slash\nnew\tline\x01",
+        "flag": True,
+        "ratio": 0.95,
+        "count": 2,
+        "missing": None,
+    }
+    checks = [
+        DQRowRule(
+            name="id_is_not_null", criticality="error", check_func=is_not_null, column="id", user_metadata=user_metadata
+        )
+    ]
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    checked_df, observation = dq_engine.apply_checks(_standard_test_df(spark), checks)
+    [row] = (
+        checked_df.where("id is null")
+        .select(F.col("_errors").getItem(0).getField("user_metadata").alias("m"))
+        .collect()
+    )
+
+    [check_metrics] = json.loads(observation.get["check_metrics"])
+    assert check_metrics["user_metadata"] == row["m"]
+    assert check_metrics["user_metadata"]["flag"] == "true"
+
+
+@pytest.mark.parametrize("metrics_source", ["observer", "compute_summary_metrics"])
+def test_check_metrics_user_metadata_excludes_engine_level_metadata(ws, spark, metrics_source):
+    """Test that check_metrics carries only rule-level user_metadata, while engine-level user_metadata is merged
+    into the row-level results and reported on the summary metrics row instead."""
+    engine_metadata = {"env": "prod", "owner": "engine"}
+    rule_metadata = {"owner": "rule"}
+    checks = [
+        {
+            "name": "id_is_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            "user_metadata": rule_metadata,
+        }
+    ]
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(
+        workspace_client=ws,
+        spark=spark,
+        observer=observer,
+        extra_params=replace(EXTRA_PARAMS, user_metadata=engine_metadata),
+    )
+
+    checked_df, observation = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), checks)
+    [row] = (
+        checked_df.where("id is null")
+        .select(F.col("_errors").getItem(0).getField("user_metadata").alias("m"))
+        .collect()
+    )
+    if metrics_source == "observer":
+        check_metrics_value = observation.get["check_metrics"]
+    else:
+        metrics_df = dq_engine.compute_summary_metrics(checked_df, checks=checks)
+        [metrics_row] = metrics_df.where("metric_name = 'check_metrics'").collect()
+        assert metrics_row["user_metadata"] == engine_metadata
+        check_metrics_value = metrics_row["metric_value"]
+
+    [check_metrics] = json.loads(check_metrics_value)
+    assert row["m"] == {"env": "prod", "owner": "rule"}  # the rule's value wins over the engine's
+    assert check_metrics["user_metadata"] == rule_metadata
+
+
+@pytest.mark.parametrize("metrics_source", ["observer", "compute_summary_metrics"])
+def test_check_metrics_dataset_check_counts_rows_not_groups(ws, spark, metrics_source):
+    """Test that a filtered, grouped dataset-level check counts the filtered rows rather than the groups."""
+    test_df = spark.createDataFrame(
+        [[1, "a", 30], [2, "a", 30], [3, "b", 30], [4, "b", 30], [5, "c", 10]],
+        "id int, grp string, age int",
+    )
+    checks = [
+        {
+            "name": "grp_count_within_limit",
+            "criticality": "error",
+            "filter": "age > 20",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "id", "aggr_type": "count", "group_by": ["grp"], "limit": 1},
+            },
+        }
+    ]
+
+    [check_metrics] = _get_check_metrics(ws, spark, test_df, checks, metrics_source)
+
+    assert check_metrics["checked_count"] == 4
+    assert check_metrics["error_count"] == 4
+
+
+def test_check_metrics_parse_with_narrow_from_json_schema(ws, spark):
+    """Test that the pre-existing narrow from_json schema still parses the enriched check_metrics."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+    checked_df, observation = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), ENRICHED_CHECKS)
+    checked_df.count()
+
+    narrow_schema = "array<struct<check_name:string,error_count:bigint,warning_count:bigint>>"
+    rows = (
+        spark.createDataFrame([[observation.get["check_metrics"]]], "metric_value string")
+        .select(F.explode(F.from_json("metric_value", narrow_schema)).alias("cm"))
+        .select("cm.*")
+        .collect()
+    )
+
+    assert [row.asDict() for row in rows] == [
+        {key: m[key] for key in ("check_name", "error_count", "warning_count")} for m in ENRICHED_CHECK_METRICS
+    ]
+
+
+def test_compute_summary_metrics_on_results_without_rule_fingerprint(ws, spark):
+    """Test that compute_summary_metrics matches checks by name on results written before rule_fingerprint existed."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+    checked_df, _ = dq_engine.apply_checks_by_metadata(_standard_test_df(spark), TEST_CHECKS)
+    legacy_df = checked_df.select(
+        "id",
+        "name",
+        "age",
+        "salary",
+        *[
+            F.transform(column, lambda x: x.dropFields("rule_fingerprint", "rule_set_fingerprint")).alias(column)
+            for column in ("_errors", "_warnings")
+        ],
+    )
+
+    metrics_df = dq_engine.compute_summary_metrics(legacy_df, checks=TEST_CHECKS)
+
+    [row] = metrics_df.where("metric_name = 'check_metrics'").collect()
+    assert json.loads(row["metric_value"]) == TEST_CHECK_METRICS
 
 
 def test_save_results_in_table_with_observer_no_observation(ws, spark, make_schema, make_random):
@@ -3310,3 +3587,17 @@ def test_compute_summary_metrics_current_timestamp_and_user_metadata(ws, spark):
     assert all(row["run_time"] is not None for row in rows)
     # user_metadata is emitted as a map on every metric row.
     assert all(row["user_metadata"] == user_metadata for row in rows)
+
+
+def _get_check_metrics(ws, spark, test_df, checks: list[dict], metrics_source: str) -> list[dict]:
+    """Applies metadata checks and returns the parsed check_metrics from the observer or compute_summary_metrics."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, checks)
+    if metrics_source == "observer":
+        checked_df.count()
+        return json.loads(observation.get["check_metrics"])
+    [row] = (
+        dq_engine.compute_summary_metrics(checked_df, checks=checks).where("metric_name = 'check_metrics'").collect()
+    )
+    return json.loads(row["metric_value"])

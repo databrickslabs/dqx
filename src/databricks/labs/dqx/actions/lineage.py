@@ -47,7 +47,7 @@ from databricks.labs.dqx.actions.registry import register_action
 from databricks.labs.dqx.config import TABLE_PATTERN, OutputConfig
 from databricks.labs.dqx.errors import InvalidActionError
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.utils import quote_column_name
+from databricks.labs.dqx.utils import escape_sql_string_literal, quote_column_name
 
 logger = logging.getLogger(__name__)
 
@@ -500,17 +500,16 @@ def _empty_lineage_df(spark: SparkSession) -> DataFrame:
 
 
 def _sql_str_literal(value: str) -> str:
-    """Escape a Python string for safe inclusion as a single-quoted SQL string literal.
+    """Wrap a Python string as a single-quoted SQL string literal, escaped by *escape_sql_string_literal*.
 
-    Escapes both characters Spark's default string-literal parser treats specially
-    (``spark.sql.parser.escapedStringLiterals=false``): a backslash is doubled, and a single
-    quote is doubled. The backslash is escaped **first** so that the quote-doubling it introduces
-    is not itself re-escaped. Without the backslash handling a value ending in a backslash (e.g. a
-    path-style *input_location*) would escape the closing quote and produce a malformed — and
-    potentially injectable — literal. Used by the lineage queries where parameter markers cannot be
-    applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has to be inlined as a literal.
+    The backslash is doubled, so a value ending in a backslash (e.g. a path-style *input_location*)
+    cannot escape the closing quote and produce a malformed — and potentially injectable — literal.
+    The single quote is escaped as ``\\'``: a doubled ``''`` is concatenated away by Spark, so the
+    lookup would silently miss a table such as ``o'brien``. Used by the lineage queries where
+    parameter markers cannot be applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has
+    to be inlined as a literal.
     """
-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+    return f"'{escape_sql_string_literal(value)}'"
 
 
 def _fully_qualified_identifier(name: str) -> str:

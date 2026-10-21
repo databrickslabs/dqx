@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from databricks_labs_dqx_app.backend.dependencies import get_discovery_service
+from databricks_labs_dqx_app.backend.dependencies import get_catalog_discovery_service, get_discovery_service
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     CatalogOut,
@@ -27,14 +27,15 @@ router = APIRouter()
 
 @router.get("/catalogs", response_model=list[CatalogOut], operation_id="listCatalogs")
 async def list_catalogs(
-    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+    discovery: Annotated[DiscoveryService, Depends(get_catalog_discovery_service)],
 ) -> list[CatalogOut]:
+    """List the catalogs the calling user can see; available before setup is ready."""
     try:
         catalogs = await discovery.list_catalogs_async()
-        return [CatalogOut(name=c.name or "", comment=c.comment) for c in catalogs]
     except Exception as e:
-        logger.error(f"Failed to list catalogs: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list catalogs: {e}")
+        logger.error(f"Failed to list catalogs: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Failed to list catalogs.") from None
+    return [CatalogOut(name=c.name or "", comment=c.comment) for c in catalogs]
 
 
 @router.get(

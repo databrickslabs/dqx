@@ -12,6 +12,7 @@ from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
+    escape_sql_string_literal,
     get_column_name_or_alias,
     is_sql_query_safe,
     to_utc,
@@ -1032,3 +1033,11 @@ def test_unquote_reverses_quote_column_name(name: str):
 )
 def test_normalize_column_expr(column: str, expected: str):
     assert normalize_column_expr(column) == expected
+
+
+def test_escape_sql_string_literal_escapes_quote_and_backslash():
+    """Single quote -> \\' and backslash -> \\\\. Spark runs with escapedStringLiterals=false, where a
+    doubled '' pair is dropped rather than unescaped (o'brien -> obrien), so the backslash form is required."""
+    assert escape_sql_string_literal("o'brien") == "o\\'brien"
+    assert escape_sql_string_literal("a\\b") == "a\\\\b"
+    assert escape_sql_string_literal("x'\\y") == "x\\'\\\\y"

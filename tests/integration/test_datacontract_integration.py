@@ -12,12 +12,12 @@ import contextlib
 import logging
 import os
 import tempfile
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
 from datacontract.data_contract import DataContract
-from pyspark.sql import SparkSession
+from pyspark.sql import Row, SparkSession
 from pyspark.sql import types as spark_types
 
 from databricks.sdk import WorkspaceClient
@@ -46,6 +46,21 @@ def _generate_rules_from_temp_contract(
             os.unlink(path)
         except OSError:
             pass
+
+
+def _flagged_names(row: Row) -> set[str]:
+    """Return the set of check names present in a row's _errors array (empty set if none)."""
+    errors = row["_errors"]
+    return {e["name"] for e in errors} if errors else set()
+
+
+def _assert_flagged_only(flagged_by_row: dict[int, set[str]], check_name: str, expected_row_ids: set[int]) -> None:
+    """Assert check_name is flagged for exactly expected_row_ids among flagged_by_row's rows."""
+    for row_id, names in flagged_by_row.items():
+        if row_id in expected_row_ids:
+            assert check_name in names, f"row {row_id}: expected '{check_name}' violation"
+        else:
+            assert check_name not in names, f"row {row_id}: unexpected '{check_name}' violation"
 
 
 @contextlib.contextmanager
@@ -714,3 +729,343 @@ class TestDataContractIntegrationErrors:
             )
         msg = str(exc_info.value).lower()
         assert "not a valid" in msg or "unity catalog" in msg or "NOT_A_UC_TYPE" in str(exc_info.value)
+
+
+class TestLibraryMetricsIntegration:
+    """End-to-end integration coverage for ODCS `type: library` quality metric rule generation."""
+
+    @pytest.fixture
+    def library_metrics_contract_path(self):
+        """Path to the type: library quality metrics fixture contract."""
+        tests_dir = os.path.dirname(os.path.dirname(__file__))
+        return os.path.join(tests_dir, "resources", "sample_datacontract_library_metrics.yaml")
+
+    def test_generate_and_apply_library_metric_rules_end_to_end(self, ws, spark, library_metrics_contract_path):
+        """Generate rules from a contract covering all five library metrics and apply them to real data."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=library_metrics_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+        generated_metrics = {r["user_metadata"]["metric"] for r in rules}
+        assert generated_metrics == {"rowCount", "nullValues", "missingValues", "invalidValues", "duplicateValues"}
+
+        missing_values_rule = next(r for r in rules if r["user_metadata"]["metric"] == "missingValues")
+        assert (
+            missing_values_rule["check"]["function"] == "sql_query"
+        ), "missingValues mustBeGreaterThan has no aggregate equivalent and must fall back to sql_query"
+
+        schema = "row_id: int, customer_id: string, email: string, status: string, phone: string"
+        test_df = spark.createDataFrame(
+            [
+                [1, "C1", "a@example.com", "ACTIVE", "111-111-1111"],
+                [2, "C2", None, "ACTIVE", "222-222-2222"],
+                [3, "C2", "c@example.com", "ACTIVE", "333-333-3333"],
+                [4, "C3", "d@example.com", "PENDING", None],
+                [5, "C4", "e@example.com", "INACTIVE", ""],
+            ],
+            schema,
+        )
+
+        dq_engine = DQEngine(workspace_client=ws)
+        checked = dq_engine.apply_checks_by_metadata(test_df, rules)
+
+        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.collect()}
+
+        # rowCount (mustBeGreaterOrEqualTo: 10, no row_filter) is a dataset-wide aggregate: the
+        # contract's 5-row dataset fails count >= 10, so every row is flagged with it.
+        _assert_flagged_only(flagged_by_row, "customers_rowCount_mustBeGreaterOrEqualTo", {1, 2, 3, 4, 5})
+
+        # nullValues (mustBe: 0) is row-level: only the row with a null email is flagged.
+        _assert_flagged_only(flagged_by_row, "email_nullValues_mustBe", {2})
+
+        # invalidValues (mustBe: 0) is row-level: only the row with an out-of-list status is flagged.
+        _assert_flagged_only(flagged_by_row, "status_invalidValues_mustBe_allowed", {4})
+
+        # duplicateValues (mustBe: 0) flags only the rows sharing the duplicated customer_id.
+        _assert_flagged_only(flagged_by_row, "customer_id_duplicateValues_mustBe", {2, 3})
+
+        # missingValues (mustBeGreaterThan: 3, sql_query fallback): the 2 missing phone values don't
+        # exceed 3, so the dataset-level condition is a violation reported on every row.
+        _assert_flagged_only(flagged_by_row, "phone_missingValues_mustBeGreaterThan", {1, 2, 3, 4, 5})
+
+        # Row 1 satisfies every row-level metric; only the two dataset-level checks apply.
+        assert flagged_by_row[1] == {
+            "customers_rowCount_mustBeGreaterOrEqualTo",
+            "phone_missingValues_mustBeGreaterThan",
+        }
+
+    def test_apply_non_zero_duplicate_values_threshold_does_not_raise(self, ws, spark):
+        """A non-zero duplicateValues threshold must actually apply against a real DataFrame
+        without raising an AnalysisException, and must count distinct recurring values (matching
+        datacontract-cli's reference mapping), not rows sitting in a duplicated group.
+
+        The duplicate count is computed via a GROUP BY ... HAVING subquery selected with no outer
+        FROM (rather than a window function passed as an is_aggr_* `column` argument, or a scalar
+        subquery re-selected FROM the input view, both of which raise at apply time -- the window
+        form because Spark rejects a window function nested inside an aggregate, the outer-FROM
+        form because sql_query's dataset-level check requires exactly one result row). Every
+        non-mustBe:0 duplicateValues threshold hits this path, and it was previously only ever
+        asserted as a generated SQL string in unit tests, never executed.
+        """
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:duplicate_values_non_zero",
+            "name": "Duplicate Values Non-Zero Threshold",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "sales_orders",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "order_ref",
+                            "physicalType": "STRING",
+                            "quality": [
+                                {"type": "library", "metric": "duplicateValues", "mustBeLessOrEqualTo": 4},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        assert len(rules) == 1
+        assert rules[0]["check"]["function"] == "sql_query"
+
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rule has validation errors: {status.errors}"
+
+        # order_ref has two recurring values ("A" recurs 3x, "B" recurs 2x; "C" is unique). The
+        # duplicate value count is 2 (A and B), not the 5 rows sitting in those two groups -- 2 is
+        # within the mustBeLessOrEqualTo: 4 threshold, so nothing is flagged. A regression to
+        # summing group sizes instead of counting distinct recurring values would report 5 here,
+        # which exceeds 4 and would incorrectly flag every row.
+        test_df = spark.createDataFrame(
+            [["A"], ["A"], ["A"], ["B"], ["B"], ["C"]],
+            "order_ref: string",
+        )
+        dq_engine = DQEngine(workspace_client=ws)
+        checked = dq_engine.apply_checks_by_metadata(test_df, rules)
+        rows = checked.collect()
+
+        assert len(rows) == 6
+        for row in rows:
+            assert _flagged_names(row) == set()
+
+
+# A 10-row dataset with known library metric values, used to check the verdict of every
+# metric x threshold x unit combination at apply time. It has 10 rows; 2 null emails (rows 3
+# and 7, 20%); 3 missing phones (row 2 NULL, row 5 empty, row 9 N/A, 30%); 4 invalid statuses
+# (row 3 fails the pattern, rows 4 and 10 fail the allowlist, row 5 fails both, 40%); and 2
+# recurring customer ids (C1 and C2, 20%).
+_METRICS_DATA_SCHEMA = "row_id: int, customer_id: string, email: string, phone: string, status: string"
+_METRICS_DATA = [
+    [1, "C1", "a@x.com", "111", "ACTIVE"],
+    [2, "C1", "b@x.com", None, "INACTIVE"],
+    [3, "C2", None, "333", "C:\\temp"],
+    [4, "C2", "d@x.com", "444", "PENDING"],
+    [5, "C3", "e@x.com", "", "pending"],
+    [6, "C4", "f@x.com", "666", "ACTIVE"],
+    [7, "C5", None, "777", None],
+    [8, "C6", "h@x.com", "888", "ACTIVE"],
+    [9, "C7", "i@x.com", "N/A", "INACTIVE"],
+    [10, "C8", "j@x.com", "000", "DELETE"],
+]
+
+
+class _MetricCase(NamedTuple):
+    """A library metric entry and the value it measures on *_METRICS_DATA*."""
+
+    property_name: str | None  # None for a schema-level entry
+    extra: dict[str, Any]
+    values: dict[str, float]  # measured value per unit
+
+
+_METRIC_ENTRIES: dict[str, _MetricCase] = {
+    "rowCount": _MetricCase(None, {}, {"rows": 10}),
+    "nullValues": _MetricCase("email", {}, {"rows": 2, "percent": 20.0}),
+    "missingValues": _MetricCase("phone", {"arguments": {"missingValues": ["", "N/A"]}}, {"rows": 3, "percent": 30.0}),
+    "invalidValues": _MetricCase(
+        "status",
+        {"arguments": {"validValues": ["ACTIVE", "INACTIVE", "C:\\temp"], "pattern": "^[A-Z]+$"}},
+        {"rows": 4, "percent": 40.0},
+    ),
+    "duplicateValues": _MetricCase("customer_id", {}, {"rows": 2, "percent": 20.0}),
+}
+
+
+def _thresholds_for(value: float) -> dict[str, tuple[Any, Any]]:
+    """(passing, failing) value for each threshold field, given the measured value. Ranges are inclusive."""
+    return {
+        "mustBe": (value, value + 1),
+        "mustNotBe": (value + 1, value),
+        "mustBeGreaterOrEqualTo": (value, value + 1),
+        "mustBeLessOrEqualTo": (value, value - 1),
+        "mustBeGreaterThan": (value - 1, value),
+        "mustBeLessThan": (value + 1, value),
+        "mustBeBetween": ([value, value], [value + 1, value + 2]),
+        "mustNotBeBetween": ([value + 1, value + 2], [value - 1, value]),
+    }
+
+
+def _matrix_cases(values: dict[str, float]) -> list[tuple[str, float, str, str, Any]]:
+    """(unit, measured value, threshold field, "pass"/"fail", threshold value) for every combination."""
+    return [
+        (unit, value, threshold_field, verdict, threshold_value)
+        for unit, value in values.items()
+        for threshold_field, (passing, failing) in _thresholds_for(value).items()
+        for verdict, threshold_value in (("pass", passing), ("fail", failing))
+    ]
+
+
+def _metrics_contract(schema_quality: list[dict], property_quality: dict[str, list[dict]]) -> dict[str, Any]:
+    properties: list[dict[str, Any]] = [{"name": "row_id", "physicalType": "INT"}]
+    for name in ("customer_id", "email", "phone", "status"):
+        properties.append({"name": name, "physicalType": "STRING", "quality": property_quality.get(name, [])})
+    return {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:library_metrics_matrix",
+        "name": "Library Metrics Matrix",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [{"name": "metrics", "physicalType": "table", "properties": properties, "quality": schema_quality}],
+    }
+
+
+def _generate_library_rules(ws: WorkspaceClient, spark: SparkSession, contract: dict[str, Any]) -> list[dict]:
+    rules = _generate_rules_from_temp_contract(
+        ws, spark, contract, generate_predefined_rules=False, process_text_rules=False, generate_schema_validation=False
+    )
+    status = DQEngine.validate_checks(rules)
+    assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+    return rules
+
+
+class TestLibraryMetricsApplyMatrix:
+    """Applies every library metric x threshold x unit against real data and asserts the verdict."""
+
+    @pytest.mark.parametrize("metric", list(_METRIC_ENTRIES))
+    def test_every_threshold_and_unit_gives_the_expected_verdict(self, ws, spark, metric):
+        property_name, extra, values = _METRIC_ENTRIES[metric]
+        # Rules are applied in small batches (one passing and one failing rule per threshold): the
+        # cost of a single apply grows quickly with the number of dataset-level checks in it.
+        batches: dict[tuple[str, str], list[dict]] = {}
+        expected: dict[str, bool] = {}  # rule name -> violated
+        for unit, value, threshold_field, verdict, threshold_value in _matrix_cases(values):
+            entry = {"metric": metric, threshold_field: threshold_value, "unit": unit, **extra}
+            if property_name:
+                contract = _metrics_contract([], {property_name: [entry]})
+            else:
+                contract = _metrics_contract([entry], {})
+            generated = _generate_library_rules(ws, spark, contract)
+            assert len(generated) == 1, f"{unit} {threshold_field}={threshold_value} (measured {value})"
+            rule = generated[0]
+            rule["name"] = f"{verdict}_{unit}_{rule['name']}"
+            expected[rule["name"]] = verdict == "fail"
+            batches.setdefault((unit, threshold_field), []).append(rule)
+
+        test_df = spark.createDataFrame(_METRICS_DATA, _METRICS_DATA_SCHEMA)
+        engine = DQEngine(workspace_client=ws)
+        for rules in batches.values():
+            flagged_by_row = [_flagged_names(row) for row in engine.apply_checks_by_metadata(test_df, rules).collect()]
+            assert len(flagged_by_row) == len(_METRICS_DATA)
+            for rule in rules:
+                flagged_rows = sum(rule["name"] in names for names in flagged_by_row)
+                # Dataset-level checks report a violation on every row.
+                expected_rows = len(_METRICS_DATA) if expected[rule["name"]] else 0
+                assert flagged_rows == expected_rows, f"{rule['name']}: flagged on {flagged_rows} rows"
+
+    def test_zero_must_be_row_level_rules_flag_the_offending_rows(self, ws, spark):
+        property_quality = {
+            name: [{"metric": metric, "mustBe": 0, **extra}]
+            for metric, (name, extra, _) in _METRIC_ENTRIES.items()
+            if name is not None
+        }
+        rules = _generate_library_rules(ws, spark, _metrics_contract([], property_quality))
+
+        test_df = spark.createDataFrame(_METRICS_DATA, _METRICS_DATA_SCHEMA)
+        checked = DQEngine(workspace_client=ws).apply_checks_by_metadata(test_df, rules)
+        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.collect()}
+
+        _assert_flagged_only(flagged_by_row, "email_nullValues_mustBe", {3, 7})
+        _assert_flagged_only(flagged_by_row, "phone_missingValues_mustBe_null", {2})
+        _assert_flagged_only(flagged_by_row, "phone_missingValues_mustBe_sentinel", {5, 9})
+        # "C:\temp" is in the allowlist: the row-level rendering must escape it the same way as the
+        # aggregate rendering, which counts 4 invalid rows in the matrix test above.
+        _assert_flagged_only(flagged_by_row, "status_invalidValues_mustBe_allowed", {4, 5, 10})
+        _assert_flagged_only(flagged_by_row, "status_invalidValues_mustBe_pattern", {3, 5})
+        _assert_flagged_only(flagged_by_row, "customer_id_duplicateValues_mustBe", {1, 2, 3, 4})
+
+    def test_thresholds_apply_to_an_empty_dataframe_without_failing_the_run(self, ws, spark):
+        """AVG over zero rows is NULL; the generated checks must not turn that into a failed run."""
+        property_quality = {
+            name: [
+                {"metric": metric, "mustBeLessThan": 50, "unit": "percent", **extra},
+                {"metric": metric, "mustBeLessOrEqualTo": 50, "unit": "percent", **extra},
+                {"metric": metric, "mustBeBetween": [0, 50], **extra},
+            ]
+            for metric, (name, extra, _) in _METRIC_ENTRIES.items()
+            if name is not None
+        }
+        schema_quality = [{"metric": "rowCount", "mustBeLessThan": 5}]
+        rules = _generate_library_rules(ws, spark, _metrics_contract(schema_quality, property_quality))
+
+        empty_df = spark.createDataFrame([], _METRICS_DATA_SCHEMA)
+        checked = DQEngine(workspace_client=ws).apply_checks_by_metadata(empty_df, rules)
+
+        assert checked.collect() == []
+
+    def test_row_filter_custom_property_scopes_the_metric(self, ws, spark):
+        """Only rows 1-5 are in scope: five rows, one of them (row 3) with a null email."""
+        row_filter = [{"property": "row_filter", "value": "row_id <= 5"}]
+        property_quality = {"email": [{"metric": "nullValues", "mustBe": 1, "customProperties": row_filter}]}
+        schema_quality = [
+            {"metric": "rowCount", "mustBe": 5, "customProperties": row_filter},
+            {"metric": "rowCount", "mustBeGreaterThan": 5, "customProperties": row_filter},
+        ]
+        rules = _generate_library_rules(ws, spark, _metrics_contract(schema_quality, property_quality))
+
+        test_df = spark.createDataFrame(_METRICS_DATA, _METRICS_DATA_SCHEMA)
+        checked = DQEngine(workspace_client=ws).apply_checks_by_metadata(test_df, rules)
+        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.collect()}
+
+        _assert_flagged_only(flagged_by_row, "email_nullValues_mustBe", set())
+        _assert_flagged_only(flagged_by_row, "metrics_rowCount_mustBe", set())
+        # The violated check is reported only on the rows in scope.
+        _assert_flagged_only(flagged_by_row, "metrics_rowCount_mustBeGreaterThan", {1, 2, 3, 4, 5})
+
+    def test_sql_keyword_literals_apply_for_every_unit(self, ws, spark):
+        """Allowlists of CDC operation codes must not trip the SQL safety check at apply time."""
+        arguments = {"validValues": ["ACTIVE", "INACTIVE", "INSERT", "UPDATE", "DELETE"]}
+        property_quality = {
+            "status": [
+                {"metric": "invalidValues", "mustBeLessThan": 3, "unit": "rows", "arguments": arguments},
+                {"metric": "invalidValues", "mustBeLessThan": 30, "unit": "percent", "arguments": arguments},
+            ]
+        }
+        rules = _generate_library_rules(ws, spark, _metrics_contract([], property_quality))
+        assert len(rules) == 2
+
+        test_df = spark.createDataFrame(_METRICS_DATA, _METRICS_DATA_SCHEMA)
+        checked = DQEngine(workspace_client=ws).apply_checks_by_metadata(test_df, rules)
+
+        # Rows 3, 4 and 5 are invalid (3 rows, 30%): both strict thresholds are violated on every row.
+        for row in checked.collect():
+            assert {rule["name"] for rule in rules} <= _flagged_names(row)

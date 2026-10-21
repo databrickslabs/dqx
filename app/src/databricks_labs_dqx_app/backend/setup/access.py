@@ -32,7 +32,12 @@ from databricks_labs_dqx_app.backend.setup.acl import (
     missing_principals,
     reconcile_group_acl,
 )
-from databricks_labs_dqx_app.backend.setup.checks import RUN_GRANTS_AS_OWNER, instruction_identifier
+from databricks_labs_dqx_app.backend.setup.checks import (
+    RUN_GRANTS_AS_OWNER,
+    grant_statement,
+    instruction_identifier,
+    unsafe_name_instruction,
+)
 from databricks_labs_dqx_app.backend.setup.configuration import SetupSettings
 from databricks_labs_dqx_app.backend.setup.grants import GrantInspector, has_privilege
 from databricks_labs_dqx_app.backend.setup.models import SetupActionId, SetupStep, SetupStepId, StepState
@@ -158,29 +163,33 @@ class AudienceAccess:
                 _acl_instruction("Can view", "dashboard", self._dashboard_id, group) for group in missing
             )
 
-        instructions = (*uc_unknown, *shared_unknown, *uc_missing, *genie_missing, *dashboard_missing)
-        if uc_missing:
-            instructions = (
-                *uc_unknown,
-                *shared_unknown,
-                RUN_GRANTS_AS_OWNER,
-                *uc_missing,
-                *genie_missing,
-                *dashboard_missing,
-            )
+        # The GRANT statements are kept apart from the prose; the owner guidance comes last so
+        # it sits directly above them.
+        instructions = (
+            *uc_unknown,
+            *shared_unknown,
+            *genie_missing,
+            *dashboard_missing,
+            *((RUN_GRANTS_AS_OWNER,) if uc_missing else ()),
+        )
+        grants = tuple(uc_missing)
         if uc_unknown:
-            return _blocked("audience_grant_check_failed", "Studio couldn't read its users' permissions.", instructions)
+            return _blocked(
+                "audience_grant_check_failed", "Studio couldn't read its users' permissions.", instructions, grants
+            )
         if shared_unknown:
             return _blocked(
                 "shared_resource_check_failed",
                 "Studio couldn't check who can open its Genie space or dashboard.",
                 instructions,
+                grants,
             )
         if uc_missing:
             return _blocked(
                 "audience_grants_missing",
                 "Studio users or administrators don't have all the data permissions they need.",
                 instructions,
+                grants,
             )
         if genie_missing:
             return _blocked(
@@ -280,23 +289,30 @@ class AudienceAccess:
         unknown: list[str] = []
         missing: list[str] = []
         for principal in principals:
-            quoted_principal = instruction_identifier(principal)
             for (kind, full_name), required in objects.items():
                 quoted_name = ".".join(instruction_identifier(part) for part in full_name.split("."))
                 privileges = inspector.privileges(kind, full_name, principal, required=frozenset(required))
                 if privileges is None:
                     guidance = (
-                        f"Sign in as the owner of {kind.lower()} {quoted_name} or a metastore admin, then click "
-                        "Verify again so Studio can read its permissions."
+                        f"Studio couldn't check who has access to {kind.lower()} {quoted_name}, because your "
+                        f"account isn't allowed to view its permissions. Ask the {kind.lower()}'s owner (shown on "
+                        "its page under Catalog in the Databricks sidebar) or a Databricks admin to open this page "
+                        "and click Verify again."
                     )
                     if guidance not in unknown:
                         unknown.append(guidance)
                     continue
-                missing.extend(
-                    f"GRANT {privilege} ON {kind} {quoted_name} TO {quoted_principal};"
-                    for privilege in required
-                    if not has_privilege(privileges, privilege)
-                )
+                for privilege in required:
+                    if has_privilege(privileges, privilege):
+                        continue
+                    statement = grant_statement(privilege, kind, full_name.split("."), principal)
+                    if statement is not None:
+                        missing.append(statement)
+                        continue
+                    # Left out rather than quoted unsafely; the step can't be confirmed until it's granted.
+                    guidance = unsafe_name_instruction(kind.lower(), quoted_name)
+                    if guidance not in unknown:
+                        unknown.append(guidance)
         return unknown, missing
 
     def _genie_space_id(self) -> str | None:
@@ -330,13 +346,16 @@ class AudienceAccess:
         )
 
 
-def _blocked(code: str, summary: str, instructions: tuple[str, ...]) -> SetupStep:
+def _blocked(
+    code: str, summary: str, instructions: tuple[str, ...], grant_statements: tuple[str, ...] = ()
+) -> SetupStep:
     return SetupStep(
         id=SetupStepId.ACCESS,
         state=StepState.ACTION_REQUIRED,
         code=code,
         summary=summary,
         instructions=instructions,
+        grant_statements=grant_statements,
         actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
     )
 
