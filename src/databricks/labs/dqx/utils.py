@@ -846,15 +846,20 @@ def missing_required_packages(packages: list[str]) -> bool:
     return not all(find_spec(spec) for spec in packages)
 
 
-def _replace_template(text: str, variables: dict[str, str]) -> str:
-    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
+def get_template_placeholders(text: str) -> set[str]:
+    """Return the names of the placeholders (keys in double curly braces) in *text*."""
+    return {match.strip("{} \t") for match in _UNRESOLVED_PLACEHOLDER_PATTERN.findall(text)}
 
-    Uses a single-pass regex substitution.
-    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
-    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
+
+def replace_template(text: str, variables: dict[str, str]) -> str:
+    """Replace placeholders (keys in double curly braces) in *text* with values from *variables*.
+
+    Uses a single-pass regex substitution, so a replacement value is never substituted again.
+    Tolerates whitespace inside the braces around the key.
+    Logs a warning if any unresolved placeholders remain after substitution.
 
     Args:
-        text: Input string potentially containing **{{ key }}** placeholders.
+        text: Input string potentially containing placeholders.
         variables: Pre-stringified mapping of placeholder names to values.
 
     Returns:
@@ -912,7 +917,7 @@ def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
         A new object with all string values having placeholders replaced.
     """
     if isinstance(obj, str):
-        return _replace_template(obj, variables)
+        return replace_template(obj, variables)
     if isinstance(obj, dict):
         return {k: _substitute_variables(v, variables) for k, v in obj.items()}
     if isinstance(obj, list):

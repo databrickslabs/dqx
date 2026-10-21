@@ -1,11 +1,11 @@
 import math
 from datetime import date, datetime
 from enum import IntEnum
-from unittest.mock import create_autospec
+from unittest.mock import Mock, create_autospec
 
 import pytest
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import types
 
 from databricks.labs.dqx import check_funcs
@@ -15,8 +15,13 @@ from databricks.labs.dqx.check_funcs import (
     has_no_gaps_per_time_window,
     is_in_distribution,
 )
+from databricks.labs.dqx.check_funcs import DatasetAggregate, add_dataset_aggregates
+from databricks.labs.dqx.executor import DQDatasetRuleExecutor
+from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds_df
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError, MissingParameterError
+
+_UPPER_CODE = F.upper("code").alias("code")
 
 
 @pytest.mark.parametrize(
@@ -768,3 +773,184 @@ def test_aggr_matches_dataset_star_ref_column_allows_count_distinct(ref_column):
     """count(DISTINCT *) as a reference column is valid: the reference side aggregates natively via
     DataFrame.filter, so it must not be rejected. See #1435."""
     check_funcs.aggr_matches_dataset("id", ref_table="cat.sch.ref", ref_column=ref_column, aggr_type="count_distinct")
+
+
+@pytest.mark.parametrize("group_by, shared", [(None, True), (["g"], False), (["g", "h"], False)])
+def test_only_aggregate_checks_over_all_rows_share_their_aggregation(group_by, shared):
+    _, apply = check_funcs.is_aggr_not_greater_than("a", limit=1, group_by=group_by)
+
+    assert hasattr(apply, check_funcs.DATASET_AGGREGATE_ATTRIBUTE) is shared
+
+
+def test_mad_bounds_are_built_without_driver_action():
+    input_df = create_autospec(DataFrame)
+
+    median_absolute_deviation_bounds_df(input_df, "value", None, "lower", "upper")
+
+    input_df.collect.assert_not_called()
+    input_df.select.return_value.collect.assert_not_called()
+
+
+def test_dataset_sql_query_builds_lazy_single_row_validation():
+    current_df = create_autospec(DataFrame)
+    original_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    rule = DQDatasetRule(
+        check_func=check_funcs.sql_query,
+        check_func_kwargs={"query": "SELECT false AS condition FROM {{ input_view }}"},
+    )
+
+    DQDatasetRuleExecutor(rule).apply(current_df, spark, input_df=original_df)
+
+    query_df = spark.sql.return_value.select.return_value
+    query_df.take.assert_not_called()
+    query_df.collect.assert_not_called()
+    current_df.crossJoin.assert_called_once()
+
+
+def test_sql_query_runs_on_result_of_previous_checks():
+    current_df = create_autospec(DataFrame)
+    original_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    rule = DQDatasetRule(
+        check_func=check_funcs.sql_query,
+        check_func_kwargs={"query": "SELECT count(*) > 0 AS condition FROM {{ input_view }} WHERE _errors IS NULL"},
+    )
+
+    DQDatasetRuleExecutor(rule).apply(current_df, spark, input_df=original_df)
+
+    current_df.createOrReplaceTempView.assert_called_once()
+    original_df.createOrReplaceTempView.assert_not_called()
+
+
+def test_sql_query_registers_only_referenced_dataframes():
+    current_df = create_autospec(DataFrame)
+    original_df = create_autospec(DataFrame)
+    used_ref = create_autospec(DataFrame)
+    unused_ref = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    rule = DQDatasetRule(
+        check_func=check_funcs.sql_query,
+        check_func_kwargs={
+            "query": "SELECT false AS condition FROM {{ input_view }} CROSS JOIN {{ used_ref }}",
+        },
+    )
+
+    DQDatasetRuleExecutor(rule).apply(
+        current_df,
+        spark,
+        ref_dfs={"used_ref": used_ref, "unused_ref": unused_ref},
+        input_df=original_df,
+    )
+
+    used_ref.createOrReplaceTempView.assert_called_once()
+    unused_ref.createOrReplaceTempView.assert_not_called()
+
+
+def test_foreign_key_checks_share_reference_projection():
+    current_df = create_autospec(DataFrame)
+    original_df = create_autospec(DataFrame)
+    reference_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    reference_cache: dict[tuple[str, str], DataFrame] = {}
+
+    for source_column in ("first_id", "second_id"):
+        rule = DQDatasetRule(
+            check_func=check_funcs.foreign_key,
+            check_func_kwargs={
+                "columns": [source_column],
+                "ref_columns": ["id"],
+                "ref_df_name": "reference",
+            },
+        )
+        DQDatasetRuleExecutor(rule).apply(
+            current_df,
+            spark,
+            ref_dfs={"reference": reference_df},
+            input_df=original_df,
+            reference_cache=reference_cache,
+        )
+
+    reference_df.select.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "first_kwargs, second_kwargs, reference_reads",
+    [
+        # same column names share one reference projection
+        ({"columns": ["first_id"], "ref_columns": ["id"]}, {"columns": ["second_id"], "ref_columns": ["id"]}, 1),
+        # a nested field a.b and a column literally named a.b are different names
+        ({"columns": ["id"], "ref_columns": ["a.b"]}, {"columns": ["id"], "ref_columns": ["`a.b`"]}, 2),
+        # null-safe keys are structs, so they differ from the plain key
+        ({"columns": ["id"], "ref_columns": ["id"]}, {"columns": ["id"], "ref_columns": ["id"], "null_safe": True}, 2),
+        # composite key structs take their field names from the source columns
+        ({"columns": ["a", "b"], "ref_columns": ["x", "y"]}, {"columns": ["c", "d"], "ref_columns": ["x", "y"]}, 2),
+        # Column inputs are never cached, even the same expression
+        ({"columns": ["id"], "ref_columns": [_UPPER_CODE]}, {"columns": ["id"], "ref_columns": [_UPPER_CODE]}, 2),
+        ({"columns": ["id"], "ref_columns": ["code"]}, {"columns": ["id"], "ref_columns": [_UPPER_CODE]}, 2),
+    ],
+)
+def test_foreign_key_reference_projection_is_shared_only_for_the_same_column_names(
+    first_kwargs, second_kwargs, reference_reads
+):
+    current_df = create_autospec(DataFrame)
+    reference_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    reference_cache: dict[tuple[str, str], DataFrame] = {}
+
+    for kwargs in (first_kwargs, second_kwargs):
+        rule = DQDatasetRule(
+            check_func=check_funcs.foreign_key, check_func_kwargs={**kwargs, "ref_df_name": "reference"}
+        )
+        DQDatasetRuleExecutor(rule).apply(
+            current_df, spark, ref_dfs={"reference": reference_df}, reference_cache=reference_cache
+        )
+
+    assert reference_df.select.call_count == reference_reads
+
+
+def test_foreign_key_broadcast_is_opt_in(monkeypatch):
+    current_df = create_autospec(DataFrame)
+    reference_df = create_autospec(DataFrame)
+    spark = create_autospec(SparkSession)
+    broadcast = Mock(side_effect=lambda df: df)
+    monkeypatch.setattr(check_funcs.F, "broadcast", broadcast)
+
+    def apply_foreign_key(broadcast_ref: bool) -> None:
+        rule = DQDatasetRule(
+            check_func=check_funcs.foreign_key,
+            check_func_kwargs={
+                "columns": ["id"],
+                "ref_columns": ["id"],
+                "ref_df_name": "reference",
+                "broadcast_ref": broadcast_ref,
+            },
+        )
+        DQDatasetRuleExecutor(rule).apply(current_df, spark, ref_dfs={"reference": reference_df})
+
+    apply_foreign_key(False)
+    broadcast.assert_not_called()
+
+    apply_foreign_key(True)
+    broadcast.assert_called_once()
+
+
+def test_compatible_aggregates_share_original_input_aggregation_and_join():
+    current_df = create_autospec(DataFrame)
+    original_df = create_autospec(DataFrame)
+    first = DatasetAggregate("metric_1", "count", _count_expression, _add_no_condition)
+    second = DatasetAggregate("metric_2", "count", _count_expression, _add_no_condition)
+
+    add_dataset_aggregates(current_df, original_df, [first, second])
+
+    original_df.select.assert_called_once()
+    current_df.select.assert_not_called()
+    current_df.crossJoin.assert_called_once_with(original_df.select.return_value.limit.return_value)
+
+
+def _count_expression() -> Column:
+    return F.count(F.lit(1))
+
+
+def _add_no_condition(df: DataFrame) -> DataFrame:
+    return df
