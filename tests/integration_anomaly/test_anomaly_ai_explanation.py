@@ -227,13 +227,17 @@ def test_ai_query_explanation_references_dominant_feature_within_word_caps(
 # ``databricks-gemma-3-12b``). The DQX parser must adapt to both. This test sweeps a
 # representative set and skips endpoints that aren't reachable in the current workspace, so
 # it doubles as a portability matrix for whichever endpoints are provisioned.
+#
+# Scoring calls ai_query over a DataFrame, which is batch inference, so every entry must be one of the
+# models the ai_query docs list as supported for batch inference ("Supported models"). Sonnet 4.6 is the
+# only Sonnet on that list: databricks-claude-sonnet-5 is rejected at scoring time with "not supported for
+# batch inference", even though the one-row probe below succeeds. It replaces the retired
+# databricks-claude-3-7-sonnet.
 _AI_QUERY_REGRESSION_ENDPOINTS = [
     "databricks-llama-4-maverick",
     "databricks-gemma-3-12b",
     "databricks-meta-llama-3-3-70b-instruct",
-    # Replaces the retired databricks-claude-3-7-sonnet. One behind the newest Sonnet (5.5), so the matrix
-    # tracks a model that is broadly available rather than the latest release.
-    "databricks-claude-sonnet-5",
+    "databricks-claude-sonnet-4-6",
     "databricks-gpt-oss-20b",
 ]
 
