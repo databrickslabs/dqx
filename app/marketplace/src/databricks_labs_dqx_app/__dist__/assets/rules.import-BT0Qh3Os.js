@@ -1,0 +1,1 @@
+import{fK as o,j as e,ap as r}from"./index-BXMHxYx-.js";import{u as a}from"./use-permissions-CyZZhcuX.js";function n(){const{canCreateRules:s}=a(),{from:t}=o.useSearch();return s?e.jsx(r,{to:"/registry-rules/import",search:{from:t},replace:!0}):e.jsx(r,{to:"/registry-rules",replace:!0})}export{n as component};

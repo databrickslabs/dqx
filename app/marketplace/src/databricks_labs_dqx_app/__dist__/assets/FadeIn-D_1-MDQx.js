@@ -1,0 +1,1 @@
+import{j as o,bA as e}from"./index-BXMHxYx-.js";function r({children:t,delay:i=0,duration:a=.5,className:n}){return o.jsx(e.div,{initial:{opacity:0,y:10},animate:{opacity:1,y:0},transition:{duration:a,delay:i,ease:"easeOut"},className:n,children:t})}export{r as F};
