@@ -38,7 +38,7 @@ classifiers = [
 dependencies = [
     "databricks-labs-blueprint>=0.9.1,<=0.12",
     "databricks-sdk~=0.73",
-    "sqlalchemy>=2.0,<3.0",
+    "sqlalchemy>=2.0,<2.1",
     "PyYAML~=6.0.3",
     "pydantic>=2.8.2,<3",
     # NOTE: protobuf 7 removed FieldDescriptor.label, which MLflow 2.x still uses. Pinned in core rather than in the

@@ -1,3 +1,5 @@
+import re
+
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from tests.constants import TEST_CATALOG
@@ -24,6 +26,30 @@ EXPECTED_CHECKS = [
         "criticality": "error",
     },
 ]
+
+
+# Name the placeholder explicitly so the test does not depend on the model choosing a non-default one
+CUSTOM_INPUT_PLACEHOLDER = "orders"
+SQL_QUERY_CUSTOM_PLACEHOLDER_USER_INPUT = (
+    "Each order's total must not exceed 10 times the average order total for that day. "
+    f"Use sql_query for the check function with input_placeholder set to '{CUSTOM_INPUT_PLACEHOLDER}'."
+)
+
+
+def assert_sql_query_checks_use_placeholder(checks: list[dict], placeholder: str) -> None:
+    """Asserts that the generated sql_query checks set *placeholder* and reference it in the query."""
+    sql_query_checks = [c for c in checks if c.get("check", {}).get("function") == "sql_query"]
+    assert sql_query_checks, f"Expected at least one sql_query check, got: {checks}"
+
+    # the placeholder is resolved with optional whitespace inside the braces, so match it the same way
+    placeholder_pattern = re.compile(r"\{\{\s*" + re.escape(placeholder) + r"\s*\}\}")
+    for check in sql_query_checks:
+        args = check["check"]["arguments"]
+        assert (
+            args.get("input_placeholder") == placeholder
+        ), f"Expected input_placeholder '{placeholder}', got: {args.get('input_placeholder')}"
+        query = args.get("query", "")
+        assert placeholder_pattern.search(query), f"Query must reference {{{{ {placeholder} }}}}, got: {query}"
 
 
 def test_generate_dq_rules_ai_assisted(ws, spark):
@@ -237,7 +263,7 @@ def test_generate_dq_rules_ai_assisted_email_format_with_summary_stats(ws, spark
 
 
 def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder(ws, spark):
-    user_input = "Each order's total must not exceed 10 times the average order total for that day. Use sql_query for the check function."
+    user_input = SQL_QUERY_CUSTOM_PLACEHOLDER_USER_INPUT
 
     summary_stats = {
         "order_id": {"mean": None, "min": "ORD001", "max": "ORD999"},
@@ -248,31 +274,14 @@ def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder(w
     generator = DQGenerator(ws, spark)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
 
-    # Expect exactly one sql_query check with custom input_placeholder
-    sql_query_checks = [
-        c
-        for c in actual_checks
-        if c.get("check", {}).get("function") == "sql_query"
-        and c.get("check", {}).get("arguments", {}).get("input_placeholder") != "input_view"
-    ]
-    assert len(sql_query_checks) == 1, "Expected exactly one sql_query check with custom input_placeholder"
-
-    check = sql_query_checks[0]
-    args = check["check"]["arguments"]
-    placeholder = args.get("input_placeholder")
-    query = args.get("query", "")
-    expected_placeholder_text = f"{{{{ {placeholder} }}}}"
-
-    assert (
-        expected_placeholder_text in query
-    ), f"Query must contain {expected_placeholder_text} when input_placeholder is {placeholder}, got: {query}"
+    assert_sql_query_checks_use_placeholder(actual_checks, CUSTOM_INPUT_PLACEHOLDER)
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
 
 
 def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder_no_summary_stats(
     ws, spark, make_table, make_schema
 ):
-    user_input = "Each order's total must not exceed 10 times the average order total for that day. Use sql_query for the check function."
+    user_input = SQL_QUERY_CUSTOM_PLACEHOLDER_USER_INPUT
 
     schema = make_schema(catalog_name=TEST_CATALOG)
     input_table = make_table(
@@ -286,23 +295,7 @@ def test_generate_dq_rules_ai_assisted_sql_query_with_custom_input_placeholder_n
         user_input=user_input, input_config=InputConfig(location=input_table.full_name)
     )
 
-    # Expect exactly one sql_query check with custom input_placeholder
-    sql_query_checks = [
-        c
-        for c in actual_checks
-        if c.get("check", {}).get("function") == "sql_query"
-        and c.get("check", {}).get("arguments", {}).get("input_placeholder") != "input_view"
-    ]
-    assert len(sql_query_checks) == 1, "Expected exactly one sql_query check with custom input_placeholder"
-
-    check = sql_query_checks[0]
-    args = check["check"]["arguments"]
-    placeholder = args.get("input_placeholder")
-    query = args.get("query", "")
-    expected_placeholder_text = f"{{{{ {placeholder} }}}}"
-    assert (
-        expected_placeholder_text in query
-    ), f"Query must contain {expected_placeholder_text} when input_placeholder is {placeholder}, got: {query}"
+    assert_sql_query_checks_use_placeholder(actual_checks, CUSTOM_INPUT_PLACEHOLDER)
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
 
 
