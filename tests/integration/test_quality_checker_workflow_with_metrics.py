@@ -1,6 +1,8 @@
+import json
 from datetime import timedelta
 from pyspark.testing.utils import assertDataFrameEqual
 
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
@@ -15,9 +17,25 @@ from tests.integration.conftest import (
 )
 
 _WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(WORKFLOW_CHECKS)
-_WORKFLOW_CHECK_METRICS_VALUE = (
-    '[{"check_name":"id_is_not_null","error_count":1,"warning_count":0},'
-    '{"check_name":"name_is_not_null_and_not_empty","error_count":2,"warning_count":0}]'
+_WORKFLOW_RULE_FINGERPRINTS = [rule.rule_fingerprint for rule in deserialize_checks(WORKFLOW_CHECKS)]
+_WORKFLOW_CHECK_METRICS_VALUE = json.dumps(
+    [
+        {
+            "check_name": "id_is_not_null",
+            "rule_fingerprint": _WORKFLOW_RULE_FINGERPRINTS[0],
+            "error_count": 1,
+            "warning_count": 0,
+            "checked_count": 10,
+        },
+        {
+            "check_name": "name_is_not_null_and_not_empty",
+            "rule_fingerprint": _WORKFLOW_RULE_FINGERPRINTS[1],
+            "error_count": 2,
+            "warning_count": 0,
+            "checked_count": 10,
+        },
+    ],
+    separators=(",", ":"),
 )
 
 

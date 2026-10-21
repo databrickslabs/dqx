@@ -1,13 +1,14 @@
 # The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
 # The checks should be kept up to date with the docs to make sure the documentation examples are validated.
 
-# is_unique check
+# is_unique check with string trimming enabled
 - criticality: error
   check:
     function: is_unique
     arguments:
       columns:
       - col1
+      trim_strings: true
 
 # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
 # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
