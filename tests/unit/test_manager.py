@@ -100,8 +100,8 @@ def test_rule_manager_validates_filter_against_current_dataframe():
     assert manager.has_invalid_filter is True
     current_df.select.assert_called()
     input_df.select.assert_not_called()
-    
-    
+
+
 def test_rule_manager_is_skipped_for_invalid_column():
     df_mock = create_autospec(DataFrame)
     spark_mock = create_autospec(SparkSession)

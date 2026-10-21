@@ -214,7 +214,7 @@ class DQEngineCore(DQEngineCoreBase):
         result_df = add_dataset_aggregates(df, df, shared_aggregates)
 
         result_df, skipped_error_checks = self._create_results_array(
-            df,
+            result_df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
             self._result_column_names[ColumnArguments.INFO],
@@ -600,6 +600,9 @@ class DQEngineCore(DQEngineCoreBase):
         dest_info_col: str,
         ref_dfs: dict[str, DataFrame] | None = None,
         rule_set_fingerprint: str | None = None,
+        input_df: DataFrame | None = None,
+        reference_cache: dict[tuple[str, str], DataFrame] | None = None,
+        input_managers: dict[int, DQRuleManager] | None = None,
     ) -> tuple[DataFrame, set[str]]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -628,8 +631,7 @@ class DQEngineCore(DQEngineCoreBase):
         """
         if not checks:
             # No checks then just append a null array result
-            empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
-            return df.select("*", empty_result), set()
+            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set()
 
         check_conditions = []
         skipped_checks: set[str] = set()

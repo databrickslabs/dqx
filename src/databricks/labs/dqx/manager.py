@@ -319,11 +319,9 @@ class DQRuleManager:
 
         if self.has_unsafe_filter:
             safe_filter = sanitize_for_logging(self.check.effective_filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
         elif self.has_invalid_filter:
             safe_filter = sanitize_for_logging(self.check.effective_filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 
         if self.has_invalid_custom_message:
