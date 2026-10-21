@@ -34,6 +34,20 @@ The AI-assisted quality checks generation is available via the `DQGenerator` cla
 This approach is particularly useful when you have clear business requirements, but need help translating them into technical data quality rules.
 It's also useful for generating technical rules without requiring knowledge of DQX-specific syntax.
 
+<Admonition type="tip" title="Enrich the prompt with Unity Catalog metadata (experimental)">
+Pass a `UnityCatalogMetadataConfig` to `generate_dq_rules_ai_assisted` to attach UC table and
+column comments, column tags from `system.information_schema.*_tags`, bounded column upstream
+lineage from `system.access.column_lineage`, and external upstream lineage (non-Databricks
+sources such as SAP, Salesforce, Tableau) read via the [Unity Catalog External Lineage API](https://docs.databricks.com/aws/en/data-governance/unity-catalog/external-lineage).
+
+Instantiating `UnityCatalogMetadataConfig()` enables every enrichment path with sensible
+defaults. Disable just one walk by setting its sub-model to `None` — for example
+`UnityCatalogMetadataConfig(column_upstream_lineage=None)` keeps comments / tags / external
+lineage but skips the recursive column-lineage CTE. See
+`demos/dqx_demo_ai_assisted_unity_catalog_metadata.py` for a side-by-side comparison that
+generates rules for the same table with and without the enrichment.
+</Admonition>
+
 <Admonition type="tip" title="When to use AI-Assisted generation">
 AI-assisted generation is ideal for:
 - Translating business requirements into technical quality rules.
