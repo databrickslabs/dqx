@@ -58,7 +58,16 @@ EXPECTED_PARAMETER_ORDER = {
     "has_no_outliers": ("column", "row_filter"),
     "is_in_distribution": ("column", "distribution", "distance", "case_sensitive", "row_filter"),
     "is_unique": ("columns", "nulls_distinct", "row_filter", "trim_strings"),
-    "foreign_key": ("columns", "ref_columns", "ref_df_name", "ref_table", "negate", "row_filter", "null_safe"),
+    "foreign_key": (
+        "columns",
+        "ref_columns",
+        "ref_df_name",
+        "ref_table",
+        "negate",
+        "row_filter",
+        "null_safe",
+        "broadcast_ref",
+    ),
     "sql_query": (
         "query",
         "merge_columns",

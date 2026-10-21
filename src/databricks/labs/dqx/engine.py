@@ -1,5 +1,6 @@
 import copy
 import inspect
+import itertools
 import logging
 import os
 import threading
@@ -42,12 +43,16 @@ from databricks.labs.dqx.config import (
     TableActionsStorageConfig,
     LakebaseActionsStorageConfig,
 )
+from databricks.labs.dqx.check_funcs import add_dataset_aggregates
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
+    CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE,
+    DQDatasetRule,
     DQRule,
+    DQRowRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
@@ -181,14 +186,43 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
+        reference_cache: dict[tuple[str, str], DataFrame] = {}
+        checks_before_row_changes = itertools.takewhile(_keeps_input_rows, error_checks + warning_checks)
+        input_managers = {
+            id(check): DQRuleManager(
+                check=self._preselect_original_columns(df, check),
+                df=df,
+                spark=self.spark,
+                run_id=self.run_id,
+                engine_user_metadata=self.engine_user_metadata,
+                run_time_overwrite=self.run_time_overwrite,
+                ref_dfs=ref_dfs,
+                suppress_skipped=self.suppress_skipped,
+                rule_fingerprint=check.rule_fingerprint,
+                rule_set_fingerprint=rule_set_fingerprint,
+                input_df=df,
+                reference_cache=reference_cache,
+            )
+            for check in checks_before_row_changes
+            if isinstance(check, DQDatasetRule)
+        }
+
+        input_managers = {key: manager for key, manager in input_managers.items() if not manager.skip_message}
+        shared_aggregates = [
+            manager.dataset_aggregate for manager in input_managers.values() if manager.dataset_aggregate is not None
+        ]
+        result_df = add_dataset_aggregates(df, df, shared_aggregates)
 
         result_df, skipped_error_checks = self._create_results_array(
-            df,
+            result_df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
+            input_df=df,
+            reference_cache=reference_cache,
+            input_managers=input_managers,
         )
         result_df, skipped_warning_checks = self._create_results_array(
             result_df,
@@ -197,7 +231,12 @@ class DQEngineCore(DQEngineCoreBase):
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
+            input_df=df,
+            reference_cache=reference_cache,
+            input_managers=input_managers,
         )
+        if shared_aggregates:
+            result_df = result_df.drop(*[aggregate.metric_col for aggregate in shared_aggregates])
 
         # Duplicate check names are intentionally preserved — if two rules share a name,
         # check_metrics will report each occurrence separately so the user can spot the overlap.
@@ -561,6 +600,9 @@ class DQEngineCore(DQEngineCoreBase):
         dest_info_col: str,
         ref_dfs: dict[str, DataFrame] | None = None,
         rule_set_fingerprint: str | None = None,
+        input_df: DataFrame | None = None,
+        reference_cache: dict[tuple[str, str], DataFrame] | None = None,
+        input_managers: dict[int, DQRuleManager] | None = None,
     ) -> tuple[DataFrame, set[str]]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -577,6 +619,11 @@ class DQEngineCore(DQEngineCoreBase):
             dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
             rule_set_fingerprint: Fingerprint of the rule set
+            input_df: Untouched input DataFrame (without result columns). Defaults to *df*.
+            reference_cache: Optional per-run cache of compatible reference projections.
+            input_managers: Managers of the checks that read *input_df*, keyed by check id. The metric columns of
+                their built-in aggregates must already be present in *df*. Other checks read *df*, or the result of
+                the last check that may have changed the rows.
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks, and the
@@ -584,21 +631,19 @@ class DQEngineCore(DQEngineCoreBase):
         """
         if not checks:
             # No checks then just append a null array result
-            empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
-            return df.select("*", empty_result), set()
+            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set()
 
         check_conditions = []
         skipped_checks: set[str] = set()
         info_col_names: list[str] = []
-        current_df = df
         original_columns = set(df.columns)
+        input_df = df if input_df is None else input_df
 
-        for check in checks:
-            # each check pass may add new columns to the df and certain checks require original columns
-            normalized_check = self._preselect_original_columns(df, check)
-            manager = DQRuleManager(
-                check=normalized_check,
-                df=current_df,
+        def build_manager(check: DQRule, manager_df: DataFrame, check_input_df: DataFrame) -> DQRuleManager:
+            return DQRuleManager(
+                # each check pass may add new columns to the df and certain checks require original columns
+                check=self._preselect_original_columns(input_df, check),
+                df=manager_df,
                 spark=self.spark,
                 run_id=self.run_id,
                 engine_user_metadata=self.engine_user_metadata,
@@ -607,9 +652,18 @@ class DQEngineCore(DQEngineCoreBase):
                 suppress_skipped=self.suppress_skipped,
                 rule_fingerprint=check.rule_fingerprint,
                 rule_set_fingerprint=rule_set_fingerprint,
+                input_df=check_input_df,
+                reference_cache=reference_cache,
             )
-            log_telemetry(self.ws, "check", check.check_func.__name__)
-            result = manager.process()
+
+        current_df = df
+        rows_df = df
+        input_managers = input_managers or {}
+        for check in checks:
+            reads_input = id(check) in input_managers
+            manager = input_managers[id(check)] if reads_input else build_manager(check, current_df, rows_df)
+            log_telemetry(self.ws, "check", manager.check.check_func.__name__)
+            result = manager.process(current_df, aggregate_added=reads_input)
             check_conditions.append(result.condition)
             if manager.is_skipped:
                 skipped_checks.add(check.rule_fingerprint)
@@ -619,6 +673,8 @@ class DQEngineCore(DQEngineCoreBase):
             # The DataFrame should contain any new columns added by the dataset-level checks
             # to satisfy the check condition.
             current_df = result.check_df
+            if not _keeps_input_rows(check):
+                rows_df = current_df  # later checks must see the rows this check may have changed
 
         # Build array of non-null results
         combined_result_array = F.array_compact(F.array(*check_conditions))
@@ -687,6 +743,45 @@ class DQEngineCore(DQEngineCoreBase):
             return df.observe(self.observer.id, *metric_exprs), observation
 
         return df.observe(observation, *metric_exprs), observation
+
+
+def _keeps_input_rows(check: DQRule) -> bool:
+    """
+    Return True if applying *check* keeps the rows of its input DataFrame (it may still add columns).
+
+    Row-level checks always keep the rows. Dataset-level checks keep them only if their check function is marked
+    with the *row_preserving* decorator; unmarked (e.g. custom) checks are treated as possibly changing the rows.
+    """
+    return isinstance(check, DQRowRule) or getattr(check.check_func, CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE, False)
+
+
+def persist_if_supported(df: DataFrame, spark: SparkSession) -> bool:
+    """
+    Cache the input *df* with *persist()* so that several outputs derived from it compute it only once.
+
+    Streaming DataFrames and DataFrames inside a Spark Declarative Pipeline are not cached. Where caching is not
+    supported (e.g. serverless compute), *df* is left uncached and is computed again for each output. Observed
+    metrics are computed once, when the cache is filled.
+
+    Args:
+        df: DataFrame to cache.
+        spark: Spark session the DataFrame belongs to.
+
+    Returns:
+        True if *df* was cached, otherwise False.
+    """
+    if df.isStreaming or is_dlt_pipeline(spark):
+        return False
+    try:
+        df.persist()
+    except Exception:  # caching is an optimization, so any failure falls back to computing df for each output
+
+        logger.debug(
+            "Could not persist the checked DataFrame; it will be computed for each output",
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 def _populate_batch_observation(
@@ -863,6 +958,24 @@ class DQEngine(DQEngineBase):
         return self._engine.apply_checks_by_metadata_and_split(
             df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
         )
+
+    @telemetry_logger("engine", "apply_checks_and_split")
+    def _apply_checks_for_split(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> DataFrame | tuple[DataFrame, Observation]:
+        log_dataframe_telemetry(self.ws, self.spark, df)
+        return self._engine.apply_checks(df, checks, ref_dfs)
+
+    @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
+    def _apply_checks_by_metadata_for_split(
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        custom_check_functions: dict[str, Callable] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
+    ) -> DataFrame | tuple[DataFrame, Observation]:
+        log_dataframe_telemetry(self.ws, self.spark, df)
+        return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
     def _get_action_evaluator(self) -> ActionEvaluator | None:
         """Return the cached *ActionEvaluator*, building it on first call.
@@ -1079,6 +1192,36 @@ class DQEngine(DQEngineBase):
                 "'quarantine_config' to run a streaming query that can emit summary metrics."
             )
 
+    def _save_valid_and_invalid(
+        self,
+        checked_df: DataFrame,
+        output_config: OutputConfig | None,
+        quarantine_config: OutputConfig,
+        use_cached_result: bool,
+    ) -> tuple[StreamingQuery | None, StreamingQuery | None]:
+        """
+        Save valid rows using *output_config* (skipped when not provided) and invalid rows using *quarantine_config*.
+
+        Args:
+            checked_df: DataFrame with the result columns of the applied checks.
+            output_config: Optional configuration for writing valid records.
+            quarantine_config: Configuration for writing invalid records.
+            use_cached_result: Whether to cache *checked_df* while both outputs are written (see *persist_if_supported*).
+
+        Returns:
+            The output and quarantine streaming queries; None for batch writes or when not written.
+        """
+        persisted = use_cached_result and output_config is not None and persist_if_supported(checked_df, self.spark)
+        try:
+            output_query = None
+            if output_config is not None:
+                output_query = save_dataframe_as_table(self.get_valid(checked_df), output_config)
+            quarantine_query = save_dataframe_as_table(self.get_invalid(checked_df), quarantine_config)
+        finally:
+            if persisted:
+                checked_df.unpersist()
+        return output_query, quarantine_query
+
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
         self,
@@ -1090,6 +1233,7 @@ class DQEngine(DQEngineBase):
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
         run_config_name: str = "default",
+        use_cached_result: bool = True,
     ) -> None:
         """
         Apply data quality checks to input data and save results.
@@ -1117,6 +1261,11 @@ class DQEngine(DQEngineBase):
                 - If 'checks' parameter is provided, it is only used for reporting purposes
                 - If 'checks' parameter is not provided, it is used for loading checks from the storage.
             run_config_name: Name of the run configuration to use when loading checks from a table.
+            use_cached_result: Whether to cache the checked data while the valid and invalid records are written.
+                Applies only when both *output_config* and *quarantine_config* are provided. Set to False to skip
+                caching, e.g. to avoid the memory and disk use on large inputs. Caching is skipped for streaming
+                input, in Spark Declarative Pipelines, and where it is not supported (e.g. serverless).
+                Defaults to True.
 
         Raises:
             InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
@@ -1149,14 +1298,14 @@ class DQEngine(DQEngineBase):
         metrics_only_df: DataFrame | None = None
 
         if quarantine_config:
-            check_result = self.apply_checks_and_split(df, checks, ref_dfs)
+            check_result = self._apply_checks_for_split(df, checks, ref_dfs)
             if self._engine.observer:
-                good_df, bad_df, batch_observation = check_result
+                checked_df, batch_observation = check_result
             else:
-                good_df, bad_df = check_result
-            if output_config is not None:
-                output_streaming_query = save_dataframe_as_table(good_df, output_config)
-            quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
+                checked_df = check_result
+            output_streaming_query, quarantine_streaming_query = self._save_valid_and_invalid(
+                checked_df, output_config, quarantine_config, use_cached_result
+            )
             target_streaming_query = quarantine_streaming_query
         else:
             check_result = self.apply_checks(df, checks, ref_dfs)
@@ -1216,6 +1365,7 @@ class DQEngine(DQEngineBase):
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
         run_config_name: str = "default",  # required for checks stored in a table
+        use_cached_result: bool = True,
     ) -> None:
         """
         Apply metadata-defined data quality checks to input data and save results.
@@ -1250,6 +1400,11 @@ class DQEngine(DQEngineBase):
                 - If 'checks' param is provided, the parameter is only used for reporting purposes.
                 - If 'checks' param is not provided, the parameter is used for loading checks from the storage.
             run_config_name: Name of the run configuration to use when loading checks from a table.
+            use_cached_result: Whether to cache the checked data while the valid and invalid records are written.
+                Applies only when both *output_config* and *quarantine_config* are provided. Set to False to skip
+                caching, e.g. to avoid the memory and disk use on large inputs. Caching is skipped for streaming
+                input, in Spark Declarative Pipelines, and where it is not supported (e.g. serverless).
+                Defaults to True.
 
         Raises:
             InvalidParameterError: If both *checks* and *checks_location* are not specified, if none of
@@ -1281,16 +1436,16 @@ class DQEngine(DQEngineBase):
         metrics_only_df: DataFrame | None = None
 
         if quarantine_config:
-            check_result = self.apply_checks_by_metadata_and_split(
+            check_result = self._apply_checks_by_metadata_for_split(
                 df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
             )
             if self._engine.observer:
-                good_df, bad_df, batch_observation = check_result
+                checked_df, batch_observation = check_result
             else:
-                good_df, bad_df = check_result
-            if output_config is not None:
-                output_streaming_query = save_dataframe_as_table(good_df, output_config)
-            quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
+                checked_df = check_result
+            output_streaming_query, quarantine_streaming_query = self._save_valid_and_invalid(
+                checked_df, output_config, quarantine_config, use_cached_result
+            )
             target_streaming_query = quarantine_streaming_query
         else:
             check_result = self.apply_checks_by_metadata(

@@ -26,7 +26,10 @@ from databricks.labs.dqx.check_funcs import (
     sql_query,
     aggr_matches_dataset,
 )
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
+from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError, UnsafeSqlQueryError
 
@@ -5350,6 +5353,319 @@ def test_is_in_distribution_flags_via_metadata_api(ws, spark):
     checked = DQEngine(ws).apply_checks_by_metadata(df, checks)
     errors = checked.select(F.col("_errors")).collect()
     assert all(row["_errors"] is not None for row in errors)
+
+
+def _issue_names(df: DataFrame) -> dict[int, tuple[list[str], list[str]]]:
+    return {
+        row["id"]: (
+            [issue["name"] for issue in (row["_errors"] or [])],
+            [issue["name"] for issue in (row["_warnings"] or [])],
+        )
+        for row in df.select("id", "_errors", "_warnings").collect()
+    }
+
+
+def test_grouped_aggregates_applied_together_match_separate_checks_with_filters_and_nulls(ws, spark: SparkSession):
+    df = spark.createDataFrame(
+        [
+            (1, "a", 1, True),
+            (2, "a", 3, True),
+            (3, "a", None, True),
+            (4, "b", 2, True),
+            (5, "b", 10, False),
+            (6, None, 5, True),
+            (7, None, None, True),
+        ],
+        "id int, group_name string, value int, include boolean",
+    )
+    error_check = DQDatasetRule(
+        name="too_many_values",
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="value",
+        filter="include = true",
+        check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["group_name"]},
+    )
+    warning_check = DQDatasetRule(
+        name="maximum_too_small",
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_less_than,
+        column="value",
+        filter="include = true",
+        check_func_kwargs={"limit": 3, "aggr_type": "max", "group_by": [F.col("group_name")]},
+    )
+    engine = DQEngine(ws)
+
+    combined = _issue_names(engine.apply_checks(df, [error_check, warning_check]))
+    error_only = _issue_names(engine.apply_checks(df, [error_check]))
+    warning_only = _issue_names(engine.apply_checks(df, [warning_check]))
+
+    assert {row_id: issues[0] for row_id, issues in combined.items()} == {
+        row_id: issues[0] for row_id, issues in error_only.items()
+    }
+    assert {row_id: issues[1] for row_id, issues in combined.items()} == {
+        row_id: issues[1] for row_id, issues in warning_only.items()
+    }
+    assert {row_id for row_id, (errors, _) in combined.items() if errors} == {1, 2, 3}
+    assert {row_id for row_id, (_, warnings) in combined.items() if warnings} == {4}
+
+
+@pytest.mark.parametrize(
+    "nulls_distinct,row_filter,expected_error_ids",
+    [
+        (True, None, {1, 2, 6, 7}),
+        (False, None, {1, 2, 3, 4, 6, 7}),
+        (True, "include = true", {1, 2}),
+        (False, "include = true", {1, 2, 3, 4}),
+    ],
+)
+def test_is_unique_parity_with_nulls_and_filter(
+    ws,
+    spark: SparkSession,
+    nulls_distinct: bool,
+    row_filter: str | None,
+    expected_error_ids: set[int],
+):
+    df = spark.createDataFrame(
+        [
+            (1, "x", True),
+            (2, "x", True),
+            (3, None, True),
+            (4, None, True),
+            (5, "y", True),
+            (6, "z", False),
+            (7, "z", False),
+        ],
+        "id int, key string, include boolean",
+    )
+    check = DQDatasetRule(
+        name="unique_key",
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["key"],
+        filter=row_filter,
+        check_func_kwargs={"nulls_distinct": nulls_distinct},
+    )
+
+    issues = _issue_names(DQEngine(ws).apply_checks(df, [check]))
+
+    assert {row_id for row_id, (errors, _) in issues.items() if errors} == expected_error_ids
+    assert all(errors in ([], ["unique_key"]) and not warnings for errors, warnings in issues.values())
+
+
+def test_lazy_mad_outliers_match_eager_bounds(ws, spark: SparkSession):
+    values = [(1, 10), (2, 12), (3, 14), (4, 13), (5, 11), (6, 20), (7, 9), (8, 15), (9, 14), (10, 13)]
+    df = spark.createDataFrame(values, "id int, value int")
+    bounds = calculate_median_absolute_deviation_bounds(df, "value", None)
+    assert bounds is not None
+    lower_bound, upper_bound = bounds
+    expected_error_ids = {row_id for row_id, value in values if value < lower_bound or value > upper_bound}
+    check = DQDatasetRule(
+        name="mad_outlier",
+        criticality="error",
+        check_func=check_funcs.has_no_outliers,
+        column="value",
+    )
+
+    issues = _issue_names(DQEngine(ws).apply_checks(df, [check]))
+
+    assert {row_id for row_id, (errors, _) in issues.items() if errors} == expected_error_ids
+    assert expected_error_ids == {6, 7}
+
+
+def test_gap_check_preserves_output_columns_and_results(ws, spark: SparkSession, set_utc_timezone):
+    df = spark.createDataFrame(
+        [
+            (1, datetime(2025, 7, 14)),
+            (2, datetime(2025, 7, 16)),
+            (3, datetime(2025, 7, 17)),
+            (4, None),
+        ],
+        "id int, event_ts timestamp",
+    )
+    _, apply_gap = check_funcs.has_no_gaps_per_time_window("event_ts", window_minutes=1440)
+
+    applied = apply_gap(df)
+    added_columns = applied.columns[len(df.columns) :]
+    window_prefix = "__gap_window_start_event_ts_"
+    assert added_columns[0].startswith(window_prefix)
+    suffix = added_columns[0][len(window_prefix) :]
+    assert applied.columns == [
+        *df.columns,
+        f"{window_prefix}{suffix}",
+        f"__gap_next_window_start_event_ts_{suffix}",
+        f"__gap_condition_event_ts_{suffix}",
+    ]
+
+    check = DQDatasetRule(
+        name="daily_gap",
+        criticality="error",
+        check_func=check_funcs.has_no_gaps_per_time_window,
+        column="event_ts",
+        check_func_kwargs={"window_minutes": 1440},
+    )
+    issues = _issue_names(DQEngine(ws).apply_checks(df, [check]))
+    assert {row_id for row_id, (errors, _) in issues.items() if errors} == {1}
+
+
+def test_freshness_check_preserves_results(ws, spark: SparkSession, set_utc_timezone):
+    current_time = datetime(2025, 1, 1, 4, 30)
+    df = spark.createDataFrame(
+        [
+            (1, datetime(2025, 1, 1, 3, 10), True),
+            (2, datetime(2025, 1, 1, 4, 10), True),
+            (3, datetime(2025, 1, 1, 4, 20), True),
+            (4, datetime(2025, 1, 1, 3, 20), False),
+            (5, datetime(2025, 1, 1, 1, 10), True),
+            (6, None, True),
+        ],
+        "id int, event_ts timestamp, include boolean",
+    )
+    check = DQDatasetRule(
+        name="hourly_freshness",
+        criticality="error",
+        check_func=check_funcs.is_data_fresh_per_time_window,
+        column="event_ts",
+        filter="include = true",
+        check_func_kwargs={
+            "window_minutes": 60,
+            "min_records_per_window": 2,
+            "lookback_windows": 3,
+            "curr_timestamp": F.lit(current_time).cast("timestamp"),
+        },
+    )
+
+    issues = _issue_names(DQEngine(ws).apply_checks(df, [check]))
+
+    assert {row_id for row_id, (errors, _) in issues.items() if errors} == {1}
+
+
+def test_warning_dataset_checks_filtered_on_error_results(ws, spark: SparkSession):
+    df = spark.createDataFrame([(1, 1), (2, None), (3, 3), (4, 3)], "id int, value int")
+    checks = [
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="value"),
+        DQDatasetRule(
+            name="too_many_valid_rows",
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="value",
+            filter="_errors IS NULL",
+            check_func_kwargs={"limit": 2, "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="valid_value_not_unique",
+            criticality="warn",
+            check_func=check_funcs.is_unique,
+            columns=["value"],
+            filter="_errors IS NULL",
+        ),
+    ]
+
+    issues = _issue_names(DQEngine(ws).apply_checks(df, checks))
+
+    assert issues == {
+        1: ([], ["too_many_valid_rows"]),
+        2: (["value_is_null"], []),
+        3: ([], ["too_many_valid_rows", "valid_value_not_unique"]),
+        4: ([], ["too_many_valid_rows", "valid_value_not_unique"]),
+    }
+
+
+def test_aggregate_checks_after_compare_datasets_include_missing_records(ws, spark: SparkSession):
+    df = spark.createDataFrame([(1, "a"), (2, "a")], "id int, group_name string")
+    ref_df = spark.createDataFrame([(1, "a"), (2, "a"), (3, "b")], "id int, group_name string")
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=["id"],
+            check_func_kwargs={"ref_columns": ["id"], "ref_df_name": "ref", "check_missing_records": True},
+        ),
+        DQDatasetRule(
+            name="too_many_rows",
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="*",
+            check_func_kwargs={"limit": 2, "aggr_type": "count"},
+        ),
+    ]
+
+    checked = DQEngine(ws).apply_checks(df, checks, ref_dfs={"ref": ref_df})
+
+    # the record missing from df is added by compare_datasets and counted by the aggregate check after it
+    assert checked.count() == 3
+    assert checked.filter(F.col("_warnings").isNotNull()).count() == 3
+
+
+def test_warning_sql_query_refers_to_error_results(ws, spark: SparkSession):
+    df = spark.createDataFrame([(1, 1), (2, None), (3, 3)], "id int, value int")
+    checks = [
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="value"),
+        DQDatasetRule(
+            name="valid_rows_with_large_value",
+            criticality="warn",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs={
+                "query": "SELECT id, _errors IS NULL AND value > 2 AS condition FROM {{ input_view }}",
+                "merge_columns": ["id"],
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="any_error",
+            criticality="warn",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs={
+                "query": "SELECT count_if(_errors IS NOT NULL) > 0 AS condition FROM {{ input_view }}",
+                "condition_column": "condition",
+            },
+        ),
+    ]
+
+    issues = _issue_names(DQEngine(ws).apply_checks(df, checks))
+
+    assert issues == {
+        1: ([], ["any_error"]),
+        2: (["value_is_null"], ["any_error"]),
+        3: ([], ["valid_rows_with_large_value", "any_error"]),
+    }
+
+
+@pytest.mark.parametrize("limit, expected_count_errors", [(3, []), (2, ["row_count_at_most_limit"])])
+def test_sql_query_with_non_unique_merge_columns_preserves_rows_for_later_aggregate(
+    ws, spark: SparkSession, limit: int, expected_count_errors: list[str]
+):
+    # "key" is not unique in the input, and the query returns several rows per key (UNION ALL)
+    df = spark.createDataFrame([(1, "a"), (2, "a"), (3, "b")], "id int, key string")
+    checks = [
+        DQDatasetRule(
+            name="key_is_a",
+            criticality="error",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs={
+                "query": "SELECT key, key = 'a' AS condition FROM {{ input_view }} "
+                "UNION ALL SELECT key, false AS condition FROM {{ input_view }}",
+                "merge_columns": ["key"],
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="row_count_at_most_limit",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": limit},
+        ),
+    ]
+
+    checked_df = DQEngine(ws).apply_checks(df, checks)
+
+    assert sorted(row["id"] for row in checked_df.select("id").collect()) == [1, 2, 3]
+    assert _issue_names(checked_df) == {
+        1: (["key_is_a", *expected_count_errors], []),
+        2: (["key_is_a", *expected_count_errors], []),
+        3: (expected_count_errors, []),
+    }
 
 
 @pytest.mark.parametrize("trim_strings", [False, True])
