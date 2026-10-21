@@ -7,7 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
@@ -473,7 +474,7 @@ class TestBatchImport:
     def test_skip_duplicates_keeps_rules_that_differ_only_in_filter(self):
         # Same check on different rows is two rules: the second must not be
         # reported as reused (and inherit the first rule's filter).
-        svc = MagicMock()
+        svc = create_autospec(RegistryService, instance=True)
         svc.compute_definition_fingerprint.side_effect = ["fp100", "fp200"]
         svc.get_active_rule_by_fingerprint.return_value = None
         svc.create_rule.side_effect = [(_rule("r100"), None), (_rule("r200"), None)]

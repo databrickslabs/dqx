@@ -38,11 +38,10 @@ def _rename_placeholders(value: Any, renames: dict[str, str]) -> Any:
 
 
 def rename_slots(definition: RuleDefinition, renames: dict[str, str]) -> RuleDefinition:
-    """Copy of *definition* with slots renamed per *renames* (old -> new), body included."""
+    """Copy of *definition* with slots renamed per *renames* (old -> new), body and filter included."""
     renamed = definition.model_copy(deep=True)
     renamed.body = _rename_placeholders(renamed.body, renames)
-    if renamed.filter:
-        renamed.filter = _rename_placeholders(renamed.filter, renames)
+    renamed.filter = _rename_placeholders(renamed.filter, renames)
     for slot in renamed.slots:
         slot.name = renames.get(slot.name, slot.name)
     return renamed
@@ -52,7 +51,9 @@ def shape_key(mode: str, definition: RuleDefinition, polarity: str | None) -> st
     """Hash of the rule's structure with slots renamed to their position.
 
     The rule-level *filter* is part of the shape: two rules that run the same
-    check on different rows are different rules (matching registry_fingerprint).
+    check on different rows are different rules, as in registry_fingerprint.
+    Unlike the fingerprint, the filter is trimmed and a blank filter counts as
+    no filter.
     """
     ordered = _ordered_slots(definition.slots)
     positional = {s.name: f"__slot_{i}" for i, s in enumerate(ordered)}
@@ -68,7 +69,7 @@ def shape_key(mode: str, definition: RuleDefinition, polarity: str | None) -> st
         "filter": rule_filter,
         "slots": (
             [positional[s.name] + ":" + s.cardinality for s in ordered]
-            if mode in _RENAMEABLE_MODES
+            if renameable
             else [s.name + ":" + s.cardinality for s in ordered]
         ),
         "parameters": sorted(
@@ -126,7 +127,11 @@ def has_generalized_slots(definition: RuleDefinition) -> bool:
 
 
 def generic_name(mode: str, definition: RuleDefinition) -> str | None:
-    """Readable name for a generalized native rule, e.g. ``Is not less than (limit: 0)``."""
+    """Readable name for a generalized native rule, e.g. ``Is not less than (limit: 0)``.
+
+    A rule-level filter is appended (``... where error_code = 100``) so rules
+    that differ only in which rows they check get distinct names.
+    """
     if mode != "dqx_native":
         return None
     function = str(definition.body.get("function") or "").strip()
@@ -134,4 +139,7 @@ def generic_name(mode: str, definition: RuleDefinition) -> str | None:
         return None
     name = function.replace("_", " ").capitalize()
     params = [f"{p.name}: {p.value}" for p in definition.parameters if p.value not in (None, "", [])]
-    return f"{name} ({', '.join(params)})" if params else name
+    if params:
+        name = f"{name} ({', '.join(params)})"
+    rule_filter = (definition.filter or "").strip()
+    return f"{name} where {rule_filter}" if rule_filter else name

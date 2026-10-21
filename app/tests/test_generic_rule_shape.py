@@ -148,6 +148,12 @@ class TestNamesAndRenames:
         assert generic_name("dqx_native", _native("is_not_less_than", ["x"], limit)) == "Is not less than (limit: 0)"
         assert generic_name("sql", _native("is_not_null", ["x"])) is None
 
+    def test_generic_name_includes_the_filter(self):
+        allowed = [{"name": "allowed", "type": "list", "value": ["OK"]}]
+        code_100 = _native("is_in_list", ["x"], allowed, rule_filter=" error_code = 100 ")
+        assert generic_name("dqx_native", code_100) == "Is in list (allowed: ['OK']) where error_code = 100"
+        assert generic_name("dqx_native", _native("is_not_null", ["x"], rule_filter="  ")) == "Is not null"
+
     def test_slot_renames_between(self):
         assert slot_renames_between(
             _native("is_unique", ["order_id", "line_id"]), _native("is_unique", ["column_1", "column_2"])
