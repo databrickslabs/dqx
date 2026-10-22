@@ -4249,6 +4249,9 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     """
     Checks whether the values in the input column contain specific keys in the outermost JSON object.
 
+    Valid JSON arrays, scalars, and null values fail with a non-object error because they are not JSON objects.
+    SQL NULL values pass; use *is_not_null* separately when the input is required.
+
     Args:
         column: The name of the column or the column expression to check for JSON keys.
         keys: A list of JSON keys to verify within the outermost JSON object.
@@ -4277,7 +4280,17 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         F.concat_ws(", ", F.lit(keys)),
         F.lit("]"),
     )
-    message = F.when(is_invalid_json, json_validation_error).otherwise(has_json_keys_msg)
+    has_json_non_object_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not a JSON object"),
+    )
+    message = (
+        F.when(is_invalid_json, json_validation_error)
+        .when(json_keys_array.isNull() & col_expr.isNotNull(), has_json_non_object_msg)
+        .otherwise(has_json_keys_msg)
+    )
 
     if require_all:
         missing = F.array_except(required_keys, json_keys_array)
@@ -4287,7 +4300,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
 
     condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
     # Treat NULL values as valid (no violation) to ensure consistent behavior across ANSI/non-ANSI modes
-    condition = condition | col_expr.isNull()
+    condition = F.coalesce(condition, F.lit(False)) | col_expr.isNull()
 
     return make_condition(
         ~condition,
