@@ -5157,16 +5157,17 @@ def test_has_json_keys_require_at_least_one(spark):
 @pytest.mark.parametrize("ansi_enabled", ["true", "false"])
 def test_has_json_keys_requires_outermost_object(spark: SparkSession, require_all: bool, ansi_enabled: str) -> None:
     missing_keys = "is missing keys in the list: [id, name]"
+    non_object = "is not a JSON object"
     cases = [
         (None, None),
-        ("[]", missing_keys),
-        ("[1, 2]", missing_keys),
-        ('[{"id": 1, "name": "test"}]', missing_keys),
-        ("123", missing_keys),
-        ('"a string"', missing_keys),
-        ("true", missing_keys),
-        ("false", missing_keys),
-        ("null", missing_keys),
+        ("[]", non_object),
+        ("[1, 2]", non_object),
+        ('[{"id": 1, "name": "test"}]', non_object),
+        ("123", non_object),
+        ('"a string"', non_object),
+        ("true", non_object),
+        ("false", non_object),
+        ("null", non_object),
         ('{"id": 1, "name": "test"}', None),
         ('{"id": null, "name": null}', None),
         ("{}", missing_keys),
