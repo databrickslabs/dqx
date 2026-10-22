@@ -79,7 +79,7 @@ def test_dq_profile_context_with_metrics_returns_new_instance_with_snapshot():
     assert refreshed.df is ctx.df
 
 
-def test_dq_profile_context_with_metrics_snapshots_supplied_mapping():
+def test_dq_profile_context_with_metrics_snapshots_supplied_mapping() -> None:
     """Later mutations to the source dict must not be reflected in the returned context."""
     source: dict[str, int] = {"count": 10}
     df_mock = create_autospec(DataFrame)
@@ -274,7 +274,7 @@ def _fake_ctx(column_name="c", column_type=None, metrics=None, options=None):
     )
 
 
-def test_chain_first_match_wins_and_stops():
+def test_chain_first_match_wins_and_stops() -> None:
     calls: list[str] = []
 
     def make_detector(name: str, match: bool):

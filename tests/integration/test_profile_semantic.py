@@ -6,6 +6,7 @@ from databricks.labs.dqx.profiler.profile_builder import (
     PROFILE_BUILDER_REGISTRY,
     register_profile_builder,
 )
+from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.semantic import (
     DEFAULT_ENUM_DETECTOR,
@@ -51,8 +52,8 @@ def _make_demo_df(spark):
     return spark.createDataFrame(rows, schema=schema)
 
 
-def _profile_by_column(profiles):
-    grouped: dict[str, list] = {}
+def _profile_by_column(profiles: list[DQProfile]) -> dict[str, list[DQProfile]]:
+    grouped: dict[str, list[DQProfile]] = {}
     for profile in profiles:
         grouped.setdefault(profile.column, []).append(profile)
     return grouped
@@ -191,7 +192,7 @@ def test_short_type_low_cardinality_classified_as_enum_and_emits_is_in(spark, ws
     ), f"expected ShortType is_in profile tagged semantic_type='enum', got: {is_in_semantic_types}"
 
 
-def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
+def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws) -> None:
     """A contextual builder ordered after `min_max` observes the *changed* `min`/`max` via `ctx.metrics`.
 
     Regression guard: after `min_max` writes its resolved bounds back into *metrics*,
@@ -248,7 +249,7 @@ def test_contextual_builder_after_min_max_observes_resolved_min_max(spark, ws):
         PROFILE_BUILDER_REGISTRY.pop("_spy_after_min_max", None)
 
 
-def test_enum_detector_values_reused_by_is_in_builder(spark, ws):
+def test_enum_detector_values_reused_by_is_in_builder(spark, ws) -> None:
     """The is_in builder must reuse the enum detector's values — no double distinct-collect."""
     df = _make_demo_df(spark)
 
