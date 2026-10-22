@@ -15,7 +15,7 @@ Generic HTTPS webhook destination with optional Basic-auth.
 
 Posts a canonical DQX JSON payload to any HTTPS endpoint. No host suffix restrictions are applied. When both *username* and *password* are provided they are resolved (via the secret resolver when given as *DQSecret* references) and packaged into a *WebhookAuth* passed to the *WebhookClient*.
 
-Class attributes: allowed\_host\_suffixes: *None* — no host restriction.
+Class attributes: allowed_host_suffixes: *None* — no host restriction.
 
 **Attributes**:
 

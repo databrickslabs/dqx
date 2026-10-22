@@ -6,7 +6,7 @@ This module provides *ActionEvaluator* — the top-level orchestrator that drive
 
 1. **Condition evaluation** — if *dq.condition* is not *None*, the condition is evaluated against *context.metrics* via *ConditionEvaluator*. A *False* result short-circuits the action (not-fired event recorded, continue).
 
-2. **Suppression check** — *ActionStateStore.should\_fire* gates frequency and status-change suppression for alert actions. A *False* result short-circuits the action (not-fired event recorded, continue).
+2. **Suppression check** — *ActionStateStore.should_fire* gates frequency and status-change suppression for alert actions. A *False* result short-circuits the action (not-fired event recorded, continue).
 
 3. **Polymorphic dispatch** — *dq.action.execute(context, services)* is called uniformly for all action types. No *isinstance* checks are performed here; new action types extend the system without modifying this evaluator (Open/Closed principle).
 
@@ -24,7 +24,7 @@ Orchestrator that drives all configured *DQAction* instances.
 For each *DQAction* in *actions*, *evaluate* follows this pipeline:
 
 1. If *dq.condition* is not *None*, evaluate it. On *False*: record a not-fired *AlertEvent* and continue.
-2. Call *state\_store.should\_fire*. On *False*: record a not-fired *AlertEvent* and continue.
+2. Call *state_store.should_fire*. On *False*: record a not-fired *AlertEvent* and continue.
 3. Execute the action via *dq.action.execute(context, services)* — **no** *isinstance* checks, purely polymorphic dispatch. Record a fired *AlertEvent* and append the *ActionResult*.
 4. Catch *TerminalActionError* into a deferred list.
 
@@ -50,7 +50,7 @@ Iterates through every *DQAction* in *self.\_actions* and applies the condition/
 
 **Arguments**:
 
-* `context` - Immutable run-time snapshot carrying *metrics*, *run\_id*, *run\_time*, and optional location fields.
+* `context` - Immutable run-time snapshot carrying *metrics*, *run_id*, *run_time*, and optional location fields.
 
 **Returns**:
 

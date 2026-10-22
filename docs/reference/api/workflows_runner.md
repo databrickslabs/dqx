@@ -1,4 +1,4 @@
-# databricks.labs.dqx.workflows\_runner
+# databricks.labs.dqx.workflows_runner
 
 ## WorkflowsRunner Objects[​](#workflowsrunner-objects "Direct link to WorkflowsRunner Objects")
 

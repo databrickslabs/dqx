@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" dir="ltr" class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-studio/authoring/create-a-rule/index" data-has-hydrated="false">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="Docusaurus v3.10.2">
+<title data-rh="true">Create a rule | DQX</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Create a rule | DQX"><meta data-rh="true" name="description" content="A rule captures one expectation about your data — &quot;this column is never"><meta data-rh="true" property="og:description" content="A rule captures one expectation about your data — &quot;this column is never"><link data-rh="true" rel="icon" href="/dqx/img/logo.svg"><link data-rh="true" rel="canonical" href="https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/"><link data-rh="true" rel="alternate" href="https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/" hreflang="en"><link data-rh="true" rel="alternate" href="https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"DQX Studio","item":"https://databrickslabs.github.io/dqx/docs/studio/"},{"@type":"ListItem","position":2,"name":"Create a rule","item":"https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/"}]}</script><link rel="stylesheet" href="/dqx/assets/css/styles.f1613816.css">
+<script src="/dqx/assets/js/runtime~main.48e51b7f.js" defer="defer"></script>
+<script src="/dqx/assets/js/main.c19102ba.js" defer="defer"></script>
+</head>
+<body>
+<svg style="display: none;"><defs>
+<symbol id="theme-svg-external-link" viewBox="0 0 24 24"><path fill="currentColor" d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t=function(){try{return new URLSearchParams(window.location.search).get("docusaurus-theme")}catch(t){}}()||function(){try{return window.localStorage.getItem("theme")}catch(t){}}();document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{const c=new URLSearchParams(window.location.search).entries();for(var[t,e]of c)if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id="__docusaurus"><link rel="preload" as="image" href="/dqx/img/logo.svg"><link rel="preload" as="image" href="/dqx/img/studio/create_rule_basic_checks_light.png"><link rel="preload" as="image" href="/dqx/img/studio/create_rule_basic_checks_dark.png"><div role="region" aria-label="Skip to main content"><a class="skipToContent_fXgn" href="#__docusaurus_skipToContent_fallback">Skip to main content</a></div><nav aria-label="Main" class="theme-layout-navbar navbar navbar--fixed-top"><div class="navbar__inner"><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded="false" class="navbar__toggle clean-btn" type="button"><svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="2" d="M4 7h22M4 15h22M4 23h22"></path></svg></button><a class="navbar__brand" href="/dqx/"><div class="navbar__logo"><img src="/dqx/img/logo.svg" alt="DQX Logo" class="themedComponent_mlkZ themedComponent--light_NVdE"><img src="/dqx/img/logo.svg" alt="DQX Logo" class="themedComponent_mlkZ themedComponent--dark_xIcU"></div><b class="navbar__title text--truncate">DQX</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><div class="navbarSearchContainer_Bca1"><div class="navbar__search"><span aria-label="expand searchbar" role="button" class="search-icon" tabindex="0"></span><input id="search_input_react" type="search" placeholder="Loading..." aria-label="Search" class="navbar__search-input search-bar" disabled=""></div></div><a href="https://github.com/databrickslabs/dqx" target="_blank" rel="noopener noreferrer" class="navbar__item navbar__link header-github-link" aria-label="GitHub repository"></a><div class="toggle_vylO colorModeToggle_DEke"><button class="clean-btn toggleButton_gllP toggleButtonDisabled_aARS" type="button" disabled="" title="system mode" aria-label="Switch between dark and light mode (currently system mode)"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP lightToggleIcon_pyhR"><path fill="currentColor" d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP darkToggleIcon_wfgR"><path fill="currentColor" d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP systemToggleIcon_QzmC"><path fill="currentColor" d="m12 21c4.971 0 9-4.029 9-9s-4.029-9-9-9-9 4.029-9 9 4.029 9 9 9zm4.95-13.95c1.313 1.313 2.05 3.093 2.05 4.95s-0.738 3.637-2.05 4.95c-1.313 1.313-3.093 2.05-4.95 2.05v-14c1.857 0 3.637 0.737 4.95 2.05z"></path></svg></button></div></div></div><div role="presentation" class="navbar-sidebar__backdrop"></div></nav><div id="__docusaurus_skipToContent_fallback" class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class="docsWrapper_hBAB"><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type="button"></button><div class="docRoot_UBD9"><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class="sidebarViewport_aRkj"><div class="sidebar_njMd"><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/dqx/docs/motivation/"><span class="linkLabel_WmDU">Motivation</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/dqx/docs/installation/"><span class="linkLabel_WmDU">Installation</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/dqx/docs/guide/"><span class="categoryLinkLabel_W154">DQX Core</span></a><button aria-label="Expand sidebar category &#x27;DQX Core&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--active" href="/dqx/docs/studio/"><span class="categoryLinkLabel_W154">DQX Studio</span></a><button aria-label="Collapse sidebar category &#x27;DQX Studio&#x27;" aria-expanded="true" type="button" class="clean-btn menu__caret"></button></div><ul class="menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/quickstart/"><span class="linkLabel_WmDU">Quickstart</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-2 menu__list-item"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role="button" aria-expanded="true" tabindex="0" href="/dqx/docs/studio/authoring/create-a-rule/"><span class="categoryLinkLabel_W154">Authoring rules</span></a></div><ul class="menu__list"><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-3 menu__list-item"><div class="menu__list-item-collapsible menu__list-item-collapsible--active"><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--active" aria-current="page" tabindex="0" href="/dqx/docs/studio/authoring/create-a-rule/"><span class="categoryLinkLabel_W154">Create a rule</span></a><button aria-label="Collapse sidebar category &#x27;Create a rule&#x27;" aria-expanded="true" type="button" class="clean-btn menu__caret"></button></div><ul class="menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-4 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/"><span class="linkLabel_WmDU">Cross-table rules</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-4 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level/"><span class="linkLabel_WmDU">Row-level vs dataset-level rules</span></a></li></ul></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/authoring/import-rules/"><span class="linkLabel_WmDU">Import rules</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/authoring/rule-marketplace/"><span class="linkLabel_WmDU">Rule Marketplace</span></a></li></ul></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-2 menu__list-item"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" tabindex="0" href="/dqx/docs/studio/monitoring/"><span class="categoryLinkLabel_W154">Monitor your tables</span></a><button aria-label="Collapse sidebar category &#x27;Monitor your tables&#x27;" aria-expanded="true" type="button" class="clean-btn menu__caret"></button></div><ul class="menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/assign-rules/"><span class="linkLabel_WmDU">Assign rules</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/profiling/"><span class="linkLabel_WmDU">Profiling</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/collections/"><span class="linkLabel_WmDU">Collections</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/run-and-schedule/"><span class="linkLabel_WmDU">Run checks &amp; schedule</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/load-checks-in-a-pipeline/"><span class="linkLabel_WmDU">Load and run checks in a pipeline</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-3 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/monitoring/uptime-health-checks/"><span class="linkLabel_WmDU">Uptime health checks</span></a></li></ul></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/running/"><span class="linkLabel_WmDU">Review results</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-2 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" tabindex="0" href="/dqx/docs/studio/governance/"><span class="categoryLinkLabel_W154">Governance &amp; security</span></a><button aria-label="Expand sidebar category &#x27;Governance &amp; security&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/integrations/"><span class="linkLabel_WmDU">Load checks outside the app</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link" tabindex="0" href="/dqx/docs/studio/styling/"><span class="linkLabel_WmDU">Theme</span></a></li></ul></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/dqx/docs/demos/"><span class="linkLabel_WmDU">Demos</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/dqx/docs/reference/"><span class="categoryLinkLabel_W154">Reference</span></a><button aria-label="Expand sidebar category &#x27;Reference&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/dqx/docs/dev/"><span class="categoryLinkLabel_W154">Contributing to DQX</span></a><button aria-label="Expand sidebar category &#x27;Contributing to DQX&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li></ul></nav></div></div></aside><main class="docMainContainer_TBSr"><div class="container padding-top--md padding-bottom--lg"><div class="row"><div class="col docItemCol_VOVn"><div class="docItemContainer_Djhp"><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label="Breadcrumbs"><ul class="breadcrumbs"><li class="breadcrumbs__item"><a aria-label="Home page" class="breadcrumbs__link" href="/dqx/"><svg viewBox="0 0 24 24" class="breadcrumbHomeIcon_YNFT"><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill="currentColor"></path></svg></a></li><li class="breadcrumbs__item"><a class="breadcrumbs__link" href="/dqx/docs/studio/"><span>DQX Studio</span></a></li><li class="breadcrumbs__item"><span class="breadcrumbs__link">Authoring rules</span></li><li class="breadcrumbs__item breadcrumbs__item--active"><span class="breadcrumbs__link">Create a rule</span></li></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type="button" class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Create a rule</h1></header>
+<p>A <strong>rule</strong> captures one expectation about your data — &quot;this column is never
+blank&quot;, &quot;an amount is never negative&quot;, &quot;a status is one of a known set&quot;. You
+write it once in the <strong>Rules Registry</strong> and reuse it on as many tables as you
+like.</p>
+<p>This page walks through creating a rule the no-code way. It&#x27;s the most common
+thing you&#x27;ll do in DQX Studio, so it&#x27;s worth reading once end to end.</p>
+<div class="theme-admonition theme-admonition-note admonition_xJq3 alert alert--secondary"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M6.3 5.69a.942.942 0 0 1-.28-.7c0-.28.09-.52.28-.7.19-.18.42-.28.7-.28.28 0 .52.09.7.28.18.19.28.42.28.7 0 .28-.09.52-.28.7a1 1 0 0 1-.7.3c-.28 0-.52-.11-.7-.3zM8 7.99c-.02-.25-.11-.48-.31-.69-.2-.19-.42-.3-.69-.31H6c-.27.02-.48.13-.69.31-.2.2-.3.44-.31.69h1v3c.02.27.11.5.31.69.2.2.42.31.69.31h1c.27 0 .48-.11.69-.31.2-.19.3-.42.31-.69H8V7.98v.01zM7 2.3c-3.14 0-5.7 2.54-5.7 5.68 0 3.14 2.56 5.7 5.7 5.7s5.7-2.55 5.7-5.7c0-3.15-2.56-5.69-5.7-5.69v.01zM7 .98c3.86 0 7 3.14 7 7s-3.14 7-7 7-7-3.12-7-7 3.14-7 7-7z"></path></svg></span>Before you start</div><div class="admonitionContent_BuS1"><p>You need the <strong>Rule Author</strong> role (or higher) to create rules. If you only see a
+read-only view, ask your admin — see
+<a class="" href="/dqx/docs/studio/governance/permissions-and-entitlements/">Roles &amp; permissions</a>.</p></div></div>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="start-a-new-rule">Start a new rule<a href="#start-a-new-rule" class="hash-link" aria-label="Direct link to Start a new rule" title="Direct link to Start a new rule" translate="no">​</a></h2>
+<p>Open <strong>Rules</strong> in the sidebar and click <strong>New rule</strong>. The rule editor opens on
+the <strong>About</strong> tab, where you describe what the rule is. You&#x27;ll fill in the
+<em>details</em> here, and the <em>logic</em> on the Implementation tab next.</p>
+<p>Fill in:</p>
+<ul>
+<li class=""><strong>Name</strong> — a short, human readable name. Say what good looks like, not what&#x27;s wrong:
+<em>&quot;Email is present&quot;</em>, not <em>&quot;email null check&quot;</em>.</li>
+<li class=""><strong>Description</strong> — one line on what the rule checks and why it matters.</li>
+<li class=""><strong>Default severity</strong> — how much a failure of this rule matters:
+<a class="" href="/dqx/docs/studio/#severity"><strong>Low</strong>, <strong>Medium</strong>, <strong>High</strong>, or <strong>Critical</strong></a>
+(your organization can customize these levels). Severity is a priority for
+triage and reporting, not a pass/fail switch — it&#x27;s the starting point, and you
+can override it for a specific table when you apply the rule.</li>
+<li class=""><strong>Dimension</strong> — which
+<a class="" href="/dqx/docs/studio/#quality-dimensions">aspect of quality</a>
+this measures (completeness, validity, accuracy, and so on). This is what lets
+you later report quality <em>by category</em>.</li>
+<li class=""><strong>Tags</strong> <em>(optional)</em> — labels for organizing and filtering rules. Some tags
+are <a href="#governed-tags" class="">governed tags</a> that make a rule apply automatically
+wherever that kind of data appears.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="governed-tags">Governed tags: apply a rule automatically<a href="#governed-tags" class="hash-link" aria-label="Direct link to Governed tags: apply a rule automatically" title="Direct link to Governed tags: apply a rule automatically" translate="no">​</a></h3>
+<p>A <strong>governed tag</strong> is a label your organization agrees on for a <em>kind</em> of data —
+<code>pii</code>, <code>region</code>, <code>class.location</code>, and so on. Governed tags are defined in
+<strong>Unity Catalog</strong>, not in DQX Studio, and are the shared vocabulary you already
+use to classify columns.</p>
+<p>Instead of pointing a rule at a named column, you can point one of its columns at
+a <strong>tag</strong>: on the column, click <strong>+ Apply to a tag</strong> and pick from the searchable
+list of Unity Catalog tags. The rule then <strong>auto-applies</strong> to any table column
+carrying that tag — a rule scoped to <code>pii</code> lands on every <code>pii</code> column across your
+tables, and picks up new ones the moment they&#x27;re tagged. No hunting down an
+<code>email</code> column that&#x27;s called <code>email_address</code> on one table and <code>contact_email</code> on
+another.</p>
+<p>Checks that arrive this way are marked with a <strong>matched-tag chip</strong> on the table&#x27;s
+<a class="" href="/dqx/docs/studio/monitoring/assign-rules/">Apply Rules tab</a>, so you can tell they came
+from a governed tag rather than being mapped by hand.</p>
+<div class="theme-admonition theme-admonition-note admonition_xJq3 alert alert--secondary"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M6.3 5.69a.942.942 0 0 1-.28-.7c0-.28.09-.52.28-.7.19-.18.42-.28.7-.28.28 0 .52.09.7.28.18.19.28.42.28.7 0 .28-.09.52-.28.7a1 1 0 0 1-.7.3c-.28 0-.52-.11-.7-.3zM8 7.99c-.02-.25-.11-.48-.31-.69-.2-.19-.42-.3-.69-.31H6c-.27.02-.48.13-.69.31-.2.2-.3.44-.31.69h1v3c.02.27.11.5.31.69.2.2.42.31.69.31h1c.27 0 .48-.11.69-.31.2-.19.3-.42.31-.69H8V7.98v.01zM7 2.3c-3.14 0-5.7 2.54-5.7 5.68 0 3.14 2.56 5.7 5.7 5.7s5.7-2.55 5.7-5.7c0-3.15-2.56-5.69-5.7-5.69v.01zM7 .98c3.86 0 7 3.14 7 7s-3.14 7-7 7-7-3.12-7-7 3.14-7 7-7z"></path></svg></span>Governed tags vs. rule labels</div><div class="admonitionContent_BuS1"><p>Governed tags attach to a <strong>column</strong> inside a rule and drive auto-apply. They&#x27;re
+different from the plain <strong>Tags</strong> field above, which just helps you organize and
+find rules. Admins manage the organization&#x27;s tags under
+<a class="" href="/dqx/docs/studio/governance/">Governance</a>.</p></div></div>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="define-what-the-rule-checks">Define what the rule checks<a href="#define-what-the-rule-checks" class="hash-link" aria-label="Direct link to Define what the rule checks" title="Direct link to Define what the rule checks" translate="no">​</a></h2>
+<p>Switch to the <strong>Implementation</strong> tab. This is where you say <em>what</em> makes data
+pass or fail — without writing code.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="columns-are-placeholders-not-real-columns">Columns are placeholders, not real columns<a href="#columns-are-placeholders-not-real-columns" class="hash-link" aria-label="Direct link to Columns are placeholders, not real columns" title="Direct link to Columns are placeholders, not real columns" translate="no">​</a></h3>
+<p>Notice the column is written as <code>{{column_1}}</code> — a <strong>placeholder</strong>. Because a
+rule lives in the Registry and is meant to be <em>reused</em>, you don&#x27;t pick a real
+column here. You choose the actual column later, when you
+<a class="" href="/dqx/docs/studio/monitoring/assign-rules/">apply the rule to a table</a>. That&#x27;s how
+one &quot;is never blank&quot; rule can protect <code>email</code> on one table and <code>phone</code> on
+another.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-rule-can-use-more-than-one-column">A rule can use more than one column<a href="#a-rule-can-use-more-than-one-column" class="hash-link" aria-label="Direct link to A rule can use more than one column" title="Direct link to A rule can use more than one column" translate="no">​</a></h3>
+<p>A rule isn&#x27;t limited to a single column. Under <strong>Columns used</strong> you can add
+several placeholders — <code>{{column_1}}</code>, <code>{{column_2}}</code>, and so on — and your
+condition can reference all of them. This is what lets a rule express a
+relationship <em>between</em> columns, not just a fact about one. For example:</p>
+<ul>
+<li class=""><strong>A date ordering:</strong> <code>{{end_date}}</code> is on or after <code>{{start_date}}</code>.</li>
+<li class=""><strong>Conditional presence:</strong> if <code>{{payment_method}}</code> is <code>card</code>, then
+<code>{{card_last_four}}</code> must not be blank.</li>
+<li class=""><strong>A combined uniqueness key:</strong> the pair <code>{{customer_id}}</code> + <code>{{order_date}}</code>
+never appears twice.</li>
+<li class=""><strong>A cross-column comparison:</strong> <code>{{discounted_price}}</code> is not greater than
+<code>{{list_price}}</code>.</li>
+</ul>
+<p>Just as with a single-column rule, you map each placeholder to a real column when
+you apply the rule to a table — so a multi-column rule stays just as reusable.</p>
+<p>Under <strong>Condition</strong>, you build a simple sentence: <em>IF <code>{{column_1}}</code> …</em> and then
+pick what must be true. There are three ways to express what makes data pass or
+fail, from the simplest to the most powerful. Most rules only ever need the
+first.</p>
+<div class="theme-admonition theme-admonition-tip admonition_xJq3 alert alert--success"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 12 16"><path fill-rule="evenodd" d="M6.5 0C3.48 0 1 2.19 1 5c0 .92.55 2.25 1 3 1.34 2.25 1.78 2.78 2 4v1h5v-1c.22-1.22.66-1.75 2-4 .45-.75 1-2.08 1-3 0-2.81-2.48-5-5.5-5zm3.64 7.48c-.25.44-.47.8-.67 1.11-.86 1.41-1.25 2.06-1.45 3.23-.02.05-.02.11-.02.17H5c0-.06 0-.13-.02-.17-.2-1.17-.59-1.83-1.45-3.23-.2-.31-.42-.67-.67-1.11C2.44 6.78 2 5.65 2 5c0-2.2 2.02-4 4.5-4 1.22 0 2.36.42 3.22 1.19C10.55 2.94 11 3.94 11 5c0 .66-.44 1.78-.86 2.48zM4 14h5c-.23 1.14-1.3 2-2.5 2s-2.27-.86-2.5-2z"></path></svg></span>Not sure which check you want?</div><div class="admonitionContent_BuS1"><p>Describe it in plain English instead — the <strong>Generate</strong> box at the top of the
+editor drafts a check for you. See <a href="#generate-a-rule-with-ai" class="">Generate a rule with AI</a>
+below.</p></div></div>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="simple-checks">Simple checks<a href="#simple-checks" class="hash-link" aria-label="Direct link to Simple checks" title="Direct link to Simple checks" translate="no">​</a></h3>
+<p>The no-code option: pick a ready-made check from a catalog, fill in a couple of
+values, and you&#x27;re done. It covers most of what you&#x27;ll want to check.</p>
+<img src="/dqx/img/studio/create_rule_basic_checks_light.png" alt="Choosing a ready-made check from the catalog of built-in checks" class="themedComponent_mlkZ themedComponent--light_NVdE"><img src="/dqx/img/studio/create_rule_basic_checks_dark.png" alt="Choosing a ready-made check from the catalog of built-in checks" class="themedComponent_mlkZ themedComponent--dark_xIcU">
+<p>When you open the picker you&#x27;ll see the built-in checks, grouped and searchable.
+You don&#x27;t need to memorize them — but here&#x27;s what&#x27;s available, by what you&#x27;re
+trying to verify:</p>
+<table><thead><tr><th>You want to check that…</th><th>Checks to reach for</th></tr></thead><tbody><tr><td><strong>A value is present</strong> (never blank)</td><td>is not null; is not null and not empty</td></tr><tr><td><strong>A value is in an allowed set</strong></td><td>is in list; is not in list</td></tr><tr><td><strong>A number or date is in range</strong></td><td>is in range; is not less than / is not greater than; is not negative</td></tr><tr><td><strong>A value matches a format</strong> (email, phone, an ID shaped like <code>NNN-NN-NNNN</code>)</td><td>matches a pattern; is a valid date / timestamp</td></tr><tr><td><strong>There are no unwanted duplicates</strong></td><td>is unique — across one column <em>or several columns combined</em></td></tr><tr><td><strong>Dates make sense for &quot;now&quot;</strong></td><td>a timestamp is not in the future; a date is recent enough</td></tr><tr><td><strong>A group of rows as a whole behaves</strong></td><td>aggregate checks (an average / sum / count stays within bounds, overall or per group); rolling-window outlier checks</td></tr><tr><td><strong>Data lines up with another table</strong></td><td>a value must exist in a reference table (foreign-key style); the table&#x27;s shape matches an expected schema</td></tr></tbody></table>
+<div class="theme-admonition theme-admonition-note admonition_xJq3 alert alert--secondary"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M6.3 5.69a.942.942 0 0 1-.28-.7c0-.28.09-.52.28-.7.19-.18.42-.28.7-.28.28 0 .52.09.7.28.18.19.28.42.28.7 0 .28-.09.52-.28.7a1 1 0 0 1-.7.3c-.28 0-.52-.11-.7-.3zM8 7.99c-.02-.25-.11-.48-.31-.69-.2-.19-.42-.3-.69-.31H6c-.27.02-.48.13-.69.31-.2.2-.3.44-.31.69h1v3c.02.27.11.5.31.69.2.2.42.31.69.31h1c.27 0 .48-.11.69-.31.2-.19.3-.42.31-.69H8V7.98v.01zM7 2.3c-3.14 0-5.7 2.54-5.7 5.68 0 3.14 2.56 5.7 5.7 5.7s5.7-2.55 5.7-5.7c0-3.15-2.56-5.69-5.7-5.69v.01zM7 .98c3.86 0 7 3.14 7 7s-3.14 7-7 7-7-3.12-7-7 3.14-7 7-7z"></path></svg></span>Patterns without the jargon</div><div class="admonitionContent_BuS1"><p>A &quot;pattern&quot; (regular expression) is just a way to describe the <em>shape</em> of text —
+for example &quot;three digits, a dash, two digits, a dash, four digits&quot; for a Social
+Security number. You describe the shape; you don&#x27;t need to be an expert.</p></div></div>
+<p>For the exact, function-by-function reference — every built-in check, its precise
+behavior, and the arguments it accepts — see the
+<a class="" href="/dqx/docs/reference/quality_checks/">Quality checks reference</a> in DQX Core.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="condition-builder">Condition builder<a href="#condition-builder" class="hash-link" aria-label="Direct link to Condition builder" title="Direct link to Condition builder" translate="no">​</a></h3>
+<p>The condition builder lets you <strong>chain several checks together with <code>AND</code> and
+<code>OR</code></strong> to express real-world rules that a single check can&#x27;t. You build each step
+the same visual way, then combine them.</p>
+<p>For example:</p>
+<ul>
+<li class=""><em><code>{{email}}</code> is not blank <strong>AND</strong> matches an email pattern.</em></li>
+<li class=""><em><code>{{status}}</code> is <code>shipped</code> <strong>OR</strong> <code>{{status}}</code> is <code>delivered</code>.</em></li>
+<li class=""><em><code>{{discount}}</code> is between 0 and 100 <strong>AND</strong> <code>{{amount}}</code> is not negative.</em></li>
+<li class=""><em>If <code>{{payment_method}}</code> is <code>card</code>, <strong>then</strong> <code>{{card_last_four}}</code> is present
+<strong>AND</strong> is four digits.</em></li>
+</ul>
+<p>Because a condition built this way can reference
+<a href="#a-rule-can-use-more-than-one-column" class="">more than one column</a> and combine several
+tests, it&#x27;s the way to capture nuanced expectations without dropping into SQL.</p>
+<p>The condition builder also has an <strong>Advanced</strong> box for the less common cases.
+Expand it when your rule needs more than a plain condition:</p>
+<ul>
+<li class=""><strong>Filter</strong> — apply the rule to only <em>some</em> rows. A filter is a condition that
+decides which rows the check runs on, so you can say &quot;only check <code>amount</code> on
+rows where <code>status</code> is <code>active</code>&quot; or &quot;only rows from this year&quot;. Rows that don&#x27;t
+match the filter are skipped rather than failed.</li>
+<li class=""><strong>Join / reference another table</strong> — check a value against a <em>different</em> table.
+This is how referential checks work — for example &quot;every <code>product_id</code> in orders
+must exist in the products table&quot;. You point at the reference table and the
+columns to match on, and DQX Studio compares against it when the rule runs.
+See <a class="" href="/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/">Cross-table rules</a> for the full
+picture (built-in check, visual join, and SQL).</li>
+</ul>
+<p>Most rules never need the Advanced box — reach for it when a rule has to target a
+subset of rows or look something up in another table.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="custom-sql">Custom SQL<a href="#custom-sql" class="hash-link" aria-label="Direct link to Custom SQL" title="Direct link to Custom SQL" translate="no">​</a></h3>
+<p>For advanced users: when even the condition builder can&#x27;t express what you need,
+choose <strong>SQL</strong> under Custom condition. You can write either:</p>
+<ul>
+<li class="">a <strong>plain condition</strong> over placeholders (always
+<a class="" href="/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level/">row-level</a>), or</li>
+<li class="">a <strong>full query</strong> (<code>SELECT … FROM {{input_view}} …</code>), where you set
+<strong>Applies to</strong> to <strong>Row-level</strong> or <strong>Dataset-level</strong>.</li>
+</ul>
+<p>This is also the path for complex
+<a class="" href="/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/">cross-table</a> comparisons. The query
+must be a single read-only <code>SELECT</code> — DQX Studio rejects anything that writes or
+runs multiple statements.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="cross-table-rules">Cross-table rules<a href="#cross-table-rules" class="hash-link" aria-label="Direct link to Cross-table rules" title="Direct link to Cross-table rules" translate="no">​</a></h2>
+<p>Some checks span two (or more) tables — for example &quot;every order points at a
+real customer&quot;, or &quot;a line item&#x27;s price matches the catalogue&quot;.</p>
+<p>There are three ways to write one:</p>
+<ul>
+<li class=""><strong>A built-in referential check</strong> — &quot;value exists in a reference table&quot;
+(foreign-key style). Best for the common case.</li>
+<li class=""><strong>The visual builder&#x27;s Advanced → Joins</strong> — when the lookup is part of a
+larger condition.</li>
+<li class=""><strong>Custom SQL</strong> — for comparisons or aggregates the builder can&#x27;t express.
+Read the monitored table with <code>FROM {{input_view}}</code>, name joined tables with
+a fully qualified <code>catalog.schema.table</code>, and (for a full query) return a
+boolean <code>condition</code> column where <code>TRUE</code> means fail. You can also write a
+boolean expression followed by <code>JOIN</code> clauses and let Studio wrap it.</li>
+</ul>
+<p>Step-by-step examples (including row-level vs dataset-level SQL, permissions, and
+common pitfalls) live on
+<a class="" href="/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/">Cross-table rules</a>. For when to use
+<strong>Row-level</strong> vs <strong>Dataset-level</strong>, see
+<a class="" href="/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level/">Row-level vs dataset-level rules</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="generate-a-rule-with-ai">Generate a rule with AI<a href="#generate-a-rule-with-ai" class="hash-link" aria-label="Direct link to Generate a rule with AI" title="Direct link to Generate a rule with AI" translate="no">​</a></h2>
+<p>If you&#x27;d rather describe what you want than build it by hand, use the <strong>Generate</strong>
+box at the top of the editor. Type the expectation in plain English and DQX
+Studio proposes a matching check with its settings filled in. Good prompts are
+specific:</p>
+<ul>
+<li class=""><code>order amount must be positive and under $1,000,000</code></li>
+<li class=""><code>email should look like a valid email address</code></li>
+<li class=""><code>status must be one of placed, shipped, delivered, cancelled</code></li>
+<li class=""><code>signup date can&#x27;t be in the future</code></li>
+<li class=""><code>card last four must be present when payment method is card</code></li>
+</ul>
+<p>The app reads your description, picks a matching rule (or chains a few together),
+and fills in the details — the allowed values, the range, the pattern, and so on.</p>
+<p>You can also ask for a specific <em>type</em> of rule rather than only describing the
+data expectation. Say you want a uniqueness check, a range check, or a
+pattern/regex check, and the assistant builds that kind of rule — for example
+<code>make a uniqueness check on customer id</code> or <code>add a regex check for a UK postcode</code>.</p>
+<div class="theme-admonition theme-admonition-caution admonition_xJq3 alert alert--warning"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.893 1.5c-.183-.31-.52-.5-.887-.5s-.703.19-.886.5L.138 13.499a.98.98 0 0 0 0 1.001c.193.31.53.501.886.501h13.964c.367 0 .704-.19.877-.5a1.03 1.03 0 0 0 .01-1.002L8.893 1.5zm.133 11.497H6.987v-2.003h2.039v2.003zm0-3.004H6.987V5.987h2.039v4.006z"></path></svg></span>Always review AI output</div><div class="admonitionContent_BuS1"><p>A generated rule is a <strong>starting point</strong>, not a finished rule. Read what the app
+proposed, adjust anything that isn&#x27;t quite right, and run the <strong>Test</strong> tab before
+saving — AI can misread a description or pick settings you didn&#x27;t intend. Once
+saved, a generated rule follows the same review, approval, and audit path as any
+other rule.</p></div></div>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="test-it-before-you-save">Test it before you save<a href="#test-it-before-you-save" class="hash-link" aria-label="Direct link to Test it before you save" title="Direct link to Test it before you save" translate="no">​</a></h2>
+<p>Open the <strong>Test</strong> tab to try the rule against a small sample of real data before
+you commit to it. A test run shows how many rows would pass or fail, and lets you
+see example rows that don&#x27;t pass — so you can confirm the rule does what you
+meant.</p>
+<p>Testing changes nothing: it reads a sample, evaluates the rule, and persists
+nothing. It&#x27;s the safest way to catch a rule that&#x27;s too strict or too loose
+before it goes live.</p>
+<p>You don&#x27;t have to hand-write test cases either. DQX Studio can generate tests for
+you with AI — it looks at what the rule checks and produces example rows that
+should pass and fail, so you can confirm the rule behaves the way you meant
+without inventing sample data yourself.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="save-and-submit">Save and submit<a href="#save-and-submit" class="hash-link" aria-label="Direct link to Save and submit" title="Direct link to Save and submit" translate="no">​</a></h2>
+<p>When you&#x27;re happy:</p>
+<ul>
+<li class=""><strong>Save as draft</strong> keeps the rule private to you while you keep working on it.</li>
+<li class=""><strong>Save &amp; submit</strong> sends it for review. An approver checks it and, once
+approved, the rule becomes active and available to apply to tables.</li>
+</ul>
+<div class="theme-admonition theme-admonition-note admonition_xJq3 alert alert--secondary"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M6.3 5.69a.942.942 0 0 1-.28-.7c0-.28.09-.52.28-.7.19-.18.42-.28.7-.28.28 0 .52.09.7.28.18.19.28.42.28.7 0 .28-.09.52-.28.7a1 1 0 0 1-.7.3c-.28 0-.52-.11-.7-.3zM8 7.99c-.02-.25-.11-.48-.31-.69-.2-.19-.42-.3-.69-.31H6c-.27.02-.48.13-.69.31-.2.2-.3.44-.31.69h1v3c.02.27.11.5.31.69.2.2.42.31.69.31h1c.27 0 .48-.11.69-.31.2-.19.3-.42.31-.69H8V7.98v.01zM7 2.3c-3.14 0-5.7 2.54-5.7 5.68 0 3.14 2.56 5.7 5.7 5.7s5.7-2.55 5.7-5.7c0-3.15-2.56-5.69-5.7-5.69v.01zM7 .98c3.86 0 7 3.14 7 7s-3.14 7-7 7-7-3.12-7-7 3.14-7 7-7z"></path></svg></span>Why can&#x27;t I just make it live myself?</div><div class="admonitionContent_BuS1"><p>Unless you&#x27;re an approver or admin, you can&#x27;t approve your own rule. This
+&quot;four-eyes&quot; step means someone other than the author signs off before a rule
+affects any run — a simple guardrail against mistakes. See the
+<a class="" href="/dqx/docs/studio/governance/approval-workflow/">Approval workflow</a>.</p></div></div>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-happens-next">What happens next<a href="#what-happens-next" class="hash-link" aria-label="Direct link to What happens next" title="Direct link to What happens next" translate="no">​</a></h2>
+<p>An approved rule sits in the Registry, ready to use. It doesn&#x27;t check anything on
+its own yet — the next step is to
+<a class="" href="/dqx/docs/studio/monitoring/assign-rules/">apply it to a table</a>, which turns your
+reusable rule into a live check.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="other-ways-to-create-rules">Other ways to create rules<a href="#other-ways-to-create-rules" class="hash-link" aria-label="Direct link to Other ways to create rules" title="Direct link to Other ways to create rules" translate="no">​</a></h2>
+<p>You can also <a class="" href="/dqx/docs/studio/authoring/import-rules/">import rules</a> you already have,
+from DQX YAML or an Open Data Contract. And if you&#x27;re not sure what to check yet,
+<a class="" href="/dqx/docs/studio/monitoring/profiling/">profiling</a> scans a table and suggests
+candidate rules from the data.</p></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href="https://github.com/databrickslabs/dqx/tree/main/docs/dqx/docs/studio/authoring/create-a-rule/index.mdx" target="_blank" rel="noopener noreferrer" class="theme-edit-this-page"><svg fill="currentColor" height="20" width="20" viewBox="0 0 40 40" class="iconEdit_Z9Sw" aria-hidden="true"><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"></path></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/dqx/docs/studio/quickstart/"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Quickstart</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Cross-table rules</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#start-a-new-rule" class="table-of-contents__link toc-highlight">Start a new rule</a><ul><li><a href="#governed-tags" class="table-of-contents__link toc-highlight">Governed tags: apply a rule automatically</a></li></ul></li><li><a href="#define-what-the-rule-checks" class="table-of-contents__link toc-highlight">Define what the rule checks</a><ul><li><a href="#columns-are-placeholders-not-real-columns" class="table-of-contents__link toc-highlight">Columns are placeholders, not real columns</a></li><li><a href="#a-rule-can-use-more-than-one-column" class="table-of-contents__link toc-highlight">A rule can use more than one column</a></li><li><a href="#simple-checks" class="table-of-contents__link toc-highlight">Simple checks</a></li><li><a href="#condition-builder" class="table-of-contents__link toc-highlight">Condition builder</a></li><li><a href="#custom-sql" class="table-of-contents__link toc-highlight">Custom SQL</a></li></ul></li><li><a href="#cross-table-rules" class="table-of-contents__link toc-highlight">Cross-table rules</a></li><li><a href="#generate-a-rule-with-ai" class="table-of-contents__link toc-highlight">Generate a rule with AI</a></li><li><a href="#test-it-before-you-save" class="table-of-contents__link toc-highlight">Test it before you save</a></li><li><a href="#save-and-submit" class="table-of-contents__link toc-highlight">Save and submit</a></li><li><a href="#what-happens-next" class="table-of-contents__link toc-highlight">What happens next</a></li><li><a href="#other-ways-to-create-rules" class="table-of-contents__link toc-highlight">Other ways to create rules</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2026 Databricks Labs. Docs built with Docusaurus.</div></div></div></footer></div>
+</body>
+</html>

@@ -4,6 +4,13 @@
 
 DQX issues (tickets) are tracked on Github [here](https://github.com/databrickslabs/dqx/issues). You can view all open issues, including those actively being worked on and those available for contribution. Issues with an assigned username are already in progress, while unassigned ones are open for anyone to pick up.
 
+Label issues (and related PRs) so Core and Studio work stays easy to find:
+
+| Label          | Use for                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| **`DQX Core`** | Python library, CLI, workflows, MCP server, Core docs under `docs/dqx/docs/guide/` / `reference/` |
+| **`DQX App`**  | DQX Studio (code under `app/`, user docs under `docs/dqx/docs/studio/`)                           |
+
 If you'd like to work on an issue, please either assign it to yourself or leave a comment to indicate that you’re taking it on. Before starting work, it's a good idea to discuss the issue in the comments, especially if you have questions, need clarification, or want to confirm the proposed approach.
 
 If you have a new idea, consider opening a new issue first to gather feedback and ensure alignment with the project’s goals. This helps avoid duplicated efforts and ensures contributions fit well with the roadmap. You can also start broader conversations or ask questions in [here](https://github.com/databrickslabs/dqx/discussions).
@@ -108,7 +115,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.16.0/pyproject.toml)). On MacOSX, run:
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.17.0/pyproject.toml)). On MacOSX, run:
 
 ```text
 # double check the required version in pyproject.toml
@@ -168,7 +175,7 @@ Always use `make` targets instead of running `uv` commands directly. The Makefil
 
 ### DQX Studio development[​](#dqx-studio-development "Direct link to DQX Studio development")
 
-The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). See [app/README.md](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
+The DQX Studio (under `app/`) is a FastAPI backend + React frontend packaged as a single Python wheel and deployed as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html). It is a **separate track** from DQX Core: Studio code lives in `app/`, end-user docs in [`docs/dqx/docs/studio/`](/dqx/docs/studio.md), and GitHub issues/PRs should carry the **`DQX App`** label. Agent-oriented architecture notes live in [`app/AGENTS.md`](https://github.com/databrickslabs/dqx/blob/main/app/AGENTS.md) (thin `CLAUDE.md` files under `app/` link there). See [`app/README.md`](https://github.com/databrickslabs/dqx/blob/main/app/README.md) for architecture and local development, and [DQX Studio deployment](#dqx-studio-deployment) below for the end-to-end deployment guide.
 
 The Studio's frontend tooling requires **Node.js 18+** (which provides `npm`), **yarn** (classic v1), and **bun**. Install them before running any `make app-*` target:
 
@@ -217,7 +224,7 @@ tail -f /tmp/dqx-dev.log
 
 ```
 
-Stop the backgrounded servers from any shell with `make app-stop-dev`. For the full local-development guide and additional logging tips, see [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEVELOPMENT.md).
+Stop the backgrounded servers from any shell with `make app-stop-dev`. For the full local-development guide and additional logging tips, see [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md).
 
 After changing backend models or routes, regenerate the OpenAPI schema and the TypeScript client manually (there is no auto-watcher):
 
@@ -251,9 +258,9 @@ DQX_ADMIN_GROUP=<a workspace group you belong to>  # grants you the Admin role i
 
 Set `DQX_ADMIN_GROUP` to a workspace group you're a member of to get the **Admin** role in the app — otherwise role resolution falls back to `VIEWER` and privileged actions (configure storage, approve rules, manage roles) return `403`. List your groups with `databricks current-user me -p <your-profile> | jq '.groups[].display'` and pick one.
 
-Leave `DQX_LAKEBASE_ENDPOINT` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase project to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`). See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
+Leave `DQX_LAKEBASE_ENDPOINT` empty for most local dev — the app falls back to Delta for the OLTP tables (rules catalog, app settings, RBAC, comments, schedules) so you don't need a Lakebase project to iterate. To exercise the Lakebase path locally, deploy the bundle once and point the variable at the resulting endpoint path (`projects/<project>/branches/<branch>/endpoints/primary`). See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md) for the full set of `DQX_LAKEBASE_*` variables.
 
-If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEVELOPMENT.md) for the full local-development guide.
+If you don't have a profile yet, run `databricks auth login --host <workspace-url> -p <your-profile>` first. See [app/DEVELOPMENT.md](https://github.com/databrickslabs/dqx/blob/main/app/DEVELOPMENT.md) for the full local-development guide.
 
 Profiler and dry-run features require deployment
 
@@ -280,7 +287,7 @@ Deploying DQX Studio to a workspace is required when you want to:
 * verify a change behaves correctly under the production identity model (service principal + on-behalf-of), or
 * run a review pass against a deployed app before merging.
 
-For the full step-by-step (service principal creation, choosing a SQL warehouse mode, adopting existing resources into the bundle, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md).
+For the full step-by-step (service principal creation, choosing a SQL warehouse mode, adopting existing resources into the bundle, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md).
 
 ### Running integration tests and code coverage[​](#running-integration-tests-and-code-coverage "Direct link to Running integration tests and code coverage")
 
@@ -635,4 +642,4 @@ The following skills are provided to cover the main capabilities of DQX:
 * Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
 * Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
 * Limit skills to use only public methods and APIs of DQX.
-* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.16.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
+* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.17.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.

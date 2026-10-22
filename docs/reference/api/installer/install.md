@@ -69,7 +69,7 @@ The final WorkspaceConfig used for the installation.
 * `ManyError` - If multiple errors occur during installation.
 * `TimeoutError` - If a timeout occurs during installation.
 
-### replace\_config[​](#replace_config "Direct link to replace_config")
+### replace_config[​](#replace_config "Direct link to replace_config")
 
 ```python
 def replace_config(**changes: Any) -> WorkspaceConfig | None
@@ -147,7 +147,7 @@ Returns the configuration of the workspace installation.
 
 The WorkspaceConfig instance.
 
-### install\_folder[​](#install_folder "Direct link to install_folder")
+### install_folder[​](#install_folder "Direct link to install_folder")
 
 ```python
 @property
@@ -155,11 +155,11 @@ def install_folder()
 
 ```
 
-Returns the installation install\_folder path.
+Returns the installation install_folder path.
 
 **Returns**:
 
-The installation install\_folder path as a string.
+The installation install_folder path as a string.
 
 ### run[​](#run-1 "Direct link to run")
 
@@ -181,4 +181,4 @@ def uninstall()
 
 ```
 
-Uninstalls DQX from the workspace, including project install\_folder, dashboards, and jobs.
+Uninstalls DQX from the workspace, including project install_folder, dashboards, and jobs.

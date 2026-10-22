@@ -1,6 +1,6 @@
-# databricks.labs.dqx.package\_utils
+# databricks.labs.dqx.package_utils
 
-### missing\_required\_packages[​](#missing_required_packages "Direct link to missing_required_packages")
+### missing_required_packages[​](#missing_required_packages "Direct link to missing_required_packages")
 
 ```python
 def missing_required_packages(packages: list[str]) -> bool

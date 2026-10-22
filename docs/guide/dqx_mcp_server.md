@@ -1,10 +1,6 @@
 # DQX MCP Server
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
-
-<!-- -->
-
-[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")
+[Available since DQX v0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")
 
 **DQX MCP Server** is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes DQX data quality tools for AI agents. It runs as a [Databricks App](https://docs.databricks.com/en/dev-tools/databricks-apps/index.html) inside your workspace with on-behalf-of (OBO) authentication — every operation respects the calling user's Unity Catalog permissions.
 
@@ -16,7 +12,7 @@ The MCP server is the recommended integration point for:
 * IDE-based workflows (Cursor, Claude Code) where you want DQX tools available as MCP tools.
 * Any MCP-compatible client that needs data quality capabilities without writing DQX code directly.
 
-For interactive, browser-based rule management, see [DQX Studio](/dqx/docs/guide/dqx_studio.md). For code-level integration into pipelines or notebooks, see the [Programmatic approach](/dqx/docs/guide/quality_checks_apply.md#programmatic-approach).
+For interactive, browser-based rule management, see [DQX Studio](/dqx/docs/studio.md). For code-level integration into pipelines or notebooks, see the [Programmatic approach](/dqx/docs/guide/quality_checks_apply.md#programmatic-approach).
 
 ## Who this guide is for[​](#who-this-guide-is-for "Direct link to Who this guide is for")
 
@@ -88,7 +84,7 @@ The server now appears under **MCP servers** with a toggle and its tool count. Y
 
 **Repeated `get_run_result` calls are expected.** Most DQX tools run asynchronously: a tool returns a `run_id`, and the client calls `get_run_result` until the run is complete. It is normal to see several `get_run_result` calls for a single operation while the job runs.
 
-![A Genie Code conversation showing repeated get\_run\_result calls while a job completes](/dqx/assets/images/mcp-genie-polling-305e05ccaa39ae598113457199bd27c9.png)
+![A Genie Code conversation showing repeated get_run_result calls while a job completes](/dqx/assets/images/mcp-genie-polling-305e05ccaa39ae598113457199bd27c9.png)
 
 Once the run completes, these steps collapse into a single summary badge with the result:
 
@@ -126,7 +122,7 @@ These are natural-language prompts you can give any connected agent. Replace `<c
 | `save_checks`                    | "Save those checks as `customers_checks` so I can reuse them later."                                                                    |
 | `load_checks`                    | "Load the data quality rules we saved earlier from `<catalog>.dqx_mcp_<you>.customers_checks` and run them on today's data."            |
 | `apply_checks_and_save_to_table` | "Apply the checks to `<catalog>.<schema>.<table>`, writing valid rows to `customers_clean` and invalid rows to `customers_quarantine`." |
-| `get_run_result`                 | "Get the result for run\_id `<id>`."                                                                                                    |
+| `get_run_result`                 | "Get the result for run_id `<id>`."                                                                                                     |
 
 Profiling samples by default
 
@@ -264,7 +260,7 @@ The runner job's per-operation runs are visible under **Workflows → Jobs → m
 
 ### Write access for the persisting tools[​](#write-access "Direct link to Write access for the persisting tools")
 
-save\_checks and apply\_checks\_and\_save\_to\_table write to your private per-user schema
+save_checks and apply_checks_and_save_to_table write to your private per-user schema
 
 The two tools that **persist** data — `save_checks` and `apply_checks_and_save_to_table` — do **not** take a caller-supplied destination. You pass a bare table *name* (e.g. `customers_clean`), and the runner service principal writes it into your own private, per-user MCP schema:
 
@@ -288,7 +284,7 @@ If you only ever use the read/analyze tools (profile, generate, validate, run), 
 | Deploy fails creating the app                                                                                                                                                                                       | Apps not enabled, or you lack app-create permission                                                                                                                                                                                                                                                      | Ask an admin to enable Apps / grant app-create (see [Prerequisites](/dqx/docs/installation.md#mcp-prerequisites)).                                                                                                                                                                         |
 | Deploy: `CREATE SCHEMA` or `GRANT` denied                                                                                                                                                                           | Missing catalog permissions                                                                                                                                                                                                                                                                              | You must own the catalog or hold `MANAGE` on it — the deploy creates a schema in it and grants on it (see [Prerequisites](/dqx/docs/installation.md#mcp-prerequisites)).                                                                                                                   |
 | Deploy: `SCHEMA_ALREADY_EXISTS` on `dqx_mcp_tmp`                                                                                                                                                                    | A schema of that name already exists in the catalog; the bundle creates it rather than adopting it                                                                                                                                                                                                       | Deploy with `--var tmp_schema_name=<another-name>`, or drop the existing schema if it is not needed.                                                                                                                                                                                       |
-| Deploy fails binding the runner SP: *"Cannot bind the service principal provided in 'run\_as' field … must have 'servicePrincipal.user' role"*                                                                      | The deploying identity lacks the **User** role on the runner SP. Workspace-admin membership does **not** grant this implicitly.                                                                                                                                                                          | Add yourself as **User** on the SP (**Settings → Identity and access → Service principals → that SP → Permissions**), then re-run the deploy — it is idempotent (see [Create the runner service principal](/dqx/docs/installation.md#mcp-runner-sp)).                                      |
+| Deploy fails binding the runner SP: *"Cannot bind the service principal provided in 'run_as' field … must have 'servicePrincipal.user' role"*                                                                       | The deploying identity lacks the **User** role on the runner SP. Workspace-admin membership does **not** grant this implicitly.                                                                                                                                                                          | Add yourself as **User** on the SP (**Settings → Identity and access → Service principals → that SP → Permissions**), then re-run the deploy — it is idempotent (see [Create the runner service principal](/dqx/docs/installation.md#mcp-runner-sp)).                                      |
 | A deploy failed partway and the schema/volumes exist but have **no** grants                                                                                                                                         | With the direct engine the UC objects are created before the grants, and each `grants` block depends on the runner job — so a job-creation failure leaves the objects in place with nothing applied (`databricks grants get schema …` returns `{}`)                                                      | Fix the underlying failure and re-run the deploy. It adopts the existing objects and applies the grants; no manual cleanup is needed.                                                                                                                                                      |
 | Every data tool's `run_id` returns `failed` with a library-install error                                                                                                                                            | The app never published the runner wheel                                                                                                                                                                                                                                                                 | Check `databricks apps logs mcp-dqx` for `Could not publish the runner wheel`; usually the app's service principal is missing `USE CATALOG`. Apply it and restart the app (`bundle run mcp-dqx`). Verify with `databricks fs ls dbfs:/Volumes/<catalog>/dqx_mcp_tmp/dqx_artifacts`.        |
 | Library-install error naming a wheel version you don't recognise                                                                                                                                                    | Runner version drift — `runner_wheel_filename` was not bumped with `runner/pyproject.toml`                                                                                                                                                                                                               | The app logs `Runner wheel version drift`. Bump the `runner_wheel_filename` bundle variable to match and redeploy.                                                                                                                                                                         |

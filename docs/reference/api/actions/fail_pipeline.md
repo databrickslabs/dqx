@@ -1,4 +1,4 @@
-# databricks.labs.dqx.actions.fail\_pipeline
+# databricks.labs.dqx.actions.fail_pipeline
 
 FailPipeline action for the DQX actions & alerting subsystem.
 
@@ -18,9 +18,9 @@ When *execute* is called this action always raises *PipelineFailedError* and the
 
 **Attributes**:
 
-* `type` - Discriminator literal, always *"fail\_pipeline"*.
+* `type` - Discriminator literal, always *"fail_pipeline"*.
 * `message` - Custom failure message to embed in the raised error. When *None* (the default) a message is generated automatically from the observed metrics in *context*.
-* `name` - Logical identifier for this action; defaults to *"fail\_pipeline"*.
+* `name` - Logical identifier for this action; defaults to *"fail_pipeline"*.
 
 ### execute[​](#execute "Direct link to execute")
 

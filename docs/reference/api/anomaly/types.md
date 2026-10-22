@@ -17,7 +17,7 @@ class TrainedModel(Protocol)
 
 Protocol for trained sklearn-compatible models.
 
-Any object with predict, decision\_function, and fit methods satisfies this protocol. Uses sklearn naming convention where input features are passed as 'data'.
+Any object with predict, decision_function, and fit methods satisfies this protocol. Uses sklearn naming convention where input features are passed as 'data'.
 
 ### predict[​](#predict "Direct link to predict")
 
@@ -28,7 +28,7 @@ def predict(data: pd.DataFrame) -> np.ndarray
 
 Predict anomaly labels (-1 for anomaly, 1 for normal).
 
-### decision\_function[​](#decision_function "Direct link to decision_function")
+### decision_function[​](#decision_function "Direct link to decision_function")
 
 ```python
 def decision_function(data: pd.DataFrame) -> np.ndarray

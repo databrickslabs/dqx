@@ -136,9 +136,76 @@ assert not dq_engine.validate_checks(loaded_checks).has_errors
 
 ```
 
+### Saving checks that use custom check functions[​](#saving-checks-that-use-custom-check-functions "Direct link to Saving checks that use custom check functions")
+
+[Available since DQX v0.17.0](https://github.com/databrickslabs/dqx/releases/tag/v0.17.0 "Available since DQX v0.17.0")
+
+Checks that use [custom check functions](/dqx/docs/reference/quality_checks.md#creating-custom-row-level-checks) can be saved to a Unity Catalog or Lakebase table. When saving checks, pass custom check functions using the `custom_check_functions` argument. DQX uses custom functions to validate the checks and compute their names and fingerprints.
+
+Loading rules with custom check functions
+
+When checks with custom functions are saved to a table, DQX stores only the function name. The function body is not stored. It must be passed using `custom_check_functions` when you apply the loaded checks.
+
+* Python
+
+```python
+import yaml
+import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import TableChecksStorageConfig
+from databricks.sdk import WorkspaceClient
+
+# define a custom check function
+@register_rule("row")
+def not_ends_with(column: str, suffix: str) -> Column:
+  col_expr = F.col(column)
+  return make_condition(
+    col_expr.endswith(suffix),
+    f"Column {column} ends with {suffix}",
+    f"{column}_ends_with_{suffix}"
+  )
+
+# define the checks
+checks = yaml.safe_load("""
+- criticality: error
+  check:
+    function: not_ends_with
+    arguments:
+      column: col1
+      suffix: .com
+""")
+
+# create a mapping of check names and custom check functions
+custom_check_functions = {"not_ends_with": not_ends_with}
+
+# specify the table where checks will be stored
+config = TableChecksStorageConfig(location="catalog.schema.checks_table")
+
+# save checks that reference custom check functions
+dq_engine = DQEngine(WorkspaceClient())
+dq_engine.save_checks(checks, config=config, custom_check_functions=custom_check_functions)
+
+# load the checks and pass the same custom check functions when applying them
+loaded_checks = dq_engine.load_checks(config=config)
+input_df = spark.createDataFrame([["user1@email.com"], ["user2"]], "col1: string")
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(
+  input_df,
+  checks=loaded_checks,
+  custom_check_functions=custom_check_functions
+)
+
+```
+
 ## Loading quality checks from a storage[​](#loading-quality-checks-from-a-storage "Direct link to Loading quality checks from a storage")
 
 You can load quality checks from various storage locations. You can then apply the loaded checks using the methods described [here](/dqx/docs/guide/quality_checks_apply.md).
+
+Loading rules authored in DQX Studio
+
+Rules you author and approve in [DQX Studio](/dqx/docs/studio.md) can also be loaded with `load_checks` and run in your own pipelines. See [Load checks in a pipeline](/dqx/docs/studio/monitoring/load-checks-in-a-pipeline.md) for details.
 
 Checks definition
 
@@ -228,7 +295,7 @@ The following backend configuration are currently supported:
 
   * `location`: table fully qualified name.
   * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-  * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run\_config\_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
+  * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
   * `rule_set_fingerprint`: (optional) SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.
 
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
@@ -244,7 +311,7 @@ The following backend configuration are currently supported:
   * `location`: fully-qualified table name in the format "database.schema.table".
   * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
   * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
-  * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run\_config\_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
+  * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
   * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.
 
 * `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
@@ -256,17 +323,13 @@ The following backend configuration are currently supported:
   * `run_config_name` (optional) - run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
   * `product_name`: (optional) name of the product (use "dqx" if not provided).
   * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
-  * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance\_name and user for lakebase).
+  * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance_name and user for lakebase).
 
 You can find details on how to define checks [here](/dqx/docs/guide/quality_checks_definition.md).
 
 ## Calculating fingerprints manually[​](#calculating-fingerprints-manually "Direct link to Calculating fingerprints manually")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 When loading from Delta or Lakebase tables, you typically pass a `run_config_name` for filtering. Alternatively, you can filter by `rule_set_fingerprint` to load a specific version of the rule set. You can also use the fingerprint to verify that the current rule set matches the one used to apply the checks.
 

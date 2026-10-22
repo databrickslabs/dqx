@@ -1,4 +1,4 @@
-# databricks.labs.dqx.installer.dashboard\_installer
+# databricks.labs.dqx.installer.dashboard_installer
 
 ## DashboardMetadata Objects[​](#dashboardmetadata-objects "Direct link to DashboardMetadata Objects")
 
@@ -9,7 +9,7 @@ class DashboardMetadata()
 
 Creates Dashboard Metadata from exported Lakeview dashboard (.lvdash.json)
 
-### from\_path[​](#from_path "Direct link to from_path")
+### from_path[​](#from_path "Direct link to from_path")
 
 ```python
 @classmethod
@@ -19,7 +19,7 @@ def from_path(cls, file: Path) -> "DashboardMetadata"
 
 Load dashboard metadata from exported Lakeview dashboard file.
 
-Expected structure: dashboard\_folder/ └── dashboard\_name.lvdash.json
+Expected structure: dashboard_folder/ └── dashboard_name.lvdash.json
 
 **Arguments**:
 
@@ -38,7 +38,7 @@ class DashboardInstaller()
 
 Creates or updates Lakeview dashboards from exported .lvdash.json files.
 
-### get\_create\_dashboard\_tasks[​](#get_create_dashboard_tasks "Direct link to get_create_dashboard_tasks")
+### get_create_dashboard_tasks[​](#get_create_dashboard_tasks "Direct link to get_create_dashboard_tasks")
 
 ```python
 def get_create_dashboard_tasks() -> Iterable[Callable[[], None]]

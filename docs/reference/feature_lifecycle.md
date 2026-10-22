@@ -1,4 +1,4 @@
-# Feature lifecycle
+# Feature Lifecycle
 
 DQX features move through release stages as they mature. When a feature is not yet generally available, its documentation page shows a status badge next to the title — for example, the [DQX MCP Server](/dqx/docs/guide/dqx_mcp_server.md) is Beta. This page explains what each badge means.
 
@@ -20,7 +20,7 @@ The feature is available for evaluation and early feedback. Its API, behavior, a
 
 ## Beta[​](#beta "Direct link to Beta")
 
-The feature is feature-complete and usable, and is released for broader adoption and feedback ahead of general availability. The API may still change in backward-incompatible ways between releases, and some rough edges may remain. It is suitable for non-critical workloads; if you depend on the current behavior, pin your DQX version and review the [changelog](https://github.com/databrickslabs/dqx/blob/v0.16.0/CHANGELOG.md) when upgrading.
+The feature is feature-complete and usable, and is released for broader adoption and feedback ahead of general availability. The API may still change in backward-incompatible ways between releases, and some rough edges may remain. It is suitable for non-critical workloads; if you depend on the current behavior, pin your DQX version and review the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.0/CHANGELOG.md) when upgrading.
 
 ## Generally available (GA)[​](#ga "Direct link to Generally available (GA)")
 
@@ -28,4 +28,4 @@ The feature is stable and production-ready, and is covered by DQX's normal [sema
 
 ## Deprecated[​](#deprecated "Direct link to Deprecated")
 
-The feature still works but is slated for removal in a future release. Its documentation points to the recommended replacement — migrate at your earliest convenience. Deprecations and their removal timelines are called out in the [changelog](https://github.com/databrickslabs/dqx/blob/v0.16.0/CHANGELOG.md).
+The feature still works but is slated for removal in a future release. Its documentation points to the recommended replacement — migrate at your earliest convenience. Deprecations and their removal timelines are called out in the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.0/CHANGELOG.md).

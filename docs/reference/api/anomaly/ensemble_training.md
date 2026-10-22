@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.ensemble\_training
+# databricks.labs.dqx.anomaly.ensemble_training
 
 Ensemble trainer for row anomaly detection models.
 
@@ -60,7 +60,7 @@ Train an ensemble of models.
 
 EnsembleTrainingResult with model URIs, metrics, and metadata
 
-### train\_ensemble[​](#train_ensemble "Direct link to train_ensemble")
+### train_ensemble[​](#train_ensemble "Direct link to train_ensemble")
 
 ```python
 def train_ensemble(

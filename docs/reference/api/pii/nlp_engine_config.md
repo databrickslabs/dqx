@@ -1,4 +1,4 @@
-# databricks.labs.dqx.pii.nlp\_engine\_config
+# databricks.labs.dqx.pii.nlp_engine_config
 
 ## NLPEngineConfig Objects[​](#nlpengineconfig-objects "Direct link to NLPEngineConfig Objects")
 
@@ -13,6 +13,6 @@ Note that DQX automatically installs the built-in entity recognition models at r
 
 **Members**:
 
-* `SPACY_SMALL`: Uses spaCy's [en\_core\_web\_sm](https://spacy.io/models/en#en_core_web_sm) for entity recognition
-* `SPACY_SMALL`: Uses spaCy's [en\_core\_web\_md](https://spacy.io/models/en#en_core_web_md) for entity recognition
-* `SPACY_SMALL`: Uses spaCy's [en\_core\_web\_lg](https://spacy.io/models/en#en_core_web_lg) for entity recognition
+* `SPACY_SMALL`: Uses spaCy's [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) for entity recognition
+* `SPACY_SMALL`: Uses spaCy's [en_core_web_md](https://spacy.io/models/en#en_core_web_md) for entity recognition
+* `SPACY_SMALL`: Uses spaCy's [en_core_web_lg](https://spacy.io/models/en#en_core_web_lg) for entity recognition

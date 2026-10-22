@@ -1,4 +1,4 @@
-# databricks.labs.dqx.installer.version\_checker
+# databricks.labs.dqx.installer.version_checker
 
 ## VersionChecker Objects[​](#versionchecker-objects "Direct link to VersionChecker Objects")
 
@@ -9,7 +9,7 @@ class VersionChecker()
 
 Encapsulates version detection and comparison logic for DQX installations.
 
-### extract\_major\_minor[​](#extract_major_minor "Direct link to extract_major_minor")
+### extract_major_minor[​](#extract_major_minor "Direct link to extract_major_minor")
 
 ```python
 @staticmethod
@@ -27,7 +27,7 @@ Extracts the major and minor version from a version string.
 
 The major.minor version as a string, or None if not found.
 
-### compare\_and\_prompt\_upgrade[​](#compare_and_prompt_upgrade "Direct link to compare_and_prompt_upgrade")
+### compare_and_prompt_upgrade[​](#compare_and_prompt_upgrade "Direct link to compare_and_prompt_upgrade")
 
 ```python
 def compare_and_prompt_upgrade() -> None

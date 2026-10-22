@@ -4,15 +4,15 @@ Core ML operations for row anomaly detection.
 
 Contains the fundamental building blocks for training and scoring:
 
-* Feature engineering (prepare\_training\_features, prepare\_engineered\_pandas)
-* Model training (fit\_sklearn\_model, fit\_isolation\_forest)
-* Scoring (score\_with\_model, score\_with\_ensemble\_models)
-* Metrics computation (compute\_validation\_metrics, compute\_score\_quantiles)
-* Baseline statistics (compute\_baseline\_statistics)
+* Feature engineering (prepare_training_features, prepare_engineered_pandas)
+* Model training (fit_sklearn_model, fit_isolation_forest)
+* Scoring (score_with_model, score_with_ensemble_models)
+* Metrics computation (compute_validation_metrics, compute_score_quantiles)
+* Baseline statistics (compute_baseline_statistics)
 
-All functions work with distributed Spark DataFrames and sklearn models. MLflow model registration is handled by mlflow\_registry.py.
+All functions work with distributed Spark DataFrames and sklearn models. MLflow model registration is handled by mlflow_registry.py.
 
-### sample\_df[​](#sample_df "Direct link to sample_df")
+### sample_df[​](#sample_df "Direct link to sample_df")
 
 ```python
 def sample_df(df: DataFrame, columns: list[str],
@@ -26,13 +26,13 @@ Sample DataFrame for training.
 
 * `df` - Input DataFrame
 * `columns` - Columns to include in sample
-* `params` - Training parameters with sample\_fraction and max\_rows
+* `params` - Training parameters with sample_fraction and max_rows
 
 **Returns**:
 
 Tuple of (sampled DataFrame, row count, truncated flag)
 
-### train\_validation\_split[​](#train_validation_split "Direct link to train_validation_split")
+### train_validation_split[​](#train_validation_split "Direct link to train_validation_split")
 
 ```python
 def train_validation_split(
@@ -42,7 +42,7 @@ def train_validation_split(
 
 Split DataFrame into training and validation sets.
 
-### prepare\_training\_features[​](#prepare_training_features "Direct link to prepare_training_features")
+### prepare_training_features[​](#prepare_training_features "Direct link to prepare_training_features")
 
 ```python
 def prepare_training_features(
@@ -57,10 +57,10 @@ Analyzes column types, applies transformations (one-hot encoding, frequency maps
 
 **Returns**:
 
-* train\_pandas: pandas DataFrame with engineered numeric features
-* feature\_metadata: Transformation metadata for distributed scoring
+* train_pandas: pandas DataFrame with engineered numeric features
+* feature_metadata: Transformation metadata for distributed scoring
 
-### fit\_sklearn\_model[​](#fit_sklearn_model "Direct link to fit_sklearn_model")
+### fit_sklearn_model[​](#fit_sklearn_model "Direct link to fit_sklearn_model")
 
 ```python
 def fit_sklearn_model(
@@ -76,7 +76,7 @@ Train sklearn IsolationForest pipeline on pre-engineered pandas DataFrame.
 * pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
 * hyperparams: Model configuration for MLflow tracking
 
-### fit\_isolation\_forest[​](#fit_isolation_forest "Direct link to fit_isolation_forest")
+### fit_isolation_forest[​](#fit_isolation_forest "Direct link to fit_isolation_forest")
 
 ```python
 def fit_isolation_forest(
@@ -93,9 +93,9 @@ Feature engineering runs on Spark, then the model trains on the driver.
 
 * pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
 * hyperparams: Model configuration for MLflow tracking
-* feature\_metadata: Transformation metadata for distributed scoring
+* feature_metadata: Transformation metadata for distributed scoring
 
-### score\_with\_model[​](#score_with_model "Direct link to score_with_model")
+### score_with_model[​](#score_with_model "Direct link to score_with_model")
 
 ```python
 def score_with_model(model: Pipeline, df: DataFrame, feature_cols: list[str],
@@ -107,7 +107,7 @@ Score DataFrame using scikit-learn model with distributed pandas UDF.
 
 Feature engineering is applied in Spark before the pandas UDF. This enables distributed inference across the Spark cluster.
 
-### score\_with\_ensemble\_models[​](#score_with_ensemble_models "Direct link to score_with_ensemble_models")
+### score_with_ensemble_models[​](#score_with_ensemble_models "Direct link to score_with_ensemble_models")
 
 ```python
 def score_with_ensemble_models(
@@ -118,7 +118,7 @@ def score_with_ensemble_models(
 
 Score DataFrame using an ensemble of models and return mean scores.
 
-### compute\_validation\_metrics[​](#compute_validation_metrics "Direct link to compute_validation_metrics")
+### compute_validation_metrics[​](#compute_validation_metrics "Direct link to compute_validation_metrics")
 
 ```python
 def compute_validation_metrics(
@@ -129,7 +129,7 @@ def compute_validation_metrics(
 
 Compute validation metrics and distribution statistics.
 
-### compute\_score\_quantiles[​](#compute_score_quantiles "Direct link to compute_score_quantiles")
+### compute_score_quantiles[​](#compute_score_quantiles "Direct link to compute_score_quantiles")
 
 ```python
 def compute_score_quantiles(
@@ -140,7 +140,7 @@ def compute_score_quantiles(
 
 Compute score quantiles from the training score distribution.
 
-### compute\_score\_quantiles\_ensemble[​](#compute_score_quantiles_ensemble "Direct link to compute_score_quantiles_ensemble")
+### compute_score_quantiles_ensemble[​](#compute_score_quantiles_ensemble "Direct link to compute_score_quantiles_ensemble")
 
 ```python
 def compute_score_quantiles_ensemble(
@@ -151,7 +151,7 @@ def compute_score_quantiles_ensemble(
 
 Compute score quantiles using ensemble mean scores.
 
-### compute\_baseline\_statistics[​](#compute_baseline_statistics "Direct link to compute_baseline_statistics")
+### compute_baseline_statistics[​](#compute_baseline_statistics "Direct link to compute_baseline_statistics")
 
 ```python
 def compute_baseline_statistics(
@@ -171,7 +171,7 @@ Compute baseline distribution statistics for drift detection.
 
 Dictionary mapping column names to their baseline statistics
 
-### aggregate\_ensemble\_metrics[​](#aggregate_ensemble_metrics "Direct link to aggregate_ensemble_metrics")
+### aggregate_ensemble_metrics[​](#aggregate_ensemble_metrics "Direct link to aggregate_ensemble_metrics")
 
 ```python
 def aggregate_ensemble_metrics(
@@ -189,7 +189,7 @@ Aggregate metrics across ensemble members (mean and std).
 
 Dictionary with aggregated metrics (mean and std for each metric)
 
-### prepare\_engineered\_pandas[​](#prepare_engineered_pandas "Direct link to prepare_engineered_pandas")
+### prepare_engineered_pandas[​](#prepare_engineered_pandas "Direct link to prepare_engineered_pandas")
 
 ```python
 def prepare_engineered_pandas(

@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.model\_discovery
+# databricks.labs.dqx.anomaly.model_discovery
 
 Discover model columns, segments, and quantile points from the anomaly registry.
 
-### get\_record\_for\_discovery[​](#get_record_for_discovery "Direct link to get_record_for_discovery")
+### get_record_for_discovery[​](#get_record_for_discovery "Direct link to get_record_for_discovery")
 
 ```python
 def get_record_for_discovery(registry_client: AnomalyModelRegistry,
@@ -13,7 +13,7 @@ def get_record_for_discovery(registry_client: AnomalyModelRegistry,
 
 Get model record for auto-discovery, checking global and segmented models.
 
-### select\_segment\_record[​](#select_segment_record "Direct link to select_segment_record")
+### select_segment_record[​](#select_segment_record "Direct link to select_segment_record")
 
 ```python
 def select_segment_record(
@@ -21,9 +21,9 @@ def select_segment_record(
 
 ```
 
-Select a deterministic segment record (latest training\_time, tie-breaker by model\_name).
+Select a deterministic segment record (latest training_time, tie-breaker by model_name).
 
-### get\_quantile\_points\_for\_severity[​](#get_quantile_points_for_severity "Direct link to get_quantile_points_for_severity")
+### get_quantile_points_for_severity[​](#get_quantile_points_for_severity "Direct link to get_quantile_points_for_severity")
 
 ```python
 def get_quantile_points_for_severity(
@@ -35,7 +35,7 @@ Extract percentile->score points for severity mapping.
 
 Used internally for scoring and exposed for testing and advanced use.
 
-### extract\_quantile\_points[​](#extract_quantile_points "Direct link to extract_quantile_points")
+### extract_quantile_points[​](#extract_quantile_points "Direct link to extract_quantile_points")
 
 ```python
 def extract_quantile_points(
@@ -45,7 +45,7 @@ def extract_quantile_points(
 
 Extract percentile->score points for severity mapping.
 
-### fetch\_model\_columns\_and\_segments[​](#fetch_model_columns_and_segments "Direct link to fetch_model_columns_and_segments")
+### fetch_model_columns_and_segments[​](#fetch_model_columns_and_segments "Direct link to fetch_model_columns_and_segments")
 
 ```python
 def fetch_model_columns_and_segments(
@@ -58,4 +58,4 @@ Auto-discover columns and segmentation from the model registry.
 
 **Returns**:
 
-Tuple of (columns, segment\_by).
+Tuple of (columns, segment_by).

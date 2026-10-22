@@ -28,8 +28,9 @@ Instances are created exclusively by *StandardMessageBuilder.build* and consumed
 * `run_id` - Identifier of the DQX run that produced this alert.
 * `run_time` - Timestamp when the DQX run executed.
 * `severity` - Alert severity level (e.g. "error", "warn").
-* `user_metadata` - Engine-level user metadata (from *ExtraParams.user\_metadata*) as a raw string-to-string mapping. Empty when no metadata was configured. Rendered by every destination so run-level context (e.g. pipeline name) reaches the notification.
-* `fields` - Flat string-to-string mapping suitable for key-value rendering in notification payloads. Contains one entry per observed metric under a key of the form *metric.NAME* (for example, *metric.error\_row\_count*), one *user\_metadata.KEY* entry per user-metadata item, plus un-prefixed reserved entries for *condition*, *run\_id*, *run\_time*, and *table*. The prefixes ensure metric and metadata names never silently overwrite the reserved metadata keys.
+* `user_metadata` - Engine-level user metadata (from *ExtraParams.user_metadata*) as a raw string-to-string mapping. Empty when no metadata was configured. Rendered by every destination so run-level context (e.g. pipeline name) reaches the notification.
+* `extras` - Per-producer payloads emitted by preceding actions in the same run (via *ActionResult.extras*), keyed by producing action name. Empty when no upstream action contributed. Rendered alongside *user_metadata* so downstream signals such as *collect_lineage → lineage_location* reach the notification without a second lookup.
+* `summary`0 - Flat string-to-string mapping suitable for key-value rendering in notification payloads. Contains one entry per observed metric under a key of the form *metric.NAME* (for example, *metric.error_row_count*), one *user_metadata.KEY* entry per user-metadata item, one *extras.ACTION.KEY* entry per upstream-action payload item, plus un-prefixed reserved entries for *condition*, *run_id*, *run_time*, and *table*. The prefixes ensure metric, metadata, and extras names never silently overwrite the reserved metadata keys.
 
 ## StandardMessageBuilder Objects[​](#standardmessagebuilder-objects "Direct link to StandardMessageBuilder Objects")
 
@@ -66,15 +67,16 @@ def build(*,
           run_time: datetime,
           table: str | None,
           severity: str = "error",
-          user_metadata: dict[str, str] | None = None) -> AlertMessage
+          user_metadata: dict[str, str] | None = None,
+          extras: dict[str, dict[str, str]] | None = None) -> AlertMessage
 
 ```
 
 Build an *AlertMessage* from run-time primitives.
 
-Composes a human-readable *title* (always contains *action\_name*), a *summary* that mentions the *table* and *condition* (or states that the action fires unconditionally when *condition* is *None*), and a *fields* dict suitable for flat key-value rendering in notification payloads.
+Composes a human-readable *title* (always contains *action_name*), a *summary* that mentions the *table* and *condition* (or states that the action fires unconditionally when *condition* is *None*), and a *fields* dict suitable for flat key-value rendering in notification payloads.
 
-Metric entries in *fields* are stored under a key of the form *metric.NAME* (for example, *metric.error\_row\_count*) so that they never collide with the reserved metadata keys *condition*, *run\_id*, *run\_time*, and *table*, which are always un-prefixed. User metadata entries are likewise stored under a *user\_metadata.KEY* prefix. *observed\_metrics* on the returned *AlertMessage* is always the raw, un-prefixed metrics dict.
+Metric entries in *fields* are stored under a key of the form *metric.NAME* (for example, *metric.error_row_count*) so that they never collide with the reserved metadata keys *condition*, *run_id*, *run_time*, and *table*, which are always un-prefixed. User metadata entries are likewise stored under a *user_metadata.KEY* prefix, and extras payloads emitted by preceding actions under an *extras.ACTION.KEY* prefix. *observed_metrics* on the returned *AlertMessage* is always the raw, un-prefixed metrics dict.
 
 **Arguments**:
 
@@ -85,7 +87,8 @@ Metric entries in *fields* are stored under a key of the form *metric.NAME* (for
 * `run_time` - Timestamp when the DQX run executed.
 * `table` - Fully-qualified table name being checked, or *None*.
 * `severity` - Alert severity level; defaults to "error".
-* `user_metadata` - Optional engine-level user metadata (from *ExtraParams.user\_metadata*) to surface in the alert payload; included under *user\_metadata.KEY* prefixed keys.
+* `user_metadata` - Optional engine-level user metadata (from *ExtraParams.user_metadata*) to surface in the alert payload; included under *user_metadata.KEY* prefixed keys.
+* `extras` - Optional per-producer payloads from preceding actions in the same run (from *ActionContext.extras*); included under *extras.ACTION.KEY* prefixed keys so downstream signals like *collect_lineage → lineage_location* reach the notification without a second lookup.
 
 **Returns**:
 

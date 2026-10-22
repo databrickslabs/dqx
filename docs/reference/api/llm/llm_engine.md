@@ -1,4 +1,4 @@
-# databricks.labs.dqx.llm.llm\_engine
+# databricks.labs.dqx.llm.llm_engine
 
 ## DQLLMEngine Objects[​](#dqllmengine-objects "Direct link to DQLLMEngine Objects")
 
@@ -30,7 +30,7 @@ Initializes the LLM engine.
 * `model_config` - Configuration for the LLM model.
 * `custom_check_functions` - Optional custom check functions to include.
 
-### detect\_business\_rules\_with\_llm[​](#detect_business_rules_with_llm "Direct link to detect_business_rules_with_llm")
+### detect_business_rules_with_llm[​](#detect_business_rules_with_llm "Direct link to detect_business_rules_with_llm")
 
 ```python
 def detect_business_rules_with_llm(
@@ -43,7 +43,7 @@ def detect_business_rules_with_llm(
 
 Detect DQX rules based on natural language request with optional schema or summary statistics.
 
-If schema\_info is empty (default), it will automatically infer the schema from the user\_input before generating rules.
+If schema_info is empty (default), it will automatically infer the schema from the user_input before generating rules.
 
 **Arguments**:
 
@@ -55,8 +55,8 @@ If schema\_info is empty (default), it will automatically infer the schema from 
 
 A Prediction object containing:
 
-* quality\_rules: The generated DQ rules
+* quality_rules: The generated DQ rules
 * reasoning: Explanation of the rules
-* guessed\_schema\_json: The inferred schema (if schema was inferred)
-* assumptions\_bullets: Assumptions made (if schema was inferred)
-* schema\_info: The final schema used (if schema was inferred)
+* guessed_schema_json: The inferred schema (if schema was inferred)
+* assumptions_bullets: Assumptions made (if schema was inferred)
+* schema_info: The final schema used (if schema was inferred)

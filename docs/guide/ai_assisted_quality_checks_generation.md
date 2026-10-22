@@ -1,10 +1,6 @@
 # AI-Assisted Quality Checks Generation
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
-
-<!-- -->
-
-[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+[Available since DQX v0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
 
 Changed in v0.16.0
 
@@ -119,11 +115,7 @@ print(checks)
 
 ### Using with Profiler Summary Statistics[​](#using-with-profiler-summary-statistics "Direct link to Using with Profiler Summary Statistics")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.12.0 "Available since DQX v0.12.0")
-
-<!-- -->
-
-[0.12.0](https://github.com/databrickslabs/dqx/releases/tag/v0.12.0 "Available since DQX v0.12.0")
+[Available since DQX v0.12.0](https://github.com/databrickslabs/dqx/releases/tag/v0.12.0 "Available since DQX v0.12.0")
 
 You can generate AI-assisted quality rules directly from profiler-generated summary statistics. This approach leverages the statistical patterns discovered during profiling to create appropriate data quality checks.
 

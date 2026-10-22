@@ -10,7 +10,7 @@ class LLMValidationScoreWeights()
 
 Weights for rule validation scoring.
 
-### \_\_post\_init\_\_[​](#__post_init__ "Direct link to __post_init__")
+### \_\_post_init\_\_[​](#__post_init__ "Direct link to __post_init__")
 
 ```python
 def __post_init__()

@@ -1,6 +1,6 @@
 # databricks.labs.dqx.cli
 
-### open\_remote\_config[​](#open_remote_config "Direct link to open_remote_config")
+### open_remote_config[​](#open_remote_config "Direct link to open_remote_config")
 
 ```python
 @dqx.command
@@ -19,7 +19,7 @@ Opens remote configuration in the browser.
 * `install_folder` - Optional custom installation folder path.
 * `ctx` - The WorkspaceContext instance to use for accessing the workspace.
 
-### open\_dashboards[​](#open_dashboards "Direct link to open_dashboards")
+### open_dashboards[​](#open_dashboards "Direct link to open_dashboards")
 
 ```python
 @dqx.command
@@ -55,7 +55,7 @@ Show installations by different users on the same workspace.
 * `w` - The WorkspaceClient instance to use for accessing the workspace.
 * `product_name` - The name of the product to search for in the installation folder.
 
-### validate\_checks[​](#validate_checks "Direct link to validate_checks")
+### validate_checks[​](#validate_checks "Direct link to validate_checks")
 
 ```python
 @dqx.command
@@ -105,7 +105,7 @@ Profile input data and generate quality rule (checks) candidates.
 * `install_folder` - Optional custom installation folder path.
 * `ctx` - The WorkspaceContext instance to use for accessing the workspace.
 
-### apply\_checks[​](#apply_checks "Direct link to apply_checks")
+### apply_checks[​](#apply_checks "Direct link to apply_checks")
 
 ```python
 @dqx.command
@@ -130,8 +130,8 @@ Apply data quality checks to the input data and save the results.
 * `run_config` - The name of the run configuration to use. If not provided, run it for all run configs.
 * `patterns` - Semicolon-separated list of location patterns (with wildcards) to profile. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
 * `exclude_patterns` - Semicolon-separated list of location patterns to exclude. Useful to skip existing output and quarantine tables based on suffixes.
-* `output_table_suffix` - Suffix to append to the output table names (default is "\_dq\_output").
-* `quarantine_table_suffix` - Suffix to append to the quarantine table names (default is "\_dq\_quarantine").
+* `output_table_suffix` - Suffix to append to the output table names (default is "\_dq_output").
+* `quarantine_table_suffix` - Suffix to append to the quarantine table names (default is "\_dq_quarantine").
 * `timeout_minutes` - The timeout for the workflow run in minutes (default is 30).
 * `install_folder` - Optional custom installation folder path.
 * `ctx` - The WorkspaceContext instance to use for accessing the workspace.
@@ -165,13 +165,13 @@ Run end to end workflow to:
 * `run_config` - The name of the run configuration to use. If not provided, run it for all run configs.
 * `patterns` - Semicolon-separated list of location patterns (with wildcards) to profile. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
 * `exclude_patterns` - Semicolon-separated list of location patterns to exclude. Useful to skip existing output and quarantine tables based on suffixes.
-* `output_table_suffix` - Suffix to append to the output table names (default is "\_dq\_output").
-* `quarantine_table_suffix` - Suffix to append to the quarantine table names (default is "\_dq\_quarantine").
+* `output_table_suffix` - Suffix to append to the output table names (default is "\_dq_output").
+* `quarantine_table_suffix` - Suffix to append to the quarantine table names (default is "\_dq_quarantine").
 * `timeout_minutes` - The timeout for the workflow run in minutes (default is 60).
 * `install_folder` - Optional custom installation folder path.
 * `ctx` - The WorkspaceContext instance to use for accessing the workspace.
 
-### train\_anomaly[​](#train_anomaly "Direct link to train_anomaly")
+### train_anomaly[​](#train_anomaly "Direct link to train_anomaly")
 
 ```python
 @dqx.command

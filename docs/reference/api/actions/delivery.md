@@ -4,7 +4,7 @@ Webhook delivery client with retry logic and SSRF guard.
 
 Provides:
 
-* *validate\_webhook\_url* — enforces HTTPS and blocks private/loopback/link-local addresses.
+* *validate_webhook_url* — enforces HTTPS and blocks private/loopback/link-local addresses.
 * *WebhookAuth* — Basic-auth credentials carrier.
 * *WebhookClient* — POSTs JSON payloads with exponential-backoff retry; never follows redirects.
 
@@ -14,7 +14,7 @@ Security notes:
 * Payload contents and credentials are never included in log messages or raised exceptions.
 * The host value is sanitized (newlines/control chars stripped) before interpolation (CWE-117).
 
-### validate\_webhook\_url[​](#validate_webhook_url "Direct link to validate_webhook_url")
+### validate_webhook_url[​](#validate_webhook_url "Direct link to validate_webhook_url")
 
 ```python
 def validate_webhook_url(url: str,
@@ -51,7 +51,7 @@ HTTP Basic-auth credentials for a webhook endpoint.
 **Attributes**:
 
 * `username` - The username portion of the Basic-auth credential.
-* `password` - The password portion of the Basic-auth credential. Treat plaintext values as development-only; prefer secret-scope references in production (e.g. *secret\_scope/key*). This field is never logged.
+* `password` - The password portion of the Basic-auth credential. Treat plaintext values as development-only; prefer secret-scope references in production (e.g. *secret_scope/key*). This field is never logged.
 
 ### header[​](#header "Direct link to header")
 
@@ -75,9 +75,9 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler)
 
 urllib redirect handler that blocks all redirects.
 
-Overrides *redirect\_request* to return *None*, preventing the opener from following any HTTP 3xx response. This closes a class of SSRF vectors where an initially-safe URL redirects to an internal address.
+Overrides *redirect_request* to return *None*, preventing the opener from following any HTTP 3xx response. This closes a class of SSRF vectors where an initially-safe URL redirects to an internal address.
 
-### redirect\_request[​](#redirect_request "Direct link to redirect_request")
+### redirect_request[​](#redirect_request "Direct link to redirect_request")
 
 ```python
 def redirect_request(req: urllib.request.Request, fp: IO[bytes], code: int,
@@ -131,14 +131,14 @@ def post(url: str,
 
 POST a JSON *payload* to *url* with retry on transient failures.
 
-The URL is validated before any network call. On repeated failures the client waits an exponentially increasing delay between attempts — starting at *base\_delay* and doubling each attempt, capped at *max\_delay* — and raises *AlertDeliveryError* after all retries are exhausted.
+The URL is validated before any network call. On repeated failures the client waits an exponentially increasing delay between attempts — starting at *base_delay* and doubling each attempt, capped at *max_delay* — and raises *AlertDeliveryError* after all retries are exhausted.
 
 **Arguments**:
 
 * `url` - The webhook endpoint URL. Must pass SSRF validation.
 * `payload` - JSON-serialisable dict to send as the request body.
 * `auth` - Optional Basic-auth credentials.
-* `allowed_host_suffixes` - Optional host-suffix allowlist forwarded to *validate\_webhook\_url*.
+* `allowed_host_suffixes` - Optional host-suffix allowlist forwarded to *validate_webhook_url*.
 
 **Raises**:
 

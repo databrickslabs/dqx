@@ -10,26 +10,28 @@ class DQProfile()
 
 Data quality profile class representing a data quality rule candidate.
 
+**Attributes**:
+
+* `name` - Profile name (e.g. *is_not_null_or_empty*, *min_max*).
+* `column` - Column the profile applies to.
+* `description` - Optional human-readable description.
+* `parameters` - Optional parameters that specialise the rule.
+* `filter` - Optional filter expression scoping the rule.
+* `semantic_type` - Optional detected semantic type name (e.g. *enum*, *key*, *measurement*, *text*) — records *why* the profile was generated when semantic profiling is enabled. Defaults to *None*, so pre-existing YAML/JSON round-trips are unaffected.
+
 ## DQProfileBuilder Objects[​](#dqprofilebuilder-objects "Direct link to DQProfileBuilder Objects")
 
 ```python
-@dataclass(frozen=True)
-class DQProfileBuilder()
+class DQProfileBuilder(BaseModel)
 
 ```
 
-Data quality profile builder class: a named builder that may produce a DQProfile for a column.
+Named builder that may produce a *DQProfile* for a column.
+
+Exactly one of *builder* or *contextual_builder* must be provided.
 
 **Attributes**:
 
-* `name` - Profile type identifier (e.g. "null\_or\_empty", "is\_in", "min\_max"). Used to look up the builder in the registry and in generated rule metadata.
-
-* `builder` - Callable that inspects column data and options and returns a DQProfile when the column matches the profile criteria, otherwise None. Signature:
-
-  (df, column\_name, column\_type, profiler\_metrics, profiler\_options) -> DQProfile | None
-
-  * df: DataFrame for this column (non-null rows only; strings trimmed when profiler\_options\["trim\_strings"] is True). Used for distinct/min/max etc.
-  * column\_name: Name of the column being profiled.
-  * column\_type: Spark DataType of the column (e.g. StringType(), LongType()).
-  * profiler\_metrics: Column-level statistics from the profiler (e.g. count, count\_null, empty\_count, count\_non\_null). Same key set as summary\_stats\[column\_name].
-  * profiler\_options: Profiler options for this run (e.g. max\_null\_ratio, max\_empty\_ratio, max\_in\_count, trim\_strings, filter).
+* `name` - Profile type identifier (e.g. *min_max*). Used to look up the builder in the registry and in generated rule metadata.
+* `builder` - Legacy 5-argument callback. Left in place for backward compatibility so existing user-authored builders keep working when wrapped in *DQProfileBuilder* or registered via *@register_profile_builder* without *kind="context"*. Does not receive semantic-type information — prefer *contextual_builder* for new code.
+* `contextual_builder` - Preferred single-argument callback receiving a *DQProfileContext*. Sees the detected semantic type via *ctx.semantic_type* and can gate its output accordingly.

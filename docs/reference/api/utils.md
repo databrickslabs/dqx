@@ -1,6 +1,6 @@
 # databricks.labs.dqx.utils
 
-### to\_utc[​](#to_utc "Direct link to to_utc")
+### to_utc[​](#to_utc "Direct link to to_utc")
 
 ```python
 def to_utc(value: datetime.datetime) -> datetime.datetime
@@ -19,15 +19,28 @@ Datetimes read back from Spark or SQL *TIMESTAMP* columns can be timezone-naive 
 
 The equivalent timezone-aware UTC datetime.
 
+### is_spark_column[​](#is_spark_column "Direct link to is_spark_column")
+
+```python
+def is_spark_column(value: object) -> TypeGuard[Column]
+
+```
+
+Return True if *value* is a PySpark Column, including the Spark Connect variant.
+
+In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI), *F.col()* / *F.lit()* return *pyspark.sql.connect.column.Column*, which is not an *isinstance* of the classic *pyspark.sql.Column*. Checking both keeps column detection correct in either runtime. Reading ConnectColumn at call time (not at import time) means monkeypatching in tests works.
+
+Returns a *TypeGuard\[Column]* so callers keep the type narrowing a bare *isinstance* would give.
+
 #### SparkColumn[​](#sparkcolumn "Direct link to SparkColumn")
 
 Pydantic-compatible Column type that accepts both classic and Spark Connect columns.
 
 #### VariableValue[​](#variablevalue "Direct link to VariableValue")
 
-Supported scalar types for variable substitution values.
+Supported scalar types for variable substitution into SQL / column expressions.
 
-### get\_column\_name\_or\_alias[​](#get_column_name_or_alias "Direct link to get_column_name_or_alias")
+### get_column_name_or_alias[​](#get_column_name_or_alias "Direct link to get_column_name_or_alias")
 
 ```python
 def get_column_name_or_alias(
@@ -49,7 +62,7 @@ PySpark does not provide direct access to the alias of an unbound column, so thi
 **Arguments**:
 
 * `column` - Column, ConnectColumn (if PySpark Connect available), or string representing a column.
-* `normalize` - If True, normalizes the column name (removes special characters, converts to lowercase).
+* `normalize` - If True, normalizes the column name (removes special characters, converts to lowercase). For string inputs, any surrounding back-quotes the user supplied (e.g. "`Customer Name`") are stripped first so quotes do not leak into display names or generated check names.
 * `allow_simple_expressions_only` - If True, raises an error if the column expression is not a simple expression. Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully reconstructed correctly when converting to string (e.g. F.col("a") + F.lit(1)). However, in certain situations this is acceptable, e.g. when using the output for reporting purposes.
 
 **Returns**:
@@ -60,7 +73,7 @@ The extracted column alias or name.
 
 * `InvalidParameterError` - If the column expression is invalid or unsupported.
 
-### get\_columns\_as\_strings[​](#get_columns_as_strings "Direct link to get_columns_as_strings")
+### get_columns_as_strings[​](#get_columns_as_strings "Direct link to get_columns_as_strings")
 
 ```python
 def get_columns_as_strings(
@@ -86,7 +99,7 @@ List of column names as strings.
 
 * `InvalidParameterError` - If any column expression is invalid or unsupported.
 
-### is\_simple\_column\_expression[​](#is_simple_column_expression "Direct link to is_simple_column_expression")
+### is_simple_column_expression[​](#is_simple_column_expression "Direct link to is_simple_column_expression")
 
 ```python
 def is_simple_column_expression(col_name: str) -> bool
@@ -103,7 +116,7 @@ Returns True if the column name does not contain any disallowed characters: spac
 
 True if the column name is valid, False otherwise.
 
-### normalize\_bound\_args[​](#normalize_bound_args "Direct link to normalize_bound_args")
+### normalize_bound_args[​](#normalize_bound_args "Direct link to normalize_bound_args")
 
 ```python
 def normalize_bound_args(val: Any,
@@ -120,7 +133,7 @@ For Decimal values, uses a special JSON-serializable format to preserve type inf
 **Arguments**:
 
 * `val` - Value or collection of values to normalize.
-* `allow_simple_expressions_only` - If True (default), Column values must be simple expressions (e.g. F.col("name")). If False, complex expressions (e.g. F.try\_element\_at(...)) are allowed and serialized as their string representation. Use False when serializing for fingerprinting/metadata only, where round-trip reconstruction is not required.
+* `allow_simple_expressions_only` - If True (default), Column values must be simple expressions (e.g. F.col("name")). If False, complex expressions (e.g. F.try_element_at(...)) are allowed and serialized as their string representation. Use False when serializing for fingerprinting/metadata only, where round-trip reconstruction is not required.
 
 **Returns**:
 
@@ -130,7 +143,29 @@ Normalized value or collection.
 
 * `TypeError` - If a column type is unsupported.
 
-### quote\_column\_name[​](#quote_column_name "Direct link to quote_column_name")
+### escape_sql_string_literal[​](#escape_sql_string_literal "Direct link to escape_sql_string_literal")
+
+```python
+def escape_sql_string_literal(value: str) -> str
+
+```
+
+Escape a string for inclusion in a single-quoted Spark SQL literal.
+
+Spark's parser honours backslash escapes inside string literals by default (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
+
+* The backslash must be doubled, or the parser consumes it (e.g. a JSON-encoded *\&quot;* collapses back to a bare *"*).
+* The single quote must be escaped as *\&#x27;*, not doubled as *''*. ANSI doubling is not honoured in this mode: Spark reads *'it''s'* as two adjacent literals and concatenates them, so the value becomes *its*.
+
+**Arguments**:
+
+* `value` - The raw string.
+
+**Returns**:
+
+The escaped string, without the enclosing quotes.
+
+### quote_column_name[​](#quote_column_name "Direct link to quote_column_name")
 
 ```python
 def quote_column_name(name: str) -> str
@@ -139,7 +174,7 @@ def quote_column_name(name: str) -> str
 
 Wraps a column name in backticks so it can be used as a SQL identifier.
 
-Column names containing spaces, non-ASCII characters, or other characters that require escaping (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before being parsed by `F.expr`.
+Column names containing spaces, non-ASCII characters, or other characters that require escaping (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before being parsed by *F.expr*.
 
 **Arguments**:
 
@@ -149,7 +184,49 @@ Column names containing spaces, non-ASCII characters, or other characters that r
 
 The column name wrapped in backticks with embedded backticks escaped.
 
-### normalize\_col\_str[​](#normalize_col_str "Direct link to normalize_col_str")
+### unquote_column_name[​](#unquote_column_name "Direct link to unquote_column_name")
+
+```python
+def unquote_column_name(name: str) -> str
+
+```
+
+Removes surrounding back-quotes from a column name, reversing *quote_column_name*.
+
+A column reference that the user already back-quoted (e.g. "`Customer Name`") is unwrapped to its plain form ("Customer Name") for use in display names and messages. Strings that are not a single back-quoted identifier (plain names, dotted paths, SQL expressions) are returned unchanged.
+
+**Arguments**:
+
+* `name` - Column reference provided as a string.
+
+**Returns**:
+
+The column name without surrounding back-quotes.
+
+### normalize_column_expr[​](#normalize_column_expr "Direct link to normalize_column_expr")
+
+```python
+def normalize_column_expr(column: str) -> str
+
+```
+
+Prepares a column reference string for use with *F.expr*, back-quoting names that require SQL identifier escaping while leaving SQL expressions untouched.
+
+Check functions accept a column as either a plain name or a SQL expression string. A plain name that is not a valid bare identifier (spaces, dashes, non-ASCII letters, etc., e.g. "Customer Name", "gross-margin" or "Päivämäärä") does not parse when passed to *F.expr* and must be back-quoted. A SQL expression (e.g. "a + b", "substr(x, 1, 2)", "\*") must be passed through as-is.
+
+Name and expression cannot be told apart with certainty from a string alone. This function uses a conservative heuristic. A string is treated as an expression, and returned unchanged, when it contains characters that typically appear in expressions (parentheses, brackets, quotes, comma, star) or arithmetic/comparison operators that are whitespace-separated (e.g. "a + b"). Everything else is treated as a dotted column path: each segment is left alone if it is a valid bare identifier. Otherwise it is back-quoted.
+
+This heuristic intentionally excludes two ambiguous cases: names that contain expression characters (e.g. "amount (usd)"), and operator-free SQL expressions such as "col IS NOT NULL" (which is treated as a name). Callers with such columns should back-quote the name themselves, pass a Column expression, or use the *sql_expression* check.
+
+**Arguments**:
+
+* `column` - Column reference provided as a string (plain name, nested path, or SQL expression).
+
+**Returns**:
+
+A string safe to pass to *F.expr*.
+
+### normalize_col_str[​](#normalize_col_str "Direct link to normalize_col_str")
 
 ```python
 def normalize_col_str(col_str: str) -> str
@@ -170,7 +247,7 @@ Normalizes string to be compatible with metastore column names by applying the f
 
 Normalized column name.
 
-### is\_sql\_query\_safe[​](#is_sql_query_safe "Direct link to is_sql_query_safe")
+### is_sql_query_safe[​](#is_sql_query_safe "Direct link to is_sql_query_safe")
 
 ```python
 def is_sql_query_safe(query: str) -> bool
@@ -189,7 +266,7 @@ Quoted string literals and backtick-quoted identifiers are stripped before scann
 
 True if the query is free of destructive statement keywords, False otherwise.
 
-### safe\_filter\_expr[​](#safe_filter_expr "Direct link to safe_filter_expr")
+### safe_filter_expr[​](#safe_filter_expr "Direct link to safe_filter_expr")
 
 ```python
 def safe_filter_expr(filter_expr: str | None) -> Column
@@ -198,7 +275,7 @@ def safe_filter_expr(filter_expr: str | None) -> Column
 
 Build a Spark column from a filter expression, rejecting unsafe SQL.
 
-Validates the filter with *is\_sql\_query\_safe* before compiling it. Destructive statements (e.g. DELETE, DROP) are rejected; SELECT and subqueries are allowed, since filters are authored by trusted operators. Used for both check filters and *row\_filter* parameters.
+Validates the filter with *is_sql_query_safe* before compiling it. Destructive statements (e.g. DELETE, DROP) are rejected; SELECT and subqueries are allowed, since filters are authored by trusted operators. Used for both check filters and *row_filter* parameters.
 
 **Arguments**:
 
@@ -212,7 +289,7 @@ The compiled filter column, or a literal true column when no filter is given.
 
 * `UnsafeSqlQueryError` - If the filter contains a destructive statement such as DELETE or DROP.
 
-### sanitize\_for\_logging[​](#sanitize_for_logging "Direct link to sanitize_for_logging")
+### sanitize_for_logging[​](#sanitize_for_logging "Direct link to sanitize_for_logging")
 
 ```python
 def sanitize_for_logging(value: str) -> str
@@ -229,7 +306,7 @@ Escapes newline and carriage-return characters in a user-supplied string so it c
 
 The string with CR and LF replaced by their escaped literal representations.
 
-### safe\_json\_load[​](#safe_json_load "Direct link to safe_json_load")
+### safe_json_load[​](#safe_json_load "Direct link to safe_json_load")
 
 ```python
 def safe_json_load(value: str | None) -> object
@@ -244,7 +321,7 @@ A *None* value is returned unchanged (a stored MAP\<STRING, STRING> may contain 
 
 * `value` - The value to parse as JSON, or None.
 
-### safe\_strip\_file\_from\_path[​](#safe_strip_file_from_path "Direct link to safe_strip_file_from_path")
+### safe_strip_file_from_path[​](#safe_strip_file_from_path "Direct link to safe_strip_file_from_path")
 
 ```python
 def safe_strip_file_from_path(path: str) -> str
@@ -264,7 +341,7 @@ Safely removes the file name from a given path, treating it as a directory if no
 
 The path without the file name, or the original path if it is already a directory.
 
-### list\_tables[​](#list_tables "Direct link to list_tables")
+### list_tables[​](#list_tables "Direct link to list_tables")
 
 ```python
 @rate_limited(max_requests=100)
@@ -292,7 +369,7 @@ Gets a list of table names from Unity Catalog given a list of wildcard patterns.
 
 * `NotFound` - If no tables are found matching the include or exclude criteria.
 
-### to\_lowercase[​](#to_lowercase "Direct link to to_lowercase")
+### to_lowercase[​](#to_lowercase "Direct link to to_lowercase")
 
 ```python
 def to_lowercase(col_expr: Column, is_array: bool = False) -> Column
@@ -310,7 +387,7 @@ Converts a column expression to lowercase, handling both scalar and array types.
 
 Column expression with lowercase transformation applied
 
-### table\_exists[​](#table_exists "Direct link to table_exists")
+### table_exists[​](#table_exists "Direct link to table_exists")
 
 ```python
 def table_exists(spark: Any, table: str) -> bool
@@ -330,7 +407,7 @@ Uses the catalog API only (no Spark job). Requires Spark 3.4+ for fully qualifie
 
 True if the table exists, False otherwise.
 
-### get\_table\_primary\_keys[​](#get_table_primary_keys "Direct link to get_table_primary_keys")
+### get_table_primary_keys[​](#get_table_primary_keys "Direct link to get_table_primary_keys")
 
 ```python
 def get_table_primary_keys(table: str, spark: Any) -> set[str]
@@ -339,7 +416,7 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]
 
 Retrieve primary key columns from Unity Catalog table metadata.
 
-Uses SparkTableDataProvider (table\_manager) to read table properties and parses the primary key constraint into a set of column names.
+Uses SparkTableDataProvider (table_manager) to read table properties and parses the primary key constraint into a set of column names.
 
 **Arguments**:
 
@@ -356,9 +433,9 @@ Set of column names that are primary keys. Returns empty set if:
 
 **Examples**:
 
-\>>> pk\_cols = get\_table\_primary\_keys("main.default.users", spark) >>> if "user\_id" in pk\_cols: ... print("user\_id is a primary key")
+\>>> pk_cols = get_table_primary_keys("main.default.users", spark) >>> if "user_id" in pk_cols: ... print("user_id is a primary key")
 
-### get\_table\_column\_metadata[​](#get_table_column_metadata "Direct link to get_table_column_metadata")
+### get_table_column_metadata[​](#get_table_column_metadata "Direct link to get_table_column_metadata")
 
 ```python
 def get_table_column_metadata(workspace_client: WorkspaceClient,
@@ -370,7 +447,7 @@ Gets column metadata for a Unity Catalog table using the Databricks SDK.
 
 **Notes**:
 
-This method is used in place of *databricks.labs.dqx.llm.llm\_utils.get\_column\_metadata* when no Spark session is available. Schemas are read from Unity Catalog. The returned JSON has the same shape, so methods can be used interchangeably for LLM-based rule generation.
+This method is used in place of *databricks.labs.dqx.llm.llm_utils.get_column_metadata* when no Spark session is available. Schemas are read from Unity Catalog. The returned JSON has the same shape, so methods can be used interchangeably for LLM-based rule generation.
 
 **Arguments**:
 
@@ -385,7 +462,7 @@ A JSON string containing the column metadata with columns wrapped in a "columns"
 
 * `NotFound` - If the table does not exist or is not accessible.
 
-### missing\_required\_packages[​](#missing_required_packages "Direct link to missing_required_packages")
+### missing_required_packages[​](#missing_required_packages "Direct link to missing_required_packages")
 
 ```python
 def missing_required_packages(packages: list[str]) -> bool
@@ -402,7 +479,36 @@ Checks if any of the required packages are missing.
 
 True if any package is missing, False otherwise.
 
-### resolve\_variables[​](#resolve_variables "Direct link to resolve_variables")
+### get_template_placeholders[​](#get_template_placeholders "Direct link to get_template_placeholders")
+
+```python
+def get_template_placeholders(text: str) -> set[str]
+
+```
+
+Return the names of the placeholders (keys in double curly braces) in *text*.
+
+### replace_template[​](#replace_template "Direct link to replace_template")
+
+```python
+def replace_template(text: str, variables: dict[str, str]) -> str
+
+```
+
+Replace placeholders (keys in double curly braces) in *text* with values from *variables*.
+
+Uses a single-pass regex substitution, so a replacement value is never substituted again. Tolerates whitespace inside the braces around the key. Logs a warning if any unresolved placeholders remain after substitution.
+
+**Arguments**:
+
+* `text` - Input string potentially containing placeholders.
+* `variables` - Pre-stringified mapping of placeholder names to values.
+
+**Returns**:
+
+String with all matching placeholders replaced.
+
+### resolve_variables[​](#resolve_variables "Direct link to resolve_variables")
 
 ```python
 def resolve_variables(
@@ -421,7 +527,7 @@ Logs a warning for any placeholders that remain unresolved after substitution (e
 
 **Notes**:
 
-Variable values substituted into *sql\_expression* checks are not sanitized and are passed directly to *F.expr()*. Callers must **ensure variable values come from trusted sources** to prevent SQL injection.
+Variable values substituted into *sql_expression* checks are not sanitized and are passed directly to *F.expr()*. Callers must **ensure variable values come from trusted sources** to prevent SQL injection.
 
 **Arguments**:
 
@@ -436,7 +542,7 @@ A new list of check dicts with placeholders resolved, or the original list when 
 
 * `InvalidParameterError` - If any variable value is not a supported scalar type.
 
-### get\_file\_extension[​](#get_file_extension "Direct link to get_file_extension")
+### get_file_extension[​](#get_file_extension "Direct link to get_file_extension")
 
 ```python
 def get_file_extension(file_path: str | os.PathLike) -> str

@@ -1,4 +1,4 @@
-# databricks.labs.dqx.contexts.workspace\_context
+# databricks.labs.dqx.contexts.workspace_context
 
 ## WorkspaceContext Objects[​](#workspacecontext-objects "Direct link to WorkspaceContext Objects")
 
@@ -9,7 +9,7 @@ class WorkspaceContext(CliContext)
 
 WorkspaceContext class that extends CliContext to provide workspace-specific functionality.
 
-### workspace\_client[​](#workspace_client "Direct link to workspace_client")
+### workspace_client[​](#workspace_client "Direct link to workspace_client")
 
 ```python
 @cached_property

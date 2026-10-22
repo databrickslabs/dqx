@@ -1,10 +1,6 @@
 # Quality Dashboard
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.13.0 "Available since DQX v0.13.0")
-
-<!-- -->
-
-[0.13.0](https://github.com/databrickslabs/dqx/releases/tag/v0.13.0 "Available since DQX v0.13.0")
+[Available since DQX v0.13.0](https://github.com/databrickslabs/dqx/releases/tag/v0.13.0 "Available since DQX v0.13.0")
 
 The data quality dashboard can be set up in two ways: you can import it directly in your workspace from the GitHub repository, or it will be automatically deployed when you install DQX using the Databricks CLI. For more details on the installation process, see the [Installation Guide](/dqx/docs/installation.md#installing-dashboard).
 

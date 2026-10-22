@@ -6,7 +6,7 @@ The generated data quality rules (checks) candidates can be used as input for th
 
 You can run profiling and quality checks generation using the following approaches:
 
-* [DQX Studio (no-code UI)](/dqx/docs/guide/dqx_studio.md): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
+* [DQX Studio (no-code UI)](/dqx/docs/studio.md): for a no-code experience, DQX Studio is the recommended option. It lets you profile tables and review and save the generated rule candidates from a browser, without writing code.
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/dqx/docs/guide/quality_checks_storage.md).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
@@ -74,11 +74,7 @@ The profiler samples 30% of the data (sample ratio = 0.3) and limits the input t
 
 ### Profiling a table[​](#profiling-a-table "Direct link to Profiling a table")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
-
-<!-- -->
-
-[0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
+[Available since DQX v0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
 
 Profiling and quality checks generation can be run on individual tables.
 
@@ -104,11 +100,7 @@ print("Generated Profiles:", profiles)
 
 ### Profiling multiple tables[​](#profiling-multiple-tables "Direct link to Profiling multiple tables")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
-
-<!-- -->
-
-[0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
+[Available since DQX v0.6.0](https://github.com/databrickslabs/dqx/releases/tag/v0.6.0 "Available since DQX v0.6.0")
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -270,26 +262,26 @@ When running the profiler workflow using Databricks API or UI, you have the same
 
   * `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.\*;catalog.schema2.table1".
 
-  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input\_config.location') which is derived from the patterns.
+  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
 
   * The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
 
-  * If the `checks_location` in the run config points to a table, the checks will be saved to that table. If the `checks_location` in the run config points to a file, file name is replaced with "\<input\_table>.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
+  * If the `checks_location` in the run config points to a table, the checks will be saved to that table. If the `checks_location` in the run config points to a file, file name is replaced with "\<input_table>.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
 
     <!-- -->
 
-    * If "checks\_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
-    * If "checks\_location=folder/checks.yml", the location will be resolved to "install\_folder/folder/\<input\_table>.yml".
-    * If "checks\_location=/App/checks.yml", the location will be resolved to "/App/\<input\_table>.yml".
-    * If "checks\_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input\_table>.yml".
+    * If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
+    * If "checks_location=folder/checks.yml", the location will be resolved to "install_folder/folder/\<input_table>.yml".
+    * If "checks_location=/App/checks.yml", the location will be resolved to "/App/\<input_table>.yml".
+    * If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input_table>.yml".
 
   * `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*\_output;\*\_quarantine".
 
   * By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters. This prevents potential profiling of the output and quarantine tables generated by the quality checker workflow. To disable this behavior, clear the values of `output_table_suffix` and `quarantine_table_suffix` in the job parameters.
 
-  * `output_table_suffix`: (optional) Suffix used for the output table names (default: "\_dq\_output").
+  * `output_table_suffix`: (optional) Suffix used for the output table names (default: "\_dq_output").
 
-  * `quarantine_table_suffix`: (optional) Suffix used for to the quarantine table names (default: "\_dq\_quarantine").
+  * `quarantine_table_suffix`: (optional) Suffix used for to the quarantine table names (default: "\_dq_quarantine").
 
 See the relevant params in red:
 
@@ -321,7 +313,7 @@ The following fields from the [configuration file](/dqx/docs/installation.md#con
 
   <!-- -->
 
-  * `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile\_summary\_stats.yml')
+  * `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary_stats.yml')
   * `sample_fraction`: fraction of data to sample. Pass a single float for uniform sampling, or a `{stratum: fraction}` dict for per-stratum sampling (requires `sample_by_column`).
   * `sample_seed`: seed for reproducible sampling.
   * `sample_by_column`: optional column used to draw a stratified sample via Spark's `DataFrame.sampleBy`. When set, the profiler samples over the distinct values of the column so every stratum is represented in the profile. Use a float `sample_fraction` for uniform sampling across all strata or a dict `sample_fraction` to control the sampling proportion per stratum.
@@ -329,6 +321,8 @@ The following fields from the [configuration file](/dqx/docs/installation.md#con
   * `limit`: maximum number of records to analyze.
   * `filter`: filter for the input data as a string SQL expression
   * `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
+  * `profile_geospatial`: whether to profile `GEOMETRY`/`GEOGRAPHY` columns to generate geospatial quality checks (default: `false`).
+  * `geospatial_srid`: SRID used to compute areas when profiling `GEOMETRY` columns (default: `3857`).
 
 * `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 
@@ -416,6 +410,10 @@ custom_options = {
   "filter": None,               # No filter (SQL expression)
 
   "llm_primary_key_detection": True,  # Detect PKs and generate uniqueness rule if found
+
+  # Geospatial options
+  "profile_geospatial": True,   # Profile GEOMETRY and GEOGRAPHY columns
+  "geospatial_srid": 3857,      # SRID used to compute areas when profiling GEOMETRY columns
 }
 
 ws = WorkspaceClient()
@@ -439,7 +437,7 @@ For the profiler workflow, you can set profiling options for each run config in 
 
   <!-- -->
 
-  * `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile\_summary\_stats.yml')
+  * `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary_stats.yml')
   * `sample_fraction`: fraction of data to sample. Pass a single float for uniform sampling, or a `{stratum: fraction}` dict for per-stratum sampling (requires `sample_by_column`).
   * `sample_seed`: seed for reproducible sampling.
   * `sample_by_column`: optional column to drive a stratified sample via Spark's `DataFrame.sampleBy`. Pair with a float `sample_fraction` for uniform per-stratum sampling or a dict `sample_fraction` to override per stratum.
@@ -447,6 +445,8 @@ For the profiler workflow, you can set profiling options for each run config in 
   * `limit`: maximum number of records to analyze.
   * `filter`: string SQL expression to filter the input data
   * `criticality`: default criticality for generated rules, either `error` or `warn` (default: `error`).
+  * `profile_geospatial`: whether to profile `GEOMETRY`/`GEOGRAPHY` columns to generate geospatial quality checks (default: `false`).
+  * `geospatial_srid`: SRID used to compute areas when profiling `GEOMETRY` columns (default: `3857`).
 
 You can open the configuration file to check available run configs and adjust the settings if needed:
 
@@ -470,7 +470,7 @@ run_configs:
 
 ```
 
-More detailed options such as 'num\_sigmas' are not configurable when using profiler workflow. They are only available for programmatic integration.
+More detailed options such as 'num_sigmas' are not configurable when using profiler workflow. They are only available for programmatic integration.
 
 #### Profiling options for multiple tables[​](#profiling-options-for-multiple-tables "Direct link to Profiling options for multiple tables")
 
@@ -522,6 +522,30 @@ results = profiler.profile_tables_for_patterns(
 
 ```
 
+## Profiling geospatial data[​](#profiling-geospatial-data "Direct link to Profiling geospatial data")
+
+[Available since DQX v0.17.0](https://github.com/databrickslabs/dqx/releases/tag/v0.17.0 "Available since DQX v0.17.0")
+
+The profiler can generate geospatial rule candidates from native `GEOMETRY` and `GEOGRAPHY` typed columns. Profiling for geospatial rules is disabled by default and requires explicit opt-in. Enable it by setting the `profile_geospatial` option.
+
+Rule candidates generated depend on the geometry types found in the column. Bounding-box, geometry type, and validity checks are generated for any geometry type. Area range checks are only generated for polygonal columns (`POLYGON`, `MULTIPOLYGON`), and coordinate-count range checks are skipped for point-only columns (a point always has a single coordinate), since those checks carry no signal there.
+
+Geospatial profiling limitations
+
+Profiling geospatial data has the following limitations:
+
+* Columns must be `GEOMETRY` or `GEOGRAPHY`. Values stored as strings or binary (e.g. WKB, WKT, or GeoJSON) are not supported.
+* Databricks serverless compute or Databricks classic compute with a runtime 17.1 or later.
+
+```python
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.sdk import WorkspaceClient
+
+profiler = DQProfiler(WorkspaceClient())
+summary_stats, profiles = profiler.profile(input_df, options={"profile_geospatial": True})
+
+```
+
 ## Understanding summary statistics and profiles[​](#understanding-summary-statistics-and-profiles "Direct link to Understanding summary statistics and profiles")
 
 How the data is profiled
@@ -538,16 +562,22 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 
 ### Summary Statistics Reference[​](#summary-statistics-reference "Direct link to Summary Statistics Reference")
 
-| Field              | Meaning                                                               | Notes                                                                |
-| ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `count`            | Rows actually profiled (after sampling **and** limit)                 | `≈ min(limit, sample_fraction × total_rows)`                         |
-| `mean`             | Arithmetic average of **non-null numeric** values                     | N/A for non-numeric                                                  |
-| `stddev`           | Sample standard deviation of **non-null numeric** values              | N/A for non-numeric                                                  |
-| `min`              | Smallest **non-null** value                                           | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum |
-| `25` / `50` / `75` | Approximate 25th/50th/75th percentiles of **non-null numeric** values | Uses Spark approximate quantiles                                     |
-| `max`              | Largest **non-null** value                                            | String = lexicographic; Date/Timestamp = latest; Numeric = maximum   |
-| `count_non_null`   | Number of non-null entries within the profiled rows                   |                                                                      |
-| `count_null`       | Number of null entries within the profiled rows                       | `count_non_null + count_null = count`                                |
+| Field                                                                   | Meaning                                                                                                      | Notes                                                                   |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `count`                                                                 | Rows actually profiled (after sampling **and** limit)                                                        | `≈ min(limit, sample_fraction × total_rows)`                            |
+| `mean`                                                                  | Arithmetic average of **non-null numeric** values                                                            | N/A for non-numeric                                                     |
+| `stddev`                                                                | Sample standard deviation of **non-null numeric** values                                                     | N/A for non-numeric                                                     |
+| `min`                                                                   | Smallest **non-null** value                                                                                  | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum    |
+| `25` / `50` / `75`                                                      | Approximate 25th/50th/75th percentiles of **non-null numeric** values                                        | Uses Spark approximate quantiles                                        |
+| `max`                                                                   | Largest **non-null** value                                                                                   | String = lexicographic; Date/Timestamp = latest; Numeric = maximum      |
+| `count_non_null`                                                        | Number of non-null entries within the profiled rows                                                          |                                                                         |
+| `count_null`                                                            | Number of null entries within the profiled rows                                                              | `count_non_null + count_null = count`                                   |
+| `min_x_coordinate` / `max_x_coordinate`                                 | Longitudinal range of profiled geometries                                                                    | Only for `GEOMETRY`/`GEOGRAPHY` columns when `profile_geospatial` is on |
+| `min_y_coordinate` / `max_y_coordinate`                                 | Latitudinal range of profiled geometries                                                                     | Only for geospatial columns when `profile_geospatial` is on             |
+| `min_area` / `max_area`                                                 | Area range of profiled geometries (using `geospatial_srid`)                                                  | Only for geospatial columns when `profile_geospatial` is on             |
+| `min_num_points` / `max_num_points`                                     | Coordinate-count range of profiled geometries                                                                | Only for geospatial columns when `profile_geospatial` is on             |
+| `geometry_types`                                                        | Distinct `ST_GeometryType` values (e.g. `POINT`, `LINESTRING`, `POLYGON`) present in the profiled geometries | Only for geospatial columns when `profile_geospatial` is on             |
+| `empty_geometry_count` / `invalid_geometry_count` / `null_island_count` | Number of empty values, invalid values, or null islands in the profiled geometries                           | Only for geospatial columns when `profile_geospatial` is on             |
 
 ## Data Drift Detection[​](#data-drift-detection "Direct link to Data Drift Detection")
 
@@ -653,11 +683,7 @@ profiler_config:
 
 ## Stratified sampling by column[​](#stratified-sampling-by-column "Direct link to Stratified sampling by column")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.15.0 "Available since DQX v0.15.0")
-
-<!-- -->
-
-[0.15.0](https://github.com/databrickslabs/dqx/releases/tag/v0.15.0 "Available since DQX v0.15.0")
+[Available since DQX v0.15.0](https://github.com/databrickslabs/dqx/releases/tag/v0.15.0 "Available since DQX v0.15.0")
 
 By default, the profiler uses Spark's `DataFrame.sample` to get a uniform random sample over the whole dataset. For skewed or imbalanced data, this can under-represent (or miss entirely) rare strata of the dataset.
 
@@ -666,7 +692,7 @@ Set a `sample_by_column` to draw a stratified sample using Spark's `DataFrame.sa
 * Use a single float value to sample the same fraction across all strata.
 * Use a dictionary of key-value pairs (e.g. `{stratum: fraction}`) to control the sample fraction for each stratum. Strata that are not listed in the dictionary are excluded from the sample entirely (they are assigned a fraction of `0`), so include every stratum you want represented.
 
-High-cardinality sample\_by\_column
+High-cardinality sample_by_column
 
 When `sample_fraction` is a single float value, the profiler collects distinct values of `sample_by_column` to build per-stratum sampling fractions. For high-cardinality columns this lookup can be expensive and is capped by `sample_by_values_limit` (default 1000). Rows whose `sample_by_column` value falls outside the collected set are excluded from the sample. Increase `sample_by_values_limit` to cover more strata, or pass a `{stratum: fraction}` dictionary to target specific strata explicitly (the limit does not apply to dictionaries).
 
@@ -734,10 +760,92 @@ run_configs:
 
 ```
 
-sample\_by\_column vs sample\_fraction
+sample_by_column vs sample_fraction
 
 `sample_by_column` and `sample_fraction` work together. When `sample_by_column` is set, a float `sample_fraction` is applied uniformly across all strata. A `sample_fraction` dictionary overrides the sampling fraction per stratum. When `sample_by_column` is not set, `sample_fraction` must be a float.
 
 Profiling with sampled data
 
 Summary statistics from limited samples may not reflect the characteristics of the overall dataset. Balance the sampling rate and limits with your desired profile accuracy. Manually review and tune rules generated from profiles on sample data to ensure correctness.
+
+## Extending the profiler with custom column metrics[​](#extending-the-profiler-with-custom-column-metrics "Direct link to Extending the profiler with custom column metrics")
+
+Use the `register_profile_column_metric` decorator to add your own per-column metrics. Each metric is computed once per column (before any profile builder runs) and shared across every profile builder, so builders never recompute it — but each additional registered metric adds an aggregation to **every** profiling run (see the warning below). The string passed to the decorator's *profile_column_metric_type* argument (e.g. `"percentile_10"` in the example below) becomes the key under which the value is exposed to profile builders.
+
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column`, or `None` to skip the metric for that column type.
+
+See [Custom Column Metrics](/dqx/docs/reference/profiler.md#custom-column-metrics) in the profiler reference for the built-in metric keys (both always-on internals and registry-managed built-ins) that are also available to profile builders.
+
+* Python
+
+```python
+from pyspark.sql import Column
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
+
+@register_profile_column_metric("percentile_10")
+def percentile_10(field: T.StructField, column_label: str) -> Column | None:
+    # Return None to skip for column types where the metric does not apply
+    if not isinstance(field.dataType, T.NumericType):
+        return None
+    return F.percentile_approx(column_label, 0.1)
+
+```
+
+Registration has global side effects
+
+`register_profile_column_metric` mutates a module-level registry, so a registered metric persists for the lifetime of the Python process and is aggregated on **every** subsequent `DQProfiler.profile(...)` call for every column it applies to. Leaving unused metrics registered adds work to every profiling run and can slow it down. Remove a metric you no longer need with `deregister_profile_column_metric`:
+
+```python
+from databricks.labs.dqx.profiler.profiler_column_metrics import deregister_profile_column_metric
+
+deregister_profile_column_metric("percentile_10")
+
+```
+
+The call is a no-op if the key is not registered, so it is safe to use unconditionally in cleanup paths (e.g. notebook teardown, test fixtures).
+
+Combine this with the `register_profile_builder` decorator to generate data quality rule suggestions based on the metric. A builder function receives the *df* (`DataFrame`), *column_name* (`str`), *column_type* (`DataType`), *profiler_metrics* (`dict[str, Any]` — the column-level statistics the profiler computed, keyed by metric type, including any custom metrics you registered), and *profiler_options* (`dict[str, Any]` — profiler configuration). It returns a `DQProfile` (a data quality rule suggestion), or `None` to emit nothing for that column:
+
+* Python
+
+```python
+from databricks.labs.dqx.profiler.profile import DQProfile
+from databricks.labs.dqx.profiler.profile_builder import register_profile_builder
+from pyspark.sql import DataFrame
+from pyspark.sql import types as T
+from typing import Any
+
+@register_profile_builder("p10_lower_bound")
+def make_p10_lower_bound_profile(
+    df: DataFrame,
+    column_name: str,
+    column_type: T.DataType,
+    profiler_metrics: dict[str, Any],
+    profiler_options: dict[str, Any],
+) -> DQProfile | None:
+    p10 = profiler_metrics.get("percentile_10")
+    if p10 is None:
+        return None
+    return DQProfile(
+        name="min_max",
+        column=column_name,
+        description=f"Lower bound set to 10th percentile ({p10})",
+        parameters={"min": p10},
+    )
+
+```
+
+Registration has global side effects
+
+`register_profile_builder` shares the same global-registry lifecycle as `register_profile_column_metric` — a registered builder persists for the lifetime of the Python process and runs on **every** subsequent `DQProfiler.profile(...)` call. Remove a builder you no longer need with `deregister_profile_builder`:
+
+```python
+from databricks.labs.dqx.profiler.profile_builder import deregister_profile_builder
+
+deregister_profile_builder("p10_lower_bound")
+
+```
+
+See [Registration has global side effects](#extending-the-profiler-with-custom-column-metrics) above for the full caveat (unused registrations slow down every profiling run; cleanup is safe to call unconditionally).

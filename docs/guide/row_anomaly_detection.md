@@ -1,10 +1,6 @@
 # Row Anomaly Detection
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 Use row anomaly detection to automatically find unusual rows in your data using ML (per‑record anomalies with explanations) without manually specifying thresholds so you can catch issues that rule-based checks miss. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
 
@@ -299,7 +295,7 @@ The `_dq_info` column is an array of structs (one element per dataset-level chec
 
 Anomalous records can be identified using the standard reporting columns (`_errors` and `_warnings`). The `_dq_info[0].anomaly.is_anomaly` field provides additional detail for in-depth analysis and is set to `False` for records that are not anomalous.
 
-### Schema of the info column (\_dq\_info)[​](#schema-of-the-info-column-_dq_info "Direct link to Schema of the info column (_dq_info)")
+### Schema of the info column (\_dq_info)[​](#schema-of-the-info-column-_dq_info "Direct link to Schema of the info column (_dq_info)")
 
 `_dq_info` has type **array of structs**. Each array element corresponds to one dataset-level check that writes info (for example one `has_no_row_anomalies` check). Element order matches the order of checks; the first anomaly check is at index `0`.
 
@@ -481,7 +477,7 @@ anomaly_engine.train(
 
 Ensemble seed handling
 
-Each ensemble model automatically gets a different seed (base\_seed + model\_index). With `random_seed=42` and `ensemble_size=3`:
+Each ensemble model automatically gets a different seed (base_seed + model_index). With `random_seed=42` and `ensemble_size=3`:
 
 * Model 0 → seed 42
 * Model 1 → seed 43

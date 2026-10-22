@@ -43,7 +43,7 @@ class DQAlert(Action)
 
 Sends alert notifications to one or more *AlertDestination* instances.
 
-When *execute* is called the action builds a single *AlertMessage* via *StandardMessageBuilder* and dispatches it to every configured destination concurrently. A failure in one destination is isolated: the remaining destinations are still attempted and the error is recorded in *ActionResult.destination\_errors* rather than re-raised.
+When *execute* is called the action builds a single *AlertMessage* via *StandardMessageBuilder* and dispatches it to every configured destination concurrently. A failure in one destination is isolated: the remaining destinations are still attempted and the error is recorded in *ActionResult.destination_errors* rather than re-raised.
 
 **Attributes**:
 
@@ -74,4 +74,4 @@ The action always returns *fired=True* and *status=UNHEALTHY* — it is only cal
 
 **Returns**:
 
-An *ActionResult* with *fired=True*, *status=UNHEALTHY*, and *destination\_errors* populated for any destinations that failed.
+An *ActionResult* with *fired=True*, *status=UNHEALTHY*, and *destination_errors* populated for any destinations that failed.

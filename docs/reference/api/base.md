@@ -26,7 +26,7 @@ class DQEngineCoreBase(DQEngineBase)
 
 ```
 
-### apply\_checks[​](#apply_checks "Direct link to apply_checks")
+### apply_checks[​](#apply_checks "Direct link to apply_checks")
 
 ```python
 @abc.abstractmethod
@@ -50,7 +50,7 @@ Apply data quality checks to the given DataFrame.
 
 A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
-### apply\_checks\_and\_split[​](#apply_checks_and_split "Direct link to apply_checks_and_split")
+### apply_checks_and_split[​](#apply_checks_and_split "Direct link to apply_checks_and_split")
 
 ```python
 @abc.abstractmethod
@@ -74,7 +74,7 @@ Apply data quality checks to the given DataFrame and split the results into two 
 
 A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows with errors or warnings and the corresponding result columns) and an optional Observation which tracks data quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
-### apply\_checks\_by\_metadata[​](#apply_checks_by_metadata "Direct link to apply_checks_by_metadata")
+### apply_checks_by_metadata[​](#apply_checks_by_metadata "Direct link to apply_checks_by_metadata")
 
 ```python
 @abc.abstractmethod
@@ -109,7 +109,7 @@ Apply data quality checks defined as metadata to the given DataFrame.
 
 A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
-### apply\_checks\_by\_metadata\_and\_split[​](#apply_checks_by_metadata_and_split "Direct link to apply_checks_by_metadata_and_split")
+### apply_checks_by_metadata_and_split[​](#apply_checks_by_metadata_and_split "Direct link to apply_checks_by_metadata_and_split")
 
 ```python
 @abc.abstractmethod
@@ -144,7 +144,7 @@ Apply data quality checks defined as metadata to the given DataFrame and split t
 
 A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows with errors or warnings and the corresponding result columns) and an optional Observation which tracks data quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
-### validate\_checks[​](#validate_checks "Direct link to validate_checks")
+### validate_checks[​](#validate_checks "Direct link to validate_checks")
 
 ```python
 @staticmethod
@@ -171,7 +171,7 @@ This method validates the presence of required keys, the existence and callabili
 
 ChecksValidationStatus indicating the validation result.
 
-### get\_invalid[​](#get_invalid "Direct link to get_invalid")
+### get_invalid[​](#get_invalid "Direct link to get_invalid")
 
 ```python
 @abc.abstractmethod
@@ -189,7 +189,7 @@ Return records that violate data quality checks (rows with warnings or errors).
 
 DataFrame with rows that have errors or warnings and the corresponding result columns.
 
-### get\_valid[​](#get_valid "Direct link to get_valid")
+### get_valid[​](#get_valid "Direct link to get_valid")
 
 ```python
 @abc.abstractmethod
@@ -207,7 +207,7 @@ Return records that do not violate data quality checks (rows with warnings but n
 
 DataFrame with warning rows but without the results columns.
 
-### load\_checks\_from\_local\_file[​](#load_checks_from_local_file "Direct link to load_checks_from_local_file")
+### load_checks_from_local_file[​](#load_checks_from_local_file "Direct link to load_checks_from_local_file")
 
 ```python
 @staticmethod
@@ -220,9 +220,9 @@ def load_checks_from_local_file(
 
 Load DQ rules (checks) from a local JSON or YAML file.
 
-The returned checks can be used as input to *apply\_checks\_by\_metadata*.
+The returned checks can be used as input to *apply_checks_by_metadata*.
 
-**Security note:** variable values substituted into **sql\_expression** checks are not sanitized. Callers must ensure that variable values come from trusted sources.
+**Security note:** variable values substituted into **sql_expression** checks are not sanitized. Callers must ensure that variable values come from trusted sources.
 
 **Arguments**:
 
@@ -233,7 +233,7 @@ The returned checks can be used as input to *apply\_checks\_by\_metadata*.
 
 List of DQ rules (checks).
 
-### save\_checks\_in\_local\_file[​](#save_checks_in_local_file "Direct link to save_checks_in_local_file")
+### save_checks_in_local_file[​](#save_checks_in_local_file "Direct link to save_checks_in_local_file")
 
 ```python
 @staticmethod

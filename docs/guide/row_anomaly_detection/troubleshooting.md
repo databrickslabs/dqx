@@ -29,7 +29,7 @@ Avoid ID columns (`order_id`, `user_id`) - they're always unique and hurt model 
 
 ***
 
-#### Error: "Columns not found in DataFrame: \['column\_name']"[​](#error-columns-not-found-in-dataframe-column_name "Direct link to Error: \"Columns not found in DataFrame: \['column_name']\"")
+#### Error: "Columns not found in DataFrame: \['column_name']"[​](#error-columns-not-found-in-dataframe-column_name "Direct link to Error: \"Columns not found in DataFrame: \['column_name']\"")
 
 **Cause**: Specified column doesn't exist in training data.
 
@@ -57,7 +57,7 @@ Note also that columns can only be defined when training the model. Scoring uses
 
 ***
 
-#### Error: "exclude\_columns contains columns not in DataFrame: \['column\_name']"[​](#error-exclude_columns-contains-columns-not-in-dataframe-column_name "Direct link to Error: \"exclude_columns contains columns not in DataFrame: \['column_name']\"")
+#### Error: "exclude_columns contains columns not in DataFrame: \['column_name']"[​](#error-exclude_columns-contains-columns-not-in-dataframe-column_name "Direct link to Error: \"exclude_columns contains columns not in DataFrame: \['column_name']\"")
 
 **Cause**: You're trying to exclude a column that doesn't exist.
 
@@ -102,7 +102,7 @@ display(spark.table("catalog.schema.anomaly_registry").filter(
 
 ***
 
-#### Error: "Column 'feature\_name' not found in DataFrame"[​](#error-column-feature_name-not-found-in-dataframe "Direct link to Error: \"Column 'feature_name' not found in DataFrame\"")
+#### Error: "Column 'feature_name' not found in DataFrame"[​](#error-column-feature_name-not-found-in-dataframe "Direct link to Error: \"Column 'feature_name' not found in DataFrame\"")
 
 **Cause**: Scoring data missing columns that were used in training.
 
@@ -276,7 +276,7 @@ has_no_row_anomalies(
 
 ```
 
-**Option 2: Check severity percentiles** (even "normal" rows in the output have scores). For the full list of fields in `_dq_info` and `anomaly`, see [Schema of the info column (\_dq\_info)](/dqx/docs/guide/row_anomaly_detection.md#schema-of-the-info-column-_dq_info).
+**Option 2: Check severity percentiles** (even "normal" rows in the output have scores). For the full list of fields in `_dq_info` and `anomaly`, see [Schema of the info column (\_dq_info)](/dqx/docs/guide/row_anomaly_detection.md#schema-of-the-info-column-_dq_info).
 
 ```python
 import pyspark.sql.functions as F

@@ -6,7 +6,7 @@ Testing applications that use DQEngine requires proper initialization of the Dat
 
 For testing, we recommend:
 
-* [pytester fixtures](https://github.com/databrickslabs/pytester) is used to set up Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace, you need to use [debug\_env\_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
+* [pytester fixtures](https://github.com/databrickslabs/pytester) is used to set up Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace, you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
 * [PySpark testing utilities](https://spark.apache.org/docs/latest/api/python/reference/pyspark.testing.html) for asserting Spark DataFrames.
 
 These libraries are also used internally to test DQX.

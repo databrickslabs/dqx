@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.feature\_prep
+# databricks.labs.dqx.anomaly.feature_prep
 
 Prepare feature metadata and apply feature engineering for anomaly scoring.
 
-### prepare\_feature\_metadata[​](#prepare_feature_metadata "Direct link to prepare_feature_metadata")
+### prepare_feature_metadata[​](#prepare_feature_metadata "Direct link to prepare_feature_metadata")
 
 ```python
 def prepare_feature_metadata(
@@ -13,7 +13,7 @@ def prepare_feature_metadata(
 
 Load and prepare feature metadata from JSON.
 
-### apply\_feature\_engineering\_for\_scoring[​](#apply_feature_engineering_for_scoring "Direct link to apply_feature_engineering_for_scoring")
+### apply_feature_engineering_for_scoring[​](#apply_feature_engineering_for_scoring "Direct link to apply_feature_engineering_for_scoring")
 
 ```python
 def apply_feature_engineering_for_scoring(
@@ -28,9 +28,9 @@ def apply_feature_engineering_for_scoring(
 
 Apply feature engineering to DataFrame for scoring.
 
-Note: the internal row identifier must exist in the DataFrame as it is required for joining results back in row\_filter cases. *passthrough\_columns* are carried through the transformation untouched (feature engineering preserves columns it does not know about).
+Note: the internal row identifier must exist in the DataFrame as it is required for joining results back in row_filter cases. *passthrough_columns* are carried through the transformation untouched (feature engineering preserves columns it does not know about).
 
-### apply\_feature\_engineering\_with\_row\_passthrough[​](#apply_feature_engineering_with_row_passthrough "Direct link to apply_feature_engineering_with_row_passthrough")
+### apply_feature_engineering_with_row_passthrough[​](#apply_feature_engineering_with_row_passthrough "Direct link to apply_feature_engineering_with_row_passthrough")
 
 ```python
 def apply_feature_engineering_with_row_passthrough(

@@ -18,7 +18,7 @@ Information about a column's type and encoding strategy.
 
 'numeric', 'categorical', 'datetime', 'boolean', 'unsupported'
 
-#### encoding\_strategy[​](#encoding_strategy "Direct link to encoding_strategy")
+#### encoding_strategy[​](#encoding_strategy "Direct link to encoding_strategy")
 
 'onehot', 'frequency', 'cyclical', 'binary', 'none'
 
@@ -39,27 +39,27 @@ Stores everything needed to apply the same transformations:
 * OneHot distinct values (low cardinality)
 * Engineered feature names (in order)
 
-#### column\_infos[​](#column_infos "Direct link to column_infos")
+#### column_infos[​](#column_infos "Direct link to column_infos")
 
 Serializable version of ColumnTypeInfo
 
-#### categorical\_frequency\_maps[​](#categorical_frequency_maps "Direct link to categorical_frequency_maps")
+#### categorical_frequency_maps[​](#categorical_frequency_maps "Direct link to categorical_frequency_maps")
 
-col\_name -> (value -> frequency)
+col_name -> (value -> frequency)
 
-#### onehot\_categories[​](#onehot_categories "Direct link to onehot_categories")
+#### onehot_categories[​](#onehot_categories "Direct link to onehot_categories")
 
-col\_name -> \[distinct\_values] for OneHot encoding
+col_name -> \[distinct_values] for OneHot encoding
 
-#### engineered\_feature\_names[​](#engineered_feature_names "Direct link to engineered_feature_names")
+#### engineered_feature_names[​](#engineered_feature_names "Direct link to engineered_feature_names")
 
 Final feature names after engineering
 
-#### categorical\_cardinality\_threshold[​](#categorical_cardinality_threshold "Direct link to categorical_cardinality_threshold")
+#### categorical_cardinality_threshold[​](#categorical_cardinality_threshold "Direct link to categorical_cardinality_threshold")
 
 Threshold used for categorical encoding
 
-### to\_json[​](#to_json "Direct link to to_json")
+### to_json[​](#to_json "Direct link to to_json")
 
 ```python
 def to_json() -> str
@@ -68,7 +68,7 @@ def to_json() -> str
 
 Serialize to JSON for storage.
 
-### from\_json[​](#from_json "Direct link to from_json")
+### from_json[​](#from_json "Direct link to from_json")
 
 ```python
 @classmethod
@@ -78,7 +78,7 @@ def from_json(cls, json_str: str) -> "SparkFeatureMetadata"
 
 Deserialize from JSON.
 
-### reconstruct\_column\_infos[​](#reconstruct_column_infos "Direct link to reconstruct_column_infos")
+### reconstruct_column_infos[​](#reconstruct_column_infos "Direct link to reconstruct_column_infos")
 
 ```python
 def reconstruct_column_infos(
@@ -88,7 +88,7 @@ def reconstruct_column_infos(
 
 Reconstruct ColumnTypeInfo objects from SparkFeatureMetadata.
 
-Uses category to set spark\_type so that any code (e.g. \_classify\_column or isinstance checks) that runs on reconstructed infos during scoring behaves correctly.
+Uses category to set spark_type so that any code (e.g. \_classify_column or isinstance checks) that runs on reconstructed infos during scoring behaves correctly.
 
 **Arguments**:
 
@@ -115,7 +115,7 @@ Categories:
 * boolean: boolean
 * unsupported: array, map, struct, binary, etc.
 
-### analyze\_columns[​](#analyze_columns "Direct link to analyze_columns")
+### analyze_columns[​](#analyze_columns "Direct link to analyze_columns")
 
 ```python
 def analyze_columns(
@@ -128,9 +128,9 @@ Analyze columns and return type information and warnings.
 
 **Returns**:
 
-Tuple of (column\_type\_infos, warnings)
+Tuple of (column_type_infos, warnings)
 
-### apply\_feature\_engineering[​](#apply_feature_engineering "Direct link to apply_feature_engineering")
+### apply_feature_engineering[​](#apply_feature_engineering "Direct link to apply_feature_engineering")
 
 ```python
 def apply_feature_engineering(
@@ -153,10 +153,10 @@ Apply feature engineering transformations in Spark (distributed).
 Transformations applied:
 
 1. Categorical: OneHot (low-card) or Frequency encoding (high-card)
-2. Datetime: Extract hour\_sin/cos, dow\_sin/cos, month\_sin/cos, is\_weekend
+2. Datetime: Extract hour_sin/cos, dow_sin/cos, month_sin/cos, is_weekend
 3. Boolean: Map to 0/1
 4. Numeric: Keep as-is
-5. Null indicators: Add column\_is\_null for columns with nulls
+5. Null indicators: Add column_is_null for columns with nulls
 6. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
 
 **Arguments**:

@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.model\_loader
+# databricks.labs.dqx.anomaly.model_loader
 
 Load and validate sklearn anomaly models from MLflow.
 
-### load\_sklearn\_model\_with\_error\_handling[​](#load_sklearn_model_with_error_handling "Direct link to load_sklearn_model_with_error_handling")
+### load_sklearn_model_with_error_handling[​](#load_sklearn_model_with_error_handling "Direct link to load_sklearn_model_with_error_handling")
 
 ```python
 def load_sklearn_model_with_error_handling(
@@ -25,7 +25,7 @@ Loaded sklearn model
 
 ModelLoadError with actionable error message if loading fails
 
-### load\_and\_validate\_model[​](#load_and_validate_model "Direct link to load_and_validate_model")
+### load_and_validate_model[​](#load_and_validate_model "Direct link to load_and_validate_model")
 
 ```python
 def load_and_validate_model(model_uri: str,
@@ -44,7 +44,7 @@ Load model with validation and error handling.
 
 Loaded sklearn model
 
-### check\_model\_staleness[​](#check_model_staleness "Direct link to check_model_staleness")
+### check_model_staleness[​](#check_model_staleness "Direct link to check_model_staleness")
 
 ```python
 def check_model_staleness(record: AnomalyModelRecord, model_name: str) -> None

@@ -8,8 +8,8 @@ Serializer for *DQAction* instances.
 
 * Enums (*DQAlertFrequency*, *NotifyOn*) serialize to their string *value*.
 * A *DQSecret* credential serializes to a tagged dict mapping the key *secret* to a *scope/key* reference (via *SecretOrStr*), so it round-trips losslessly without being confused with a plain string.
-* *DQCallbackAlertDestination* instances are skipped during *to\_dict* with a *WARNING*-level log message because they hold a live Python callable that cannot be persisted (see *DQAlert.\_serialize\_destinations*).
-* The *"condition"* field is omitted from the output of *to\_dict* when it is *None*, and defaults back to *None* when absent on *from\_dict*.
+* *DQCallbackAlertDestination* instances are skipped during *to_dict* with a *WARNING*-level log message because they hold a live Python callable that cannot be persisted (see *DQAlert.\_serialize_destinations*).
+* The *"condition"* field is omitted from the output of *to_dict* when it is *None*, and defaults back to *None* when absent on *from_dict*.
 
 ## Security[​](#security "Direct link to Security")
 
@@ -24,13 +24,13 @@ class ActionSerializer()
 
 Converts *DQAction* instances to plain dicts and back via Pydantic.
 
-Adding a new action type requires only declaring the new Pydantic model with its literal *type* discriminator and registering it via *@register\_action*; a new destination type is added to the *AnyDestination* discriminated union. In both cases the serializer itself needs no changes.
+Adding a new action type requires only declaring the new Pydantic model with its literal *type* discriminator and registering it via *@register_action*; a new destination type is added to the *AnyDestination* discriminated union. In both cases the serializer itself needs no changes.
 
 *DQSecret* values round-trip as a tagged dict (key *secret* mapped to a *scope/key* reference) so the reference survives JSON / YAML without being confused with a plain string.
 
-*DQCallbackAlertDestination* instances are skipped during *to\_dict* because they hold a live Python callable that cannot be persisted. The *"condition"* field is omitted when *None*.
+*DQCallbackAlertDestination* instances are skipped during *to_dict* because they hold a live Python callable that cannot be persisted. The *"condition"* field is omitted when *None*.
 
-### to\_dict[​](#to_dict "Direct link to to_dict")
+### to_dict[​](#to_dict "Direct link to to_dict")
 
 ```python
 @staticmethod
@@ -48,7 +48,7 @@ Serialize *action* to a plain Python dict.
 
 A JSON-serializable dict representing *action*. The *"condition"* key is omitted when the condition is *None*.
 
-### from\_dict[​](#from_dict "Direct link to from_dict")
+### from_dict[​](#from_dict "Direct link to from_dict")
 
 ```python
 @staticmethod
@@ -60,7 +60,7 @@ Deserialize a plain dict into a *DQAction*.
 
 **Arguments**:
 
-* `raw` - Dict produced by *to\_dict* (or loaded from JSON / YAML).
+* `raw` - Dict produced by *to_dict* (or loaded from JSON / YAML).
 
 **Returns**:
 
@@ -70,7 +70,7 @@ A fully reconstructed *DQAction*.
 
 * `InvalidActionError` - If the payload is invalid — for example an unknown action or destination *"type"*, or a missing required field.
 
-### serialize\_actions[​](#serialize_actions "Direct link to serialize_actions")
+### serialize_actions[​](#serialize_actions "Direct link to serialize_actions")
 
 ```python
 def serialize_actions(actions: list[DQAction]) -> list[dict[str, object]]
@@ -79,7 +79,7 @@ def serialize_actions(actions: list[DQAction]) -> list[dict[str, object]]
 
 Serialize a list of *DQAction* instances to plain Python dicts.
 
-Convenience wrapper around *ActionSerializer.to\_dict* for operating on a whole list at once. The output is suitable for YAML or JSON persistence.
+Convenience wrapper around *ActionSerializer.to_dict* for operating on a whole list at once. The output is suitable for YAML or JSON persistence.
 
 **Arguments**:
 
@@ -89,7 +89,7 @@ Convenience wrapper around *ActionSerializer.to\_dict* for operating on a whole 
 
 List of JSON-serializable dicts, one per action.
 
-### deserialize\_actions[​](#deserialize_actions "Direct link to deserialize_actions")
+### deserialize_actions[​](#deserialize_actions "Direct link to deserialize_actions")
 
 ```python
 def deserialize_actions(metadata: list[dict[str, object]]) -> list[DQAction]
@@ -98,11 +98,11 @@ def deserialize_actions(metadata: list[dict[str, object]]) -> list[DQAction]
 
 Deserialize a list of plain dicts into *DQAction* instances.
 
-Convenience wrapper around *ActionSerializer.from\_dict* for operating on a whole list at once.
+Convenience wrapper around *ActionSerializer.from_dict* for operating on a whole list at once.
 
 **Arguments**:
 
-* `metadata` - List of dicts produced by *serialize\_actions* (or loaded from YAML / JSON). Each element must be a *dict*; passing a non-dict element raises *InvalidActionError*.
+* `metadata` - List of dicts produced by *serialize_actions* (or loaded from YAML / JSON). Each element must be a *dict*; passing a non-dict element raises *InvalidActionError*.
 
 **Returns**:
 

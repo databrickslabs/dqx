@@ -690,7 +690,7 @@ The table used to store checks has the following structure. You can use `for_eac
 | `criticality`          | `string`              | Either `"error"` (rows go only to "bad" dataset) or `"warn"` (rows go to both "good" and "bad"). Defaults to `"error"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `check`                | `struct`              | Defines the DQX check to apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | └─ `function`          | `string`              | Name of the DQX check function to apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| └─ `for_each_column`   | `array<string>`       | (Optional) List of columns for which the same check applies. Stored in compact format (one row per check). Manual tables can use compact or expanded (individual rules instead of for\_each\_column) format.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| └─ `for_each_column`   | `array<string>`       | (Optional) List of columns for which the same check applies. Stored in compact format (one row per check). Manual tables can use compact or expanded (individual rules instead of for_each_column) format.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | └─ `arguments`         | `map<string, string>` | Keyword arguments for the check function. All parameters without a default must be present (or supplied via `for_each_column` for `column` / `columns`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `filter`               | `string`              | (Optional) Spark SQL expression to filter rows to which the check is applied, e.g. `"business_unit = 'Finance'"`. The check function will run only on the rows matching the filter condition. The condition can reference any column of the validated dataset, not only the one where you apply the check function. When using dataset-level checks, the filter condition is pushed down as `row_filter` to the check function and applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results. Subqueries are allowed (e.g. `"customer_id IN (SELECT customer_id FROM main.ref.active_customers)"`), so you can scope a check using a reference table. A filter containing a destructive SQL keyword (e.g. `DELETE`, `DROP`, `INSERT`, `UPDATE`, `TRUNCATE`) is treated as invalid: that check is skipped (reported with `skipped = true` and a message identifying the unsafe filter) while the remaining checks still run. |
 | `run_config_name`      | `string`              | Name of the run config name. Could be any string such as input table or job name (use "default" if not provided). Useful for selecting applicable checks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -716,11 +716,7 @@ If `run_config_name` is not provided, "default" is used. Typically, the input ta
 
 ## Variable Substitution[​](#variable-substitution "Direct link to Variable Substitution")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 DQX supports variable substitution in declarative check definitions (YAML, JSON, or Delta tables). This allows you to parameterize your quality rules and inject values at **load time** or **save time** from engine-level defaults and/or via the `variables` parameter in `load_checks` or `save_checks`.
 
@@ -792,11 +788,7 @@ dq_engine.save_checks(
 
 ## Default Variables[​](#default-variables "Direct link to Default Variables")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 In addition to specifying variables during the load or save process, you can define engine-level defaults using the `ExtraParams` class. These constants are automatically applied to all checks unless explicitly overridden.
 
@@ -804,11 +796,7 @@ For technical details and configuration examples, see [Default Variables](/dqx/d
 
 ## Validating quality checks[​](#validating-quality-checks "Direct link to Validating quality checks")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
-
-<!-- -->
-
-[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+[Available since DQX v0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
 
 Semantic validation introduced in 0.16.0
 
@@ -867,7 +855,7 @@ databricks labs dqx validate-checks --run-config "default"
 
 The following DQX field from the run config in [configuration file](/dqx/docs/installation.md#configuration-file) are used:
 
-* 'checks\_location': file or table location of the quality checks
+* 'checks_location': file or table location of the quality checks
 
 ### Controlling semantic validation[​](#controlling-semantic-validation "Direct link to Controlling semantic validation")
 

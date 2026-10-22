@@ -1,10 +1,6 @@
 # Actions and Alerting
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
-
-<!-- -->
-
-[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")
+[Available since DQX v0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")
 
 DQX **actions** let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected.
 
@@ -169,7 +165,7 @@ For streaming, action evaluation runs inside a Spark `StreamingQueryListener` pr
 
 In practice, alerts are rate-limited (`HOURLY` / `DAILY`) and typically fire only when a condition crosses a threshold, so the callback rarely blocks and the synchronous path is sufficient. Fully asynchronous off-thread delivery is a possible future enhancement, mainly for high-throughput streaming that fires alerts frequently against slow endpoints.
 
-### Manual evaluation with evaluate\_actions[​](#manual-evaluation-with-evaluate_actions "Direct link to Manual evaluation with evaluate_actions")
+### Manual evaluation with evaluate_actions[​](#manual-evaluation-with-evaluate_actions "Direct link to Manual evaluation with evaluate_actions")
 
 For pipelines that do not use the save methods (e.g. Lakeflow Pipelines or custom `writeStream` code), call `evaluate_actions` explicitly after triggering a Spark action on the checked DataFrame.
 
@@ -249,7 +245,7 @@ results = engine.evaluate_actions(
 
 Trigger a Spark action first
 
-Call *evaluate\_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
+Call *evaluate_actions* only after a Spark action (count, write, etc.) has been triggered on the checked DataFrame. If the observation has not been materialized, metrics will be empty and actions will not receive meaningful values.
 
 ### Condition syntax and available metrics[​](#condition-syntax-and-available-metrics "Direct link to Condition syntax and available metrics")
 
@@ -450,6 +446,101 @@ audit = DQAction(
 
 ```
 
+### CollectLineageAction[​](#collectlineageaction "Direct link to CollectLineageAction")
+
+[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")[Available since DQX v0.17.0](https://github.com/databrickslabs/dqx/releases/tag/v0.17.0 "Available since DQX v0.17.0")
+
+`CollectLineageAction` collects the upstream, downstream, and per-failed-column lineage for the run's *input_location* and persists it into a Delta table. It is intended to be paired with alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can answer *"what feeds this table?"* directly from a DQ alert.
+
+See the end-to-end walkthrough in [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_lineage_action.py) for a pipeline that exercises lineage collection with an alert on top.
+
+The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR` so a stale system-table read never neglects check results.
+
+Requires DBR 17+
+
+Upstream and downstream table walks use a single recursive CTE against *system.access.table_lineage* with an in-CTE full-path cycle guard, so the compute must be on **Databricks Runtime 17 or newer** (the release that introduced `WITH RECURSIVE`). On older runtimes the walk fails softly, a sanitised warning is logged, and an empty *LINEAGE_TABLE_SCHEMA* DataFrame is written — no other lineage collection is affected.
+
+**Configuration:**
+
+* *LineageSearchConfig* (used for *upstream*, *downstream*, *column_upstream*, *column_downstream*): *depth* (int ≥ 1 or `None`, default `100`), *lookback_days* (int ≥ 1, default `30`), *max_nodes* (int ≥ 1, default `100`). The *depth* default of `100` matches Spark's own *spark.sql.cteRecursionLevelLimit*; set a smaller value for a stricter per-direction hop cap, or `None` to opt into unbounded walks (very deep graphs may then trip Spark's recursion limit at execution time). Both the table-lineage and column-lineage walks are recursive and honour *depth* and *max_nodes* identically. *max_nodes* is a **guardrail** applied as a `LIMIT` inside each member of the recursive CTE (bounding the frontier per hop, so intermediate expansion is capped per iteration) and once more at the tail (bounding total output). Together with *depth* this bounds the traversal's materialised row count to `O(depth * max_nodes)`. It does **not** guarantee which rows survive when the graph produces more edges than the cap (no ordering contract); treat it as a safety limit.
+
+* *LineageActionConfig* composes four optional sub-configs — *upstream*, *downstream*, *column_upstream*, *column_downstream*:
+
+  <!-- -->
+
+  * Sub-configs each default to a fresh *LineageSearchConfig* (direction on by default); set any field to `null` (YAML) / `None` (Python) to disable that direction. Table and column directions are symmetric — the split lets you collect, e.g., only *upstream* + *column_downstream* if that is all you need.
+  * Per-failed-column seeds are read from whichever of *context.output_location* and *context.quarantine_location* are present and unioned. DQX writes failures to *quarantine_location* in split-run mode and to *output_location* in non-split mode, so column lineage works in either configuration without extra wiring.
+  * The seeds are the column names in the *columns* field of each failed check's result, which DQX fills from the rule's *column* / *columns* argument. A check without one contributes no column lineage, only table lineage. For *sql_expression*, set its optional *columns* argument (e.g. `columns: [amount]`) to include it. *sql_query* has no *columns* argument, so its failures never seed column lineage.
+  * *errors_column* / *warnings_column* (defaults `"_errors"` / `"_warnings"`) name the two ARRAY\<STRUCT> columns DQX appends to the output / quarantine tables. Override them when the engine's error / warning column renames have been applied so this action can still locate the issue structs.
+
+* *output_config* (required *OutputConfig*): the Delta destination for the persisted lineage rows. Fully configurable — *location*, *format*, *mode*, *options*, *partition_by*, *cluster_by*.
+
+Keep write mode consistent with failed-check output
+
+Set `output_config.mode` equal to `RunConfig.output_config.mode` (the failed-checks output mode) so lineage writes stay consistent with how DQX writes failed rows. This is a coherence contract, not a type-level constraint — the framework does not enforce it.
+
+**Emitted extras:** exactly `{"lineage_location": "<full name>"}`. Downstream actions read the table when they need the full structure — see [Passing data between actions (extras)](#passing-data-between-actions-extras).
+
+**Persisted table schema** (columns are the same on every run, including empty runs):
+
+| Column                 | Type      | Populated for                                                                                      |
+| ---------------------- | --------- | -------------------------------------------------------------------------------------------------- |
+| *run_id*               | STRING    | every row (from `context.run_id`)                                                                  |
+| *run_time*             | TIMESTAMP | every row (from `context.run_time`)                                                                |
+| *source_table*         | STRING    | every row (`context.input_location`)                                                               |
+| *edge_type*            | STRING    | every row — *upstream* / *downstream* / *column_upstream* / *column_downstream*                    |
+| *depth*                | BIGINT    | edge rows (BFS depth)                                                                              |
+| *predecessor*          | STRING    | edge rows — immediate predecessor table in the walk direction (equal to *source_table* at depth 1) |
+| *target_table*         | STRING    | edge rows                                                                                          |
+| *target_delta_version* | BIGINT    | edge rows (when known)                                                                             |
+| *source_column*        | STRING    | column-lineage rows                                                                                |
+| *target_column*        | STRING    | column-lineage rows                                                                                |
+
+* Python (classes)
+* YAML (metadata)
+
+```python
+from databricks.labs.dqx.actions import (
+    CollectLineageAction,
+    DQAction,
+    LineageActionConfig,
+    LineageSearchConfig,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+lineage = DQAction(
+    action=CollectLineageAction(
+        output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        config=LineageActionConfig(
+            upstream=LineageSearchConfig(depth=2, lookback_days=30, max_nodes=100),
+            downstream=LineageSearchConfig(depth=1),
+            column_upstream=LineageSearchConfig(depth=2),
+            column_downstream=None,  # disable downstream column lineage for this action
+        ),
+    ),
+)
+
+```
+
+```yaml
+- action:
+    type: collect_lineage
+    output_config:
+      location: cat.sch.dqx_lineage
+      mode: append
+    config:
+      upstream:
+        depth: 2
+        lookback_days: 30
+        max_nodes: 100
+      downstream:
+        depth: 1
+      column_upstream:
+        depth: 2
+      column_downstream: null   # disable downstream column lineage for this action
+
+```
+
 ## Registering a custom action[​](#registering-a-custom-action "Direct link to Registering a custom action")
 
 The built-in actions (`DQAlert`, `FailPipeline`, `NoOpAction`) cover the common cases, but you can add your own. A custom action is any subclass of `Action` that:
@@ -516,6 +607,66 @@ action = DQAction(condition="error_row_count > 0", action=LogErrorCount())
 The process running DQX must be able to import your action
 
 Registration happens when the `@register_action`-decorated class is **imported**, so the class must live somewhere the process that runs DQX can import *before* it constructs or loads the action — otherwise the `type` is unknown and loading raises `InvalidActionError`. Custom actions are code, not configuration: they are **not** stored with the metadata in `actions_location`. The `type` must be unique: registering a *different* class under a `type` already taken by another raises `InvalidActionError`, but re-running the same definition (e.g. a notebook cell) simply overwrites it.
+
+## Passing data between actions (extras)[​](#passing-data-between-actions-extras "Direct link to Passing data between actions (extras)")
+
+[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")[Available since DQX v0.17.0](https://github.com/databrickslabs/dqx/releases/tag/v0.17.0 "Available since DQX v0.17.0")
+
+Actions in a DQX run evaluate **sequentially**, so an earlier action can hand a small payload to a later one — for example, `CollectLineageAction` publishes the full name of the lineage table it just wrote, and a following `DQAlert` embeds that table name into its message. This is exposed through `ActionResult.extras` / `ActionContext.extras` and needs no new orchestration abstraction.
+
+**Contract**
+
+* Producer returns `ActionResult(..., extras=<dict[str, str] | None>)`. *extras* is optional and defaults to `None` for backward compatibility with actions written before this feature.
+* The payload is a flat *dict\[str, str]* — small, cheap to copy, safe to log. If a producer needs to transport richer structure, persist it and hand back the location/reference as a string; downstream consumers read the persisted artefact directly.
+* Consumer reads the payload via `context.get_extras("<producing-action-name>")`, which always returns a `dict[str, str]` (empty when no producer of that name has contributed yet) so no intermediate `None`-guards are needed at the call site.
+* The evaluator **copies** the payload before inserting it into the next `ActionContext`, so mutations made by the producer after *execute* returned are invisible downstream.
+
+Order matters — extras only flow forward
+
+Extras flow to *later* actions only. A consumer listed **before** its producer sees empty extras (`get_extras` returns `{}`) — there is no error or warning. Always order a consumer after the action that produces the extras it reads.
+
+Extras are keyed by producing action name
+
+Two `DQAction` entries with the same `name` share one *extras* slot. The second action's payload overwrites the first (last-write-wins). Give producers distinct names when consumers must distinguish between them.
+
+**Minimal worked example** — an alert that references the lineage table produced by the previous action:
+
+```python
+from typing import Literal
+from databricks.labs.dqx.actions import (
+    Action,
+    ActionContext,
+    ActionResult,
+    ActionServices,
+    ActionStatus,
+    CollectLineageAction,
+    DQAction,
+    register_action,
+)
+from databricks.labs.dqx.config import OutputConfig
+
+
+@register_action
+class LineageAwareAlert(Action):
+    type: Literal["lineage_aware_alert"] = "lineage_aware_alert"
+
+    def execute(self, context: ActionContext, services: ActionServices) -> ActionResult:
+        lineage_info = context.get_extras("collect_lineage")
+        table = lineage_info.get("lineage_location")
+        # ... build and deliver an alert message that mentions `table` ...
+        return ActionResult(action_name=self.name or self.type, fired=True, status=ActionStatus.HEALTHY)
+
+
+actions = [
+    DQAction(
+        action=CollectLineageAction(
+            output_config=OutputConfig(location="cat.sch.dqx_lineage", mode="append"),
+        ),
+    ),
+    DQAction(condition="error_row_count > 0", action=LineageAwareAlert()),
+]
+
+```
 
 ## Alert Types[​](#alert-types "Direct link to Alert Types")
 
@@ -702,7 +853,7 @@ alert = DQAlert(
 
 ```
 
-Engine user\_metadata is included in the alert payload
+Engine user_metadata is included in the alert payload
 
 Engine-level metadata set via `ExtraParams.user_metadata` is surfaced in every alert: it appears in the Slack message (a *Metadata* section), the Teams card (as facts), the generic webhook payload (under `user_metadata.<key>` in `fields`), and the driver-log line. So run-level context such as `{"pipeline": "sales_daily"}` reaches the notification regardless of destination. This is the run-level metadata; per-rule metadata (e.g. a per-check owner) is a separate, tracked enhancement.
 
@@ -710,7 +861,7 @@ Engine-level metadata set via `ExtraParams.user_metadata` is surfaced in every a
 
 Two knobs control when `DQAlert` actually sends a notification after its condition fires.
 
-*alert\_frequency* limits how often alerts can be sent:
+*alert_frequency* limits how often alerts can be sent:
 
 | Value                               | Behaviour                                     |
 | ----------------------------------- | --------------------------------------------- |
@@ -718,7 +869,7 @@ Two knobs control when `DQAlert` actually sends a notification after its conditi
 | `DQAlertFrequency.HOURLY`           | Send at most once per hour                    |
 | `DQAlertFrequency.DAILY`            | Send at most once per day                     |
 
-*notify\_on* controls which status transitions trigger a notification:
+*notify_on* controls which status transitions trigger a notification:
 
 | Value                     | Behaviour                                                                                                                                           |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -751,7 +902,7 @@ alert = DQAlert(
 
 ```
 
-alert\_frequency is an absolute cap
+alert_frequency is an absolute cap
 
 The two knobs compose, and `alert_frequency` is applied **first** as a hard cap: while an `HOURLY` / `DAILY` window is still active, the alert is suppressed **even if** `notify_on` is `STATUS_CHANGE` and the run is a genuine recovery→failure transition. If you need every transition into unhealthy to notify, use `DQAlertFrequency.ALWAYS` with `NotifyOn.STATUS_CHANGE`.
 
@@ -766,7 +917,7 @@ The `DQAlertFrequency.HOURLY` / `DQAlertFrequency.DAILY` windows and `NotifyOn.S
 DQX persists action data in **two separate tables**, each with a distinct purpose:
 
 * The **action-definitions table** stores the actions themselves (serialized *DQAction* rows) so they can be managed separately from pipeline code and reused across runs. It is written and read with `DQActionManager`.
-* The **action-events table** stores one row per action *evaluation* — a durable, auditable history of what was checked, what fired, and where it was delivered. It is enabled by passing an *action\_events\_config* to `DQEngine`.
+* The **action-events table** stores one row per action *evaluation* — a durable, auditable history of what was checked, what fired, and where it was delivered. It is enabled by passing an *action_events_config* to `DQEngine`.
 
 Both tables support the same two storage backends: a **Unity Catalog Delta table** (the default) or a **Lakebase (PostgreSQL)** instance. DQX selects the backend automatically from the storage-config type you pass, so the surrounding code is identical either way.
 
@@ -782,13 +933,13 @@ Callback destinations not serializable
 
 Each stored action is one row. The action itself is serialized to a JSON string (the metadata wire format described in [Defining and applying actions](#defining-and-applying-actions)) and stored alongside the run config it belongs to and a creation timestamp. The same layout is used for both the Delta and Lakebase backends:
 
-| Column              | Type              | Description                                                                         |
-| ------------------- | ----------------- | ----------------------------------------------------------------------------------- |
-| *action\_json*      | *STRING* / *TEXT* | The serialized *DQAction* (its metadata dict encoded as JSON)                       |
-| *run\_config\_name* | *STRING*          | Run configuration the action belongs to; used to scope loads and *overwrite* writes |
-| *created\_at*       | *TIMESTAMP*       | UTC time the row was written                                                        |
+| Column            | Type              | Description                                                                         |
+| ----------------- | ----------------- | ----------------------------------------------------------------------------------- |
+| *action_json*     | *STRING* / *TEXT* | The serialized *DQAction* (its metadata dict encoded as JSON)                       |
+| *run_config_name* | *STRING*          | Run configuration the action belongs to; used to scope loads and *overwrite* writes |
+| *created_at*      | *TIMESTAMP*       | UTC time the row was written                                                        |
 
-On *load*, each *action\_json* value is deserialized back into a *DQAction*; rows that fail to deserialize are skipped with a warning rather than aborting the whole load. In *overwrite* mode only the rows matching the given *run\_config\_name* are replaced, so actions for other run configs in the same table are preserved.
+On *load*, each *action_json* value is deserialized back into a *DQAction*; rows that fail to deserialize are skipped with a warning rather than aborting the whole load. In *overwrite* mode only the rows matching the given *run_config_name* are replaced, so actions for other run configs in the same table are preserved.
 
 #### Unity Catalog Delta table[​](#unity-catalog-delta-table "Direct link to Unity Catalog Delta table")
 
@@ -858,12 +1009,12 @@ DQActionManager.save_actions_in_local_file(actions, "actions_backup.json")
 
 ```
 
-#### Run-config-driven actions (actions\_location)[​](#run-config-driven-actions-actions_location "Direct link to Run-config-driven actions (actions_location)")
+#### Run-config-driven actions (actions_location)[​](#run-config-driven-actions-actions_location "Direct link to Run-config-driven actions (actions_location)")
 
 Instead of attaching actions to the engine, a `RunConfig` can point at the actions to load:
 
-* **actions\_location** — table, YAML/JSON file, or Lakebase table holding the action definitions. DQX loads them with `DQActionManager` and fires them for that run config. Omit it to run checks with no actions.
-* **action\_events\_location** — UC or Lakebase table for [event history](#recording-action-event-history) and durable suppression across runs. Omit it to keep suppression state in memory for that run only.
+* **actions_location** — table, YAML/JSON file, or Lakebase table holding the action definitions. DQX loads them with `DQActionManager` and fires them for that run config. Omit it to run checks with no actions.
+* **action_events_location** — UC or Lakebase table for [event history](#recording-action-event-history) and durable suppression across runs. Omit it to keep suppression state in memory for that run only.
 
 Each run config is applied with its own actions and a dedicated observer, so the parallel multi-run-config runner stays isolated. This works both in the installed DQX Workflows (via `config.yml`) and when you call the runner directly.
 
@@ -912,11 +1063,11 @@ Loading actions yourself with `DQActionManager` and passing them to `DQEngine(ac
 
 Per-run-config action behaviour
 
-When a run config sets *actions\_location*, its loaded actions are applied for that run config **instead of** any engine-level *actions* passed to the shared `DQEngine`; run configs without *actions\_location* still use the engine-level actions. Action events are scoped by run config name, so several run configs can safely share one *action\_events\_location* — each run config's alert suppression is seeded only from its own events.
+When a run config sets *actions_location*, its loaded actions are applied for that run config **instead of** any engine-level *actions* passed to the shared `DQEngine`; run configs without *actions_location* still use the engine-level actions. Action events are scoped by run config name, so several run configs can safely share one *action_events_location* — each run config's alert suppression is seeded only from its own events.
 
 ### Recording action event history[​](#recording-action-event-history "Direct link to Recording action event history")
 
-Pass an *action\_events\_config* pointing at an events table to keep a durable, auditable history of every action DQX evaluates. On each run the engine appends one row per action evaluation to this table — **including evaluations that did not fire** (condition false, or suppressed by frequency / status-change gating) — so the table is a complete audit log of what was checked, what fired, where it was delivered, and what failed.
+Pass an *action_events_config* pointing at an events table to keep a durable, auditable history of every action DQX evaluates. On each run the engine appends one row per action evaluation to this table — **including evaluations that did not fire** (condition false, or suppressed by frequency / status-change gating) — so the table is a complete audit log of what was checked, what fired, where it was delivered, and what failed.
 
 ```python
 from databricks.labs.dqx.engine import DQEngine
@@ -932,23 +1083,23 @@ engine = DQEngine(
 
 ```
 
-For a Lakebase (PostgreSQL) backend, pass a *LakebaseActionsStorageConfig* in the *action\_events\_config* parameter instead of *ActionEventsConfig*.
+For a Lakebase (PostgreSQL) backend, pass a *LakebaseActionsStorageConfig* in the *action_events_config* parameter instead of *ActionEventsConfig*.
 
 Each row is an *AlertEvent* with the following columns:
 
-| Column              | Type                      | Description                                                                                       |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------------- |
-| *action\_name*      | *STRING*                  | Logical name of the evaluated action                                                              |
-| *condition*         | *STRING*                  | The gating condition expression, or *null* when the action is unconditional                       |
-| *fired*             | *BOOLEAN*                 | Whether the action actually executed and delivered                                                |
-| *status*            | *STRING*                  | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*)                   |
-| *observed\_metrics* | *MAP of STRING to STRING* | Snapshot of the metrics observed during the run (values stored as strings)                        |
-| *run\_id*           | *STRING*                  | Unique identifier of the DQX run that produced the event                                          |
-| *run\_time*         | *TIMESTAMP*               | Timestamp of the run                                                                              |
-| *input\_location*   | *STRING*                  | Source path or table of the checked data, or *null*                                               |
-| *destinations*      | *ARRAY of STRING*         | Names of the destinations that were targeted                                                      |
-| *delivery\_errors*  | *ARRAY of STRING*         | Error messages for any destinations that failed delivery                                          |
-| *run\_config\_name* | *STRING*                  | Run configuration the event belongs to; events are stamped with and loaded filtered by this value |
+| Column             | Type                      | Description                                                                                       |
+| ------------------ | ------------------------- | ------------------------------------------------------------------------------------------------- |
+| *action_name*      | *STRING*                  | Logical name of the evaluated action                                                              |
+| *condition*        | *STRING*                  | The gating condition expression, or *null* when the action is unconditional                       |
+| *fired*            | *BOOLEAN*                 | Whether the action actually executed and delivered                                                |
+| *status*           | *STRING*                  | Aggregate *ActionStatus* of the execution (for example *healthy* / *unhealthy*)                   |
+| *observed_metrics* | *MAP of STRING to STRING* | Snapshot of the metrics observed during the run (values stored as strings)                        |
+| *run_id*           | *STRING*                  | Unique identifier of the DQX run that produced the event                                          |
+| *run_time*         | *TIMESTAMP*               | Timestamp of the run                                                                              |
+| *input_location*   | *STRING*                  | Source path or table of the checked data, or *null*                                               |
+| *destinations*     | *ARRAY of STRING*         | Names of the destinations that were targeted                                                      |
+| *delivery_errors*  | *ARRAY of STRING*         | Error messages for any destinations that failed delivery                                          |
+| *run_config_name*  | *STRING*                  | Run configuration the event belongs to; events are stamped with and loaded filtered by this value |
 
 Because it is an ordinary table, you can query the history directly — for example, to review the most recent alerts that actually fired:
 
@@ -963,7 +1114,7 @@ LIMIT 50
 
 #### Persisting alert state across runs[​](#persisting-alert-state-across-runs "Direct link to Persisting alert state across runs")
 
-The same events table also makes alert suppression durable. By default, frequency and status-change state is held in memory for the lifetime of the *DQEngine*, so a new engine instance (for example each scheduled job run) starts with empty state. When *action\_events\_config* is set, the engine seeds its suppression state from the events table on first use, so *HOURLY* / *DAILY* frequency windows and *STATUS\_CHANGE* alerting behave correctly across engine restarts. Without it, alert state resets on every run.
+The same events table also makes alert suppression durable. By default, frequency and status-change state is held in memory for the lifetime of the *DQEngine*, so a new engine instance (for example each scheduled job run) starts with empty state. When *action_events_config* is set, the engine seeds its suppression state from the events table on first use, so *HOURLY* / *DAILY* frequency windows and *STATUS_CHANGE* alerting behave correctly across engine restarts. Without it, alert state resets on every run.
 
 ## Security and secrets[​](#security-and-secrets "Direct link to Security and secrets")
 

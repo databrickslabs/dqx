@@ -1,4 +1,4 @@
-# databricks.labs.dqx.datacontract.contract\_rules\_generator
+# databricks.labs.dqx.datacontract.contract_rules_generator
 
 Data Contract to DQX Rules Generator.
 
@@ -36,9 +36,9 @@ Initialize the DataContractRulesGenerator.
 
 **Raises**:
 
-* `ImportError` - If LLM dependencies are missing when llm\_engine is provided.
+* `ImportError` - If LLM dependencies are missing when llm_engine is provided.
 
-### generate\_rules\_from\_contract[​](#generate_rules_from_contract "Direct link to generate_rules_from_contract")
+### generate_rules_from_contract[​](#generate_rules_from_contract "Direct link to generate_rules_from_contract")
 
 ```python
 @telemetry_logger("datacontract", "generate_rules_from_contract")
@@ -50,36 +50,41 @@ def generate_rules_from_contract(
         process_text_rules: bool = True,
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
-        default_criticality: str = "error") -> list[dict]
+        default_criticality: str = "error",
+        process_library_rules: bool = True) -> list[dict]
 
 ```
 
 Generate DQX quality rules from an ODCS v3.x data contract.
 
-Parses an ODCS v3.x contract natively and generates rules based on schema properties, logicalTypeOptions constraints, explicit quality definitions, and text-based expectations. When the contract defines a schema and generate\_schema\_validation is True, one dataset-level has\_valid\_schema rule per schema is generated. strict\_schema\_validation is passed as the strict argument to has\_valid\_schema (default True = exact match).
+Parses an ODCS v3.x contract natively and generates rules based on schema properties, logicalTypeOptions constraints, explicit quality definitions, and text-based expectations. When the contract defines a schema and generate_schema_validation is True, one dataset-level has_valid_schema rule per schema is generated. strict_schema_validation is passed as the strict argument to has_valid_schema (default True = exact match).
+
+Explicit rules carry their quality entry's `dimension`, `description` and flattened `customProperties` in `user_metadata` alongside the contract provenance keys, so contract-authored context is not lost on import. A quality `owner` or `steward` custom property (or, failing that, the first ODCS `team` member with an owner/steward-like role) is emitted as a top-level `owner` on the generated rule for Rules Registry ownership.
 
 **Arguments**:
 
-* `contract` - Pre-loaded DataContract object from datacontract-cli. Can be created with:
+* \`\`6 - Pre-loaded DataContract object from datacontract-cli. Can be created with:
 
   <!-- -->
 
-  * DataContract(data\_contract\_file=path) - from a file path
-  * DataContract(data\_contract\_str=yaml\_string) - from a YAML/JSON string Either `contract` or `contract_file` must be provided.
+  * DataContract(data_contract_file=path) - from a file path
+  * DataContract(data_contract_str=yaml_string) - from a YAML/JSON string Either `6 or `8 must be provided.
 
-* `contract_file` - Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
+* `8 - Path to contract YAML/JSON file (local, volume, or workspace). Either `6 or \`\`8 must be provided.
 
-* `contract_format` - Contract format specification (default is "odcs"). Only "odcs" is supported.
+* \`\`2 - Contract format specification (default is "odcs"). Only "odcs" is supported.
 
-* `generate_predefined_rules` - Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
+* \`\`3 - Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
 
-* `process_text_rules` - Whether to process text-based expectations using LLM (default True). Requires llm\_engine to be provided in **init**.
+* \`\`4 - Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in **init**.
 
-* `generate_schema_validation` - Whether to generate dataset-level has\_valid\_schema rules from the contract schema (default True).
+* \`\`5 - Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
 
-* `contract`0 - Passed as the strict argument to has\_valid\_schema (default True = exact columns, order, types; False = permissive).
+* \`\`6 - Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
 
-* `contract`1 - Default criticality level for generated rules (default is "error").
+* \`\`7 - Default criticality level for generated rules (default is "error").
+
+* \`\`8 - Whether to generate rules from ODCS library quality metric entries (default True). Set to False to skip this mapping entirely.
 
 **Returns**:
 
@@ -87,8 +92,8 @@ A list of dictionaries representing the generated DQX quality rules.
 
 **Raises**:
 
-* `contract`2 - If neither or both contract parameters are provided, or format not supported.
+* \`\`9 - If neither or both contract parameters are provided, or format not supported.
 
 **Notes**:
 
-Exactly one of 'contract' or 'contract\_file' must be provided.
+Exactly one of 'contract' or 'contract_file' must be provided.

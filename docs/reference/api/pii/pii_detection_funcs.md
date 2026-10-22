@@ -1,6 +1,6 @@
-# databricks.labs.dqx.pii.pii\_detection\_funcs
+# databricks.labs.dqx.pii.pii_detection_funcs
 
-### does\_not\_contain\_pii[​](#does_not_contain_pii "Direct link to does_not_contain_pii")
+### does_not_contain_pii[​](#does_not_contain_pii "Direct link to does_not_contain_pii")
 
 ```python
 @register_rule("row")
@@ -13,7 +13,7 @@ def does_not_contain_pii(
 
 ```
 
-Check if a column contains personally-identifying information (PII). Uses Microsoft Presidio to detect various named entities (e.g. PERSON, ADDRESS, EMAIL\_ADDRESS). If PII is detected, the message includes a JSON string with the entity types, location within the string, and confidence score from the model.
+Check if a column contains personally-identifying information (PII). Uses Microsoft Presidio to detect various named entities (e.g. PERSON, ADDRESS, EMAIL_ADDRESS). If PII is detected, the message includes a JSON string with the entity types, location within the string, and confidence score from the model.
 
 **Arguments**:
 

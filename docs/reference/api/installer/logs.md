@@ -10,7 +10,7 @@ class PartialLogRecord()
 
 The information found within a log file record.
 
-### peak\_multi\_line\_message[​](#peak_multi_line_message "Direct link to peak_multi_line_message")
+### peak_multi_line_message[​](#peak_multi_line_message "Direct link to peak_multi_line_message")
 
 ```python
 def peak_multi_line_message(
@@ -25,7 +25,7 @@ A single log record message may span multiple log lines. In this case, the regex
 * `log` *TextIO* - The log file IO.
 * `pattern` *re.Pattern* - The regex pattern for a log line.
 
-### parse\_logs[​](#parse_logs "Direct link to parse_logs")
+### parse_logs[​](#parse_logs "Direct link to parse_logs")
 
 ```python
 def parse_logs(log: TextIO) -> Iterator[PartialLogRecord]

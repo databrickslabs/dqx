@@ -4,7 +4,7 @@ SHAP-based explainability for row anomaly detection.
 
 Provides contribution formatting and computation for scoring pipelines, plus TreeSHAP-based feature contribution analysis for reporting and messages. Requires the 'anomaly' extras: pip install databricks-labs-dqx\[anomaly]
 
-### format\_shap\_contributions[​](#format_shap_contributions "Direct link to format_shap_contributions")
+### format_shap_contributions[​](#format_shap_contributions "Direct link to format_shap_contributions")
 
 ```python
 def format_shap_contributions(
@@ -15,7 +15,7 @@ def format_shap_contributions(
 
 Format SHAP values into contribution dictionaries.
 
-### compute\_shap\_values[​](#compute_shap_values "Direct link to compute_shap_values")
+### compute_shap_values[​](#compute_shap_values "Direct link to compute_shap_values")
 
 ```python
 def compute_shap_values(
@@ -26,7 +26,7 @@ def compute_shap_values(
 
 Compute SHAP values for a model and feature matrix.
 
-### severity\_from\_scores[​](#severity_from_scores "Direct link to severity_from_scores")
+### severity_from_scores[​](#severity_from_scores "Direct link to severity_from_scores")
 
 ```python
 def severity_from_scores(
@@ -37,9 +37,9 @@ def severity_from_scores(
 
 Map raw anomaly scores to severity percentiles via piecewise linear interpolation.
 
-Numpy counterpart of *add\_severity\_percentile\_column* (same quantile points, same clamping at both ends) for use inside scoring UDFs.
+Numpy counterpart of *add_severity_percentile_column* (same quantile points, same clamping at both ends) for use inside scoring UDFs.
 
-### compute\_gated\_shap\_contributions[​](#compute_gated_shap_contributions "Direct link to compute_gated_shap_contributions")
+### compute_gated_shap_contributions[​](#compute_gated_shap_contributions "Direct link to compute_gated_shap_contributions")
 
 ```python
 def compute_gated_shap_contributions(
@@ -52,9 +52,9 @@ def compute_gated_shap_contributions(
 
 Compute SHAP contributions only for rows whose severity reaches the anomaly threshold.
 
-TreeSHAP costs an order of magnitude more than scoring itself, and contributions are only surfaced for anomalous rows, so computing SHAP for the typically tiny anomalous subset instead of every row removes most of the contributions cost. Rows below the threshold get `None` (a null map). When *quantile\_points* or *threshold* is unavailable, SHAP is computed for all rows (previous behaviour).
+TreeSHAP costs an order of magnitude more than scoring itself, and contributions are only surfaced for anomalous rows, so computing SHAP for the typically tiny anomalous subset instead of every row removes most of the contributions cost. Rows below the threshold get `None` (a null map). When *quantile_points* or *threshold* is unavailable, SHAP is computed for all rows (previous behaviour).
 
-### format\_contributions\_map[​](#format_contributions_map "Direct link to format_contributions_map")
+### format_contributions_map[​](#format_contributions_map "Direct link to format_contributions_map")
 
 ```python
 def format_contributions_map(contributions_map: dict[str, float | None] | None,
@@ -71,13 +71,13 @@ Format contributions map as string for top N contributors.
 
 **Returns**:
 
-Formatted string like "amount (85%), quantity (10%), discount (5%)" Empty string if contributions\_map is None or empty
+Formatted string like "amount (85%), quantity (10%), discount (5%)" Empty string if contributions_map is None or empty
 
 **Example**:
 
-\>>> format\_contributions\_map(dict(amount=85.0, quantity=10.0), 2) 'amount (85%), quantity (10%)'
+\>>> format_contributions_map(dict(amount=85.0, quantity=10.0), 2) 'amount (85%), quantity (10%)'
 
-### create\_optimal\_tree\_explainer[​](#create_optimal_tree_explainer "Direct link to create_optimal_tree_explainer")
+### create_optimal_tree_explainer[​](#create_optimal_tree_explainer "Direct link to create_optimal_tree_explainer")
 
 ```python
 def create_optimal_tree_explainer(tree_model: Any) -> Any
@@ -96,7 +96,7 @@ Uses SHAP's TreeExplainer, which provides efficient SHAP value computation for t
 
 Configured SHAP TreeExplainer
 
-### compute\_contributions\_for\_matrix[​](#compute_contributions_for_matrix "Direct link to compute_contributions_for_matrix")
+### compute_contributions_for_matrix[​](#compute_contributions_for_matrix "Direct link to compute_contributions_for_matrix")
 
 ```python
 def compute_contributions_for_matrix(
@@ -107,7 +107,7 @@ def compute_contributions_for_matrix(
 
 Compute normalized SHAP contributions for a feature matrix.
 
-### compute\_feature\_contributions[​](#compute_feature_contributions "Direct link to compute_feature_contributions")
+### compute_feature_contributions[​](#compute_feature_contributions "Direct link to compute_feature_contributions")
 
 ```python
 def compute_feature_contributions(model_uri: str, df: DataFrame,
@@ -127,9 +127,9 @@ TreeSHAP provides exact feature attributions from the IsolationForest model, sho
 
 **Returns**:
 
-DataFrame with additional 'anomaly\_contributions' map column containing normalized SHAP values (absolute contributions summing to 1.0 per row).
+DataFrame with additional 'anomaly_contributions' map column containing normalized SHAP values (absolute contributions summing to 1.0 per row).
 
-### add\_top\_contributors\_to\_message[​](#add_top_contributors_to_message "Direct link to add_top_contributors_to_message")
+### add_top_contributors_to_message[​](#add_top_contributors_to_message "Direct link to add_top_contributors_to_message")
 
 ```python
 def add_top_contributors_to_message(df: DataFrame,
@@ -142,7 +142,7 @@ Enhance error messages with top feature contributors from SHAP values.
 
 **Arguments**:
 
-* `df` - DataFrame with anomaly\_score and anomaly\_contributions.
+* `df` - DataFrame with anomaly_score and anomaly_contributions.
 * `threshold` - Score threshold for anomalies.
 * `top_n` - Number of top contributors to include in message.
 

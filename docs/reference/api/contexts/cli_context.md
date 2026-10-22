@@ -1,4 +1,4 @@
-# databricks.labs.dqx.contexts.cli\_context
+# databricks.labs.dqx.contexts.cli_context
 
 ## CliContext Objects[​](#clicontext-objects "Direct link to CliContext Objects")
 

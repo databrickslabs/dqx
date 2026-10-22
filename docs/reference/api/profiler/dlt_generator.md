@@ -1,4 +1,4 @@
-# databricks.labs.dqx.profiler.dlt\_generator
+# databricks.labs.dqx.profiler.dlt_generator
 
 ## DQDltGenerator Objects[​](#dqdltgenerator-objects "Direct link to DQDltGenerator Objects")
 
@@ -7,7 +7,7 @@ class DQDltGenerator(DQEngineBase)
 
 ```
 
-### generate\_dlt\_rules[​](#generate_dlt_rules "Direct link to generate_dlt_rules")
+### generate_dlt_rules[​](#generate_dlt_rules "Direct link to generate_dlt_rules")
 
 ```python
 @telemetry_logger("generator", "generate_dlt_rules")
@@ -23,7 +23,7 @@ Generates Lakeflow Pipelines (formerly Delta Live Table (DLT)) rules in the spec
 
 * `rules` - A list of data quality profiles to generate rules for.
 * `action` - The action to take on rule violation (e.g., "drop", "fail").
-* `language` - The language to generate the rules in ("SQL", "Python" or "Python\_Dict").
+* `language` - The language to generate the rules in ("SQL", "Python" or "Python_Dict").
 
 **Returns**:
 

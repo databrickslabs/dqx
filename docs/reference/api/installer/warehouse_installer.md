@@ -1,4 +1,4 @@
-# databricks.labs.dqx.installer.warehouse\_installer
+# databricks.labs.dqx.installer.warehouse_installer
 
 ## WarehouseInstaller Objects[​](#warehouseinstaller-objects "Direct link to WarehouseInstaller Objects")
 

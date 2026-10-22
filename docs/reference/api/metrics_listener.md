@@ -1,4 +1,4 @@
-# databricks.labs.dqx.metrics\_listener
+# databricks.labs.dqx.metrics_listener
 
 ## StreamingMetricsListener Objects[​](#streamingmetricslistener-objects "Direct link to StreamingMetricsListener Objects")
 

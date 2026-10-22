@@ -1,4 +1,4 @@
-# databricks.labs.dqx.actions.definition\_storage
+# databricks.labs.dqx.actions.definition_storage
 
 Storage handlers for persisting *DQAction* definitions.
 
@@ -11,28 +11,28 @@ This module provides:
 
 ## Schema[​](#schema "Direct link to Schema")
 
-Both handlers store each *DQAction* as a serialized JSON string alongside the *run\_config\_name* and a *created\_at* timestamp:
+Both handlers store each *DQAction* as a serialized JSON string alongside the *run_config_name* and a *created_at* timestamp:
 
-* *action\_json* — JSON string produced by *ActionSerializer.to\_dict*.
-* *run\_config\_name* — run configuration name for multi-run isolation.
-* *created\_at* — timestamp at write time.
+* *action_json* — JSON string produced by *ActionSerializer.to_dict*.
+* *run_config_name* — run configuration name for multi-run isolation.
+* *created_at* — timestamp at write time.
 
 ## Security[​](#security "Direct link to Security")
 
 User-supplied values are sanitized before appearing in log messages (CWE-117).
 
-### build\_replace\_where\_predicate[​](#build_replace_where_predicate "Direct link to build_replace_where_predicate")
+### build_replace_where_predicate[​](#build_replace_where_predicate "Direct link to build_replace_where_predicate")
 
 ```python
 def build_replace_where_predicate(run_config_name: str) -> str
 
 ```
 
-Build a safe Delta *replaceWhere* predicate for *run\_config\_name*.
+Build a safe Delta *replaceWhere* predicate for *run_config_name*.
 
-Validates that *run\_config\_name* contains only characters in the set *\[A-Za-z0-9\_.-]* to prevent SQL injection (CWE-89) in the predicate string. If the name contains any other character, *UnsafeSqlQueryError* is raised before the predicate is constructed.
+Validates that *run_config_name* contains only characters in the set *\[A-Za-z0-9\_.-]* to prevent SQL injection (CWE-89) in the predicate string. If the name contains any other character, *UnsafeSqlQueryError* is raised before the predicate is constructed.
 
-This mirrors the identical guard in *TableChecksStorageHandler.save* in *checks\_storage.py*.
+This mirrors the identical guard in *TableChecksStorageHandler.save* in *checks_storage.py*.
 
 **Arguments**:
 
@@ -40,11 +40,11 @@ This mirrors the identical guard in *TableChecksStorageHandler.save* in *checks\
 
 **Returns**:
 
-A SQL predicate string that compares *run\_config\_name* against its validated value, safe for use as a Delta *replaceWhere* option.
+A SQL predicate string that compares *run_config_name* against its validated value, safe for use as a Delta *replaceWhere* option.
 
 **Raises**:
 
-* `UnsafeSqlQueryError` - If *run\_config\_name* contains characters outside *\[A-Za-z0-9\_.-]*.
+* `UnsafeSqlQueryError` - If *run_config_name* contains characters outside *\[A-Za-z0-9\_.-]*.
 
 ## ActionsStorageHandler Objects[​](#actionsstoragehandler-objects "Direct link to ActionsStorageHandler Objects")
 
@@ -104,11 +104,11 @@ class TableActionsStorageHandler(
 
 Persists *DQAction* definitions to a Unity Catalog Delta table via Spark.
 
-Each *DQAction* is serialized to JSON via *ActionSerializer.to\_dict* and stored as a single row alongside the *run\_config\_name* and a *created\_at* timestamp.
+Each *DQAction* is serialized to JSON via *ActionSerializer.to_dict* and stored as a single row alongside the *run_config_name* and a *created_at* timestamp.
 
-On *save*, the write mode from *config.mode* controls whether existing rows for the *run\_config\_name* are replaced (*"overwrite"*) or kept (*"append"*).
+On *save*, the write mode from *config.mode* controls whether existing rows for the *run_config_name* are replaced (*"overwrite"*) or kept (*"append"*).
 
-On *load*, all rows matching *config.run\_config\_name* are read and deserialized.
+On *load*, all rows matching *config.run_config_name* are read and deserialized.
 
 **Arguments**:
 
@@ -131,7 +131,7 @@ Serialize and write *actions* to the configured Delta table.
 
 **Raises**:
 
-* `UnsafeSqlQueryError` - If *run\_config\_name* contains characters outside *\[A-Za-z0-9\_.-]* when *mode* is *"overwrite"*, raised by *\_build\_replace\_where* to prevent SQL injection in the Delta *replaceWhere* predicate (CWE-89).
+* `UnsafeSqlQueryError` - If *run_config_name* contains characters outside *\[A-Za-z0-9\_.-]* when *mode* is *"overwrite"*, raised by *\_build_replace_where* to prevent SQL injection in the Delta *replaceWhere* predicate (CWE-89).
 
 ### load[​](#load-1 "Direct link to load")
 
@@ -163,7 +163,7 @@ class LakebaseActionsStorageHandler(
 
 Persists *DQAction* definitions to a Lakebase (PostgreSQL) table via SQLAlchemy.
 
-Inherits engine lifecycle management from *LakebaseConnectionMixin*: a lazily created, cached engine with a *do\_connect* listener that refreshes the Databricks-generated credential token before each connection, and schema / table bootstrap on first use.
+Inherits engine lifecycle management from *LakebaseConnectionMixin*: a lazily created, cached engine with a *do_connect* listener that refreshes the Databricks-generated credential token before each connection, and schema / table bootstrap on first use.
 
 The handler accepts an optional pre-built *Engine* for testability — pass an in-memory or test engine via the *engine* constructor parameter to avoid needing a real Lakebase instance in unit tests.
 
@@ -184,7 +184,7 @@ def save(actions: list[DQAction],
 
 Serialize and write *actions* to the Lakebase table.
 
-Bootstraps the schema and table on first use. When *config.mode* is *"overwrite"*, all existing rows for *config.run\_config\_name* are deleted before inserting the new rows.
+Bootstraps the schema and table on first use. When *config.mode* is *"overwrite"*, all existing rows for *config.run_config_name* are deleted before inserting the new rows.
 
 **Arguments**:
 

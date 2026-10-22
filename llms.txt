@@ -7,13 +7,13 @@
 
 > DQX homepage
 
-- [DQX - Data Quality Framework](/dqx/index.md)
+- [Data quality you can trust](/dqx/index.md)
 
-## User Guide
+## DQX Core
 
-> Complete guide for using DQX features
+> The DQX Python package for code-level data quality
 
-- [User Guide](/dqx/docs/guide.md): This section provides a user guide.
+- [DQX Core](/dqx/docs/guide.md): DQX Core is the DQX Python package — the code-level way to define, apply, and
 - [Actions and Alerting](/dqx/docs/guide/actions_and_alerts.md): DQX actions let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected.
 - [Additional Configuration](/dqx/docs/guide/additional_configuration.md): Adding user metadata to the results of all checks
 - [AI-Assisted Primary Key Detection](/dqx/docs/guide/ai_assisted_primary_key_detection.md): DQX provides AI-assisted primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs).
@@ -23,7 +23,6 @@
 - [Data Contract Quality Rules Generation](/dqx/docs/guide/data_contract_quality_rules_generation.md): DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
 - [Profiling and Quality Checks Generation](/dqx/docs/guide/data_profiling.md): Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 - [DQX MCP Server](/dqx/docs/guide/dqx_mcp_server.md): dqx-mcp-server}
-- [DQX Studio (No-Code UI)](/dqx/docs/guide/dqx_studio.md): DQX Studio is the web application for authoring, reviewing, running, and monitoring data quality rules without writing code.
 - [Applying Quality Checks](/dqx/docs/guide/quality_checks_apply.md): You can apply quality checks to your data using the following approaches:
 - [Quality Checks Definition](/dqx/docs/guide/quality_checks_definition.md): Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
 - [Loading and Storing Quality Checks](/dqx/docs/guide/quality_checks_storage.md): DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments. For the checks table schema and relationships to other DQX tables, see Table Schemas and Relationships.
@@ -32,9 +31,40 @@
 - [Troubleshooting Row Anomaly Detection](/dqx/docs/guide/row_anomaly_detection/troubleshooting.md): This guide helps you resolve common issues when using DQX row anomaly detection.
 - [Summary Metrics](/dqx/docs/guide/summary_metrics.md): DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see Table Schemas and Relationships.
 
-## Reference
+## DQX Studio
 
-> API reference, CLI commands, and technical documentation
+> The no-code web app for authoring, reviewing, running, and monitoring data quality rules
+
+- [DQX Studio](/dqx/docs/studio.md): DQX Studio is in Beta. It's ready to use, but features and screens may still
+- [Create a rule](/dqx/docs/studio/authoring/create-a-rule.md): A rule captures one expectation about your data — "this column is never
+- [Cross-table rules](/dqx/docs/studio/authoring/create-a-rule/cross-table-rules.md): A cross-table rule checks that data in one table is consistent with data in
+- [Row-level vs dataset-level rules](/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level.md): Every rule answers one of two questions:
+- [Import rules](/dqx/docs/studio/authoring/import-rules.md): If you have data-quality rules defined somewhere else, you don't
+- [Rule Marketplace](/dqx/docs/studio/authoring/rule-marketplace.md): The Rule Marketplace is a catalogue of ready-made, reusable data-quality rules —
+- [Governance & security](/dqx/docs/studio/governance.md): This section is for governance admins accountable for how DQX Studio is run. It covers configuring the app once it's installed.
+- [The approval workflow (four-eyes)](/dqx/docs/studio/governance/approval-workflow.md): Every rule, monitored table, and collection moves through the same simple states
+- [Permissions & Entitlements](/dqx/docs/studio/governance/permissions-and-entitlements.md): Two different securables control what you can do in DQX Studio, and it helps to keep
+- [Load checks outside the app](/dqx/docs/studio/integrations.md): You author and approve rules in DQX Studio, but you don't have to run them there.
+- [Monitor your tables](/dqx/docs/studio/monitoring.md): This section is for stewards who want to put real, ongoing data-quality checks on
+- [Assign rules](/dqx/docs/studio/monitoring/assign-rules.md): Assigning rules is where the reusable definitions in your
+- [Collections (data products)](/dqx/docs/studio/monitoring/collections.md): This page is for stewards who own a data product or domain — a set of related tables
+- [Load and run checks in a pipeline](/dqx/docs/studio/monitoring/load-checks-in-a-pipeline.md): You author and approve rules in DQX Studio, but you don't have to run them there.
+- [Profiling](/dqx/docs/studio/monitoring/profiling.md): If you're not sure what rules a particular table needs, let DQX profile the data
+- [Run checks & schedule](/dqx/docs/studio/monitoring/run-and-schedule.md): A run evaluates every check on a table (or a whole collection) against the
+- [Uptime health checks](/dqx/docs/studio/monitoring/uptime-health-checks.md): DQX Studio exposes read-only validation-status endpoints so an external uptime
+- [Quickstart: your first monitored table in 10 minutes](/dqx/docs/studio/quickstart.md): This is a start-to-finish walkthrough for someone opening DQX Studio for the
+- [Review results](/dqx/docs/studio/running.md): After a run finishes, its results
+- [Theme](/dqx/docs/studio/styling.md): Admins can brand DQX Studio for their company under Settings → Theme. It applies to every Studio user. Users still choose light or dark mode themselves.
+
+## DQX Core — Demos
+
+> DQX Core example implementations and demos
+
+- [Demos](/dqx/docs/demos.md): DQX Core
+
+## DQX Core — Reference
+
+> DQX Core API reference, CLI commands, and technical documentation
 
 - [Reference](/dqx/docs/reference.md): This section provides additional details and configuration of DQX.
 - [API Reference](/dqx/docs/reference/api.md): This section contains the API reference for the Databricks Labs DQX project.
@@ -54,6 +84,7 @@
 - [databricks.labs.dqx.actions.evaluator](/dqx/docs/reference/api/actions/evaluator.md): Action evaluator orchestrator for the DQX actions &amp; alerting subsystem.
 - [databricks.labs.dqx.actions.event_storage](/dqx/docs/reference/api/actions/event_storage.md): Concrete event store implementations for the DQX actions &amp; alerting subsystem.
 - [databricks.labs.dqx.actions.fail_pipeline](/dqx/docs/reference/api/actions/fail_pipeline.md): FailPipeline action for the DQX actions &amp; alerting subsystem.
+- [databricks.labs.dqx.actions.lineage](/dqx/docs/reference/api/actions/lineage.md): Lineage collection action for the DQX actions &amp; alerting subsystem.
 - [databricks.labs.dqx.actions.log_sanitize](/dqx/docs/reference/api/actions/log_sanitize.md): Shared log-sanitization helper for the DQX actions subsystem.
 - [databricks.labs.dqx.actions.manager](/dqx/docs/reference/api/actions/manager.md): DQActionManager — high-level entry point for persisting and loading DQAction definitions.
 - [databricks.labs.dqx.actions.message](/dqx/docs/reference/api/actions/message.md): Alert message representation and builder for DQX actions.
@@ -105,6 +136,7 @@
 - [databricks.labs.dqx.contexts.workflow_context](/dqx/docs/reference/api/contexts/workflow_context.md): WorkflowContext Objects
 - [databricks.labs.dqx.contexts.workspace_context](/dqx/docs/reference/api/contexts/workspace_context.md): WorkspaceContext Objects
 - [databricks.labs.dqx.datacontract.contract_rules_generator](/dqx/docs/reference/api/datacontract/contract_rules_generator.md): Data Contract to DQX Rules Generator.
+- [databricks.labs.dqx.datacontract.library_metrics](/dqx/docs/reference/api/datacontract/library_metrics.md): ODCS type: library quality metrics mapped onto DQX rules.
 - [databricks.labs.dqx.engine](/dqx/docs/reference/api/engine.md): DQEngineCore Objects
 - [databricks.labs.dqx.errors](/dqx/docs/reference/api/errors.md): DQXError Objects
 - [databricks.labs.dqx.executor](/dqx/docs/reference/api/executor.md): DQCheckResult Objects
@@ -133,13 +165,15 @@
 - [databricks.labs.dqx.pii.nlp_engine_config](/dqx/docs/reference/api/pii/nlp_engine_config.md): NLPEngineConfig Objects
 - [databricks.labs.dqx.pii.pii_detection_funcs](/dqx/docs/reference/api/pii/pii_detection_funcs.md): does\not\contain\_pii
 - [databricks.labs.dqx.profiler.profiler](/dqx/docs/reference/api/profiler.md): DQProfiler Objects
-- [databricks.labs.dqx.profiler.common](/dqx/docs/reference/api/profiler/common.md): val\to\str
+- [databricks.labs.dqx.profiler.common](/dqx/docs/reference/api/profiler/common.md): is\_text
 - [databricks.labs.dqx.profiler.dlt_generator](/dqx/docs/reference/api/profiler/dlt_generator.md): DQDltGenerator Objects
 - [databricks.labs.dqx.profiler.generator](/dqx/docs/reference/api/profiler/generator.md): DQGenerator Objects
 - [databricks.labs.dqx.profiler.profile](/dqx/docs/reference/api/profiler/profile.md): DQProfile Objects
-- [databricks.labs.dqx.profiler.profile_builder](/dqx/docs/reference/api/profiler/profile_builder.md): make\null\or\empty\profile
+- [databricks.labs.dqx.profiler.profile_builder](/dqx/docs/reference/api/profiler/profile_builder.md): register\profile\builder
+- [databricks.labs.dqx.profiler.profiler_column_metrics](/dqx/docs/reference/api/profiler/profiler_column_metrics.md): register\profile\column\_metric
 - [databricks.labs.dqx.profiler.profiler_runner](/dqx/docs/reference/api/profiler/profiler_runner.md): ProfilerRunner Objects
 - [databricks.labs.dqx.profiler.profiler_workflow](/dqx/docs/reference/api/profiler/profiler_workflow.md): ProfilerWorkflow Objects
+- [databricks.labs.dqx.profiler.semantic](/dqx/docs/reference/api/profiler/semantic.md): Semantic-type classification for the DQProfiler.
 - [databricks.labs.dqx.profiling_utils](/dqx/docs/reference/api/profiling_utils.md): Shared profiling utilities.
 - [databricks.labs.dqx.quality_checker.e2e_workflow](/dqx/docs/reference/api/quality_checker/e2e_workflow.md): EndToEndWorkflow Objects
 - [databricks.labs.dqx.quality_checker.quality_checker_runner](/dqx/docs/reference/api/quality_checker/quality_checker_runner.md): QualityCheckerRunner Objects
@@ -155,7 +189,7 @@
 - [Performance Benchmarks Report](/dqx/docs/reference/benchmarks.md): Specification
 - [CLI Reference](/dqx/docs/reference/cli.md): This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
 - [DQX Engine](/dqx/docs/reference/engine.md): To perform data quality checking with DQX, you must create a DQEngine object.
-- [Feature lifecycle](/dqx/docs/reference/feature_lifecycle.md): DQX features move through release stages as they mature. When a feature is not yet generally
+- [Feature Lifecycle](/dqx/docs/reference/feature_lifecycle.md): DQX features move through release stages as they mature. When a feature is not yet generally
 - [DQX Installation Wizard](/dqx/docs/reference/installation_wizard.md): When you install DQX as a tool in a Databricks workspace using databricks labs install dqx, the installer runs an interactive wizard to collect settings for the "default" run configuration.
 - [DQX Profiler](/dqx/docs/reference/profiler.md): To profile data and generate candidate data quality rules with DQX, you can use the DQProfiler, DQGenerator, and DQDltGenerator classes.
 - [Quality Checks](/dqx/docs/reference/quality_checks.md): This page provides a reference for the quality check functions available in DQX. Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
@@ -170,12 +204,6 @@
 - [Contributing to DQX](/dqx/docs/dev.md): This section is for contributors to the DQX project. It contains information on how to contribute, including submitting issues, pulling requests, and contributing to the documentation.
 - [Contributing](/dqx/docs/dev/contributing.md): Guidelines for Working on Issues
 - [Authoring Documentation](/dqx/docs/dev/docs_authoring.md): This document provides guidelines for writing documentation for the DQX project.
-
-## Demos
-
-> Example implementations and demos
-
-- [Demos](/dqx/docs/demos.md): Import the following notebooks in the Databricks workspace to try DQX out:
 
 ## Dqx
 

@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.anomaly\_engine
+# databricks.labs.dqx.anomaly.anomaly_engine
 
 AnomalyEngine entrypoint for row anomaly detection.
 
@@ -22,17 +22,17 @@ This class provides methods for training, managing, and working with row anomaly
 
 # Initialize engine
 
-from databricks.sdk import WorkspaceClient from databricks.labs.dqx.anomaly.anomaly\_engine import AnomalyEngine
+from databricks.sdk import WorkspaceClient from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 
-ws = WorkspaceClient() anomaly\_engine = AnomalyEngine(ws)
+ws = WorkspaceClient() anomaly_engine = AnomalyEngine(ws)
 
 # Train a model with auto-discovery
 
-model\_name = anomaly\_engine.train( df, model\_name="catalog.schema.my\_anomaly\_model", registry\_table="catalog.schema.dqx\_anomaly\_models", )
+model_name = anomaly_engine.train( df, model_name="catalog.schema.my_anomaly_model", registry_table="catalog.schema.dqx_anomaly_models", )
 
 # Train with specific configuration
 
-model\_name = anomaly\_engine.train( df=df, model\_name="catalog.schema.regional\_model", registry\_table="catalog.schema.dqx\_anomaly\_models", columns=\["revenue", "transactions"], segment\_by=\["region"] )
+model_name = anomaly_engine.train( df=df, model_name="catalog.schema.regional_model", registry_table="catalog.schema.dqx_anomaly_models", columns=\["revenue", "transactions"], segment_by=\["region"] )
 
 ### train[​](#train "Direct link to train")
 
@@ -55,9 +55,9 @@ Requires Spark >= 3.4 and the 'anomaly' extras installed: pip install 'databrick
 
 Auto-discovery behavior:
 
-* columns=None, segment\_by=None: Auto-discovers both (simplest)
-* columns specified, segment\_by=None: Uses columns, no segmentation
-* columns=None, segment\_by specified: Auto-discovers columns, uses segments
+* columns=None, segment_by=None: Auto-discovers both (simplest)
+* columns specified, segment_by=None: Uses columns, no segmentation
+* columns=None, segment_by specified: Auto-discovers columns, uses segments
 
 **Arguments**:
 
@@ -69,38 +69,38 @@ Auto-discovery behavior:
 
 * `columns` - Columns to use for row anomaly detection (auto-discovered if omitted).
 
-* `segment_by` - Segment columns (auto-discovered if both columns and segment\_by omitted).
+* `segment_by` - Segment columns (auto-discovered if both columns and segment_by omitted).
 
 * `params` - Optional anomaly parameters for tuning training behavior.
 
 * `exclude_columns` - Columns to exclude from training (e.g., IDs, labels, ground truth). Exclusions always take precedence over `columns` if both are provided. Useful with auto-discovery to filter out unwanted columns without specifying all desired columns manually.
 
-* `expected_anomaly_rate` - Expected fraction of anomalies in your data (default: 0.02 = 2%). Used as the default contamination parameter for the Isolation Forest algorithm, which controls the proportion of training data that the model treats as outliers when learning the decision boundary. A higher value makes the model flag more rows as anomalous. Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration). Overridden if params.algorithm\_config.contamination is set explicitly. Important Notes:
+* `expected_anomaly_rate` - Expected fraction of anomalies in your data (default: 0.02 = 2%). Used as the default contamination parameter for the Isolation Forest algorithm, which controls the proportion of training data that the model treats as outliers when learning the decision boundary. A higher value makes the model flag more rows as anomalous. Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration). Overridden if params.algorithm_config.contamination is set explicitly. Important Notes:
 
   <!-- -->
 
-  * Avoid ID columns (user\_id, order\_id, etc.) - use exclude\_columns to filter them out.
-  * Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user\_id.
+  * Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
+  * Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user_id.
   * See documentation for detailed column selection best practices.
 
 **Returns**:
 
-Base model name (e.g., 'catalog.schema.model\_name'). For segmented models, individual segments are stored with suffixes like '\_\_seg\_region=APAC', but the base name is returned for simplified API usage.
+Base model name (e.g., 'catalog.schema.model_name'). For segmented models, individual segments are stored with suffixes like '\_\_seg_region=APAC', but the base name is returned for simplified API usage.
 
 **Examples**:
 
 # Auto-discovery with default 2% expected anomaly rate (simplest)
 
-anomaly\_engine.train( df, model\_name="catalog.schema.my\_model", registry\_table="catalog.schema.dqx\_anomaly\_models", )
+anomaly_engine.train( df, model_name="catalog.schema.my_model", registry_table="catalog.schema.dqx_anomaly_models", )
 
 # Exclude ID fields (recommended)
 
-anomaly\_engine.train( df, model\_name="catalog.schema.my\_model", registry\_table="catalog.schema.dqx\_anomaly\_models", exclude\_columns=\["user\_id", "order\_id"], )
+anomaly_engine.train( df, model_name="catalog.schema.my_model", registry_table="catalog.schema.dqx_anomaly_models", exclude_columns=\["user_id", "order_id"], )
 
 # Adjust expected anomaly rate for specific use cases
 
-anomaly\_engine.train( df, model\_name="catalog.schema.fraud\_detector", registry\_table="catalog.schema.dqx\_anomaly\_models", expected\_anomaly\_rate=0.01, # 1% fraud ) anomaly\_engine.train( df, model\_name="catalog.schema.quality\_monitor", registry\_table="catalog.schema.dqx\_anomaly\_models", expected\_anomaly\_rate=0.10, # 10% defects )
+anomaly_engine.train( df, model_name="catalog.schema.fraud_detector", registry_table="catalog.schema.dqx_anomaly_models", expected_anomaly_rate=0.01, # 1% fraud ) anomaly_engine.train( df, model_name="catalog.schema.quality_monitor", registry_table="catalog.schema.dqx_anomaly_models", expected_anomaly_rate=0.10, # 10% defects )
 
 # Explicit columns
 
-anomaly\_engine.train( df, model\_name="catalog.schema.sales\_monitor", registry\_table="catalog.schema.dqx\_anomaly\_models", columns=\["revenue", "transactions"], )
+anomaly_engine.train( df, model_name="catalog.schema.sales_monitor", registry_table="catalog.schema.dqx_anomaly_models", columns=\["revenue", "transactions"], )

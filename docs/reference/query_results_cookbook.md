@@ -4,6 +4,10 @@ This cookbook is a practical guide for querying DQX result tables - summary metr
 
 Before you start, take a minute with the [Table Relationships diagram](/dqx/docs/reference/table_schemas.md#table-relationships) in the schema reference. It is important because every query here touches on one of the relationships shown there.
 
+Using DQX Studio?
+
+DQX Studio stores its quarantined rows in its own `dq_quarantine_records` table, which has a different schema from the tables here. See [DQX Studio quarantine records](#dqx-studio-quarantine-records) below for recipes against it.
+
 Table name placeholders
 
 The examples below use these placeholder table names. Please replace them with your actual catalog, schema, and table names:
@@ -227,7 +231,7 @@ display(result_df)
 
 **Returns**: One row per error, each with its check function, arguments, filter, and criticality from the checks table.
 
-for\_each\_column rules
+for_each_column rules
 
 Rules defined with `for_each_column` are stored as a single row in the checks table but expand into one error per column at runtime, each with its own `rule_fingerprint`. These per-column fingerprints do not match the parent row in the checks table, so the joins below will not return those rules. To find the originating rule, list all active rules for the run with [Recipe 6](#6-which-rules-were-applied-in-a-run), look for the ones where `check.for_each_column IS NOT NULL`, and match them by `check.function` and column membership.
 
@@ -367,10 +371,12 @@ The `check_metrics` field in the summary table already contains a per-check brea
 ```sql
 SELECT
   cm.check_name,
+  cm.rule_fingerprint,
   cm.error_count,
-  cm.warning_count
+  cm.warning_count,
+  cm.checked_count
 FROM catalog.schema.summary_metrics
-LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,rule_fingerprint:string,error_count:bigint,warning_count:bigint,checked_count:bigint>>')) AS cm
 WHERE run_id = '<run_id>'
   AND metric_name = 'check_metrics'
   AND (cm.error_count > 0 OR cm.warning_count > 0);
@@ -383,8 +389,10 @@ import pyspark.sql.functions as F
 
 check_metrics_schema = ArrayType(StructType([
   StructField("check_name", StringType()),
+  StructField("rule_fingerprint", StringType()),
   StructField("error_count", LongType()),
   StructField("warning_count", LongType()),
+  StructField("checked_count", LongType()),
 ]))
 
 failed_checks_df = (
@@ -405,7 +413,7 @@ If you also need the full check definition (function, arguments, filter), join t
 
 **Returns**: One row per distinct failing check, with its function, arguments, and filter (`null` for `for_each_column` rules - see the note below).
 
-for\_each\_column rules
+for_each_column rules
 
 Rules defined with `for_each_column` produce per-column errors with fingerprints that do not match the parent row in the checks table, so they join with `null` check columns. See the same note in [Recipe 3](#3-row-details) for how to recover the originating rule via [Recipe 6](#6-which-rules-were-applied-in-a-run).
 
@@ -681,7 +689,7 @@ checks = dq_engine.load_checks(
 
 **Returns**: One row per check with its earliest failing `run_time` and the `run_id` of that first failure.
 
-This extends Recipe 7. Instead of the current error rate, you want the *first* run\_time a particular check failed - useful for correlating regressions with upstream changes.
+This extends Recipe 7. Instead of the current error rate, you want the *first* run_time a particular check failed - useful for correlating regressions with upstream changes.
 
 * SQL
 * Python
@@ -706,8 +714,10 @@ import pyspark.sql.functions as F
 
 check_metrics_schema = ArrayType(StructType([
   StructField("check_name", StringType()),
+  StructField("rule_fingerprint", StringType()),
   StructField("error_count", LongType()),
   StructField("warning_count", LongType()),
+  StructField("checked_count", LongType()),
 ]))
 
 first_failures_df = (
@@ -894,5 +904,58 @@ daily_df = (
 )
 
 display(daily_df)
+
+```
+
+## DQX Studio quarantine records[​](#dqx-studio-quarantine-records "Direct link to DQX Studio quarantine records")
+
+DQX Studio stores its quarantined rows in its own `dq_quarantine_records` table in the Studio catalog (`<catalog>.<prefix>.dq_quarantine_records`) — a different shape from the tables above. `row_data` holds the full source row, and `errors` / `warnings` the checks each row failed, all as [`VARIANT`](https://docs.databricks.com/aws/en/semi-structured/variant). For an overview and the basic "recent rows" query, see [Analyse in Lakehouse](/dqx/docs/studio/running.md#analyse-in-lakehouse); the recipes below go further. Replace `<catalog>` with your Studio catalog and `<prefix>` with its storage prefix (default `dqx_studio`).
+
+**Read individual fields out of the source row:**
+
+```sql
+SELECT quarantine_id,
+       row_data:order_id::string   AS order_id,
+       row_data:amount::double     AS amount
+FROM <catalog>.<prefix>.dq_quarantine_records
+WHERE source_table_fqn = 'main.sales.orders';
+
+```
+
+**Get one row per failed check** — explode the `errors` array so each failed check becomes its own row:
+
+```sql
+SELECT q.quarantine_id,
+       q.source_table_fqn,
+       e.value:name::string     AS check_name,
+       e.value:message::string  AS message,
+       e.value:columns          AS columns
+FROM <catalog>.<prefix>.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.run_id = '<run_id>';
+
+```
+
+**Count failures by check** (a quick "what's failing most?"):
+
+```sql
+SELECT e.value:name::string AS check_name, count(*) AS failing_rows
+FROM <catalog>.<prefix>.dq_quarantine_records AS q,
+     LATERAL variant_explode(q.errors) AS e
+WHERE q.source_table_fqn = 'main.sales.orders'
+GROUP BY e.value:name::string
+ORDER BY failing_rows DESC;
+
+```
+
+**Add each run's details** — join to `dq_validation_runs` to see when a run happened, what triggered it, and whether it succeeded:
+
+```sql
+SELECT q.quarantine_id, q.source_table_fqn, q.created_at, r.*
+FROM <catalog>.<prefix>.dq_quarantine_records AS q
+JOIN <catalog>.<prefix>.dq_validation_runs   AS r
+  ON q.run_id = r.run_id
+WHERE q.source_table_fqn = 'main.sales.orders'
+ORDER BY q.created_at DESC;
 
 ```

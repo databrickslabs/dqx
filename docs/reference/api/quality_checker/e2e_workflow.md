@@ -1,4 +1,4 @@
-# databricks.labs.dqx.quality\_checker.e2e\_workflow
+# databricks.labs.dqx.quality_checker.e2e_workflow
 
 ## EndToEndWorkflow Objects[​](#endtoendworkflow-objects "Direct link to EndToEndWorkflow Objects")
 
@@ -23,7 +23,7 @@ Initialize end-to-end workflow and emit a log record for traceability.
 
 * `ctx` *WorkflowContext* - Runtime context.
 
-### run\_profiler[​](#run_profiler "Direct link to run_profiler")
+### run_profiler[​](#run_profiler "Direct link to run_profiler")
 
 ```python
 @workflow_task(depends_on=[prepare], run_job_name="profiler")
@@ -37,7 +37,7 @@ Run the profiler to generate checks and summary statistics.
 
 * `ctx` - Runtime context.
 
-### run\_quality\_checker[​](#run_quality_checker "Direct link to run_quality_checker")
+### run_quality_checker[​](#run_quality_checker "Direct link to run_quality_checker")
 
 ```python
 @workflow_task(depends_on=[run_profiler], run_job_name="quality-checker")

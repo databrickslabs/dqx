@@ -1,10 +1,10 @@
-# databricks.labs.dqx.lakebase\_engine
+# databricks.labs.dqx.lakebase_engine
 
 Shared helpers for creating SQLAlchemy engines connected to Databricks Lakebase (PostgreSQL).
 
 This module centralises two concerns:
 
-1. *create\_lakebase\_engine* — a pure function that builds a SQLAlchemy *Engine* with the standard DQX pool settings (pool\_recycle, sslmode, pool\_size) and a *do\_connect* event listener that injects a freshly generated Databricks credential token before every connection attempt.
+1. *create_lakebase_engine* — a pure function that builds a SQLAlchemy *Engine* with the standard DQX pool settings (pool_recycle, sslmode, pool_size) and a *do_connect* event listener that injects a freshly generated Databricks credential token before every connection attempt.
 
 2. *LakebaseConnectionMixin* — a lightweight mixin that supplies a lazily created, cached *Engine* to any class that stores a *WorkspaceClient*, a *LakebaseActionsStorageConfig*, and an optional pre-built engine. The mixin eliminates duplicated `_get_engine` / `_create_engine` logic across *LakebaseActionsStorageHandler* and *LakebaseActionEventStore*.
 
@@ -12,7 +12,7 @@ This module centralises two concerns:
 
 Credential tokens are injected only into the *cparams* dict immediately before each connection attempt and are never logged (CWE-532).
 
-### create\_lakebase\_engine[​](#create_lakebase_engine "Direct link to create_lakebase_engine")
+### create_lakebase_engine[​](#create_lakebase_engine "Direct link to create_lakebase_engine")
 
 ```python
 def create_lakebase_engine(ws: WorkspaceClient, instance_name: str, host: str,
@@ -24,16 +24,16 @@ Build a SQLAlchemy engine for a Databricks Lakebase PostgreSQL instance.
 
 The returned engine is configured with:
 
-* *pool\_recycle=45*60\* so connections are recycled before the Lakebase idle-connection timeout.
-* *sslmode=require* via *connect\_args* for encrypted transport.
-* *pool\_size=4* to limit concurrent connections.
-* A *do\_connect* listener that injects a freshly generated Databricks database credential token before every connection attempt, so short-lived credentials are never stale.
+* *pool_recycle=45*60\* so connections are recycled before the Lakebase idle-connection timeout.
+* *sslmode=require* via *connect_args* for encrypted transport.
+* *pool_size=4* to limit concurrent connections.
+* A *do_connect* listener that injects a freshly generated Databricks database credential token before every connection attempt, so short-lived credentials are never stale.
 
 **Arguments**:
 
-* `ws` - Authenticated *WorkspaceClient* used to call *database.generate\_database\_credential*.
+* `ws` - Authenticated *WorkspaceClient* used to call *database.generate_database_credential*.
 * `instance_name` - Lakebase instance identifier, e.g. `&quot;my-lakebase&quot;`. Used in the credential request.
-* `host` - Read-write DNS hostname of the Lakebase instance (obtained via *ws.database.get\_database\_instance(instance\_name).read\_write\_dns*).
+* `host` - Read-write DNS hostname of the Lakebase instance (obtained via *ws.database.get_database_instance(instance_name).read_write_dns*).
 * `user` - PostgreSQL user name; typically the service-principal client ID or the current user's e-mail address.
 * `port` - TCP port string, e.g. `&quot;5432&quot;`.
 * `database` - Name of the PostgreSQL database to connect to.

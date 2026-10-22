@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.model\_config
+# databricks.labs.dqx.anomaly.model_config
 
 Model configuration and record structure for row anomaly detection.
 
-Single responsibility: model record structure (dataclasses) and config identity (compute\_config\_hash). Persistence lives in model\_registry.
+Single responsibility: model record structure (dataclasses) and config identity (compute_config_hash). Persistence lives in model_registry.
 
 ## ModelIdentity Objects[​](#modelidentity-objects "Direct link to ModelIdentity Objects")
 
@@ -63,7 +63,7 @@ Composed of 4 focused components, each under the 16-attribute limit:
 
 Stored as nested structs in Delta tables (no flattening needed).
 
-### compute\_config\_hash[​](#compute_config_hash "Direct link to compute_config_hash")
+### compute_config_hash[​](#compute_config_hash "Direct link to compute_config_hash")
 
 ```python
 def compute_config_hash(columns: list[str],
@@ -87,4 +87,4 @@ Generate stable hash of model configuration.
 This hash uniquely identifies a model configuration based on:
 
 * Sorted list of columns (order-independent)
-* Sorted list of segment\_by columns (order-independent) Used for collision detection when same model\_name is reused with different configs.
+* Sorted list of segment_by columns (order-independent) Used for collision detection when same model_name is reused with different configs.

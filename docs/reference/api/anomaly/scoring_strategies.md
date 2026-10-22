@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.scoring\_strategies
+# databricks.labs.dqx.anomaly.scoring_strategies
 
 Scoring strategy interface and implementations for row anomaly models.
 
@@ -23,7 +23,7 @@ def supports(algorithm: str) -> bool
 
 Return True if the strategy supports the given algorithm.
 
-### score\_global[​](#score_global "Direct link to score_global")
+### score_global[​](#score_global "Direct link to score_global")
 
 ```python
 @abstractmethod
@@ -34,7 +34,7 @@ def score_global(df: DataFrame, record: AnomalyModelRecord,
 
 Score a global model.
 
-### score\_segmented[​](#score_segmented "Direct link to score_segmented")
+### score_segmented[​](#score_segmented "Direct link to score_segmented")
 
 ```python
 @abstractmethod
@@ -55,7 +55,7 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy)
 
 IsolationForest scoring strategy (default).
 
-### resolve\_scoring\_strategy[​](#resolve_scoring_strategy "Direct link to resolve_scoring_strategy")
+### resolve_scoring_strategy[​](#resolve_scoring_strategy "Direct link to resolve_scoring_strategy")
 
 ```python
 def resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy

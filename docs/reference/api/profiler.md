@@ -9,7 +9,7 @@ class DQProfiler(DQEngineBase)
 
 Data Quality Profiler class to profile input data.
 
-### get\_columns\_or\_fields[​](#get_columns_or_fields "Direct link to get_columns_or_fields")
+### get_columns_or_fields[​](#get_columns_or_fields "Direct link to get_columns_or_fields")
 
 ```python
 @staticmethod
@@ -51,7 +51,7 @@ Profiles a DataFrame to generate summary statistics and data quality rules.
 
 A tuple containing a dictionary of summary statistics and a list of data quality profiles.
 
-### profile\_table[​](#profile_table "Direct link to profile_table")
+### profile_table[​](#profile_table "Direct link to profile_table")
 
 ```python
 @telemetry_logger("profiler", "profile_table")
@@ -75,7 +75,7 @@ Profiles a table to generate summary statistics and data quality rules.
 
 A tuple containing a dictionary of summary statistics and a list of data quality profiles.
 
-### profile\_tables\_for\_patterns[​](#profile_tables_for_patterns "Direct link to profile_tables_for_patterns")
+### profile_tables_for_patterns[​](#profile_tables_for_patterns "Direct link to profile_tables_for_patterns")
 
 ```python
 @telemetry_logger("profiler", "profile_tables_for_patterns")
@@ -105,7 +105,7 @@ Profiles Delta tables in Unity Catalog to generate summary statistics and data q
 
 A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
 
-### detect\_primary\_keys\_with\_llm[​](#detect_primary_keys_with_llm "Direct link to detect_primary_keys_with_llm")
+### detect_primary_keys_with_llm[​](#detect_primary_keys_with_llm "Direct link to detect_primary_keys_with_llm")
 
 ```python
 @telemetry_logger("profiler", "detect_primary_keys_with_llm")
@@ -127,9 +127,9 @@ A dictionary containing the primary key detection result with the following keys
 
 * table: The table name
 * success: Whether detection was successful
-* primary\_key\_columns: List of detected primary key columns (if successful)
+* primary_key_columns: List of detected primary key columns (if successful)
 * confidence: Confidence level (high/medium/low)
 * reasoning: LLM reasoning for the selection
-* has\_duplicates: Whether duplicates were found (if validation performed)
-* duplicate\_count: Number of duplicate combinations (if validation performed)
+* has_duplicates: Whether duplicates were found (if validation performed)
+* duplicate_count: Number of duplicate combinations (if validation performed)
 * error: Error message (if failed)

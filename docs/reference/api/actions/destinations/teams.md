@@ -33,6 +33,6 @@ Class attributes:
 * `name` - Logical name for this destination instance.
 * `webhook_url` - The Teams Workflows webhook URL (plain string or *DQSecret*).
 
-#### url\_contains\_secret[​](#url_contains_secret "Direct link to url_contains_secret")
+#### url_contains_secret[​](#url_contains_secret "Direct link to url_contains_secret")
 
 Teams Workflows URL embeds a signature; prefer DQSecret

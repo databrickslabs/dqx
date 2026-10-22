@@ -1,6 +1,6 @@
 # databricks.labs.dqx.telemetry
 
-### reset\_telemetry\_cache[​](#reset_telemetry_cache "Direct link to reset_telemetry_cache")
+### reset_telemetry_cache[​](#reset_telemetry_cache "Direct link to reset_telemetry_cache")
 
 ```python
 def reset_telemetry_cache() -> None
@@ -11,7 +11,7 @@ Clear the per-process telemetry dedup cache so previously sent signals can be se
 
 Telemetry is deduplicated per process (each *(key, value)* is sent at most once). This resets that state; mainly useful for tests that assert on send behavior in isolation.
 
-### log\_telemetry[​](#log_telemetry "Direct link to log_telemetry")
+### log_telemetry[​](#log_telemetry "Direct link to log_telemetry")
 
 ```python
 def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None
@@ -28,7 +28,7 @@ Best-effort: telemetry must never affect the data path. Each *(key, value)* is s
 * `key` - telemetry key to log
 * `value` - telemetry value to log
 
-### telemetry\_logger[​](#telemetry_logger "Direct link to telemetry_logger")
+### telemetry_logger[​](#telemetry_logger "Direct link to telemetry_logger")
 
 ```python
 def telemetry_logger(key: str,
@@ -39,7 +39,7 @@ def telemetry_logger(key: str,
 
 Decorator to log telemetry for method calls. By default, it expects the decorated method to have "ws" attribute for workspace client.
 
-Usage: @telemetry\_logger("telemetry\_key", "telemetry\_value") # Uses "ws" attribute for workspace client by default @telemetry\_logger("telemetry\_key", "telemetry\_value", "my\_ws\_client") # Custom attribute
+Usage: @telemetry_logger("telemetry_key", "telemetry_value") # Uses "ws" attribute for workspace client by default @telemetry_logger("telemetry_key", "telemetry_value", "my_ws_client") # Custom attribute
 
 **Arguments**:
 
@@ -47,7 +47,7 @@ Usage: @telemetry\_logger("telemetry\_key", "telemetry\_value") # Uses "ws" attr
 * `value` - Telemetry value to log
 * `workspace_client_attr` - Name of the workspace client attribute on the class (defaults to "ws")
 
-### log\_dataframe\_telemetry[​](#log_dataframe_telemetry "Direct link to log_dataframe_telemetry")
+### log_dataframe_telemetry[​](#log_dataframe_telemetry "Direct link to log_dataframe_telemetry")
 
 ```python
 def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession,
@@ -74,7 +74,7 @@ This function is designed to never throw exceptions - it will log errors but con
 
 None
 
-### get\_tables\_from\_spark\_plan[​](#get_tables_from_spark_plan "Direct link to get_tables_from_spark_plan")
+### get_tables_from_spark_plan[​](#get_tables_from_spark_plan "Direct link to get_tables_from_spark_plan")
 
 ```python
 def get_tables_from_spark_plan(plan_str: str) -> set[str]
@@ -93,7 +93,7 @@ This function parses the Analyzed Logical Plan section and identifies table refe
 
 A set of distinct table names found in the plan. Returns empty set if no Analyzed Logical Plan section is found or no tables are referenced.
 
-### get\_paths\_from\_spark\_plan[​](#get_paths_from_spark_plan "Direct link to get_paths_from_spark_plan")
+### get_paths_from_spark_plan[​](#get_paths_from_spark_plan "Direct link to get_paths_from_spark_plan")
 
 ```python
 def get_paths_from_spark_plan(plan_str: str,
@@ -114,7 +114,7 @@ This function parses the Physical Plan section and identifies file path referenc
 
 A set of distinct file paths found in the plan. Returns empty set if no Physical Plan section is found or no paths are referenced.
 
-### is\_dlt\_pipeline[​](#is_dlt_pipeline "Direct link to is_dlt_pipeline")
+### is_dlt_pipeline[​](#is_dlt_pipeline "Direct link to is_dlt_pipeline")
 
 ```python
 def is_dlt_pipeline(spark: SparkSession) -> bool
@@ -131,7 +131,7 @@ Determine if the current Spark session is running within a Databricks Delta Live
 
 True if running in a DLT pipeline, False otherwise
 
-### get\_spark\_plan\_as\_string[​](#get_spark_plan_as_string "Direct link to get_spark_plan_as_string")
+### get_spark_plan_as_string[​](#get_spark_plan_as_string "Direct link to get_spark_plan_as_string")
 
 ```python
 def get_spark_plan_as_string(df: DataFrame) -> str

@@ -1,4 +1,4 @@
-# databricks.labs.dqx.actions.log\_sanitize
+# databricks.labs.dqx.actions.log_sanitize
 
 Shared log-sanitization helper for the DQX actions subsystem.
 
@@ -6,7 +6,7 @@ User-supplied values (action names, conditions, destination names, table identif
 
 A single implementation lives here so every action module sanitizes identically — an earlier divergence (one module stripped only CR/LF) let control characters slip through on one code path.
 
-### sanitize\_for\_log[​](#sanitize_for_log "Direct link to sanitize_for_log")
+### sanitize_for_log[​](#sanitize_for_log "Direct link to sanitize_for_log")
 
 ```python
 def sanitize_for_log(text: str) -> str

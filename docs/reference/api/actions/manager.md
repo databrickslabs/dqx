@@ -6,13 +6,13 @@ DQActionManager — high-level entry point for persisting and loading *DQAction*
 
 Typical usage::
 
-from databricks.sdk import WorkspaceClient from pyspark.sql import SparkSession from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn from databricks.labs.dqx.actions.dq\_action import DQAction from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination from databricks.labs.dqx.actions.manager import DQActionManager from databricks.labs.dqx.config import TableActionsStorageConfig
+from databricks.sdk import WorkspaceClient from pyspark.sql import SparkSession from databricks.labs.dqx.actions.alert import DQAlert, DQAlertFrequency, NotifyOn from databricks.labs.dqx.actions.dq_action import DQAction from databricks.labs.dqx.actions.destinations.slack import DQSlackAlertDestination from databricks.labs.dqx.actions.manager import DQActionManager from databricks.labs.dqx.config import TableActionsStorageConfig
 
 ws = WorkspaceClient() manager = DQActionManager(ws=ws)
 
-dest = DQSlackAlertDestination(name="slack", webhook\_url="[https://hooks.slack.com/…](https://hooks.slack.com/%E2%80%A6)") alert = DQAlert(destinations=\[dest]) actions = \[DQAction(action=alert, condition="error\_row\_count > 0")]
+dest = DQSlackAlertDestination(name="slack", webhook_url="[https://hooks.slack.com/…](https://hooks.slack.com/%E2%80%A6)") alert = DQAlert(destinations=\[dest]) actions = \[DQAction(action=alert, condition="error_row_count > 0")]
 
-config = TableActionsStorageConfig(location="catalog.schema.dqx\_actions") manager.save\_actions(actions, config) loaded = manager.load\_actions(config)
+config = TableActionsStorageConfig(location="catalog.schema.dqx_actions") manager.save_actions(actions, config) loaded = manager.load_actions(config)
 
 ## DQActionManager Objects[​](#dqactionmanager-objects "Direct link to DQActionManager Objects")
 
@@ -32,7 +32,7 @@ The *spark* parameter is optional. When *None*, the manager first tries *SparkSe
 * `ws` - Authenticated *WorkspaceClient*.
 * `spark` - Active *SparkSession*, or *None* to auto-resolve.
 
-### load\_actions\_from\_local\_file[​](#load_actions_from_local_file "Direct link to load_actions_from_local_file")
+### load_actions_from_local_file[​](#load_actions_from_local_file "Direct link to load_actions_from_local_file")
 
 ```python
 @staticmethod
@@ -42,7 +42,7 @@ def load_actions_from_local_file(filepath: str) -> list[DQAction]
 
 Load *DQAction* definitions from a local YAML or JSON file.
 
-The file must contain a top-level list of action dicts, each matching the wire format produced by *save\_actions\_in\_local\_file*. YAML files use the *.yml* or *.yaml* extension; JSON files use *.json*.
+The file must contain a top-level list of action dicts, each matching the wire format produced by *save_actions_in_local_file*. YAML files use the *.yml* or *.yaml* extension; JSON files use *.json*.
 
 Example YAML file:
 
@@ -74,7 +74,7 @@ List of *DQAction* instances loaded from the file.
 * `InvalidParameterError` - If the file does not exist or the extension is not *.yml*, *.yaml*, or *.json*.
 * `InvalidConfigError` - If the file cannot be parsed or its content cannot be validated as a list of *DQAction* dicts.
 
-### save\_actions\_in\_local\_file[​](#save_actions_in_local_file "Direct link to save_actions_in_local_file")
+### save_actions_in_local_file[​](#save_actions_in_local_file "Direct link to save_actions_in_local_file")
 
 ```python
 @staticmethod
@@ -96,7 +96,7 @@ The file extension determines the output format: *.yml* / *.yaml* produces YAML;
 * `InvalidParameterError` - If the file extension is not supported.
 * `InvalidConfigError` - If the file cannot be written.
 
-### save\_actions[​](#save_actions "Direct link to save_actions")
+### save_actions[​](#save_actions "Direct link to save_actions")
 
 ```python
 def save_actions(
@@ -113,7 +113,7 @@ Persist *actions* to the configured storage backend.
 * `actions` - List of *DQAction* definitions to persist.
 * `config` - Backend-specific configuration; either *TableActionsStorageConfig* (Unity Catalog Delta) or *LakebaseActionsStorageConfig* (Lakebase PostgreSQL).
 
-### load\_actions[​](#load_actions "Direct link to load_actions")
+### load_actions[​](#load_actions "Direct link to load_actions")
 
 ```python
 def load_actions(

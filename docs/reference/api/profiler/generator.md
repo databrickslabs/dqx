@@ -40,7 +40,7 @@ Gets a Spark session. Gets an available one or creates a new one if none was pro
 
 Spark session instance.
 
-### generate\_dq\_rules[​](#generate_dq_rules "Direct link to generate_dq_rules")
+### generate_dq_rules[​](#generate_dq_rules "Direct link to generate_dq_rules")
 
 ```python
 @telemetry_logger("generator", "generate_dq_rules")
@@ -60,7 +60,7 @@ Generates a list of data quality rules based on the provided dq profiles.
 
 A list of dictionaries representing the data quality rules.
 
-### generate\_dq\_rules\_ai\_assisted[​](#generate_dq_rules_ai_assisted "Direct link to generate_dq_rules_ai_assisted")
+### generate_dq_rules_ai_assisted[​](#generate_dq_rules_ai_assisted "Direct link to generate_dq_rules_ai_assisted")
 
 ```python
 @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
@@ -81,7 +81,7 @@ Generates data quality rules using LLM based on natural language input.
 
 **Returns**:
 
-A list of dictionaries representing the generated data quality rules. Rules that fail *DQEngine.validate\_checks* (e.g. missing required arguments, unknown function names) are dropped and logged at *WARNING*; only valid rules are returned.
+A list of dictionaries representing the generated data quality rules. Rules that fail *DQEngine.validate_checks* (e.g. missing required arguments, unknown function names) are dropped and logged at *WARNING*; only valid rules are returned.
 
 **Raises**:
 
@@ -89,9 +89,9 @@ A list of dictionaries representing the generated data quality rules. Rules that
 
 **Notes**:
 
-A Spark session is required when using this method with an *input\_config* that is not a Unity Catalog table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a valid 3-level name (e.g. catalog.schema.table).
+A Spark session is required when using this method with an *input_config* that is not a Unity Catalog table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a valid 3-level name (e.g. catalog.schema.table).
 
-### generate\_rules\_from\_contract[​](#generate_rules_from_contract "Direct link to generate_rules_from_contract")
+### generate_rules_from_contract[​](#generate_rules_from_contract "Direct link to generate_rules_from_contract")
 
 ```python
 @telemetry_logger("generator", "generate_rules_from_contract")
@@ -103,13 +103,14 @@ def generate_rules_from_contract(
         process_text_rules: bool = True,
         generate_schema_validation: bool = True,
         strict_schema_validation: bool = True,
-        default_criticality: str = "error") -> list[dict]
+        default_criticality: str = "error",
+        process_library_rules: bool = True) -> list[dict]
 
 ```
 
 Generate DQX quality rules from a data contract specification.
 
-Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on schema properties, explicit quality definitions, and text-based expectations. When the contract defines a schema and generate\_schema\_validation is True, one dataset-level has\_valid\_schema rule per schema is generated. strict\_schema\_validation is passed to the check.
+Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on schema properties, explicit quality definitions, and text-based expectations. When the contract defines a schema and generate_schema_validation is True, one dataset-level has_valid_schema rule per schema is generated. strict_schema_validation is passed to the check.
 
 **Arguments**:
 
@@ -117,8 +118,8 @@ Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. 
 
   <!-- -->
 
-  * DataContract(data\_contract\_file=path) - from a file path
-  * DataContract(data\_contract\_str=yaml\_string) - from a YAML/JSON string Either `contract` or `contract_file` must be provided.
+  * DataContract(data_contract_file=path) - from a file path
+  * DataContract(data_contract_str=yaml_string) - from a YAML/JSON string Either `contract` or `contract_file` must be provided.
 
 * `contract_file` - Path to contract YAML file (local, volume, or workspace).
 
@@ -128,11 +129,13 @@ Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. 
 
 * `process_text_rules` - Whether to process text-based expectations using LLM.
 
-* `generate_schema_validation` - Whether to generate dataset-level has\_valid\_schema rules (default True).
+* `generate_schema_validation` - Whether to generate dataset-level has_valid_schema rules (default True).
 
-* `strict_schema_validation` - Passed as strict to has\_valid\_schema (default True = exact match; False = permissive).
+* `strict_schema_validation` - Passed as strict to has_valid_schema (default True = exact match; False = permissive).
 
 * `default_criticality` - Default criticality for generated rules as "warn" or "error" (default is "error").
+
+* `contract`0 - Whether to generate rules from ODCS library quality metric entries (default True).
 
 **Returns**:
 
@@ -140,14 +143,14 @@ A list of dictionaries representing the generated DQX quality rules.
 
 **Raises**:
 
-* `contract`0 - If datacontract-cli is not installed.
-* `contract`1 - If neither or both parameters are provided, or format not supported.
+* `contract`1 - If datacontract-cli is not installed.
+* `contract`2 - If neither or both parameters are provided, or format not supported.
 
 **Notes**:
 
-Exactly one of 'contract' or 'contract\_file' must be provided.
+Exactly one of 'contract' or 'contract_file' must be provided.
 
-### dq\_generate\_is\_in[​](#dq_generate_is_in "Direct link to dq_generate_is_in")
+### dq_generate_is_in[​](#dq_generate_is_in "Direct link to dq_generate_is_in")
 
 ```python
 @staticmethod
@@ -167,7 +170,7 @@ Generates a data quality rule to check if a column's value is in a specified lis
 
 A dictionary representing the data quality rule.
 
-### dq\_generate\_min\_max[​](#dq_generate_min_max "Direct link to dq_generate_min_max")
+### dq_generate_min_max[​](#dq_generate_min_max "Direct link to dq_generate_min_max")
 
 ```python
 @staticmethod
@@ -189,7 +192,7 @@ Generates a data quality rule to check if a column's value is within a specified
 
 A dictionary representing the data quality rule, or None if no limits are provided.
 
-### dq\_generate\_is\_not\_null[​](#dq_generate_is_not_null "Direct link to dq_generate_is_not_null")
+### dq_generate_is_not_null[​](#dq_generate_is_not_null "Direct link to dq_generate_is_not_null")
 
 ```python
 @staticmethod
@@ -211,7 +214,7 @@ Generates a data quality rule to check if a column's value is not null.
 
 A dictionary representing the data quality rule.
 
-### dq\_generate\_is\_not\_null\_or\_empty[​](#dq_generate_is_not_null_or_empty "Direct link to dq_generate_is_not_null_or_empty")
+### dq_generate_is_not_null_or_empty[​](#dq_generate_is_not_null_or_empty "Direct link to dq_generate_is_not_null_or_empty")
 
 ```python
 @staticmethod
@@ -233,7 +236,7 @@ Generates a data quality rule to check if a column's value is not null or empty.
 
 A dictionary representing the data quality rule.
 
-### dq\_generate\_is\_not\_empty[​](#dq_generate_is_not_empty "Direct link to dq_generate_is_not_empty")
+### dq_generate_is_not_empty[​](#dq_generate_is_not_empty "Direct link to dq_generate_is_not_empty")
 
 ```python
 @staticmethod
@@ -255,7 +258,7 @@ Generates a data quality rule to check if a column's value is not empty (nulls a
 
 A dictionary representing the data quality rule.
 
-### dq\_generate\_is\_unique[​](#dq_generate_is_unique "Direct link to dq_generate_is_unique")
+### dq_generate_is_unique[​](#dq_generate_is_unique "Direct link to dq_generate_is_unique")
 
 ```python
 @staticmethod
@@ -267,7 +270,7 @@ def dq_generate_is_unique(column: str,
 
 Generates a data quality rule to check if specified columns are unique.
 
-Uses is\_unique with nulls\_distinct=True for uniqueness validation.
+Uses is_unique with nulls_distinct=True for uniqueness validation.
 
 **Arguments**:
 
@@ -279,7 +282,7 @@ Uses is\_unique with nulls\_distinct=True for uniqueness validation.
 
 A dictionary representing the data quality rule.
 
-### dq\_generate\_has\_no\_outliers[​](#dq_generate_has_no_outliers "Direct link to dq_generate_has_no_outliers")
+### dq_generate_has_no_outliers[​](#dq_generate_has_no_outliers "Direct link to dq_generate_has_no_outliers")
 
 ```python
 @staticmethod
@@ -291,13 +294,233 @@ def dq_generate_has_no_outliers(column: str,
 
 Generates a data quality rule to check if a column's values contain no outliers.
 
-Uses the MAD (Median Absolute Deviation) method via the *has\_no\_outliers* check function. Values outside median ± 3.5 \* MAD are flagged as outliers.
+Uses the MAD (Median Absolute Deviation) method via the *has_no_outliers* check function. Values outside median ± 3.5 \* MAD are flagged as outliers.
 
 **Arguments**:
 
 * `column` - The name of the column to check.
 * `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
 * `params` - Additional parameters (unused; left for compatibility with other functions).
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_geometry_type[​](#dq_generate_geometry_type "Direct link to dq_generate_geometry_type")
+
+```python
+@staticmethod
+def dq_generate_geometry_type(column: str,
+                              criticality: str = "error",
+                              **params: object) -> dict | None
+
+```
+
+Generates a data quality rule to check that a geometry column holds a single geometry type.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the profiled ST\_ geometry *type*.
+
+**Returns**:
+
+A dictionary representing the data quality rule, or None if the type is not recognized.
+
+### dq_generate_has_x_coordinate_between[​](#dq_generate_has_x_coordinate_between "Direct link to dq_generate_has_x_coordinate_between")
+
+```python
+@staticmethod
+def dq_generate_has_x_coordinate_between(column: str,
+                                         criticality: str = "error",
+                                         **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's x coordinates (a.k.a. longitude) fall within a specific range.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *min_value* and *max_value* bounds.
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_has_y_coordinate_between[​](#dq_generate_has_y_coordinate_between "Direct link to dq_generate_has_y_coordinate_between")
+
+```python
+@staticmethod
+def dq_generate_has_y_coordinate_between(column: str,
+                                         criticality: str = "error",
+                                         **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's y coordinates (a.k.a. latitude) fall within a specific range.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *min_value* and *max_value* bounds.
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_area_not_less_than[​](#dq_generate_is_area_not_less_than "Direct link to dq_generate_is_area_not_less_than")
+
+```python
+@staticmethod
+def dq_generate_is_area_not_less_than(column: str,
+                                      criticality: str = "error",
+                                      **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's areas are not less than a specified limit.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *value* limit, optional *srid* (geometry columns), and optional *geodesic* flag (geography columns).
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_area_not_greater_than[​](#dq_generate_is_area_not_greater_than "Direct link to dq_generate_is_area_not_greater_than")
+
+```python
+@staticmethod
+def dq_generate_is_area_not_greater_than(column: str,
+                                         criticality: str = "error",
+                                         **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's areas are not greater than a specified limit.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *value* limit, optional *srid* (geometry columns), and optional *geodesic* flag (geography columns).
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_num_points_not_less_than[​](#dq_generate_is_num_points_not_less_than "Direct link to dq_generate_is_num_points_not_less_than")
+
+```python
+@staticmethod
+def dq_generate_is_num_points_not_less_than(column: str,
+                                            criticality: str = "error",
+                                            **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's coordinate counts are not less than a specified limit.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *value* limit.
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_num_points_not_greater_than[​](#dq_generate_is_num_points_not_greater_than "Direct link to dq_generate_is_num_points_not_greater_than")
+
+```python
+@staticmethod
+def dq_generate_is_num_points_not_greater_than(column: str,
+                                               criticality: str = "error",
+                                               **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometry column's coordinate counts are not greater than a specified limit.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters, including the *value* limit.
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_non_empty_geometry[​](#dq_generate_is_non_empty_geometry "Direct link to dq_generate_is_non_empty_geometry")
+
+```python
+@staticmethod
+def dq_generate_is_non_empty_geometry(column: str,
+                                      criticality: str = "error",
+                                      **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometries are not empty.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters (unused; consumed for a uniform dispatch signature).
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_ogc_valid[​](#dq_generate_is_ogc_valid "Direct link to dq_generate_is_ogc_valid")
+
+```python
+@staticmethod
+def dq_generate_is_ogc_valid(column: str,
+                             criticality: str = "error",
+                             **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometries are valid in the OGC sense.
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters (unused; consumed for a uniform dispatch signature).
+
+**Returns**:
+
+A dictionary representing the data quality rule.
+
+### dq_generate_is_not_null_island[​](#dq_generate_is_not_null_island "Direct link to dq_generate_is_not_null_island")
+
+```python
+@staticmethod
+def dq_generate_is_not_null_island(column: str,
+                                   criticality: str = "error",
+                                   **params: object) -> dict
+
+```
+
+Generates a data quality rule to check that geometries are not null islands (POINT(0 0)).
+
+**Arguments**:
+
+* `column` - The name of the column to check.
+* `criticality` - The criticality of the rule as "warn" or "error" (default is "error").
+* `params` - Additional parameters (unused; consumed for a uniform dispatch signature).
 
 **Returns**:
 

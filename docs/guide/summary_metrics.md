@@ -1,48 +1,40 @@
 # Summary Metrics
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
-
-<!-- -->
-
-[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+[Available since DQX v0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
 
 DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets. For the metrics table schema and relationships to output, quarantine, and checks tables, see [Table Schemas and Relationships](/dqx/docs/reference/table_schemas.md).
 
 ## Overview[​](#overview "Direct link to Overview")
 
-Summary metrics in DQX capture **built-in metrics** (automatically calculated), **per-check metrics** (error and warning counts broken down by check name), and **custom metrics** (user-defined SQL expressions) during data quality checking. These metrics are collected using Spark's built-in [Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html) functionality and can be persisted to tables for historical analysis.
+Summary metrics in DQX capture **built-in metrics** (automatically calculated), **per-check metrics** (error, warning, and checked row counts for each applied check), and **custom metrics** (user-defined SQL expressions) during data quality checking. These metrics are collected using Spark's built-in [Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html) functionality and can be persisted to tables for historical analysis.
 
 ### Built-in Metrics[​](#built-in-metrics "Direct link to Built-in Metrics")
 
 DQX automatically captures the following built-in metrics for every data quality check execution:
 
-| Metric Name         | Data Type       | Description                                                                                                                                                                                               |
-| ------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input_row_count`   | `int`           | Total number of input rows processed                                                                                                                                                                      |
-| `error_row_count`   | `int`           | Number of rows that failed error-level checks                                                                                                                                                             |
-| `warning_row_count` | `int`           | Number of rows that triggered warning-level checks                                                                                                                                                        |
-| `valid_row_count`   | `int`           | Number of rows that passed all checks (have no errors and warnings)                                                                                                                                       |
-| `check_metrics`     | `string` (JSON) | Per-check breakdown of error and warning counts, stored as a JSON array of structs: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. Automatically included when checks are applied. |
+| Metric Name         | Data Type       | Description                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input_row_count`   | `int`           | Total number of input rows processed                                                                                                                                                                                                                                                                                                        |
+| `error_row_count`   | `int`           | Number of rows that failed error-level checks                                                                                                                                                                                                                                                                                               |
+| `warning_row_count` | `int`           | Number of rows that triggered warning-level checks                                                                                                                                                                                                                                                                                          |
+| `valid_row_count`   | `int`           | Number of rows that passed all checks (have no errors and warnings)                                                                                                                                                                                                                                                                         |
+| `check_metrics`     | `string` (JSON) | Per-check breakdown of error, warning, and checked row counts, stored as a JSON array of structs: `[{"check_name": "...", "rule_fingerprint": "...", "error_count": N, "warning_count": N, "checked_count": N, "user_metadata": {...}}, ...]`. Automatically included when checks are applied. See [Per-Check Metrics](#per-check-metrics). |
 
 ### Per-Check Metrics[​](#per-check-metrics "Direct link to Per-Check Metrics")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
-<!-- -->
+When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error, warning, and checked row counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
 
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-When checks are applied, DQX automatically includes a `check_metrics` metric that provides a per-check breakdown of error and warning counts. This makes it possible to identify which specific checks are failing without querying the row-level `_errors` and `_warnings` columns.
-
-`check_metrics` contains an entry for **every applied check**, not only the ones that failed. Checks that never triggered still appear with `error_count` and `warning_count` set to `0`. This differs from the row-level `_errors` / `_warnings` columns, which list only the checks that failed for a given row. As a result, the breakdown is derived from the applied checks (their names), so it cannot be reconstructed from the data alone — a check with zero violations leaves no trace in `_errors` / `_warnings`.
+`check_metrics` contains an entry for **every applied check**, not only the ones that failed. Checks that never triggered still appear with `error_count` and `warning_count` set to `0`. This differs from the row-level `_errors` / `_warnings` columns, which list only the checks that failed for a given row. As a result, the breakdown is derived from the applied checks (their names, fingerprints, and filters), so it cannot be reconstructed from the data alone — a check with zero violations leaves no trace in `_errors` / `_warnings`.
 
 The `check_metrics` value is a JSON-serialized array of structs, with one entry per applied check (here `passenger_incorrect_count` was applied but never triggered):
 
 ```json
 [
-  {"check_name": "id_is_not_null", "error_count": 5, "warning_count": 0},
-  {"check_name": "name_is_not_null_and_not_empty", "error_count": 0, "warning_count": 3},
-  {"check_name": "passenger_incorrect_count", "error_count": 0, "warning_count": 0}
+  {"check_name": "id_is_not_null", "rule_fingerprint": "c7cdc9ef...", "error_count": 5, "warning_count": 0, "checked_count": 100, "user_metadata": {"owner": "data-eng", "team": "ingest"}},
+  {"check_name": "name_is_not_null_and_not_empty", "rule_fingerprint": "8a41f0d2...", "error_count": 0, "warning_count": 3, "checked_count": 100},
+  {"check_name": "passenger_incorrect_count", "rule_fingerprint": "3e9b72aa...", "error_count": 0, "warning_count": 0, "checked_count": 40}
 ]
 
 ```
@@ -50,8 +42,13 @@ The `check_metrics` value is a JSON-serialized array of structs, with one entry 
 Each entry contains:
 
 * `check_name` — the name of the check (either explicitly set via `name` in the rule definition, or auto-derived from the check function and arguments)
+* `rule_fingerprint` — the fingerprint of the check, the same value as `rule_fingerprint` in the row-level `_errors` / `_warnings` results and in checks storage. Use it to tell apart checks that share a name and to join back to check definitions.
 * `error_count` — number of rows where this check triggered an error (`0` if no rows failed the check)
 * `warning_count` — number of rows where this check triggered a warning (`0` if no rows failed the check)
+* `checked_count` — number of rows the check was applied to: rows matching the check's filter (the `filter` field, or a `row_filter` passed in the check function arguments), or all input rows when the check has no filter. This applies to row-level and dataset-level checks alike; for dataset-level checks it counts input rows, not groups. It is `0` when the check is skipped (e.g. because its columns or filter cannot be resolved). Skipped checks are still marked as `skipped` in `_errors` / `_warnings` unless `suppress_skipped` is enabled. Use it with `error_count` / `warning_count` to compute a per-check failure rate.
+* `user_metadata` — the check's own `user_metadata`, with values converted to strings the same way as in the row-level `_errors` / `_warnings` results (e.g. `true`, `0.95`). Only present when set on the check. Run-level metadata is stored separately in the `user_metadata` column of the metrics table.
+
+Error and warning counts are matched to row-level results by `rule_fingerprint`, so two checks with the same name get separate counts. When `compute_summary_metrics` runs on results written before DQX 0.14.0 (which have no `rule_fingerprint` in `_errors` / `_warnings`), counts are matched by check name instead.
 
 When persisted to the metrics table, `check_metrics` is stored as a single row with `metric_name = 'check_metrics'` and `metric_value` containing the JSON string. You can parse it with Spark's `from_json` or `json_tuple` functions for analysis:
 
@@ -59,11 +56,18 @@ When persisted to the metrics table, `check_metrics` is stored as a single row w
 SELECT
   run_id,
   check.check_name,
+  check.rule_fingerprint,
   check.error_count,
-  check.warning_count
+  check.warning_count,
+  check.checked_count,
+  check.error_count / NULLIF(check.checked_count, 0) AS error_rate,
+  check.user_metadata
 FROM main.analytics.dq_metrics
 LATERAL VIEW explode(
-  from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')
+  from_json(
+    metric_value,
+    'array<struct<check_name:string,rule_fingerprint:string,error_count:bigint,warning_count:bigint,checked_count:bigint,user_metadata:map<string,string>>>'
+  )
 ) AS check
 WHERE metric_name = 'check_metrics'
 
@@ -384,15 +388,11 @@ engine.save_results_in_table(
 
 ### Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)[​](#summary-metrics-in-spark-declarative-pipelines-lakeflow--dlt "Direct link to Summary Metrics in Spark Declarative Pipelines (Lakeflow / DLT)")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
-
-<!-- -->
-
-[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+[Available since DQX v0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
 
 To compute summary metrics in Spark Declarative Pipelines (a.k.a. SDP, Lakeflow Pipelines, or DLT), use `compute_summary_metrics`, passing the same `checks` you applied to the input data. For information about why the `DQObserver` cannot be used, see [Why not the observer](#why-not-the-observer-directly).
 
-Use compute\_summary\_metrics on batch data
+Use compute_summary_metrics on batch data
 
 `compute_summary_metrics` computes aggregates over the entire input dataset. It cannot be used with append-mode streaming queries that write data using `df.writeStream` without a watermark. Use a materialized view, batch write, or foreachBatch sink instead.
 
@@ -446,11 +446,11 @@ def dq_summary_metrics():
 
 ```
 
-See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Incremental materialized views
 
-`compute_summary_metrics` stamps each metrics row with a `run_id` and `run_time`. Without static values these are non-deterministic across pipeline runs. To enable incremental updates to the metrics, override the *run\_time\_overwrite* and *run\_id\_overwrite* with static values when creating the `DQEngine` by passing `ExtraParams`.
+`compute_summary_metrics` stamps each metrics row with a `run_id` and `run_time`. Without static values these are non-deterministic across pipeline runs. To enable incremental updates to the metrics, override the *run_time_overwrite* and *run_id_overwrite* with static values when creating the `DQEngine` by passing `ExtraParams`.
 
 ##### Using a foreachBatch sink (per-batch history)[​](#using-a-foreachbatch-sink-per-batch-history "Direct link to Using a foreachBatch sink (per-batch history)")
 
@@ -485,7 +485,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
 
 ##### Using a windowed streaming table (per-window history)[​](#using-a-windowed-streaming-table-per-window-history "Direct link to Using a windowed streaming table (per-window history)")
 
@@ -497,7 +497,7 @@ If you prefer time-windowed metrics, add a watermark on a timestamp column and a
 import pyspark.sql.functions as F
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
-# pass check names to get_metrics(check_names) to also include the per-check breakdown
+# pass the applied checks (or their names) to get_metrics(checks) to also include the per-check breakdown
 observer = DQMetricsObserver()
 
 @dlt.table
@@ -636,21 +636,21 @@ databricks labs dqx e2e --run-config "production"
 
 Summary metrics can be written and centralized in a delta table. The metrics table contains the following fields:
 
-| Column Name            | Column Type           | Description                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `run_id`               | `STRING`              | Unique run ID recorded in the summary metrics as well as detailed quality checking results to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created. |
-| `run_name`             | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                                                                                                                                                                                                                                                       |
-| `input_location`       | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                                                                                                                                                                                                                                                       |
-| `output_location`      | `STRING`              | Location of the output dataset (table name or file path).                                                                                                                                                                                                                                                                                                                |
-| `quarantine_location`  | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                                                                                                                                                                                                                                                   |
-| `checks_location`      | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                                                                                                                                                                                                                                    |
-| `rule_set_fingerprint` | `STRING`              | SHA-256 fingerprint of the rule set used for this run. Enables correlation with checks storage and results. Populated automatically when applying checks or saving results.                                                                                                                                                                                              |
-| `metric_name`          | `STRING`              | Name of the metric (e.g., 'input\_row\_count').                                                                                                                                                                                                                                                                                                                          |
-| `metric_value`         | `STRING`              | Value of the metric. All values are stored as strings — numeric metrics (e.g. `input_row_count`) are string-encoded integers, and `check_metrics` is a JSON string: `[{"check_name": "...", "error_count": N, "warning_count": N}, ...]`. Cast to the appropriate type when querying (e.g. `CAST(metric_value AS INT)` for counts, or parse JSON for `check_metrics`).   |
-| `run_time`             | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                                                                                                                                                                                                                                  |
-| `error_column_name`    | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '\_errors').                                                                                                                                                                                                                                            |
-| `warning_column_name`  | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '\_warnings').                                                                                                                                                                                                                                        |
-| `user_metadata`        | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                                                                                                                                                                                                                                                        |
+| Column Name            | Column Type           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run_id`               | `STRING`              | Unique run ID recorded in the summary metrics as well as detailed quality checking results to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created.                                                                                                                                                                |
+| `run_name`             | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `input_location`       | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `output_location`      | `STRING`              | Location of the output dataset (table name or file path).                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `quarantine_location`  | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `checks_location`      | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `rule_set_fingerprint` | `STRING`              | SHA-256 fingerprint of the rule set used for this run. Enables correlation with checks storage and results. Populated automatically when applying checks or saving results.                                                                                                                                                                                                                                                                                                                                                             |
+| `metric_name`          | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `metric_value`         | `STRING`              | Value of the metric. All values are stored as strings — numeric metrics (e.g. `input_row_count`) are string-encoded integers, and `check_metrics` is a JSON string: `[{"check_name": "...", "rule_fingerprint": "...", "error_count": N, "warning_count": N, "checked_count": N, "user_metadata": {...}}, ...]` (`user_metadata` only when set on the check; see [Per-Check Metrics](#per-check-metrics)). Cast to the appropriate type when querying (e.g. `CAST(metric_value AS INT)` for counts, or parse JSON for `check_metrics`). |
+| `run_time`             | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `error_column_name`    | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '\_errors').                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `warning_column_name`  | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '\_warnings').                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `user_metadata`        | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ### Tracking from the summary table[​](#tracking-from-the-summary-table "Direct link to Tracking from the summary table")
 

@@ -18,6 +18,15 @@ API docs are generated using [pydoc-markdown](https://github.com/pypa/pydoc-mark
 
 Most of the documentation is written in markdown files with the `.mdx` extension. The markdown files are located in the `docs` directory of the DQX project.
 
+DQX docs are split into two product tracks — keep them separate:
+
+| Track                                           | User-facing docs                                                                                                                                      | Code                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **DQX Core** (Python library / CLI / workflows) | `docs/dqx/docs/guide/`, `reference/`, `installation.mdx` (library install), etc.                                                                      | `src/databricks/labs/dqx/` |
+| **DQX Studio** (no-code Databricks App)         | [`docs/dqx/docs/studio/`](https://github.com/databrickslabs/dqx/tree/main/docs/dqx/docs/studio) (published at [`/docs/studio/`](/dqx/docs/studio.md)) | `app/`                     |
+
+When Core guide pages mention Studio, link to [`/docs/studio/`](/dqx/docs/studio.md) rather than duplicating Studio how-tos. Studio install steps belong under [DQX Studio installation](/dqx/docs/installation.md#dqx-studio-installation) and the Studio docs, not under Core workflow guides.
+
 ## Prerequisites[​](#prerequisites "Direct link to Prerequisites")
 
 Before you start writing documentation, make sure you have the following tools installed on your machine:
@@ -156,7 +165,7 @@ import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags }
 # My Feature
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.14.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.14.0" heading={false} />
   <FeatureLifecycleStage stage="beta" heading={false} />
 </FeatureTags>
 
@@ -170,7 +179,7 @@ import Admonition from '@theme/Admonition';
 # My Feature
 
 <FeatureTags>
-  <AvailableSinceVersion version="0.16.0" heading={false} />
+  <AvailableSinceVersion productName="DQX" version="0.16.0" heading={false} />
 </FeatureTags>
 <Admonition type="note" title="Changed in v0.16.0">
 Prior to v0.16.0, this option was called `foo`.
@@ -185,7 +194,7 @@ import { FeatureLifecycleStage, DeprecatedInVersion, FeatureTags }
 # My Feature
 
 <FeatureTags>
-  <DeprecatedInVersion version="0.16.0" heading={false} />
+  <DeprecatedInVersion productName="DQX" version="0.16.0" heading={false} />
   <FeatureLifecycleStage stage="deprecated" heading={false} />
 </FeatureTags>
 
@@ -201,7 +210,7 @@ Place tags in a `<FeatureTags>` row under the heading, not inside the `#` line. 
 
 Any page, section, or subsection heading can be tagged. The following conventions are used for tagging feature documentation:
 
-* Untagged features represent generally-available functionality. If a version tag is missing, the feature has been available since before release version 0.9.0.
+* Untagged features represent generally available functionality. If a version tag is missing, the feature has been available since before release version 0.9.0.
 * If a feature page is tagged, all untagged subheadings share the same version and lifecycle stage.
 * If any subheading is tagged, that capability has it own version and lifecycle stage which differs from the page-level version and lifecycle stage.
 * Sections with structural content, explanations, or examples should not be tagged.
@@ -210,7 +219,10 @@ Any page, section, or subsection heading can be tagged. The following convention
 
 The following components are available:
 
-\*`<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked to the matching section of the [Feature lifecycle](/dqx/docs/reference/feature_lifecycle.md) reference. \*`<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes. \*`<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in v0.16.0", with an optional replacement named in the tooltip. \*`<FeatureTags>` — the row container that places the tags on their own line under the heading.
+* `<FeatureLifecycleStage stage="experimental | beta | ga | deprecated" />` — a status badge linked to the matching section of the [Feature Lifecycle](/dqx/docs/reference/feature_lifecycle.md) reference.
+* `<AvailableSinceVersion version="0.14.0" />` — "Available since v0.14.0", linked to that release's notes.
+* `<DeprecatedInVersion version="0.16.0" replacement="the new_check function" />` — "Deprecated in v0.16.0", with an optional replacement named in the tooltip.
+* `<FeatureTags>` — the row container that places the tags on their own line under the heading.
 
 ## Content alignment and structure of folders[​](#content-alignment-and-structure-of-folders "Direct link to Content alignment and structure of folders")
 
@@ -220,6 +232,7 @@ The rule of thumb is:
 
 * Do not put any technical details in the main documentation.
 * All technical details should be kept in the `/docs/dev/` section.
+* Studio end-user content belongs under `/docs/studio/`; contributor/dev setup for the app belongs under `/docs/dev/contributing` (and `app/*.md` in the repo).
 
 No need for:
 

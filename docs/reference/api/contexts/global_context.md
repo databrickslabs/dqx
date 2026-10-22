@@ -1,4 +1,4 @@
-# databricks.labs.dqx.contexts.global\_context
+# databricks.labs.dqx.contexts.global_context
 
 ## GlobalContext Objects[​](#globalcontext-objects "Direct link to GlobalContext Objects")
 

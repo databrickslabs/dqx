@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.ensemble\_scorer
+# databricks.labs.dqx.anomaly.ensemble_scorer
 
 Ensemble anomaly scoring (distributed UDF and driver-local).
 
-### serialize\_ensemble\_models[​](#serialize_ensemble_models "Direct link to serialize_ensemble_models")
+### serialize_ensemble_models[​](#serialize_ensemble_models "Direct link to serialize_ensemble_models")
 
 ```python
 def serialize_ensemble_models(model_uris: list[str],
@@ -12,7 +12,7 @@ def serialize_ensemble_models(model_uris: list[str],
 
 Load and serialize ensemble models for UDF.
 
-### prepare\_ensemble\_scoring\_schema[​](#prepare_ensemble_scoring_schema "Direct link to prepare_ensemble_scoring_schema")
+### prepare_ensemble_scoring_schema[​](#prepare_ensemble_scoring_schema "Direct link to prepare_ensemble_scoring_schema")
 
 ```python
 def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType
@@ -21,7 +21,7 @@ def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType
 
 Prepare schema for ensemble scoring UDF.
 
-### create\_ensemble\_scoring\_udf[​](#create_ensemble_scoring_udf "Direct link to create_ensemble_scoring_udf")
+### create_ensemble_scoring_udf[​](#create_ensemble_scoring_udf "Direct link to create_ensemble_scoring_udf")
 
 ```python
 def create_ensemble_scoring_udf(models_bytes: list[bytes],
@@ -32,7 +32,7 @@ def create_ensemble_scoring_udf(models_bytes: list[bytes],
 
 Create ensemble scoring UDF.
 
-### create\_ensemble\_scoring\_udf\_with\_contributions[​](#create_ensemble_scoring_udf_with_contributions "Direct link to create_ensemble_scoring_udf_with_contributions")
+### create_ensemble_scoring_udf_with_contributions[​](#create_ensemble_scoring_udf_with_contributions "Direct link to create_ensemble_scoring_udf_with_contributions")
 
 ```python
 def create_ensemble_scoring_udf_with_contributions(
@@ -46,9 +46,9 @@ def create_ensemble_scoring_udf_with_contributions(
 
 Create ensemble scoring UDF with SHAP contributions.
 
-When *quantile\_points* and *threshold* are provided, SHAP runs only for rows whose mean-score severity reaches the threshold; other rows get a null contributions map.
+When *quantile_points* and *threshold* are provided, SHAP runs only for rows whose mean-score severity reaches the threshold; other rows get a null contributions map.
 
-### score\_ensemble\_models[​](#score_ensemble_models "Direct link to score_ensemble_models")
+### score_ensemble_models[​](#score_ensemble_models "Direct link to score_ensemble_models")
 
 ```python
 def score_ensemble_models(model_uris: list[str],
@@ -69,7 +69,7 @@ Score DataFrame with multiple ensemble models and compute statistics.
 
 The original row rides through feature engineering inside a struct column and is restored after scoring, so scores are attached in the same pass — no join back onto the caller's DataFrame.
 
-### score\_ensemble\_models\_local[​](#score_ensemble_models_local "Direct link to score_ensemble_models_local")
+### score_ensemble_models_local[​](#score_ensemble_models_local "Direct link to score_ensemble_models_local")
 
 ```python
 def score_ensemble_models_local(model_uris: list[str],

@@ -78,7 +78,7 @@ See more in [Quality Checks](/dqx/docs/reference/quality_checks.md).
 
 Focus your data quality efforts on the fields that matter most for business outcomes and downstream processes:
 
-* Critical business keys and identifiers (e.g., order\_id, customer\_id)
+* Critical business keys and identifiers (e.g., order_id, customer_id)
 * Timestamps and date fields used in analytics or SLAs
 * Columns used in joins, aggregations, or financial calculations
 * Columns with known historical quality issues that have caused problems in the past
@@ -125,7 +125,7 @@ Different consumers of the same data may have different quality expectations. Fo
 
 DQX offers different execution modes. Choose the one that best fits your use case:
 
-* [DQX Studio](/dqx/docs/guide/dqx_studio.md) for a no-code experience (**recommended for no-code**). A browser-based UI to author, review, run, and monitor quality rules on already persisted data. Easiest to adopt for less technical users, with built-in approval workflows and run history.
+* [DQX Studio](/dqx/docs/studio.md) for a no-code experience (**recommended for no-code**). A browser-based UI to author, review, run, and monitor quality rules on already persisted data. Easiest to adopt for less technical users, with built-in approval workflows and run history.
 * Workflows for no-code data quality validation run as a background process. Suitable for post-factum monitoring only on already persisted data. Provides ease of use and quick setup driven by a configuration file, but limited flexibility.
 * Embedded usage for integrating data quality checks directly into your data pipelines. Suitable for in-transit and real-time validation during data processing. It can also be used for post-factum monitoring. Offers the best flexibility and control, but requires coding.
 

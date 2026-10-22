@@ -1,4 +1,4 @@
-# databricks.labs.dqx.quality\_checker.quality\_checker\_runner
+# databricks.labs.dqx.quality_checker.quality_checker_runner
 
 ## QualityCheckerRunner Objects[​](#qualitycheckerrunner-objects "Direct link to QualityCheckerRunner Objects")
 
@@ -25,7 +25,7 @@ Run the DQX data quality job for the provided run configs.
 * `run_configs` - List of RunConfig objects containing the configuration for each run.
 * `max_parallelism` - Maximum number of parallel runs. Defaults to the number of CPU cores.
 
-### run\_for\_patterns[​](#run_for_patterns "Direct link to run_for_patterns")
+### run_for_patterns[​](#run_for_patterns "Direct link to run_for_patterns")
 
 ```python
 def run_for_patterns(patterns: list[str], exclude_patterns: list[str],

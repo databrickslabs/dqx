@@ -1,6 +1,6 @@
-# databricks.labs.dqx.checks\_resolver
+# databricks.labs.dqx.checks_resolver
 
-### resolve\_check\_function[​](#resolve_check_function "Direct link to resolve_check_function")
+### resolve_check_function[​](#resolve_check_function "Direct link to resolve_check_function")
 
 ```python
 def resolve_check_function(function_name: str,
@@ -24,9 +24,9 @@ function or None if not found.
 
 **Raises**:
 
-* `InvalidCheckError` - if the function is not found and fail\_on\_missing is True.
+* `InvalidCheckError` - if the function is not found and fail_on_missing is True.
 
-### resolve\_custom\_check\_functions\_from\_path[​](#resolve_custom_check_functions_from_path "Direct link to resolve_custom_check_functions_from_path")
+### resolve_custom_check_functions_from_path[​](#resolve_custom_check_functions_from_path "Direct link to resolve_custom_check_functions_from_path")
 
 ```python
 def resolve_custom_check_functions_from_path(
@@ -38,7 +38,7 @@ Resolve custom check functions from a path in the local filesystem, Databricks w
 
 **Arguments**:
 
-* `check_functions` - a mapping where each key is the name of a function (e.g., "my\_func") and each value is the file path to the Python module that defines it. The path can be absolute or relative to the installation folder, and may refer to a local filesystem location, a Databricks workspace path (e.g. /Workspace/my\_repo/my\_module.py), or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my\_module.py).
+* `check_functions` - a mapping where each key is the name of a function (e.g., "my_func") and each value is the file path to the Python module that defines it. The path can be absolute or relative to the installation folder, and may refer to a local filesystem location, a Databricks workspace path (e.g. /Workspace/my_repo/my_module.py), or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my_module.py).
 
 **Returns**:
 

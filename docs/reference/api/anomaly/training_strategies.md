@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.training\_strategies
+# databricks.labs.dqx.anomaly.training_strategies
 
 Training strategy pattern for row anomaly detection.
 
@@ -81,4 +81,4 @@ def train(train_df: DataFrame, val_df: DataFrame, columns: list[str],
 
 Train IsolationForest model(s).
 
-If allow\_ensemble and params.ensemble\_size > 1, trains an ensemble. Otherwise trains a single model using the registry abstraction.
+If allow_ensemble and params.ensemble_size > 1, trains an ensemble. Otherwise trains a single model using the registry abstraction.

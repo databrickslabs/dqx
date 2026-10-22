@@ -1,6 +1,6 @@
-# databricks.labs.dqx.llm.llm\_utils
+# databricks.labs.dqx.llm.llm_utils
 
-### extract\_json\_rules[​](#extract_json_rules "Direct link to extract_json_rules")
+### extract_json_rules[​](#extract_json_rules "Direct link to extract_json_rules")
 
 ```python
 def extract_json_rules(raw: str) -> object
@@ -11,11 +11,11 @@ Extract the DQX rules JSON value from an LLM rules response, tolerating surround
 
 Smaller serving models frequently wrap the rules array in a markdown code fence, prepend a prose preamble, or append a trailing explanation after the closing bracket. A strict *json.loads* rejects all of these (for example with *Extra data* when text trails a valid array) and discards otherwise-valid rules.
 
-The DQX rules payload is always a JSON array of rule objects, so this helper strips a code fence and returns the first array (via *\_first\_rules\_array*) that decodes to a list containing at least one dict. An array that mixes valid rule dicts with malformed entries is still returned (dropping the junk is *\_filter\_unsafe\_sql\_rules*' job, not the extractor's). An empty `[]` is accepted as a fallback; genuinely truncated or non-array output yields no qualifying list and raises, so broken responses are not silently salvaged into a meaningless fragment.
+The DQX rules payload is always a JSON array of rule objects, so this helper strips a code fence and returns the first array (via *\_first_rules_array*) that decodes to a list containing at least one dict. An array that mixes valid rule dicts with malformed entries is still returned (dropping the junk is *\_filter_unsafe_sql_rules*' job, not the extractor's). An empty `[]` is accepted as a fallback; genuinely truncated or non-array output yields no qualifying list and raises, so broken responses are not silently salvaged into a meaningless fragment.
 
 **Arguments**:
 
-* `raw` - The raw *quality\_rules* string returned by the model.
+* `raw` - The raw *quality_rules* string returned by the model.
 
 **Returns**:
 
@@ -25,7 +25,7 @@ The decoded rules list.
 
 * `json.JSONDecodeError` - if no JSON array can be located.
 
-### get\_check\_function\_definitions[​](#get_check_function_definitions "Direct link to get_check_function_definitions")
+### get_check_function_definitions[​](#get_check_function_definitions "Direct link to get_check_function_definitions")
 
 ```python
 def get_check_function_definitions(
@@ -46,7 +46,7 @@ If provided, the function will use the custom check functions to resolve the che
 
 * `list[dict]` - A list of dictionaries, each containing the definition of a check function.
 
-### get\_required\_check\_functions\_definitions[​](#get_required_check_functions_definitions "Direct link to get_required_check_functions_definitions")
+### get_required_check_functions_definitions[​](#get_required_check_functions_definitions "Direct link to get_required_check_functions_definitions")
 
 ```python
 def get_required_check_functions_definitions(
@@ -61,7 +61,7 @@ Extract only required function information (name and doc).
 
 list\[dict\[str, str]]: A list of dictionaries containing the required fields for each check function.
 
-### get\_required\_summary\_stats[​](#get_required_summary_stats "Direct link to get_required_summary_stats")
+### get_required_summary_stats[​](#get_required_summary_stats "Direct link to get_required_summary_stats")
 
 ```python
 def get_required_summary_stats(
@@ -79,7 +79,7 @@ Filters the summary statistics to include only mean, min, and max values, which 
 
 * `dict` - A dictionary containing the required fields for each summary stats with JSON-serializable values.
 
-### create\_optimizer\_training\_set[​](#create_optimizer_training_set "Direct link to create_optimizer_training_set")
+### create_optimizer_training_set[​](#create_optimizer_training_set "Direct link to create_optimizer_training_set")
 
 ```python
 def create_optimizer_training_set(
@@ -98,7 +98,7 @@ Get quality check training examples for the dspy optimizer.
 
 * `list[dspy.Example]` - A list of dspy.Example objects created from training examples.
 
-### create\_optimizer\_training\_set\_with\_stats[​](#create_optimizer_training_set_with_stats "Direct link to create_optimizer_training_set_with_stats")
+### create_optimizer_training_set_with_stats[​](#create_optimizer_training_set_with_stats "Direct link to create_optimizer_training_set_with_stats")
 
 ```python
 def create_optimizer_training_set_with_stats(
@@ -117,7 +117,7 @@ Get quality check training examples using data summary statistics for the dspy o
 
 * `list[dspy.Example]` - A list of dspy.Example objects created from training examples with stats.
 
-### get\_column\_metadata[​](#get_column_metadata "Direct link to get_column_metadata")
+### get_column_metadata[​](#get_column_metadata "Direct link to get_column_metadata")
 
 ```python
 def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str

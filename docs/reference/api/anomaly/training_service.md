@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.training\_service
+# databricks.labs.dqx.anomaly.training_service
 
 Anomaly training service - Main orchestration layer.
 
@@ -27,7 +27,7 @@ def __init__(spark: SparkSession,
 
 Initialize the training service.
 
-### apply\_expected\_anomaly\_rate\_if\_default\_contamination[​](#apply_expected_anomaly_rate_if_default_contamination "Direct link to apply_expected_anomaly_rate_if_default_contamination")
+### apply_expected_anomaly_rate_if_default_contamination[​](#apply_expected_anomaly_rate_if_default_contamination "Direct link to apply_expected_anomaly_rate_if_default_contamination")
 
 ```python
 @staticmethod
@@ -37,9 +37,9 @@ def apply_expected_anomaly_rate_if_default_contamination(
 
 ```
 
-Apply expected\_anomaly\_rate to params if contamination is not explicitly set.
+Apply expected_anomaly_rate to params if contamination is not explicitly set.
 
-### build\_context[​](#build_context "Direct link to build_context")
+### build_context[​](#build_context "Direct link to build_context")
 
 ```python
 def build_context(df: DataFrame, model_name: str, registry_table: str, *,

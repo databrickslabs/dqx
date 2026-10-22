@@ -1,4 +1,4 @@
-# databricks.labs.dqx.profiler.profiler\_runner
+# databricks.labs.dqx.profiler.profiler_runner
 
 ## ProfilerRunner Objects[​](#profilerrunner-objects "Direct link to ProfilerRunner Objects")
 
@@ -30,7 +30,7 @@ Run the DQX profiler for the given run configuration and save the generated chec
 
 A tuple containing the generated checks and profile summary statistics.
 
-### run\_for\_patterns[​](#run_for_patterns "Direct link to run_for_patterns")
+### run_for_patterns[​](#run_for_patterns "Direct link to run_for_patterns")
 
 ```python
 def run_for_patterns(generator: DQGenerator, run_config: RunConfig,

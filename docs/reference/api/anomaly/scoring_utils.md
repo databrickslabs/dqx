@@ -1,8 +1,8 @@
-# databricks.labs.dqx.anomaly.scoring\_utils
+# databricks.labs.dqx.anomaly.scoring_utils
 
 Anomaly scoring helpers: DataFrame/schema builders, row filter, join, reserved column checks.
 
-### create\_null\_scored\_dataframe[​](#create_null_scored_dataframe "Direct link to create_null_scored_dataframe")
+### create_null_scored_dataframe[​](#create_null_scored_dataframe "Direct link to create_null_scored_dataframe")
 
 ```python
 def create_null_scored_dataframe(
@@ -34,7 +34,7 @@ Create a DataFrame with null anomaly scores (for empty segments or filtered rows
 
 DataFrame with null anomaly scores and properly structured info column
 
-### add\_info\_column[​](#add_info_column "Direct link to add_info_column")
+### add_info_column[​](#add_info_column "Direct link to add_info_column")
 
 ```python
 def add_info_column(df: DataFrame,
@@ -56,14 +56,14 @@ Add info struct column with anomaly metadata.
 
 **Arguments**:
 
-* `df` - Scored DataFrame with anomaly\_score, prediction, etc.
+* `df` - Scored DataFrame with anomaly_score, prediction, etc.
 * `model_name` - Name of the model used for scoring.
 * `threshold` - Threshold used for row anomaly detection.
 * `info_col_name` - Name for the info struct column (collision-safe UUID name expected).
 * `segment_values` - Segment values if model is segmented (None for global models).
-* `enable_contributions` - Whether anomaly\_contributions are available (0–100 percent).
-* `enable_confidence_std` - Whether anomaly\_score\_std is available.
-* `ai_explanation_col` - Optional column name carrying the pre-computed AI explanation struct. When provided and present on df, it is packaged into \_dq\_info.
+* `enable_contributions` - Whether anomaly_contributions are available (0–100 percent).
+* `enable_confidence_std` - Whether anomaly_score_std is available.
+* `ai_explanation_col` - Optional column name carrying the pre-computed AI explanation struct. When provided and present on df, it is packaged into \_dq_info.
 * `score_col` - Column name for anomaly scores (internal, collision-safe).
 * `score_std_col` - Column name for ensemble std scores (internal, collision-safe).
 * `model_name`0 - Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
@@ -73,7 +73,7 @@ Add info struct column with anomaly metadata.
 
 DataFrame with info column added.
 
-### add\_severity\_percentile\_column[​](#add_severity_percentile_column "Direct link to add_severity_percentile_column")
+### add_severity_percentile_column[​](#add_severity_percentile_column "Direct link to add_severity_percentile_column")
 
 ```python
 def add_severity_percentile_column(
@@ -95,7 +95,7 @@ Add a severity percentile column using piecewise linear interpolation.
 
 DataFrame with severity percentile column added.
 
-### create\_udf\_schema[​](#create_udf_schema "Direct link to create_udf_schema")
+### create_udf_schema[​](#create_udf_schema "Direct link to create_udf_schema")
 
 ```python
 def create_udf_schema(enable_contributions: bool) -> StructType
@@ -104,7 +104,7 @@ def create_udf_schema(enable_contributions: bool) -> StructType
 
 Create schema for scoring UDF output.
 
-The anomaly\_score is used internally for populating \_dq\_info (array of structs). After merge, first check's anomaly info is at \_dq\_info\[0].anomaly; check \_dq\_info\[0].anomaly.is\_anomaly for status.
+The anomaly_score is used internally for populating \_dq_info (array of structs). After merge, first check's anomaly info is at \_dq_info\[0].anomaly; check \_dq_info\[0].anomaly.is_anomaly for status.
 
 **Arguments**:
 
@@ -114,16 +114,16 @@ The anomaly\_score is used internally for populating \_dq\_info (array of struct
 
 StructType schema for the UDF output
 
-### check\_reserved\_row\_id\_columns[​](#check_reserved_row_id_columns "Direct link to check_reserved_row_id_columns")
+### check_reserved_row_id_columns[​](#check_reserved_row_id_columns "Direct link to check_reserved_row_id_columns")
 
 ```python
 def check_reserved_row_id_columns(df: DataFrame) -> None
 
 ```
 
-Raise if DataFrame has reserved \_dqx\_row\_id / \_\_dqx\_row\_id columns.
+Raise if DataFrame has reserved \_dqx_row_id / \_\_dqx_row_id columns.
 
-### join\_filtered\_results\_back[​](#join_filtered_results_back "Direct link to join_filtered_results_back")
+### join_filtered_results_back[​](#join_filtered_results_back "Direct link to join_filtered_results_back")
 
 ```python
 def join_filtered_results_back(df: DataFrame, result: DataFrame,
@@ -134,15 +134,15 @@ def join_filtered_results_back(df: DataFrame, result: DataFrame,
 
 Left-join scored result onto df so every input row is preserved.
 
-Rows that were scored get score/info; rows that were not (e.g. filtered out by row\_filter) get null. merge\_columns (e.g. row\_id) must exist on both df and result.
+Rows that were scored get score/info; rows that were not (e.g. filtered out by row_filter) get null. merge_columns (e.g. row_id) must exist on both df and result.
 
-### apply\_row\_filter[​](#apply_row_filter "Direct link to apply_row_filter")
+### apply_row_filter[​](#apply_row_filter "Direct link to apply_row_filter")
 
 ```python
 def apply_row_filter(df: DataFrame, row_filter: str | None) -> DataFrame
 
 ```
 
-Return only rows that match row\_filter for scoring; if no filter, return df unchanged.
+Return only rows that match row_filter for scoring; if no filter, return df unchanged.
 
-row\_filter is a SQL expression (e.g. "region = 'US'"). Only these rows are run through anomaly detection; elsewhere we join results back so output has same row count.
+row_filter is a SQL expression (e.g. "region = 'US'"). Only these rows are run through anomaly detection; elsewhere we join results back so output has same row count.

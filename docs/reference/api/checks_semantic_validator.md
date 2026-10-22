@@ -1,4 +1,4 @@
-# databricks.labs.dqx.checks\_semantic\_validator
+# databricks.labs.dqx.checks_semantic_validator
 
 Semantic (ruleset-level) validation for DQ checks.
 
@@ -31,23 +31,23 @@ Provides semantic validation for a collection of DQ rules.
 Detects ruleset-level issues such as:
 
 * Duplicate rules: two rules with the same function, arguments, criticality, and filter.
-* Conflicting rules: two rules targeting the same function and column but with different arguments (e.g. two *is\_in\_range* checks with different thresholds).
+* Conflicting rules: two rules targeting the same function and column but with different arguments (e.g. two *is_in_range* checks with different thresholds).
 
 **Notes**:
 
-Rules that use raw Spark SQL expressions (via the *sql\_expression* function) are not deeply inspected — only structured metadata (function name, column, arguments) is compared. Document this limitation when such checks are used.
+Rules that use raw Spark SQL expressions (via the *sql_expression* function) are not deeply inspected — only structured metadata (function name, column, arguments) is compared. Document this limitation when such checks are used.
 
 Usage::
 
 # Just get a list of issues:
 
-issues = ChecksSemanticValidator.validate\_ruleset(checks)
+issues = ChecksSemanticValidator.validate_ruleset(checks)
 
 # Or apply with configurable behavior:
 
 ChecksSemanticValidator.apply(checks, mode=ChecksSemanticValidationMode.WARN) ChecksSemanticValidator.apply(checks, mode=ChecksSemanticValidationMode.FAIL)
 
-### detect\_duplicates[​](#detect_duplicates "Direct link to detect_duplicates")
+### detect_duplicates[​](#detect_duplicates "Direct link to detect_duplicates")
 
 ```python
 @staticmethod
@@ -67,7 +67,7 @@ Two rules are duplicates when they share the same function, arguments, criticali
 
 A list of issue message strings, empty if no duplicates found.
 
-### detect\_conflicts[​](#detect_conflicts "Direct link to detect_conflicts")
+### detect_conflicts[​](#detect_conflicts "Direct link to detect_conflicts")
 
 ```python
 @staticmethod
@@ -77,7 +77,7 @@ def detect_conflicts(checks: list[dict]) -> list[str]
 
 Detect rules targeting the same function and column with different arguments.
 
-For example, two *is\_in\_range* checks on *age* with different min/max thresholds would be flagged, as this is likely a misconfiguration.
+For example, two *is_in_range* checks on *age* with different min/max thresholds would be flagged, as this is likely a misconfiguration.
 
 **Arguments**:
 
@@ -87,7 +87,7 @@ For example, two *is\_in\_range* checks on *age* with different min/max threshol
 
 A list of issue message strings, empty if no conflicts found.
 
-### validate\_ruleset[​](#validate_ruleset "Direct link to validate_ruleset")
+### validate_ruleset[​](#validate_ruleset "Direct link to validate_ruleset")
 
 ```python
 @staticmethod
@@ -116,7 +116,7 @@ def apply(checks: list[dict],
 
 Run semantic validation and surface issues according to the chosen mode.
 
-This is the main entry point called from *validate\_checks*, *save\_checks*, and *load\_checks* with configurable behavior.
+This is the main entry point called from *validate_checks*, *save_checks*, and *load_checks* with configurable behavior.
 
 **Arguments**:
 

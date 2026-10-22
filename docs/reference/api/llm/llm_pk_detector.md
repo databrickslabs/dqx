@@ -1,4 +1,4 @@
-# databricks.labs.dqx.llm.llm\_pk\_detector
+# databricks.labs.dqx.llm.llm_pk_detector
 
 Primary key detection using LLM analysis.
 
@@ -12,7 +12,7 @@ class PredictionResult()
 
 Result from LLM primary key prediction.
 
-### to\_dict[​](#to_dict "Direct link to to_dict")
+### to_dict[​](#to_dict "Direct link to to_dict")
 
 ```python
 def to_dict() -> dict[str, Any]
@@ -164,7 +164,7 @@ Initialize the validation chain.
 
 * `validators` - List of validators to run in sequence.
 
-### validate\_all[​](#validate_all "Direct link to validate_all")
+### validate_all[​](#validate_all "Direct link to validate_all")
 
 ```python
 def validate_all(table: str, pk_columns: list[str], table_columns: list[str],
@@ -260,7 +260,7 @@ Initialize the retry strategy.
 
 * `max_retries` - Maximum number of retries allowed.
 
-### should\_retry[​](#should_retry "Direct link to should_retry")
+### should_retry[​](#should_retry "Direct link to should_retry")
 
 ```python
 def should_retry(attempt: int, validation_result: ValidationResult) -> bool
@@ -278,7 +278,7 @@ Determine if we should retry based on attempt number and validation result.
 
 True if we should retry, False otherwise.
 
-### generate\_feedback[​](#generate_feedback "Direct link to generate_feedback")
+### generate_feedback[​](#generate_feedback "Direct link to generate_feedback")
 
 ```python
 def generate_feedback(attempt: int, pk_columns: list[str],
@@ -324,7 +324,7 @@ Initialize the builder for a specific table.
 
 * `table` - Fully qualified table name.
 
-### with\_success[​](#with_success "Direct link to with_success")
+### with_success[​](#with_success "Direct link to with_success")
 
 ```python
 def with_success(pk_columns: list[str], confidence: str,
@@ -344,7 +344,7 @@ Mark the detection as successful with primary key details.
 
 Self for method chaining.
 
-### with\_validation[​](#with_validation "Direct link to with_validation")
+### with_validation[​](#with_validation "Direct link to with_validation")
 
 ```python
 def with_validation(has_duplicates: bool,
@@ -363,7 +363,7 @@ Add validation results to the detection result.
 
 Self for method chaining.
 
-### with\_error[​](#with_error "Direct link to with_error")
+### with_error[​](#with_error "Direct link to with_error")
 
 ```python
 def with_error(error: str) -> "DetectionResultBuilder"
@@ -380,7 +380,7 @@ Mark the detection as failed with an error message.
 
 Self for method chaining.
 
-### with\_status[​](#with_status "Direct link to with_status")
+### with_status[​](#with_status "Direct link to with_status")
 
 ```python
 def with_status(final_status: str) -> "DetectionResultBuilder"
@@ -391,13 +391,13 @@ Set the final status of the detection.
 
 **Arguments**:
 
-* `final_status` - Status string (e.g., 'success', 'max\_retries\_reached', 'invalid\_columns').
+* `final_status` - Status string (e.g., 'success', 'max_retries_reached', 'invalid_columns').
 
 **Returns**:
 
 Self for method chaining.
 
-### add\_attempt[​](#add_attempt "Direct link to add_attempt")
+### add_attempt[​](#add_attempt "Direct link to add_attempt")
 
 ```python
 def add_attempt(attempt_result: dict[str, Any]) -> "DetectionResultBuilder"
@@ -438,7 +438,7 @@ Formats and logs detection results for display.
 
 This class separates presentation logic from business logic, making it easy to test and swap formatters.
 
-### print\_summary[​](#print_summary "Direct link to print_summary")
+### print_summary[​](#print_summary "Direct link to print_summary")
 
 ```python
 @staticmethod
@@ -452,7 +452,7 @@ Print a formatted summary of the detection result.
 
 * `result` - Detection result dictionary.
 
-### format\_reasoning[​](#format_reasoning "Direct link to format_reasoning")
+### format_reasoning[​](#format_reasoning "Direct link to format_reasoning")
 
 ```python
 @staticmethod
@@ -466,7 +466,7 @@ Format and print LLM reasoning step by step.
 
 * `reasoning` - LLM reasoning text.
 
-### print\_trace\_if\_available[​](#print_trace_if_available "Direct link to print_trace_if_available")
+### print_trace_if_available[​](#print_trace_if_available "Direct link to print_trace_if_available")
 
 ```python
 @staticmethod
@@ -525,7 +525,7 @@ Note: DSPy must be configured before creating this instance.
 * `show_live_reasoning` - Whether to display live reasoning during detection.
 * `max_retries` - Maximum number of retries for detection.
 
-### detect\_primary\_keys\_with\_llm[​](#detect_primary_keys_with_llm "Direct link to detect_primary_keys_with_llm")
+### detect_primary_keys_with_llm[​](#detect_primary_keys_with_llm "Direct link to detect_primary_keys_with_llm")
 
 ```python
 def detect_primary_keys_with_llm(table: str,
@@ -546,12 +546,12 @@ Dictionary containing detection results with the following keys:
 
 * table: The table name
 * success: Whether detection was successful
-* primary\_key\_columns: List of detected primary key columns (if successful)
+* primary_key_columns: List of detected primary key columns (if successful)
 * confidence: Confidence level (high/medium/low)
 * reasoning: LLM reasoning for the selection
-* has\_duplicates: Whether duplicates were found (if validation performed)
-* duplicate\_count: Number of duplicate combinations (if validation performed)
+* has_duplicates: Whether duplicates were found (if validation performed)
+* duplicate_count: Number of duplicate combinations (if validation performed)
 * error: Error message (if failed)
-* final\_status: Final status of the detection
-* all\_attempts: List of all attempts (if retries occurred)
-* retries\_attempted: Number of retries (if retries occurred)
+* final_status: Final status of the detection
+* all_attempts: List of all attempts (if retries occurred)
+* retries_attempted: Number of retries (if retries occurred)

@@ -1,73 +1,75 @@
-![DQX Logo](img/logo.svg)
+![DQX Logo](/dqx/img/logo.svg)
 
-# DQX - Data Quality Framework
+# Data quality you can trust
 
-Provided by [Databricks Labs](https://github.com/databrickslabs)
+DQX is the data quality framework for Databricks — define, monitor, and act on data quality issues across your lakehouse.
 
-DQX is a data quality framework for Apache Spark that enables you to define, monitor, and address data quality issues in your Python-based data pipelines.
+Provided by<!-- --> [Databricks Labs](https://github.com/databrickslabs)
 
-[Motivation](/dqx/docs/motivation.md)[Installation](/dqx/docs/installation.md)[User guide](/dqx/docs/guide.md)[Demos](/dqx/docs/demos.md)[Reference](/dqx/docs/reference.md)
+## [DQX Core](/dqx/docs/guide.md)
 
-## Capabilities
+[The Python package. Define and run checks in your PySpark pipelines and notebooks — batch and streaming.](/dqx/docs/guide.md)
 
-### DQX Studio (No-Code UI)
+[Battle-tested data quality frameworkOpen the Core guide](/dqx/docs/guide.md)
 
-Author, review, run, and monitor quality rules from a browser.
+## [DQX StudioBeta](/dqx/docs/studio.md)
 
-### MCP for AI Coding Agents
+[The no-code web app. Author, run, and monitor quality rules from your browser — no code required.](/dqx/docs/studio.md)
 
-Expose DQX tools to Genie Code, Cursor, and Claude Code over MCP.
+[No code requiredOpen the Studio guide](/dqx/docs/studio.md)
 
-### Info of Failed Checks
+## Compare what each option offers
 
-Get detailed insights into why a check has failed.
+DQX comes in two flavors. Pick one to see its features.
 
-### Data Format Agnostic
+DQX Core· Python package DQX Studio· No-code app
+
+### Data format agnostic
 
 Works seamlessly with PySpark DataFrames.
 
-### Spark Batch & Spark Structured Streaming Support
+### Batch & streaming
 
-Includes Lakeflow Pipelines (DLT) integration.
+Spark batch and Structured Streaming, with Lakeflow (DLT) pipeline integration.
 
-### Custom Reactions to Failed Checks
+### Row & column-level rules
+
+Define quality rules at both the row and column level.
+
+### Rich failure detail
+
+Get detailed insight into exactly why a check failed.
+
+### Custom reactions to failures
 
 Drop, mark, or quarantine invalid data flexibly.
 
-### Check Levels
+### Profiling & rule generation
 
-Use warning or error levels for failed checks.
+Profile input data and auto-generate data quality rule candidates.
 
-### Row & Column Level Rules
+### Code or config checks
 
-Define quality rules at both row and column levels.
+Define checks in code, or declaratively as configuration.
 
-### Profiling & Quality Rules Generation
+### Validation summary & dashboard
 
-Automatically profile input data and generate data quality rule candidates.
+Track and pinpoint data quality issues over time.
 
-### Code or Config Checks
+### Row anomaly detection
 
-Define checks as code or configuration.
+Detect unusual rows with trained ML models and explanations.
 
-### Validation Summary & Quality Dashboard
+### Data contracts
 
-Track and identify data quality issues effectively.
+Generate quality rules from ODCS contracts, including schema validation.
 
-### DQ Row Anomaly Detection
+### MCP for AI coding agents
 
-Automatically detect unusual rows with trained ML Models and explanations.
+Expose DQX tools to Genie Code, Cursor, and Claude Code over MCP.
 
-### Data Contract
+### Actions and alerting
 
-Generate quality rules from ODCS data contracts, including schema validation.
+Send Slack, Teams, or webhook alerts, or fail the pipeline, when summary metrics cross a threshold.
 
-### Actions and Alerting
-
-Send Slack, Microsoft Teams, or webhook alerts, or fail the pipeline, when summary metrics cross a threshold.
-
-## Improve your Data Quality now 🚀
-
-Follow our comprehensive guide to get up and running with DQX in no time.
-
-[Start using DQX ✨](/dqx/docs/installation.md)
+[Motivation](/dqx/docs/motivation.md)[Install DQX Core](/dqx/docs/installation.md)[DQX Core guide](/dqx/docs/guide.md)[Demos](/dqx/docs/demos.md)

@@ -25,12 +25,12 @@ For external environments, such as CI servers or local machines, you can authent
 
 The `DQProfiler` class provides methods to analyze datasets and generate data quality profiles for each column:
 
-| Method                         | Description                                                                 | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `profile`                      | Profiles a DataFrame to generate summary statistics and data quality rules. | `df`: DataFrame to profile; `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `profile_table`                | Profiles a table to generate summary statistics and data quality rules.     | `table`: Fully-qualified table name to profile (e.g. 'catalog.schema.table'); `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with default options);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `profile_tables_for_patterns`  | Profiles multiple tables in Unity Catalog with pattern matching.            | `patterns`: List of table names or filesystem-style wildcards (e.g. 'schema.\*') to include (if None, all tables are included); `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names to include as values (default: all columns); `options`: Optional list of dictionaries with table names (or table wildcard patterns) as key and profiling options as values (merged with default options); `max_parallelism`: (optional) Maximum number of tables to check in parallel (defaults to the number of CPU cores); `exclude_patterns`: (optional) List of table names or filesystem-style wildcards (e.g. '\*\_dq\_output') to exclude, useful if wanting to exclude existing output or quarantine tables. |
-| `detect_primary_keys_with_llm` | Detects primary keys in the input table using LLM.                          | `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data; `max_retries`: Maximum number of retries to find unique primary key combination.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Method                         | Description                                                                 | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile`                      | Profiles a DataFrame to generate summary statistics and data quality rules. | `df`: DataFrame to profile; `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `profile_table`                | Profiles a table to generate summary statistics and data quality rules.     | `table`: Fully-qualified table name to profile (e.g. 'catalog.schema.table'); `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with default options);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `profile_tables_for_patterns`  | Profiles multiple tables in Unity Catalog with pattern matching.            | `patterns`: List of table names or filesystem-style wildcards (e.g. 'schema.\*') to include (if None, all tables are included); `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names to include as values (default: all columns); `options`: Optional list of dictionaries with table names (or table wildcard patterns) as key and profiling options as values (merged with default options); `max_parallelism`: (optional) Maximum number of tables to check in parallel (defaults to the number of CPU cores); `exclude_patterns`: (optional) List of table names or filesystem-style wildcards (e.g. '\*\_dq_output') to exclude, useful if wanting to exclude existing output or quarantine tables. |
+| `detect_primary_keys_with_llm` | Detects primary keys in the input table using LLM.                          | `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data; `max_retries`: Maximum number of retries to find unique primary key combination.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 See usage example [here](/dqx/docs/guide/data_profiling.md).
 
@@ -42,7 +42,7 @@ The profiler supports extensive configuration options to customize behavior:
 | ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `round`                         | `True`        | Round min/max values for cleaner rules                                                                                                                                                                                                                                                                                               |
 | `max_in_count`                  | `10`          | Generate `is_in` rule if distinct values < this count                                                                                                                                                                                                                                                                                |
-| `distinct_ratio`                | `0.05`        | Generate `is_in` rule if distinct values < 5% of total                                                                                                                                                                                                                                                                               |
+| `distinct_ratio`                | `0.05`        | Generate `is_in` rule if distinct values < 5% of non-null values                                                                                                                                                                                                                                                                     |
 | `max_null_ratio`                | `0.01`        | Generate `is_not_null` rule if null values < 1% of total                                                                                                                                                                                                                                                                             |
 | `remove_outliers`               | `True`        | Enable outlier detection for min/max rules                                                                                                                                                                                                                                                                                           |
 | `outlier_columns`               | `[]`          | Specific columns for outlier detection (empty = all numeric)                                                                                                                                                                                                                                                                         |
@@ -60,10 +60,16 @@ The profiler supports extensive configuration options to customize behavior:
 | `has_no_outliers`               | `False`       | Enable or disable `has_no_outliers` rule generation globally for all columns. Disabled by default due to performance considerations.                                                                                                                                                                                                 |
 | `has_no_outliers_allow_columns` | `[]`          | Generate `has_no_outliers` rule only for the listed columns; all other columns are skipped. Mutually exclusive with `has_no_outliers_deny_columns`                                                                                                                                                                                   |
 | `has_no_outliers_deny_columns`  | `[]`          | Skip `has_no_outliers` rule generation for the listed columns; all other columns are processed. Mutually exclusive with `has_no_outliers_allow_columns`                                                                                                                                                                              |
+| `profile_geospatial`            | `False`       | Profile native `GEOMETRY` and `GEOGRAPHY` columns to generate geospatial rules (default `False`); Requires Databricks serverless or DBR 17.1+                                                                                                                                                                                        |
+| `geospatial_srid`               | `3857`        | SRID used to transform geometries when computing areas for geospatial rules (default `3857`)                                                                                                                                                                                                                                         |
 
 Ratio thresholds are evaluated on the sampled data
 
 Ratio-based decisions such as `outliers_ratio` (and the other `*_ratio` options) are evaluated on the **sampled** data (see `sample_fraction` / `limit`), not the full dataset. A `has_no_outliers` rule is therefore emitted based on the outlier fraction observed in the sample; the generated check itself still runs against the full dataset at apply time. For more representative rule generation on skewed data, increase `sample_fraction` or `limit`.
+
+\`distinct_ratio\` denominator changed
+
+`distinct_ratio` is now `distinct_count / count_non_null` (previously `/ total_rows`), so null-heavy low-cardinality columns may no longer emit an `is_in` rule — lower `distinct_ratio` or raise `max_in_count` to restore it.
 
 ## DQProfile Structure[​](#dqprofile-structure "Direct link to DQProfile Structure")
 
@@ -77,6 +83,7 @@ class DQProfile:
     description: str | None = None              # Optional description of how the rule was generated
     parameters: dict[str, Any] | None = None    # Optional parameters for the rule
     filter: str | None = None                   # Optional filter to be applied to the data source
+    semantic_type: str | None = None            # Detected semantic type name (only set when semantic profiling is enabled)
 
 ```
 
@@ -84,34 +91,221 @@ class DQProfile:
 
 Profiling data generates several types of `DQProfile` objects. Each profile can be used to generate a corresponding `DQRule` consisting of an input column, built-in DQX check function, and arguments inferred during profiling.
 
-| Profile Type             | DQX Check Function          | Supported Data Types                                                  | Profiled Values                                                                                                              | Notes                                                                                                                                                                                               |
-| ------------------------ | --------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| is\_not\_null            | `is_not_null`               | All                                                                   |                                                                                                                              | Generated when `null_ratio <= max_null_ratio` for non-text columns, or when `null_ratio <= max_null_ratio` but `empty_ratio > max_empty_ratio` for text columns                                     |
-| is\_not\_null\_or\_empty | `is_not_null_and_not_empty` | `StringType`, `CharType`, or `VarcharType`                            | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when both `null_ratio <= max_null_ratio` and `empty_ratio <= max_empty_ratio`                                                                                            |
-| is\_not\_empty           | `is_not_empty`              | `StringType`, `CharType`, or `VarcharType`                            | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when `null_ratio > max_null_ratio` (nulls allowed) but `empty_ratio <= max_empty_ratio`                                                                                  |
-| is\_in                   | `is_in_list`                | `StringType`, `CharType`, `VarcharType`, `IntegerType`, or `LongType` | `in`: List of distinct values from the profiled data                                                                         | List of values checks are inferred based on the `max_in_count` and `distinct_ratio` in the profiler options                                                                                         |
-| min\_max                 | `is_in_range`               | `NumericType`, `DateType`, `TimestampType`, or `TimestampNTZType`     | `min`: Minimum value from the profiled data; `max`: Maximum value from the profiled data                                     | Values can be rounded by setting `"round": True` in the profiler options; Outlier values may be ignored based on the profiler options (e.g. `remove_outliers`, `num_sigmas`, and `outlier_columns`) |
-| has\_no\_outliers        | `has_no_outliers`           | `NumericType` (all numeric types)                                     |                                                                                                                              | Generated when the fraction of outliers detected via the Median Absolute Deviation (MAD) method is at or below `outliers_ratio`; outliers are values outside `median ± 3.5 × MAD`                   |
-| is\_unique               | `is_unique`                 | All                                                                   | `reasoning`: Reason for inferring that a column is a primary key; `confidence`: Confidence score of the LLM-generated result | Requires installation of [LLM Extensions](/dqx/docs/installation.md#optional-dependencies); Set `llm_primary_key_detection: True` in the profiler options to enable primary key detection           |
+| Profile Type                                                 | DQX Check Function                                                                                                                 | Supported Data Types                                                               | Profiled Values                                                                                                              | Notes                                                                                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| is_not_null                                                  | `is_not_null`                                                                                                                      | All                                                                                |                                                                                                                              | Generated when `null_ratio <= max_null_ratio` for non-text columns, or when `null_ratio <= max_null_ratio` but `empty_ratio > max_empty_ratio` for text columns                                     |
+| is_not_null_or_empty                                         | `is_not_null_and_not_empty`                                                                                                        | `StringType`, `CharType`, or `VarcharType`                                         | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when both `null_ratio <= max_null_ratio` and `empty_ratio <= max_empty_ratio`                                                                                            |
+| is_not_empty                                                 | `is_not_empty`                                                                                                                     | `StringType`, `CharType`, or `VarcharType`                                         | `trim_strings`: Whether to trim whitespace before checking for empty strings                                                 | Generated for text columns when `null_ratio > max_null_ratio` (nulls allowed) but `empty_ratio <= max_empty_ratio`                                                                                  |
+| is_in                                                        | `is_in_list`                                                                                                                       | `StringType`, `CharType`, `VarcharType`, `IntegerType`, `LongType`, or `ShortType` | `in`: List of distinct values from the profiled data                                                                         | List of values checks are inferred based on the `max_in_count` and `distinct_ratio` in the profiler options                                                                                         |
+| min_max                                                      | `is_in_range`                                                                                                                      | `NumericType`, `DateType`, `TimestampType`, or `TimestampNTZType`                  | `min`: Minimum value from the profiled data; `max`: Maximum value from the profiled data                                     | Values can be rounded by setting `"round": True` in the profiler options; Outlier values may be ignored based on the profiler options (e.g. `remove_outliers`, `num_sigmas`, and `outlier_columns`) |
+| has_no_outliers                                              | `has_no_outliers`                                                                                                                  | `NumericType` (all numeric types)                                                  |                                                                                                                              | Generated when the fraction of outliers detected via the Median Absolute Deviation (MAD) method is at or below `outliers_ratio`; outliers are values outside `median ± 3.5 × MAD`                   |
+| is_unique                                                    | `is_unique`                                                                                                                        | All                                                                                | `reasoning`: Reason for inferring that a column is a primary key; `confidence`: Confidence score of the LLM-generated result | Requires installation of [LLM Extensions](/dqx/docs/installation.md#optional-dependencies); Set `llm_primary_key_detection: True` in the profiler options to enable primary key detection           |
+| geometry_type                                                | `is_point` / `is_linestring` / `is_polygon` / `is_multipoint` / `is_multilinestring` / `is_multipolygon` / `is_geometrycollection` | `GEOMETRY`, `GEOGRAPHY`                                                            | `type`: profiled `ST_GeometryType`                                                                                           | Requires `profile_geospatial: True`; generated only when the sampled column holds a single geometry type                                                                                            |
+| has_x_coordinate_between / has_y_coordinate_between          | `has_x_coordinate_between` / `has_y_coordinate_between`                                                                            | `GEOMETRY`, `GEOGRAPHY`                                                            | `min_value`, `max_value`: bounding-box bounds                                                                                | Requires `profile_geospatial: True`                                                                                                                                                                 |
+| is_area_not_less_than / is_area_not_greater_than             | `is_area_not_less_than` / `is_area_not_greater_than`                                                                               | `GEOMETRY`, `GEOGRAPHY`                                                            | `value`: area bound; `srid`: `geospatial_srid`                                                                               | Requires `profile_geospatial: True`                                                                                                                                                                 |
+| is_num_points_not_less_than / is_num_points_not_greater_than | `is_num_points_not_less_than` / `is_num_points_not_greater_than`                                                                   | `GEOMETRY`, `GEOGRAPHY`                                                            | `value`: coordinate-count bound                                                                                              | Requires `profile_geospatial: True`                                                                                                                                                                 |
+| is_non_empty_geometry / is_ogc_valid / is_not_null_island    | `is_non_empty_geometry` / `is_ogc_valid` / `is_not_null_island`                                                                    | `GEOMETRY`, `GEOGRAPHY`                                                            |                                                                                                                              | Requires `profile_geospatial: True`; generated when the sample satisfies the property within `max_null_ratio`                                                                                       |
 
 ## DQGenerator methods[​](#dqgenerator-methods "Direct link to DQGenerator methods")
 
 The `DQGenerator` class converts profiling results into DQX quality rules:
 
-| Method                          | Description                                                                                                                                                                                                                                                                  | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Supports local execution |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| `generate_dq_rules`             | Generates a list of data quality rules from profiling results.                                                                                                                                                                                                               | `profiles`: List of DQProfile objects; `criticality`: Criticality for generated rules (default "error").                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Yes                      |
-| `generate_dq_rules_ai_assisted` | Generates a list of data quality rules using Natural language description.                                                                                                                                                                                                   | `user_input`: Natural language description of data quality requirements; `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data (if not provided, description provided by the user will be used to guess the table schema).                                                                                                                                                                                                                                                                                                                             | Yes                      |
-| `generate_rules_from_contract`  | Generates quality rules from ODCS data contract specification. Either `contract` or `contract_file` must be provided. When the contract defines a schema and `generate_schema_validation=True` (default), one dataset-level `has_valid_schema` rule per schema is generated. | `contract`: Pre-loaded DataContract object (or `None`); `contract_file`: Path to contract YAML file (or `None`); `contract_format`: Contract format (default "odcs"); `generate_predefined_rules`: Generate rules from contract fields (default `True`); `process_text_rules`: Process text expectations with LLM (default `True`); `generate_schema_validation`: Generate has\_valid\_schema rules from contract schema (default `True`); `strict_schema_validation`: Passed as strict to has\_valid\_schema (default `True`); `default_criticality`: Default criticality for predefined rules (default "error"). | Yes                      |
+| Method                          | Description                                                                                                                                                                                                                                                                  | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Supports local execution |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `generate_dq_rules`             | Generates a list of data quality rules from profiling results.                                                                                                                                                                                                               | `profiles`: List of DQProfile objects; `criticality`: Criticality for generated rules (default "error").                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Yes                      |
+| `generate_dq_rules_ai_assisted` | Generates a list of data quality rules using Natural language description.                                                                                                                                                                                                   | `user_input`: Natural language description of data quality requirements; `input_config`: `InputConfig` object with the data location (e.g. a table) and options for reading the input data (if not provided, description provided by the user will be used to guess the table schema).                                                                                                                                                                                                                                                                                                                         | Yes                      |
+| `generate_rules_from_contract`  | Generates quality rules from ODCS data contract specification. Either `contract` or `contract_file` must be provided. When the contract defines a schema and `generate_schema_validation=True` (default), one dataset-level `has_valid_schema` rule per schema is generated. | `contract`: Pre-loaded DataContract object (or `None`); `contract_file`: Path to contract YAML file (or `None`); `contract_format`: Contract format (default "odcs"); `generate_predefined_rules`: Generate rules from contract fields (default `True`); `process_text_rules`: Process text expectations with LLM (default `True`); `generate_schema_validation`: Generate has_valid_schema rules from contract schema (default `True`); `strict_schema_validation`: Passed as strict to has_valid_schema (default `True`); `default_criticality`: Default criticality for predefined rules (default "error"). | Yes                      |
 
 ## DQDltGenerator methods[​](#dqdltgenerator-methods "Direct link to DQDltGenerator methods")
 
 The `DQDltGenerator` class creates Delta Live Tables expectation statements from profiling results:
 
-| Method               | Description                                                 | Arguments                                                                                                                                                            | Supports local execution |
-| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `generate_dlt_rules` | Generates Delta Live Table rules in the specified language. | `rules`: List of DQProfile objects; `action`: Optional violation action ("drop", "fail", or None); `language`: Target language ("SQL", "Python", or "Python\_Dict"). | Yes                      |
+| Method               | Description                                                 | Arguments                                                                                                                                                           | Supports local execution |
+| -------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `generate_dlt_rules` | Generates Delta Live Table rules in the specified language. | `rules`: List of DQProfile objects; `action`: Optional violation action ("drop", "fail", or None); `language`: Target language ("SQL", "Python", or "Python_Dict"). | Yes                      |
+
+## Custom Column Metrics[​](#custom-column-metrics "Direct link to Custom Column Metrics")
+
+Use the `register_profile_column_metric` decorator to add your own per-column metrics. Each metric is computed once per column (before any profile builder runs) and shared across every profile builder — but each additional registered metric adds an aggregation to every profiling run.
+
+A metric function receives the column's *field* (`StructField`) and *column_label* (its name in the DataFrame), and returns a PySpark aggregation `Column` or `None` to skip for that column type. The string passed to the decorator's *profile_column_metric_type* argument (e.g. `"percentile_10"`) becomes the key in the metrics dictionary that all profile builders receive.
+
+```python
+from pyspark.sql import Column
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from databricks.labs.dqx.profiler.profiler_column_metrics import register_profile_column_metric
+
+@register_profile_column_metric("percentile_10")
+def percentile_10(field: T.StructField, column_label: str) -> Column | None:
+    if not isinstance(field.dataType, T.NumericType):
+        return None
+    return F.percentile_approx(column_label, 0.1)
+
+```
+
+### Built-in column metrics[​](#built-in-column-metrics "Direct link to Built-in column metrics")
+
+Two groups of metrics are available to all profile builders: **always-on internals** that the profiler owns, and **registry-managed** metrics that can be added, replaced, or removed via `register_profile_column_metric` / `deregister_profile_column_metric`.
+
+**Always-on internals (not deregisterable):**
+
+| Metric key       | Applicable types | Description                                              |
+| ---------------- | ---------------- | -------------------------------------------------------- |
+| `count`          | All              | Total row count (before null filtering)                  |
+| `count_non_null` | All              | Non-null value count                                     |
+| `count_null`     | All              | Null value count (derived from `count - count_non_null`) |
+
+These keys are reserved: calling `register_profile_column_metric("count")` / `"count_non_null"` / `"count_null"` — or `deregister_profile_column_metric` with any of them — raises `InvalidParameterError`. Profile builders can rely on these keys always being present with integer values.
+
+**Registry-managed built-ins:**
+
+| Metric key       | Applicable types | Description                          |
+| ---------------- | ---------------- | ------------------------------------ |
+| `count_distinct` | All              | Distinct non-null value count        |
+| `empty_count`    | Text only        | Empty-string count; `0` for non-text |
+
+Both are registered via `@register_profile_column_metric(...)` at import time and can be deregistered like any custom metric.
+
+Spark's `DataFrame.summary()` additionally contributes `mean`, `stddev`, `min`, `25%`, `50%`, `75%`, and `max` for numeric columns (the percentile keys carry the literal `%` suffix that `summary()` emits, so a builder reads them as `profiler_metrics.get("50%")`).
+
+See the [Data Profiling Guide](/dqx/docs/guide/data_profiling.md#extending-the-profiler-with-custom-column-metrics) for a complete example including a custom profile builder that consumes a custom metric.
 
 Complete Profiling Guide
 
 For comprehensive examples, advanced options, and best practices, see the [Data Profiling Guide](/dqx/docs/guide/data_profiling.md).
+
+## Semantic-aware profiling[​](#semantic-aware-profiling "Direct link to Semantic-aware profiling")
+
+[Beta](/dqx/docs/reference/feature_lifecycle.md#beta "Feature lifecycle: Beta")[Available since DQX v0.17.0](https://github.com/databrickslabs/dqx/releases/tag/v0.17.0 "Available since DQX v0.17.0")
+
+Semantic-aware profiling introduces a lightweight classification stage between metric collection and check generation so that a column receives *one* consistent family of checks. For example, a *vehicle_type* column classified as an *enum* now receives an *is_in* candidate only — not both *is_in* and *min_max* — while a continuous *cargo_weight* column is classified as a *measurement* and receives *min_max* only.
+
+The feature is fully opt-in: it runs if a `semantic_registry` is supplied to the `DQProfiler` constructor. When no registry is supplied, semantic detection does not run and every `DQProfile.semantic_type` field is `None`.
+
+### Composing a registry[​](#composing-a-registry "Direct link to Composing a registry")
+
+`SemanticRegistry` is an immutable, ordered, name-unique collection of detectors. The composition methods (all return a new registry, leaving the original untouched):
+
+```text
+prepend(detector)          → puts one detector at the front (highest priority)
+append(detector)           → adds one detector at the back (lowest priority)
+insert(name, detector)     → inserts one detector after the named entry
+replace(name, detector)    → swaps the entry named `name`
+remove(name)               → drops the entry named `name`
+SemanticRegistry.of(...)   → build a registry with an explicit chain from scratch
+
+```
+
+```python
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.semantic import (
+    DQSemanticType,
+    DQSemanticTypeDetector,
+    SemanticRegistry,
+    default_semantic_detectors,
+)
+
+# 1. Default chain (enum → key → measurement → text)
+default_registry = SemanticRegistry.default()
+
+# 2. Prepend a custom detector so it wins first
+def _detect_uuid(ctx):
+    # ... your logic ...
+    return DQSemanticType(name="uuid") if ... else None
+
+uuid_detector = DQSemanticTypeDetector(name="uuid", detect=_detect_uuid)
+prepended = SemanticRegistry.default().prepend(uuid_detector)
+
+# 3. Append as a lowest-priority fallback
+appended = SemanticRegistry.default().append(uuid_detector)
+
+# 4. Insert immediately after the built-in `enum` detector
+inserted = SemanticRegistry.default().insert("enum", uuid_detector)
+
+# 5. Swap a single entry by name (position preserved)
+custom_enum_detector = DQSemanticTypeDetector(name="enum", detect=_detect_uuid)
+swapped = SemanticRegistry.default().replace("enum", custom_enum_detector)
+
+# 6. Drop a built-in detector
+without_text = SemanticRegistry.default().remove("text")
+
+# 7. Build an arbitrary chain from scratch
+custom = SemanticRegistry.of(uuid_detector, *default_semantic_detectors())
+
+# 8. Empty registry — semantic types are always None
+empty = SemanticRegistry()
+
+profiler = DQProfiler(ws, semantic_registry=default_registry)
+
+```
+
+Every composition method returns a **new** `SemanticRegistry` and routes through the constructor so name-uniqueness is enforced on the derived instance. Adding a detector whose name clashes with an existing entry raises `pydantic.ValidationError`; `insert`, `replace`, and `remove` raise `ValueError` when the referenced `name` is not present. To construct an arbitrary chain from scratch, use `SemanticRegistry.of(...)` (varargs) or the `SemanticRegistry(detectors=(...))` constructor directly.
+
+### Built-in detectors[​](#built-in-detectors "Direct link to Built-in detectors")
+
+| Detector      | Applicability                                                                                                                                                                                                                                                                                                                 | Produced `properties`                                        |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `enum`        | String or integer columns (including `ShortType`) where `cardinality < max_in_count` AND `cardinality / count_non_null < distinct_ratio` (default 0.05, taken from the `distinct_ratio` profiler option so semantic profiling and the legacy `is_in` builder agree). Collects distinct values once and hands them downstream. | `values`: tuple of distinct values                           |
+| `key`         | Any column with `distinctness ≥ 0.99` AND a type-specific second signal — numeric density ≥ `KEY_MIN_DENSITY_RATIO` (default 0.99) or string length_stability ≥ `KEY_MIN_LENGTH_STABILITY_RATIO` (default 0.95).                                                                                                              | `signal`: `"density"` or `"length_stability"`                |
+| `measurement` | Any numeric column not consumed by an earlier detector.                                                                                                                                                                                                                                                                       | `distribution`: best-effort guess (`normal` / `uniform` / …) |
+| `text`        | Any string column not consumed by an earlier detector.                                                                                                                                                                                                                                                                        | (none)                                                       |
+
+`key` requires **two** positive signals — distinctness alone was over-classifying continuous numeric measurements and free-form short strings. For a UUID-like `order_id` the second signal is length stability (every value is 36 chars); for an auto-incrementing `user_id` it is density (distinct values densely cover the observed value range). Users can tune the thresholds via a custom detector.
+
+### Planned specialised detectors (example snippets)[​](#planned-specialised-detectors-example-snippets "Direct link to Planned specialised detectors (example snippets)")
+
+Specialised format detectors are documented here as example patterns; they are not yet included in the default chain. Supply them via `prepend(...)` if you need one today:
+
+| Planned name | Idea                                                                             |
+| ------------ | -------------------------------------------------------------------------------- |
+| `uuid`       | Regex match against the canonical RFC 9562 form on string columns                |
+| `email`      | Basic email regex match on string columns                                        |
+| `h3_hash`    | H3 index format on string / integer columns                                      |
+| `geo_coord`  | Numeric columns whose distribution and range look like WGS-84 latitude/longitude |
+| `date_int`   | Integer columns storing packed calendar dates (e.g. `20260101`)                  |
+
+Minimal example — a UUID detector via regex:
+
+```python
+import re
+from databricks.labs.dqx.profiler.semantic import DQSemanticType, DQSemanticTypeDetector
+
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+def _detect_uuid(ctx):
+    if not isinstance(ctx.column_type, (StringType,)):
+        return None
+    # Cheap probe: look at a small sample instead of the whole column.
+    sample = ctx.df.limit(20).collect()
+    if not sample:
+        return None
+    values = [row[0] for row in sample if row[0] is not None]
+    if not values or not all(_UUID_RE.match(v) for v in values):
+        return None
+    return DQSemanticType(name="uuid")
+
+uuid_detector = DQSemanticTypeDetector(name="uuid", detect=_detect_uuid)
+
+```
+
+### Traceability via `DQProfile.semantic_type`[​](#traceability-via-dqprofilesemantic_type "Direct link to traceability-via-dqprofilesemantic_type")
+
+When a detector fires, the resulting `DQProfile` records the semantic type name in its `semantic_type` field so users can trace *why* a check was generated. When the profiler is used without a `semantic_registry`, this field is `None` on every profile.
+
+### Registering custom profile builders[​](#registering-custom-profile-builders "Direct link to Registering custom profile builders")
+
+Existing user-authored builders registered via `@register_profile_builder(...)` continue to work unchanged. The decorator now also accepts an optional `kind="context"` argument to opt into the preferred contextual callback shape, which receives a `DQProfileContext` (giving access to *ctx.semantic_type*, *ctx.metrics*, and *ctx.options*):
+
+```python
+from databricks.labs.dqx.profiler.profile import DQProfile
+from databricks.labs.dqx.profiler.profile_builder import register_profile_builder
+from databricks.labs.dqx.profiler.semantic import DQProfileContext
+
+@register_profile_builder("my_custom", kind="context")
+def _my_custom_builder(ctx: DQProfileContext) -> DQProfile | None:
+    if ctx.semantic_type and ctx.semantic_type.name != "measurement":
+        return None
+    return DQProfile(name="my_custom", column=ctx.column_name)
+
+```

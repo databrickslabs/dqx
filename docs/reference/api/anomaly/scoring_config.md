@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.scoring\_config
+# databricks.labs.dqx.anomaly.scoring_config
 
 Scoring configuration and constants for row anomaly detection.
 
@@ -22,7 +22,7 @@ class ScoringConfig()
 
 Configuration for anomaly scoring.
 
-### drift\_threshold\_value[​](#drift_threshold_value "Direct link to drift_threshold_value")
+### drift_threshold_value[​](#drift_threshold_value "Direct link to drift_threshold_value")
 
 ```python
 @property

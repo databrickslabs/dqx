@@ -1,4 +1,4 @@
-# databricks.labs.dqx.installer.config\_provider
+# databricks.labs.dqx.installer.config_provider
 
 ## ConfigProvider Objects[​](#configprovider-objects "Direct link to ConfigProvider Objects")
 

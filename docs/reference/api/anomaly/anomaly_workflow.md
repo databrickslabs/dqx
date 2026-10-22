@@ -1,4 +1,4 @@
-# databricks.labs.dqx.anomaly.anomaly\_workflow
+# databricks.labs.dqx.anomaly.anomaly_workflow
 
 Workflow to train anomaly detection models on Databricks.
 
@@ -13,7 +13,7 @@ class AnomalyTrainerWorkflow(Workflow)
 
 Workflow wrapper for periodic anomaly model training.
 
-### train\_model[​](#train_model "Direct link to train_model")
+### train_model[​](#train_model "Direct link to train_model")
 
 ```python
 @workflow_task

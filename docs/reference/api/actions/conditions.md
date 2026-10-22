@@ -2,7 +2,7 @@
 
 Safe AST-based condition evaluator for DQX action gating.
 
-Conditions are arithmetic/boolean expressions evaluated against a metrics dict (e.g. *"error\_row\_count > 0 or warning\_row\_count > 0"*). They are parsed with *ast.parse* in *"eval"* mode and walked by a restricted visitor that allows only a small, safe subset of AST nodes. Any node outside that allowlist — including *ast.Call*, *ast.Attribute*, *ast.Subscript*, lambdas, and all comprehensions — raises *InvalidConditionError*.
+Conditions are arithmetic/boolean expressions evaluated against a metrics dict (e.g. *"error_row_count > 0 or warning_row_count > 0"*). They are parsed with *ast.parse* in *"eval"* mode and walked by a restricted visitor that allows only a small, safe subset of AST nodes. Any node outside that allowlist — including *ast.Call*, *ast.Attribute*, *ast.Subscript*, lambdas, and all comprehensions — raises *InvalidConditionError*.
 
 Security: *eval()* / *exec()* / *compile(mode="exec")* are never used. The evaluator is purely structural, operating on the parsed AST.
 
@@ -15,7 +15,7 @@ class ConditionEvaluator()
 
 Safe evaluator for DQX action-gating condition expressions.
 
-Conditions are simple arithmetic/boolean expressions of the form *"error\_row\_count > 0 or warning\_row\_count > 0"*. They are parsed via *ast.parse* (*mode="eval"*) and evaluated by a restricted AST walker that allows only:
+Conditions are simple arithmetic/boolean expressions of the form *"error_row_count > 0 or warning_row_count > 0"*. They are parsed via *ast.parse* (*mode="eval"*) and evaluated by a restricted AST walker that allows only:
 
 * Literals: *ast.Constant* with *int*, *float*, *bool*, or *str*
 * Names: *ast.Name* — resolved from the *metrics* dict at evaluate time; numeric strings are coerced to *float* automatically

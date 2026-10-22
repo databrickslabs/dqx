@@ -29,6 +29,6 @@ Class attributes:
 * `name` - Logical name for this destination instance.
 * `webhook_url` - The Slack incoming webhook URL (plain string or *DQSecret*).
 
-#### url\_contains\_secret[​](#url_contains_secret "Direct link to url_contains_secret")
+#### url_contains_secret[​](#url_contains_secret "Direct link to url_contains_secret")
 
 Slack webhook URL embeds a token; prefer DQSecret

@@ -2,7 +2,7 @@
 
 You can apply quality checks to your data using the following approaches:
 
-* [DQX Studio (no-code UI)](/dqx/docs/guide/dqx_studio.md): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks to data at-rest and review the results from a browser, without writing code or maintaining configuration files.
+* [DQX Studio (no-code UI)](/dqx/docs/studio.md): for a no-code experience, DQX Studio is the recommended option. It lets you apply checks, review results, and manage rules from a browser, without writing code.
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
@@ -35,7 +35,13 @@ Save destinations
 
 The end-to-end `apply_checks_and_save_in_table` and `apply_checks_by_metadata_and_save_in_table` methods accept `output_config`, `quarantine_config`, `metrics_config`, or combinations of these. If `output_config` is omitted and `quarantine_config` is provided, only the quarantined table is produced. If only `metrics_config` is provided for batch input, only summary metrics are written and no output or quarantine table is produced. Streaming metrics require an output or quarantine stream to emit the observed metrics. This applies to both `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`.
 
-The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/dqx/docs/guide/additional_configuration.md#suppressing-skipped-check-entries). The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax). In addition, you can also perform standalone validation of the checks as described [here](/dqx/docs/guide/quality_checks_definition.md#validating-quality-checks).
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. A `row_filter` passed in the check function arguments (for example to dataset-level checks such as `is_unique`) is validated the same way as `filter`. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields and `skipped=True` in the result struct. You can suppress these entries entirely or identify them downstream — see [Suppressing skipped check entries](/dqx/docs/guide/additional_configuration.md#suppressing-skipped-check-entries).
+
+Unresolvable row_filter now skips the check (since 0.17.0)
+
+Before 0.17.0, only the check-level `filter` was validated. A `row_filter` in the check function arguments that referenced a missing column raised an `AnalysisException` when the checks were applied. The check is now skipped and reported like an invalid `filter`, with a `checked_count` of `0` in the [summary metrics](/dqx/docs/guide/summary_metrics.md). With `suppress_skipped` enabled it leaves no entry in the results, so review skipped checks if you rely on the earlier error to catch typos.
+
+The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax). In addition, you can also perform standalone validation of the checks as described [here](/dqx/docs/guide/quality_checks_definition.md#validating-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing. You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
 
@@ -238,11 +244,7 @@ Checks are applied to a `column` specified in the `arguments` of the `check`. Th
 
 ### Applying checks on multiple tables[​](#applying-checks-on-multiple-tables "Direct link to Applying checks on multiple tables")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.3 "Available since DQX v0.9.3")
-
-<!-- -->
-
-[0.9.3](https://github.com/databrickslabs/dqx/releases/tag/v0.9.3 "Available since DQX v0.9.3")
+[Available since DQX v0.9.3](https://github.com/databrickslabs/dqx/releases/tag/v0.9.3 "Available since DQX v0.9.3")
 
 Applying checks on multiple tables can be performed by executing the same methods as described above in a loop. However, DQX provides a convenient method to handle multiple tables in a single method call. Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns` to perform end-to-end quality checking for multiple tables.
 
@@ -398,7 +400,7 @@ You can define checks using DQX classes or as metadata (list of dictionaries) or
 
 Incremental materialized views
 
-When writing DQX results to Lakeflow Materialized Views, you can set *run\_time\_overwrite* and *run\_id\_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine`. This enables Lakeflow engine to continue incrementally updating the Materialized Views across pipeline runs. Without static values, each run may be treated as a new run, preventing proper incremental updates.
+When writing DQX results to Lakeflow Materialized Views, you can set *run_time_overwrite* and *run_id_overwrite* as **static values** in `ExtraParams` when creating the `DQEngine`. This enables Lakeflow engine to continue incrementally updating the Materialized Views across pipeline runs. Without static values, each run may be treated as a new run, preventing proper incremental updates.
 
 #### Option 1: Apply quality check and quarantine bad records[​](#option-1-apply-quality-check-and-quarantine-bad-records "Direct link to Option 1: Apply quality check and quarantine bad records")
 
@@ -641,7 +643,7 @@ You can apply quality checks to data at-rest using DQX Workflows without writing
 
 Prefer a UI?
 
-[DQX Studio](/dqx/docs/guide/dqx_studio.md) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
+[DQX Studio](/dqx/docs/studio.md) is the recommended no-code option — it provides a browser-based UI to apply checks, review results, and monitor runs, without maintaining a configuration file.
 
 The workflows use [configuration file](/dqx/docs/installation.md#configuration-file) to specify input and output locations, and to apply sets of quality checks from a storage.
 
@@ -660,11 +662,7 @@ The workflows can be executed as batch or streaming jobs.
 
 ### Quality Checker Workflow[​](#quality-checker-workflow "Direct link to Quality Checker Workflow")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
-
-<!-- -->
-
-[0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
+[Available since DQX v0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
 
 Quality checker workflow performs the following:
 
@@ -710,26 +708,26 @@ When running the quality checker workflow using Databricks API or UI, you have t
 
   * `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.\*;catalog.schema2.table1".
 
-  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input\_config.location') which is derived from the patterns.
+  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
 
   * The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
 
-  * If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. If the `checks_location` in the run config points to a file, file name is replaced with "\<input\_table>.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
+  * If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. If the `checks_location` in the run config points to a file, file name is replaced with "\<input_table>.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
 
     <!-- -->
 
-    * If "checks\_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
-    * If "checks\_location=folder/checks.yml", the location will be resolved to "install\_folder/folder/\<input\_table>.yml".
-    * If "checks\_location=/App/checks.yml", the location will be resolved to "/App/\<input\_table>.yml".
-    * If "checks\_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input\_table>.yml".
+    * If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
+    * If "checks_location=folder/checks.yml", the location will be resolved to "install_folder/folder/\<input_table>.yml".
+    * If "checks_location=/App/checks.yml", the location will be resolved to "/App/\<input_table>.yml".
+    * If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input_table>.yml".
 
   * `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*\_output;\*\_quarantine".
 
   * By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters. This prevents applying checks to the output and quarantine tables from previous runs.
 
-  * `output_table_suffix`: (optional) Suffix to append to the output table names (default: "\_dq\_output").
+  * `output_table_suffix`: (optional) Suffix to append to the output table names (default: "\_dq_output").
 
-  * `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "\_dq\_quarantine").
+  * `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "\_dq_quarantine").
 
 See the relevant params in red:
 
@@ -753,7 +751,7 @@ The following fields from the [configuration file](/dqx/docs/installation.md#con
 * `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 * `anomaly_override_clusters`: (optional) cluster configuration to use for the anomaly-trainer workflow, only applicable if `serverless_clusters` is set to `false`.
 * `quality_checker_max_parallelism`: (optional) max parallelism for quality checking multiple tables (default: 4).
-* `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user\_metadata.
+* `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata.
 * `custom_check_functions`: (optional) mapping of custom check function name to Python file (module) containing check function definition.
 * `reference_tables`: (optional) mapping of reference table names to reference table locations.
 
@@ -801,11 +799,7 @@ Example of the configuration file (relevant fields only):
 
 ### End-to-End Workflow[​](#end-to-end-workflow "Direct link to End-to-End Workflow")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
-
-<!-- -->
-
-[0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
+[Available since DQX v0.9.1](https://github.com/databrickslabs/dqx/releases/tag/v0.9.1 "Available since DQX v0.9.1")
 
 The end-to-end (e2e) workflow is designed to automate the entire data quality checking process, from profiling the input data to applying quality checks and saving results. The workflow executes the profiler and quality checker workflows in sequence, allowing you to generate quality checks based on the input data and then apply those checks to the same data.
 
@@ -855,26 +849,26 @@ When running the e2e workflow using Databricks API or UI, you have the same exec
 
   * `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.\*;catalog.schema2.table1".
 
-  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input\_config.location') which is derived from the patterns.
+  * `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
 
   * The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
 
-  * If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. If the `checks_location` in the run config points to a file, file name is replaced with \<input\_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
+  * If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. If the `checks_location` in the run config points to a file, file name is replaced with \<input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder. For example:
 
     <!-- -->
 
-    * If "checks\_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
-    * If "checks\_location=folder/checks.yml", the location will be resolved to "install\_folder/folder/\<input\_table>.yml".
-    * If "checks\_location=/App/checks.yml", the location will be resolved to "/App/\<input\_table>.yml".
-    * If "checks\_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input\_table>.yml".
+    * If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
+    * If "checks_location=folder/checks.yml", the location will be resolved to "install_folder/folder/\<input_table>.yml".
+    * If "checks_location=/App/checks.yml", the location will be resolved to "/App/\<input_table>.yml".
+    * If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/\<input_table>.yml".
 
   * `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*\_output;\*\_quarantine".
 
   * By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters. This prevents applying checks to the output and quarantine tables from previous runs.
 
-  * `output_table_suffix`: (optional) Suffix to append to the output table names (default: "\_dq\_output").
+  * `output_table_suffix`: (optional) Suffix to append to the output table names (default: "\_dq_output").
 
-  * `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "\_dq\_quarantine").
+  * `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "\_dq_quarantine").
 
 See the relevant params in red:
 
@@ -939,7 +933,7 @@ The following fields from the [configuration file](/dqx/docs/installation.md#con
 
 * `llm_config`: (optional) configuration for the AI-assisted features
 
-* `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user\_metadata
+* `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 
 * `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. By default, the number of input, warning, and error rows will be tracked. When custom metrics are defined, they will be tracked in addition to the default metrics.
 
@@ -1012,11 +1006,7 @@ Example of the configuration file (relevant fields only):
 
 ## Summary Metrics[​](#summary-metrics "Direct link to Summary Metrics")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
-
-<!-- -->
-
-[0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
+[Available since DQX v0.10.0](https://github.com/databrickslabs/dqx/releases/tag/v0.10.0 "Available since DQX v0.10.0")
 
 DQX can capture and store summary metrics for your data quality checks in a centralized Delta table. These metrics can complement row-level quality checks stored in output DataFrames or be stored independently.
 
@@ -1081,11 +1071,7 @@ dq_engine.apply_checks_and_save_in_table(
 
 ### Enabling summary metrics in Lakeflow Pipelines[​](#enabling-summary-metrics-in-lakeflow-pipelines "Direct link to Enabling summary metrics in Lakeflow Pipelines")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
-
-<!-- -->
-
-[0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
+[Available since DQX v0.16.0](https://github.com/databrickslabs/dqx/releases/tag/v0.16.0 "Available since DQX v0.16.0")
 
 Inside a Lakeflow Pipeline (a.k.a. Spark Declarative Pipeline or DLT Pipeline), use the following approach:
 
@@ -1121,13 +1107,13 @@ def dq_summary_metrics():
 
 ```
 
-This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Summary Metrics: Snapshot vs. history
 
 This example uses a materialized view to compute summary metrics for the entire table. On each pipeline update the entire view is refreshed. This can be either:
 
-* **Incremental** when the query is deterministic (see the note above about setting a static *run\_time\_overwrite* and *run\_id\_overwrite*) and the engine can incrementalize the aggregation
+* **Incremental** when the query is deterministic (see the note above about setting a static *run_time_overwrite* and *run_id_overwrite*) and the engine can incrementalize the aggregation
 * **Fully recomputed** when the query is non-deterministic or the engine cannot incrementalize the aggregation
 
 The metrics view contains a **cumulative snapshot** over all rows in the checked table. Metrics are cumulative totals representing the current quality of the entire dataset and do not contain any per-run history.<br /><!-- -->To maintain a **history** of metrics over time, compute the metrics per micro-batch inside a [foreachBatch sink](https://docs.databricks.com/aws/en/ldp/for-each-batch) and append them to a table.
@@ -1174,7 +1160,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.16.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
 
 ### Enabling summary metrics in DQX workflows[​](#enabling-summary-metrics-in-dqx-workflows "Direct link to Enabling summary metrics in DQX workflows")
 
@@ -1211,7 +1197,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 
 ```
 
-The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.16.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.17.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 
 * `name`: name of the check (string type).
 * `message`: message describing the quality issue (string type).

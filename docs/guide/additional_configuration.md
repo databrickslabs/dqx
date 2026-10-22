@@ -116,15 +116,11 @@ extra_params:
 
 Info column usage
 
-The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (\_dq\_info)](/dqx/docs/guide/row_anomaly_detection.md#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
+The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (\_dq_info)](/dqx/docs/guide/row_anomaly_detection.md#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
 
 ## Suppressing skipped check entries[​](#suppressing-skipped-check-entries "Direct link to Suppressing skipped check entries")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 By default, when a check is skipped (e.g. because a referenced column or filter cannot be resolved in the input DataFrame), DQX records an entry in `_errors` or `_warnings` with `skipped=True` and a message describing why the check was skipped.
 
@@ -156,11 +152,7 @@ extra_params:
 
 ## Identifying skipped checks in results[​](#identifying-skipped-checks-in-results "Direct link to Identifying skipped checks in results")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 When a check is skipped and `suppress_skipped` is not enabled, the result struct includes a `skipped` boolean field set to `True`. This allows downstream consumers to distinguish skipped checks from actual data quality failures without parsing the message string.
 
@@ -176,11 +168,7 @@ skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.ski
 
 ## Defining default variables for substitution[​](#defining-default-variables-for-substitution "Direct link to Defining default variables for substitution")
 
-[Available since v](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
-
-<!-- -->
-
-[0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
+[Available since DQX v0.14.0](https://github.com/databrickslabs/dqx/releases/tag/v0.14.0 "Available since DQX v0.14.0")
 
 DQX allows you to define engine-level defaults for variables used in declarative check definitions (YAML, JSON, or Delta tables). These defaults are automatically applied during `load_checks` and `save_checks` unless overridden by the per-call `variables` parameter.
 

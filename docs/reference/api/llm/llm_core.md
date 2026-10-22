@@ -1,4 +1,4 @@
-# databricks.labs.dqx.llm.llm\_core
+# databricks.labs.dqx.llm.llm_core
 
 ## LLMModelConfigurator Objects[​](#llmmodelconfigurator-objects "Direct link to LLMModelConfigurator Objects")
 
@@ -22,7 +22,7 @@ Initialize model configurator.
 
 * `model_config` - Configuration for the LLM model.
 
-### create\_lm[​](#create_lm "Direct link to create_lm")
+### create_lm[​](#create_lm "Direct link to create_lm")
 
 ```python
 def create_lm() -> dspy.LM
@@ -31,13 +31,13 @@ def create_lm() -> dspy.LM
 
 Create an LM instance with current config for per-request override.
 
-Budget caps (max\_tokens, temperature, timeout) come from *LLMModelConfig* and are forwarded to litellm via dspy.LM kwargs to bound cost and latency on pathological prompts (OWASP LLM04).
+Budget caps (max_tokens, temperature, timeout) come from *LLMModelConfig* and are forwarded to litellm via dspy.LM kwargs to bound cost and latency on pathological prompts (OWASP LLM04).
 
 **Returns**:
 
 A new LM instance configured with the current model config.
 
-### lm\_context[​](#lm_context "Direct link to lm_context")
+### lm_context[​](#lm_context "Direct link to lm_context")
 
 ```python
 @contextmanager
@@ -127,7 +127,7 @@ Generate data quality rules.
 
 **Returns**:
 
-Prediction containing quality\_rules and reasoning.
+Prediction containing quality_rules and reasoning.
 
 ## DspyRuleGenerationWithSchemaInference Objects[​](#dspyrulegenerationwithschemainference-objects "Direct link to DspyRuleGenerationWithSchemaInference Objects")
 
@@ -158,7 +158,7 @@ Generate rules with optional schema inference.
 
 **Returns**:
 
-Prediction with quality\_rules, reasoning, and optional schema info.
+Prediction with quality_rules, reasoning, and optional schema info.
 
 ## DspyRuleUsingDataStatsSignature Objects[​](#dspyruleusingdatastatssignature-objects "Direct link to DspyRuleUsingDataStatsSignature Objects")
 
@@ -199,7 +199,7 @@ Generate data quality rules.
 
 **Returns**:
 
-Prediction containing quality\_rules and reasoning.
+Prediction containing quality_rules and reasoning.
 
 ## LLMRuleCompiler Objects[​](#llmrulecompiler-objects "Direct link to LLMRuleCompiler Objects")
 
@@ -245,7 +245,7 @@ Get the optimized DSPy model.
 
 Optimized DSPy module for generating data quality rules.
 
-### model\_using\_data\_stats[​](#model_using_data_stats "Direct link to model_using_data_stats")
+### model_using_data_stats[​](#model_using_data_stats "Direct link to model_using_data_stats")
 
 ```python
 @cached_property

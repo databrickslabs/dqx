@@ -1,6 +1,6 @@
 # databricks.labs.dqx.io
 
-### read\_input\_data[​](#read_input_data "Direct link to read_input_data")
+### read_input_data[​](#read_input_data "Direct link to read_input_data")
 
 ```python
 def read_input_data(spark: SparkSession,
@@ -19,7 +19,7 @@ Reads input data from the specified location and format.
 
 DataFrame with values read from the input data
 
-### save\_dataframe\_as\_table[​](#save_dataframe_as_table "Direct link to save_dataframe_as_table")
+### save_dataframe_as_table[​](#save_dataframe_as_table "Direct link to save_dataframe_as_table")
 
 ```python
 def save_dataframe_as_table(
@@ -43,8 +43,8 @@ Supports both batch and streaming writes. For streaming DataFrames, returns a St
   * mode: Write mode ('overwrite', 'append', etc.)
   * format: Data format (default: 'delta')
   * options: Additional Spark write options as dict (e.g., "mergeSchema", "overwriteSchema")
-  * partition\_by: Optional list of columns to partition by
-  * cluster\_by: Optional list of columns to cluster by (Delta Liquid Clustering)
+  * partition_by: Optional list of columns to partition by
+  * cluster_by: Optional list of columns to cluster by (Delta Liquid Clustering)
   * trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
 
 **Returns**:
@@ -59,7 +59,7 @@ StreamingQuery if the DataFrame is streaming, None if the DataFrame is batch
 
 The `cluster_by` method of Spark's `DataStreamWriter` is supported for creating liquid clustered tables as of Databricks Runtime version 16+ (see: <https://docs.databricks.com/aws/en/delta/clustering#create-tables-with-clustering>). Users must manually enable `spark.databricks.delta.liquid.eagerClustering.streaming.enabled` to allow clustering on write for streaming workloads.
 
-### is\_one\_time\_trigger[​](#is_one_time_trigger "Direct link to is_one_time_trigger")
+### is_one_time_trigger[​](#is_one_time_trigger "Direct link to is_one_time_trigger")
 
 ```python
 def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool
@@ -76,7 +76,7 @@ Checks if a trigger is a one-time trigger that should wait for completion.
 
 True if the trigger is 'once' or 'availableNow', False otherwise
 
-### get\_reference\_dataframes[​](#get_reference_dataframes "Direct link to get_reference_dataframes")
+### get_reference_dataframes[​](#get_reference_dataframes "Direct link to get_reference_dataframes")
 
 ```python
 def get_reference_dataframes(

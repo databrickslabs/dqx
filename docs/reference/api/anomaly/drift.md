@@ -14,7 +14,7 @@ class DriftResult()
 
 Results from drift detection.
 
-### compute\_drift\_score[​](#compute_drift_score "Direct link to compute_drift_score")
+### compute_drift_score[​](#compute_drift_score "Direct link to compute_drift_score")
 
 ```python
 def compute_drift_score(df: DataFrame,
@@ -37,7 +37,7 @@ Compute drift score comparing current data to baseline statistics.
 
 DriftResult with detection status and details.
 
-### prepare\_drift\_df[​](#prepare_drift_df "Direct link to prepare_drift_df")
+### prepare_drift_df[​](#prepare_drift_df "Direct link to prepare_drift_df")
 
 ```python
 def prepare_drift_df(
@@ -48,7 +48,7 @@ def prepare_drift_df(
 
 Prepare drift DataFrame and columns aligned to training baseline stats.
 
-### check\_segment\_drift[​](#check_segment_drift "Direct link to check_segment_drift")
+### check_segment_drift[​](#check_segment_drift "Direct link to check_segment_drift")
 
 ```python
 def check_segment_drift(segment_df: DataFrame, columns: list[str],
@@ -60,7 +60,7 @@ def check_segment_drift(segment_df: DataFrame, columns: list[str],
 
 Check and warn about data drift in a segment. Returns the DriftResult when computed.
 
-### check\_and\_warn\_drift[​](#check_and_warn_drift "Direct link to check_and_warn_drift")
+### check_and_warn_drift[​](#check_and_warn_drift "Direct link to check_and_warn_drift")
 
 ```python
 def check_and_warn_drift(df: DataFrame, columns: list[str],
@@ -72,7 +72,7 @@ def check_and_warn_drift(df: DataFrame, columns: list[str],
 
 Check for data drift and issue warning if detected. Returns the DriftResult when computed.
 
-### format\_drift\_summary[​](#format_drift_summary "Direct link to format_drift_summary")
+### format_drift_summary[​](#format_drift_summary "Direct link to format_drift_summary")
 
 ```python
 def format_drift_summary(drift_result: "DriftResult | None",
@@ -84,4 +84,4 @@ Format a DriftResult for inclusion in the LLM prompt.
 
 Returns 'none' when no drift was computed or no drift detected; otherwise a semicolon-separated list of drifted feature names with their drift scores, e.g. 'drift detected: amount=4.12; quantity=3.55'.
 
-Drifted columns listed in *redact\_columns* are excluded from the per-feature breakdown so their names are never sent to the LLM. When every drifted column is redacted, the output collapses to an opaque 'drift detected (N features)' indicator so the prompt still signals drift without leaking names.
+Drifted columns listed in *redact_columns* are excluded from the per-feature breakdown so their names are never sent to the LLM. When every drifted column is redacted, the output collapses to an opaque 'drift detected (N features)' indicator so the prompt still signals drift without leaking names.
