@@ -453,7 +453,7 @@ def test_save_checks_forwards_custom_check_functions():
 
 def test_save_checks_supports_handler_without_custom_check_functions():
     class TwoArgHandler:
-        def __init__(self):
+        def __init__(self) -> None:
             self.saved: list[tuple[list[dict], FileChecksStorageConfig]] = []
 
         def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
