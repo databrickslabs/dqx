@@ -141,6 +141,18 @@ class TestRuleScore:
         assert [t["source_table_fqn"] for t in body["per_table"]] == ["main.sales.orders", "dev.sales.items"]
         assert [t["score"] for t in body["per_table"]] == [pytest.approx(0.9), pytest.approx(0.7)]
 
+    def test_per_table_scores_carry_table_level_tests(self, client, sql_mock, apply_rules_mock, monitored_tables_mock):
+        apply_rules_mock.list_bindings_for_rule.return_value = [make_applied_rule("ar1", "b1")]
+        monitored_tables_mock.get.return_value = make_binding_detail("b1", "main.sales.orders")
+        sql_mock.query_dicts.return_value = [
+            {**measure_row("r1", 0.45, 10, 100), "table_failed_tests": "1", "table_total_tests": "1"}
+        ]
+        table = client.get("/api/v1/dq-score/rule/r1").json()["per_table"][0]
+        assert table["failed_tests"] == 10
+        assert table["total_tests"] == 100
+        assert table["table_failed_tests"] == 1
+        assert table["table_total_tests"] == 1
+
     def test_per_table_query_measures_the_metric_view_and_escapes_fqn(
         self, client, sql_mock, apply_rules_mock, monitored_tables_mock, app_config
     ):
@@ -154,6 +166,8 @@ class TestRuleScore:
         assert "MEASURE(score)" in stmt
         assert "MEASURE(failed_tests)" in stmt
         assert "MEASURE(total_tests)" in stmt
+        assert "MEASURE(table_failed_tests)" in stmt
+        assert "MEASURE(table_total_tests)" in stmt
         # Latest run within the selected mode set — NOT the view's
         # is_latest_run flag, which is computed over ALL runs regardless of
         # run_mode (a newer draft would otherwise blank the published score).

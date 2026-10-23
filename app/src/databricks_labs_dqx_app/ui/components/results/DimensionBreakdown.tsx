@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
 import { BreachIcon } from "./BreachIcon";
+import { combineTestCounts } from "./testCounts";
 
 /**
  * Client-side page slice for the breakdown table. Without *pageSize* the
@@ -77,6 +78,11 @@ export type BreakdownRow = {
   rule_count?: number | null;
   check_count?: number | null;
   total_tests?: number | null;
+  /** Table-level (dataset check) tests, one per check. Kept out of the
+   *  failed/total columns (those count row tests only) and shown as a small
+   *  indicator under the failure count when the row has dataset checks. */
+  table_failed_tests?: number | null;
+  table_total_tests?: number | null;
   /** True when any child check in this group has a threshold breach. */
   breached?: boolean;
   /** Criticality of the breach (worst child): "error" | "warn" | null.
@@ -327,6 +333,12 @@ export function DimensionBreakdown({
                 // facet filter): render it dimmed + thinner so it reads as
                 // out-of-scope, not a live result.
                 const isMuted = r.label != null && mutedSet.has(r.label);
+                const tests = combineTestCounts({
+                  failedTests: r.failed_tests,
+                  totalTests: r.total_tests,
+                  tableFailedTests: r.table_failed_tests,
+                  tableTotalTests: r.table_total_tests,
+                });
                 return (
                   <tr
                     key={i}
@@ -375,12 +387,10 @@ export function DimensionBreakdown({
                         : (r.rule_count == null ? "—" : r.rule_count)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {r.pass_rate == null && r.failed_tests == null
-                        ? "—"
-                        : (r.failed_tests ?? 0)}
+                      {tests.failed ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {r.total_tests == null ? "—" : r.total_tests}
+                      {tests.total ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {r.pass_rate == null

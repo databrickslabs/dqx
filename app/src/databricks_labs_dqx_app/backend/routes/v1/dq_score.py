@@ -73,6 +73,8 @@ def _row_to_table_score(table_fqn: str, row: dict[str, str | None]) -> TableScor
         latest_run_id=row.get("run_id"),
         total_tests=safe_int(row.get("total_tests")) or 0,
         failed_tests=safe_int(row.get("failed_tests")) or 0,
+        table_total_tests=safe_int(row.get("table_total_tests")),
+        table_failed_tests=safe_int(row.get("table_failed_tests")),
     )
 
 
@@ -97,7 +99,8 @@ def _compute_score_for_table(
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
     stmt = (
         f"SELECT run_id, MEASURE(score) AS score, "
-        f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests "
+        f"MEASURE(failed_tests) AS failed_tests, MEASURE(total_tests) AS total_tests, "
+        f"MEASURE(table_failed_tests) AS table_failed_tests, MEASURE(table_total_tests) AS table_total_tests "
         f"FROM {mv} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"GROUP BY run_id, run_time "

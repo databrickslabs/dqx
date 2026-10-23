@@ -37,6 +37,7 @@ from databricks_labs_dqx_app.backend.models import (
     MetricSnapshotOut,
     MetricsSummaryOut,
 )
+from databricks_labs_dqx_app.backend.services.score_view_service import EVALUATED_ROWS_METRIC
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
@@ -45,7 +46,14 @@ router = APIRouter()
 
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _BUILTIN_METRIC_NAMES = frozenset(
-    {"input_row_count", "error_row_count", "warning_row_count", "valid_row_count", "check_metrics"}
+    {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+        EVALUATED_ROWS_METRIC,
+    }
 )
 
 
@@ -115,7 +123,7 @@ def _pivot_rows(rows: list[dict[str, Any]]) -> list[MetricSnapshotOut]:
         if pass_rate is not None:
             pass_rate = round(pass_rate, 4)
 
-        check_metrics = parse_check_metrics(metrics.get("check_metrics"))
+        check_metrics = parse_check_metrics(metrics.get("check_metrics"), metrics.get(EVALUATED_ROWS_METRIC))
         custom_metrics = {k: v for k, v in metrics.items() if k not in _BUILTIN_METRIC_NAMES} or None
 
         out.append(

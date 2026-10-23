@@ -70,8 +70,42 @@ def safe_float(value: Any) -> float | None:
         return None
 
 
-def parse_check_metrics(raw: Any) -> "list[CheckMetricBreakdown]":
-    """Parse the ``check_metrics`` JSON-string emitted by the observer."""
+def _parse_evaluated_counts(raw: Any) -> dict[str, int]:
+    """check_name -> evaluated rows from the *check_evaluated_rows* payload.
+
+    Tolerant of an absent or corrupt payload (empty map) and of malformed
+    entries (skipped), so a bad value only drops the evaluated count — the
+    check then falls back to the table's input rows. A check listed more than
+    once keeps its largest count, matching the score view's MAX.
+    """
+    if not raw:
+        return {}
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(items, list):
+        return {}
+    out: dict[str, int] = {}
+    for item in items:
+        if not isinstance(item, dict) or not item.get("check_name"):
+            continue
+        count = safe_int(item.get("evaluated_count"))
+        if count is not None:
+            name = str(item["check_name"])
+            out[name] = max(count, out.get(name, count))
+    return out
+
+
+def parse_check_metrics(raw: Any, evaluated_raw: Any = None) -> "list[CheckMetricBreakdown]":
+    """Parse the ``check_metrics`` JSON-string emitted by the observer.
+
+    Args:
+        raw: The run's *check_metrics* metric value.
+        evaluated_raw: Optional *check_evaluated_rows* metric value; each
+            listed check gets its *evaluated_count*. Absent or corrupt
+            payloads leave every *evaluated_count* None.
+    """
     # Local import breaks the module-level cycle this helper module would
     # otherwise create: ``models`` imports the OLTP services, and those
     # services import the ``safe_int``/``safe_float`` coercers above (via
@@ -87,15 +121,18 @@ def parse_check_metrics(raw: Any) -> "list[CheckMetricBreakdown]":
         return []
     if not isinstance(items, list):
         return []
+    evaluated = _parse_evaluated_counts(evaluated_raw)
     out: list[CheckMetricBreakdown] = []
     for item in items:
         if not isinstance(item, dict):
             continue
+        check_name = str(item.get("check_name") or "unknown")
         out.append(
             CheckMetricBreakdown(
-                check_name=str(item.get("check_name") or "unknown"),
+                check_name=check_name,
                 error_count=int(item.get("error_count") or 0),
                 warning_count=int(item.get("warning_count") or 0),
+                evaluated_count=evaluated.get(check_name),
             )
         )
     return out
