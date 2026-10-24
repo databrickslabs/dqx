@@ -334,8 +334,8 @@ class TestBaselineShape:
         sql = _baseline()
         assert sql.count("pending_rationale TEXT,") == 3
         assert sql.count("last_decision_rationale TEXT,") == 3
-        # dq_rules_history keeps the per-transition note under a bare name.
-        assert sql.count(" rationale TEXT,") == 1
+        # dq_rules_history and dq_review_events keep the per-step note under a bare name.
+        assert sql.count(" rationale TEXT,") == 2
 
     def test_sticky_object_notes_are_gone(self):
         assert "notes" not in _baseline()

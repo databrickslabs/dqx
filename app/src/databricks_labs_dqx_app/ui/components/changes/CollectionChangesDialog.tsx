@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useGetDataProductChanges } from "@/lib/api";
+import { useGetDataProductChanges, useListDataProductReviewEvents } from "@/lib/api";
 import {
   ChangesDialog,
   ChangesPanel,
@@ -21,7 +21,7 @@ export interface CollectionChangesTarget {
 
 const SETTINGS_KEY = "settings";
 
-function useCollectionChanges(productId: string, enabled: boolean): ChangesViewProps {
+function useCollectionChanges(productId: string, enabled: boolean, withEvents = false): ChangesViewProps {
   const { t } = useTranslation();
   // The server picks the default comparison (pending changes when there are any).
   const defaults = useGetDataProductChanges(productId, undefined, { query: { enabled } });
@@ -37,6 +37,7 @@ function useCollectionChanges(productId: string, enabled: boolean): ChangesViewP
     query: { enabled: enabled && !!info && (sides.mode === "pending" || sides.target > 0) },
   });
 
+  const reviewEvents = useListDataProductReviewEvents(productId, { query: { enabled: enabled && withEvents } });
   const data = query.data?.data;
   const items: ChangeItem[] = (data?.changes ?? []).map((c) => ({
     key: c.key,
@@ -59,6 +60,13 @@ function useCollectionChanges(productId: string, enabled: boolean): ChangesViewP
       version: v.version,
       createdBy: v.created_by,
       createdAt: v.created_at,
+    })),
+    events: (reviewEvents.data?.data ?? []).map((e) => ({
+      action: e.action,
+      actor: e.actor,
+      at: e.created_at,
+      note: e.rationale,
+      version: e.version,
     })),
     items,
     labelFor: (item) => (item.key === SETTINGS_KEY ? t("tableChanges.collectionSettings") : item.name),
@@ -83,6 +91,6 @@ export function CollectionChangesDialog({
 
 /** The collection page's History tab: the version timeline beside the changes. */
 export function CollectionChangesPanel({ productId }: { productId: string }) {
-  const view = useCollectionChanges(productId, true);
+  const view = useCollectionChanges(productId, true, true);
   return <ChangesPanel resetKey={productId} {...view} />;
 }

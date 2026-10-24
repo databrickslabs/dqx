@@ -3284,6 +3284,13 @@
     "notRecordedPending": "La v{{version}} a été approuvée avant que les collections n'enregistrent leurs versions : chaque membre actuel apparaît donc comme ajouté.",
     "notRecordedHistory": "Ces versions ont été approuvées avant que les collections n'enregistrent leurs versions et ne peuvent donc pas être comparées. Les versions approuvées à partir de maintenant le pourront.",
     "notApprovedYet": "Pas encore approuvé",
+    "approvedBy": "Approuvé par",
+    "event": {
+      "submitted": "Soumis",
+      "approved": "Approuvé",
+      "rejected": "Rejeté",
+      "withdrawn": "Retiré"
+    },
     "status": {
       "added": "Ajoutée",
       "removed": "Supprimée",

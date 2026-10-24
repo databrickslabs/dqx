@@ -18,6 +18,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_review_event_service,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -42,6 +43,7 @@ from databricks_labs_dqx_app.backend.models import (
     DataProductChangesOut,
     DataProductOut,
     DataProductVersionOut,
+    ReviewEventOut,
     LifecycleRationaleIn,
     RunDataProductIn,
     RunDataProductOut,
@@ -54,6 +56,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     ScheduleGrantService,
     manage_block_detail,
 )
+from databricks_labs_dqx_app.backend.services.review_events import ReviewEventService
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
     DataProductService,
@@ -166,6 +169,25 @@ def get_data_product_changes(
             for c in result.changes
         ],
     )
+
+
+@router.get(
+    "/{product_id}/review-events",
+    response_model=list[ReviewEventOut],
+    operation_id="listDataProductReviewEvents",
+    dependencies=[require_role(*_VIEWERS_PLUS)],
+)
+def list_data_product_review_events(
+    product_id: str,
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+) -> list[ReviewEventOut]:
+    """A collection's review trail, newest first: each submit, approve, reject and withdraw."""
+    try:
+        events = review_events.list_events("data_product", product_id)
+    except Exception as e:
+        logger.error(f"Failed to list review events for data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
+    return [ReviewEventOut(**vars(e)) for e in events]
 
 
 # ------------------------------------------------------------------
@@ -449,6 +471,7 @@ def submit_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
@@ -482,6 +505,7 @@ def submit_data_product(
             last_change_time=gate_detail.product.updated_at,
         )
         svc.submit(product_id, user_email, rationale=rationale)
+        review_events.record("data_product", product_id, "submitted", user_email, rationale=rationale)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
@@ -495,7 +519,15 @@ def submit_data_product(
             principal_email=user_email,
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
-            svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            approved = svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            review_events.record(
+                "data_product",
+                product_id,
+                "approved",
+                mark_auto_approver(user_email),
+                rationale=rationale,
+                version=approved.version,
+            )
             # Auto-approve activates any cron on the space — wake the scheduler.
             scheduler_registry.notify_scheduler()
         detail = svc.get(product_id)
@@ -524,6 +556,7 @@ def approve_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
@@ -532,7 +565,11 @@ def approve_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.approve(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        approved = svc.approve(product_id, user_email, rationale=rationale)
+        review_events.record(
+            "data_product", product_id, "approved", user_email, rationale=rationale, version=approved.version
+        )
         # Approval activates any cron on the space — wake the scheduler so its
         # first run does not wait out the idle poll interval.
         scheduler_registry.notify_scheduler()
@@ -558,6 +595,7 @@ def reject_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Reject a Table Space — sets ``status='rejected'``.
@@ -566,7 +604,9 @@ def reject_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.reject(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        svc.reject(product_id, user_email, rationale=rationale)
+        review_events.record("data_product", product_id, "rejected", user_email, rationale=rationale)
         detail = svc.get(product_id)
         assert detail is not None  # just rejected it
         return DataProductOut.from_domain(detail)
@@ -590,6 +630,7 @@ def revert_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
 ) -> DataProductOut:
     """Withdraw a pending submission — ``pending_approval`` -> ``draft``.
 
@@ -599,6 +640,7 @@ def revert_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.revert(product_id, user_email)
+        review_events.record("data_product", product_id, "withdrawn", user_email)
         detail = svc.get(product_id)
         assert detail is not None  # just reverted it
         return DataProductOut.from_domain(detail)

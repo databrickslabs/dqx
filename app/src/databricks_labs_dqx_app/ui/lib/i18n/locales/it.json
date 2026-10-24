@@ -3284,6 +3284,13 @@
     "notRecordedPending": "La v{{version}} è stata approvata prima che le raccolte registrassero le loro versioni, quindi ogni membro attuale appare come aggiunto.",
     "notRecordedHistory": "Queste versioni sono state approvate prima che le raccolte registrassero le loro versioni, quindi non si possono confrontare. Le versioni approvate da ora in poi sì.",
     "notApprovedYet": "Non ancora approvato",
+    "approvedBy": "Approvato da",
+    "event": {
+      "submitted": "Inviato",
+      "approved": "Approvato",
+      "rejected": "Rifiutato",
+      "withdrawn": "Ritirato"
+    },
     "status": {
       "added": "Aggiunta",
       "removed": "Rimossa",

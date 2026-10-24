@@ -799,6 +799,16 @@ class UpdateMonitoredTableOwnerIn(BaseModel):
     owner: str = Field(min_length=1, description="Owner's email/username")
 
 
+class ReviewEventOut(BaseModel):
+    """One step of a table's, collection's or rule's review trail — backs the History tab."""
+
+    action: str = Field(description="submitted | approved | rejected | withdrawn")
+    actor: str | None = Field(default=None, description="Who did it; an automatic approval carries an (auto) marker")
+    created_at: str | None = None
+    rationale: str | None = Field(default=None, description="The note left with it")
+    version: int | None = Field(default=None, description="The version an approval created")
+
+
 class LifecycleRationaleIn(BaseModel):
     """Optional body for submit / approve / reject lifecycle endpoints."""
 

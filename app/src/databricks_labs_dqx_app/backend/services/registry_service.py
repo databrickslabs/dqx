@@ -855,9 +855,7 @@ class RegistryService:
         from databricks_labs_dqx_app.backend.registry_models import get_rule_name
 
         name = get_rule_name(existing.user_metadata) or existing.rule_id
-        return (
-            f"A published rule with an identical definition already exists: " f"'{name}' (rule_id={existing.rule_id})."
-        )
+        return f"A published rule with an identical definition already exists: '{name}' (rule_id={existing.rule_id})."
 
     # ------------------------------------------------------------------
     # Lifecycle transitions
@@ -946,7 +944,9 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         target: RuleStatus = "approved" if rule.version >= 1 else "rejected"
-        return self._transition(rule_id, target, user_email, rationale=rationale, as_decision=True)
+        return self._transition(
+            rule_id, target, user_email, rationale=rationale, as_decision=True, history_action="reject"
+        )
 
     def revoke(self, rule_id: str, user_email: str) -> RegistryRule:
         """Revoke a pending submission back to a working state.
@@ -965,7 +965,7 @@ class RegistryService:
         if rule.status != "pending_approval":
             raise ValueError(f"Cannot revoke: rule is not pending approval (status={rule.status})")
         target: RuleStatus = "approved" if rule.version >= 1 else "draft"
-        return self._transition(rule_id, target, user_email, clear_pending_rationale=True)
+        return self._transition(rule_id, target, user_email, clear_pending_rationale=True, history_action="revoke")
 
     def deprecate(self, rule_id: str, user_email: str) -> RegistryRule:
         """Deprecate a published rule (approved -> deprecated)."""
@@ -985,6 +985,7 @@ class RegistryService:
         as_submit: bool = False,
         as_decision: bool = False,
         clear_pending_rationale: bool = False,
+        history_action: str | None = None,
     ) -> RegistryRule:
         rule = self._get(rule_id)
         if rule is None:
@@ -1006,7 +1007,7 @@ class RegistryService:
             rule.rule_id,
             rule.definition,
             rule.version,
-            f"status:{new_status}",
+            history_action or f"status:{new_status}",
             prev_status,
             new_status,
             user_email,

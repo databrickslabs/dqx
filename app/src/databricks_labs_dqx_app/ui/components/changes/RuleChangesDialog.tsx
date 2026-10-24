@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useListRegistryRuleVersions, type RegistryRuleVersionOut } from "@/lib/api";
+import { useListRegistryRuleReviewEvents, useListRegistryRuleVersions, type RegistryRuleVersionOut } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { buildDqxCheckJson, severityValueCriticality, type MaterializableRule } from "@/lib/registry-rule-conversion";
 import {
@@ -27,10 +27,12 @@ export interface RuleChangesTarget {
   proposed: MaterializableRule;
 }
 
-function useRuleChanges(target: RuleChangesTarget | null): ChangesViewProps {
+function useRuleChanges(target: RuleChangesTarget | null, withEvents = false): ChangesViewProps {
   const { t } = useTranslation();
   const ruleId = target?.ruleId ?? "";
   const { data, isLoading, isError } = useListRegistryRuleVersions(ruleId, { query: { enabled: !!target } });
+  const enabled = !!target;
+  const reviewEvents = useListRegistryRuleReviewEvents(ruleId, { query: { enabled: enabled && withEvents } });
   // The rendered criticality honours the admin-edited severity -> criticality
   // mapping, matching the "View JSON" dialog and the materializer.
   const { data: labelDefsData } = useLabelDefinitions();
@@ -80,6 +82,13 @@ function useRuleChanges(target: RuleChangesTarget | null): ChangesViewProps {
     hasPending,
     approvedVersion: approved,
     versions,
+    events: (reviewEvents.data?.data ?? []).map((e) => ({
+      action: e.action,
+      actor: e.actor,
+      at: e.created_at,
+      note: e.rationale,
+      version: e.version,
+    })),
     items: target ? [item] : [],
     single: true,
     loading: isLoading,
@@ -96,6 +105,6 @@ export function RuleChangesDialog({ target, onClose }: { target: RuleChangesTarg
 
 /** The rule's History tab: the version timeline beside the changes. */
 export function RuleChangesPanel({ target }: { target: RuleChangesTarget }) {
-  const view = useRuleChanges(target);
+  const view = useRuleChanges(target, true);
   return <ChangesPanel resetKey={target.ruleId} {...view} />;
 }

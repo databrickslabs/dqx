@@ -1,5 +1,9 @@
 import { useTranslation } from "react-i18next";
-import { useGetMonitoredTableChanges, useListMonitoredTableVersions } from "@/lib/api";
+import {
+  useGetMonitoredTableChanges,
+  useListMonitoredTableReviewEvents,
+  useListMonitoredTableVersions,
+} from "@/lib/api";
 import {
   ChangesDialog,
   ChangesPanel,
@@ -19,7 +23,7 @@ export interface TableChangesTarget {
   version: number;
 }
 
-function useTableChanges(bindingId: string, enabled: boolean): ChangesViewProps {
+function useTableChanges(bindingId: string, enabled: boolean, withEvents = false): ChangesViewProps {
   const { t } = useTranslation();
   // The server picks the default comparison (pending changes when there are any).
   const defaults = useGetMonitoredTableChanges(bindingId, undefined, { query: { enabled } });
@@ -35,6 +39,7 @@ function useTableChanges(bindingId: string, enabled: boolean): ChangesViewProps 
     query: { enabled: enabled && !!info && (sides.mode === "pending" || sides.target > 0) },
   });
   const versions = useListMonitoredTableVersions(bindingId, { query: { enabled } });
+  const reviewEvents = useListMonitoredTableReviewEvents(bindingId, { query: { enabled: enabled && withEvents } });
 
   const items: ChangeItem[] = (query.data?.data?.changes ?? []).map((c) => ({
     key: c.key,
@@ -53,6 +58,13 @@ function useTableChanges(bindingId: string, enabled: boolean): ChangesViewProps 
       createdAt: v.created_at,
       note: v.refrozen_at ? t("monitoredTables.historyRefrozenLabel") : null,
     })),
+    events: (reviewEvents.data?.data ?? []).map((e) => ({
+      action: e.action,
+      actor: e.actor,
+      at: e.created_at,
+      note: e.rationale,
+      version: e.version,
+    })),
     items,
     loading: defaults.isLoading || query.isLoading,
     error: defaults.isError || query.isError,
@@ -68,6 +80,6 @@ export function TableChangesDialog({ target, onClose }: { target: TableChangesTa
 
 /** The table page's History tab: the version timeline beside the changes. */
 export function TableChangesPanel({ bindingId }: { bindingId: string }) {
-  const view = useTableChanges(bindingId, true);
+  const view = useTableChanges(bindingId, true, true);
   return <ChangesPanel resetKey={bindingId} {...view} />;
 }

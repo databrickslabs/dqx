@@ -8,7 +8,7 @@ writes, `run_rules` / Admin+Author gate for run) without going through
 middleware.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
@@ -17,11 +17,13 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
     CreateDataProductIn,
+    LifecycleRationaleIn,
     RunDataProductIn,
     UpdateDataProductIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import DataProduct, DataProductMember
 from databricks_labs_dqx_app.backend.routes.v1 import data_products as dp_routes
+from databricks_labs_dqx_app.backend.services.review_events import ReviewEvent, ReviewEventService
 from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     add_data_product_member,
     approve_data_product,
@@ -30,6 +32,7 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     get_data_product,
     list_data_products,
     reject_data_product,
+    revert_data_product,
     remove_data_product_member,
     run_data_product,
     submit_data_product,
@@ -409,6 +412,7 @@ class TestSubmit:
             role=UserRole.RULE_AUTHOR,
             principal_ids=frozenset(),
             obo_ws=_mock_obo_ws(),
+            review_events=MagicMock(),
         )
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x", rationale=None)
@@ -427,6 +431,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                review_events=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -445,6 +450,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                review_events=MagicMock(),
             )
         svc.approve.assert_called_once()
         notify.assert_called_once()
@@ -464,6 +470,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                review_events=MagicMock(),
             )
         svc.approve.assert_not_called()
         notify.assert_not_called()
@@ -487,6 +494,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                review_events=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -495,7 +503,7 @@ class TestApprove:
     def test_approve_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
-        result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         assert result.status == "approved"
         svc.approve.assert_called_once_with("p1", "alice@x", rationale=None)
 
@@ -503,14 +511,14 @@ class TestApprove:
         svc = MagicMock()
         svc.approve.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         assert excinfo.value.status_code == 409
 
     def test_approve_missing_raises_404(self):
         svc = MagicMock()
         svc.approve.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_approve_notifies_scheduler(self):
@@ -519,7 +527,7 @@ class TestApprove:
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         notify.assert_called_once()
 
 
@@ -527,7 +535,7 @@ class TestReject:
     def test_reject_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="rejected", version=0)
-        result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         assert result.status == "rejected"
         svc.reject.assert_called_once_with("p1", "alice@x", rationale=None)
 
@@ -535,7 +543,7 @@ class TestReject:
         svc = MagicMock()
         svc.reject.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=MagicMock())
         assert excinfo.value.status_code == 409
 
 
@@ -687,3 +695,98 @@ class TestChanges:
         with pytest.raises(HTTPException) as exc:
             dp_routes.get_data_product_changes("p1", svc, base=None, target=9)
         assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Review trail — each review step on a collection is recorded
+# ---------------------------------------------------------------------------
+
+
+class TestReviewTrail:
+    @staticmethod
+    def _review_events() -> MagicMock:
+        return create_autospec(ReviewEventService, instance=True)
+
+    @staticmethod
+    def _submit(svc: MagicMock, review_events: MagicMock, app_settings: MagicMock, **kwargs) -> None:
+        submit_data_product(
+            "p1",
+            svc=svc,
+            app_settings=app_settings,
+            draft_run_gate=MagicMock(),
+            perms=MagicMock(),
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset(),
+            obo_ws=_mock_obo_ws(),
+            review_events=review_events,
+            **kwargs,
+        )
+
+    def test_submit_is_recorded_with_its_note(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=1)
+        review_events = self._review_events()
+        self._submit(svc, review_events, _enabled_settings(), body=LifecycleRationaleIn(rationale="adds orders"))
+        review_events.record.assert_called_once_with(
+            "data_product", "p1", "submitted", "alice@x", rationale="adds orders"
+        )
+
+    def test_an_auto_approved_submit_records_the_approval_and_its_version(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=2)
+        svc.approve.return_value = _product(product_id="p1", status="approved", version=2)
+        settings = MagicMock()
+        settings.get_approvals_mode.return_value = "disabled"
+        review_events = self._review_events()
+        self._submit(svc, review_events, settings)
+        actions = [c.args[2] for c in review_events.record.call_args_list]
+        assert actions == ["submitted", "approved"]
+        assert review_events.record.call_args.kwargs["version"] == 2
+
+    def test_approve_records_the_approver_note_and_version(self):
+        svc = MagicMock()
+        svc.approve.return_value = _product(product_id="p1", status="approved", version=3)
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=3)
+        review_events = self._review_events()
+        approve_data_product(
+            "p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=review_events, body=LifecycleRationaleIn(rationale="ok")
+        )
+        review_events.record.assert_called_once_with(
+            "data_product", "p1", "approved", "alice@x", rationale="ok", version=3
+        )
+
+    def test_reject_records_the_note(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="rejected", version=1)
+        review_events = self._review_events()
+        reject_data_product(
+            "p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=review_events, body=LifecycleRationaleIn(rationale="no")
+        )
+        review_events.record.assert_called_once_with("data_product", "p1", "rejected", "alice@x", rationale="no")
+
+    def test_withdraw_is_recorded(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="draft", version=1)
+        review_events = self._review_events()
+        revert_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=review_events)
+        review_events.record.assert_called_once_with("data_product", "p1", "withdrawn", "alice@x")
+
+    def test_a_refused_approval_records_nothing(self):
+        svc = MagicMock()
+        svc.approve.side_effect = InvalidStatusTransitionError("not pending")
+        review_events = self._review_events()
+        with pytest.raises(HTTPException):
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), review_events=review_events)
+        review_events.record.assert_not_called()
+
+    def test_review_events_is_viewer_plus(self):
+        assert UserRole.VIEWER in _route_required_roles("listDataProductReviewEvents")
+
+    def test_the_trail_is_listed(self):
+        review_events = self._review_events()
+        review_events.list_events.return_value = [
+            ReviewEvent(action="submitted", actor="alice@x", created_at="2026-10-01", rationale="adds orders"),
+        ]
+        out = dp_routes.list_data_product_review_events("p1", review_events=review_events)
+        review_events.list_events.assert_called_once_with("data_product", "p1")
+        assert [(e.action, e.actor, e.rationale) for e in out] == [("submitted", "alice@x", "adds orders")]

@@ -208,12 +208,24 @@ export interface ChangesVersion {
   note?: string | null;
 }
 
+/** One review step (submitted, approved, rejected, withdrawn), for the History timeline. */
+export interface ChangesEvent {
+  action: string;
+  actor?: string | null;
+  at?: string | null;
+  note?: string | null;
+  /** The version an approval created. */
+  version?: number | null;
+}
+
 export interface ChangesViewProps {
   sides: ReturnType<typeof useChangesSides>;
   hasPending: boolean;
   approvedVersion: number;
   /** Approved versions, for the picker and the History timeline. */
   versions: ChangesVersion[];
+  /** The review trail, shown in the History timeline. */
+  events?: ChangesEvent[];
   items: ChangeItem[];
   /** Hide the per-status counts and the unchanged toggle (a single item). */
   single?: boolean;
@@ -433,15 +445,42 @@ export function ChangesDialog({
   );
 }
 
+type TimelineEntry =
+  | { kind: "version"; at?: string | null; version: ChangesVersion; approval?: ChangesEvent }
+  | { kind: "event"; at?: string | null; event: ChangesEvent };
+
+const EVENT_STYLE: Record<string, string> = {
+  submitted: "text-sky-700 dark:text-sky-400",
+  approved: "text-green-700 dark:text-green-400",
+  rejected: "text-red-700 dark:text-red-400",
+  withdrawn: "text-muted-foreground",
+};
+
+function timeOf(at: string | null | undefined): number {
+  const ms = at ? Date.parse(at) : Number.NaN;
+  return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
+}
+
 /**
- * View changes inside a History tab: the version timeline (pending changes on
- * top, then each approved version with who approved it and when) beside the
- * comparison. Picking a version shows it against the version before it.
+ * View changes inside a History tab: the timeline (pending changes on top, then
+ * each approved version with who approved it, when and their note, between the
+ * other review steps — submitted, rejected, withdrawn — newest first) beside
+ * the comparison. Picking a version shows it against the version before it.
  */
 export function ChangesPanel({ resetKey, ...view }: ChangesViewProps & { resetKey: string }) {
   const { t } = useTranslation();
   const { sides, hasPending, approvedVersion: approved } = view;
-  const versions = [...view.versions].sort((a, b) => b.version - a.version);
+  const events = view.events ?? [];
+  // An approval's note belongs on the version it created; every other step is
+  // its own line in the timeline.
+  const approvals = new Map(
+    events.filter((e) => e.action === "approved" && e.version != null).map((e) => [e.version as number, e]),
+  );
+  const steps = events.filter((e) => !(e.action === "approved" && e.version != null && view.versions.some((v) => v.version === e.version)));
+  const entries: TimelineEntry[] = [
+    ...view.versions.map((v) => ({ kind: "version" as const, at: v.createdAt, version: v, approval: approvals.get(v.version) })),
+    ...steps.map((e) => ({ kind: "event" as const, at: e.at, event: e })),
+  ].sort((x, y) => timeOf(y.at) - timeOf(x.at) || 0);
   const entry = (selected: boolean) =>
     cn(
       "flex w-full flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-xs",
@@ -461,14 +500,34 @@ export function ChangesPanel({ resetKey, ...view }: ChangesViewProps & { resetKe
             <span className="text-muted-foreground">{t("tableChanges.notApprovedYet")}</span>
           </button>
         )}
-        {versions.length === 0 && !hasPending && (
+        {entries.length === 0 && !hasPending && (
           <p className="px-3 py-2 text-xs text-muted-foreground">{view.neverApprovedText}</p>
         )}
-        {versions.map((v) => {
+        {entries.map((item, i) => {
+          if (item.kind === "event") {
+            const e = item.event;
+            return (
+              <div key={`event-${i}`} className="flex flex-col gap-0.5 px-3 py-1.5 text-xs">
+                <span className={cn("font-medium", EVENT_STYLE[e.action] ?? "text-muted-foreground")}>
+                  {t(`tableChanges.event.${e.action}`, e.action)}
+                  {e.version != null ? ` · v${e.version}` : ""}
+                </span>
+                {e.actor && <span className="truncate font-mono text-muted-foreground">{e.actor}</span>}
+                {e.at && (
+                  <span className="text-muted-foreground">
+                    <RelativeTimeCell iso={e.at} />
+                  </span>
+                )}
+                {e.note && <span className="italic text-muted-foreground">“{e.note}”</span>}
+              </div>
+            );
+          }
+          const v = item.version;
           const selected = sides.mode === "history" && sides.target === v.version;
+          const actor = item.approval?.actor ?? v.createdBy;
           return (
             <button
-              key={v.version}
+              key={`v-${v.version}`}
               type="button"
               aria-current={selected}
               onClick={() => sides.selectVersion(v.version)}
@@ -482,12 +541,17 @@ export function ChangesPanel({ resetKey, ...view }: ChangesViewProps & { resetKe
                   </span>
                 )}
               </span>
-              {v.createdBy && <span className="truncate font-mono text-muted-foreground">{v.createdBy}</span>}
+              {actor && (
+                <span className="truncate text-muted-foreground">
+                  {t("tableChanges.approvedBy")} <span className="font-mono">{actor}</span>
+                </span>
+              )}
               {v.createdAt && (
                 <span className="text-muted-foreground">
                   <RelativeTimeCell iso={v.createdAt} />
                 </span>
               )}
+              {item.approval?.note && <span className="italic text-muted-foreground">“{item.approval.note}”</span>}
               {v.note && <span className="text-amber-700 dark:text-amber-400">{v.note}</span>}
             </button>
           );

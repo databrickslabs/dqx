@@ -29,6 +29,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
+    get_review_event_service,
     get_obo_ws,
     get_pending_application_service,
     get_permissions_service,
@@ -88,6 +89,7 @@ from databricks_labs_dqx_app.backend.models import (
     MatchRulesOut,
     SuggestRulesOut,
     TagSuggestionsOut,
+    ReviewEventOut,
     RuleChangeOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -124,6 +126,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.review_events import ReviewEventService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
@@ -803,6 +806,37 @@ def get_monitored_table_changes(
 
 
 @router.get(
+    "/{binding_id}/review-events",
+    response_model=list[ReviewEventOut],
+    operation_id="listMonitoredTableReviewEvents",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_monitored_table_review_events(
+    binding_id: str,
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+) -> list[ReviewEventOut]:
+    """A monitored table's review trail, newest first: each submit, approve, reject and withdraw."""
+    perms.require_object(
+        ObjectType.MONITORED_TABLE.value,
+        binding_id,
+        Privilege.SELECT,
+        role=role,
+        principal_ids=set(principal_ids),
+        principal_email=_current_user_email(obo_ws),
+    )
+    try:
+        events = review_events.list_events("monitored_table", binding_id)
+    except Exception as e:
+        logger.error(f"Failed to list review events for monitored table {binding_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
+    return [ReviewEventOut(**vars(e)) for e in events]
+
+
+@router.get(
     "/{binding_id}/versions/{version}/checks",
     response_model=MonitoredTableVersionChecksOut,
     operation_id="getMonitoredTableVersionChecks",
@@ -1440,6 +1474,7 @@ def submit_monitored_table(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
@@ -1533,11 +1568,21 @@ def submit_monitored_table(
                 mark_auto_approver(user_email),
                 rationale=rationale,
             )
+            review_events.record(
+                "monitored_table",
+                binding_id,
+                "approved",
+                mark_auto_approver(user_email),
+                rationale=rationale,
+                version=new_version,
+            )
             return MonitoredTableReviewOut(
                 table=MonitoredTableOut.from_domain(table),
                 affected_check_count=approved,
                 new_version=new_version,
             )
+        if status == "pending_approval":
+            review_events.record("monitored_table", binding_id, "submitted", user_email, rationale=rationale)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
     except HTTPException:
         raise
@@ -1564,6 +1609,7 @@ def approve_monitored_table(
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Approve a monitored table — approving every ``pending_approval`` check mapped to it.
@@ -1597,13 +1643,17 @@ def approve_monitored_table(
                 ),
             )
         user_email = _current_user_email(obo_ws)
+        rationale = body.rationale if body else None
         table, approved, new_version = _approve_binding_checks(
             monitored_tables_svc,
             rules_catalog,
             version_svc,
             binding_id,
             user_email,
-            rationale=body.rationale if body else None,
+            rationale=rationale,
+        )
+        review_events.record(
+            "monitored_table", binding_id, "approved", user_email, rationale=rationale, version=new_version
         )
         return MonitoredTableReviewOut(
             table=MonitoredTableOut.from_domain(table),
@@ -1630,6 +1680,7 @@ def reject_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Reject a monitored table — rejecting every ``pending_approval`` check mapped to it.
@@ -1668,13 +1719,15 @@ def reject_monitored_table(
             to_status="rejected",
             user_email=user_email,
         )
+        rationale = body.rationale if body else None
         table = monitored_tables_svc.set_status(
             binding_id,
             "rejected",
             user_email,
-            rationale=body.rationale if body else None,
+            rationale=rationale,
             set_rationale=True,
         )
+        review_events.record("monitored_table", binding_id, "rejected", user_email, rationale=rationale)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
     except HTTPException:
         raise
@@ -1696,6 +1749,7 @@ def revert_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
 ) -> MonitoredTableReviewOut:
     """Withdraw a pending submission — walk the binding back to ``draft``.
 
@@ -1732,6 +1786,7 @@ def revert_monitored_table(
             user_email=user_email,
         )
         table = monitored_tables_svc.set_status(binding_id, "draft", user_email, set_rationale=True)
+        review_events.record("monitored_table", binding_id, "withdrawn", user_email)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
     except HTTPException:
         raise
