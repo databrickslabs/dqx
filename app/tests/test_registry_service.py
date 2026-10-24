@@ -757,6 +757,23 @@ class TestLifecycle:
         updated = svc.revoke("r1", "author@x")
         assert updated.status == "approved"
 
+    @pytest.mark.parametrize("version", [0, 1])
+    def test_reject_records_a_reject_in_the_history(self, svc, sql, version):
+        """Rejecting a published rule's review and withdrawing it both return it to
+        approved, so the history names each instead of the status they land on."""
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=version))]
+        svc.reject("r1", "approver@x", rationale="too broad")
+        history = next(c.args[0] for c in sql.execute.call_args_list if "dq_rules_history" in c.args[0])
+        assert "'reject'" in history
+        assert "'too broad'" in history
+
+    @pytest.mark.parametrize("version", [0, 1])
+    def test_revoke_records_a_revoke_in_the_history(self, svc, sql, version):
+        sql.query.return_value = [_row_for(self._rule("pending_approval", version=version))]
+        svc.revoke("r1", "author@x")
+        history = next(c.args[0] for c in sql.execute.call_args_list if "dq_rules_history" in c.args[0])
+        assert "'revoke'" in history
+
     def test_cannot_revoke_non_pending(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("draft"))]
         with pytest.raises(ValueError, match="not pending approval"):

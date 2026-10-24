@@ -10,6 +10,7 @@ binding_id, publish version bump, and the run fan-out resolution matrix
 zero-runnable, per-member submission failures collected into ``skipped``).
 """
 
+import json
 from datetime import datetime
 from unittest.mock import create_autospec
 
@@ -23,6 +24,8 @@ from databricks_labs_dqx_app.backend.services.binding_run_service import (
     NeverApprovedError,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    collection_state,
+    compare_collection_states,
     BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
@@ -53,6 +56,7 @@ def _mock_sql() -> SqlExecutor:
     )
     mock.q.side_effect = lambda i: f"`{i}`"
     mock.ts_text.side_effect = lambda c: f"CAST({c} AS STRING)"
+    mock.json_literal_expr.side_effect = lambda j: "parse_json('" + j.replace("'", "''") + "')"
     mock.query.return_value = []
     # The service now goes through the shared CRUD-builder shortcuts
     # (``insert``/``update``/``delete``/``count``/``select_rows``); route
@@ -1063,7 +1067,7 @@ class TestApprove:
         product = service.approve("p1", "bob@x")
         assert product.status == "approved"
         assert product.version == 2
-        update_sql = sql.execute.call_args[0][0]
+        update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
         assert "`version` = 2" in update_sql
         assert "`status` = 'approved'" in update_sql
 
@@ -1277,3 +1281,221 @@ class TestRun:
         run_set_service.create.assert_called_once_with(
             product_id="p1", product_version=4, source="approved", trigger="manual", created_by="bob@x"
         )
+
+
+# ---------------------------------------------------------------------------
+# Versions and View changes
+# ---------------------------------------------------------------------------
+
+_VERSIONS = "dqx_test.dqx_app_test.dq_data_product_versions"
+
+
+def _state(*members: tuple[str, str, int | None], name: str = "Orders", description: str | None = None) -> dict:
+    return collection_state(
+        DataProduct(product_id="p1", name=name, description=description, owner="alice@x", status="approved"),
+        list(members),
+    )
+
+
+def _route_queries(
+    sql,
+    product: list[str | None],
+    members: list[list[str | None]] | None = None,
+    versions: list[list[object]] | None = None,
+) -> None:
+    """Answer each read by the table it reads, so the order of reads doesn't matter."""
+
+    def answer(stmt: str, **_kwargs) -> list:
+        if _VERSIONS in stmt:
+            rows = versions or []
+            if "COUNT(" in stmt.upper():
+                wanted = [r for r in rows if f"`version` = {r[0]}" in stmt]
+                return [[str(len(wanted))]]
+            return rows
+        if _MEMBERS in stmt:
+            return members or []
+        return [product]
+
+    sql.query.side_effect = answer
+
+
+def _executed(sql) -> list[str]:
+    return [c.args[0] for c in sql.execute.call_args_list]
+
+
+class TestCompareCollectionStates:
+    def test_members_are_matched_by_table_with_the_settings_first(self):
+        before = _state(("b1", "c.s.orders", None), ("b2", "c.s.items", 3))
+        after = _state(("b1", "c.s.orders", None), ("b2", "c.s.items", 4), ("b3", "c.s.users", None))
+        changes = compare_collection_states(before, after)
+        assert [(c.key, c.status) for c in changes] == [
+            ("settings", "unchanged"),
+            ("b2", "modified"),
+            ("b1", "unchanged"),
+            ("b3", "added"),
+        ]
+        modified = changes[1]
+        assert modified.name == "c.s.items"
+        assert modified.before == [{"table": "c.s.items", "version": 3}]
+        assert modified.after == [{"table": "c.s.items", "version": 4}]
+
+    def test_a_removed_member_comes_last(self):
+        before = _state(("b1", "c.s.orders", None), ("b2", "c.s.items", None))
+        after = _state(("b1", "c.s.orders", None))
+        changes = compare_collection_states(before, after)
+        assert (changes[-1].key, changes[-1].status) == ("b2", "removed")
+        assert changes[-1].before == [{"table": "c.s.items", "version": "latest"}]
+        assert changes[-1].after == []
+
+    def test_a_settings_edit_is_modified(self):
+        changes = compare_collection_states(_state(name="Orders"), _state(name="Orders v2", description="All orders"))
+        assert changes[0].status == "modified"
+        assert changes[0].after == [{"name": "Orders v2", "description": "All orders", "owner": "alice@x"}]
+
+    def test_first_approval_shows_everything_added(self):
+        changes = compare_collection_states(None, _state(("b1", "c.s.orders", 2)))
+        assert [(c.key, c.status) for c in changes] == [("settings", "added"), ("b1", "added")]
+
+    def test_a_pin_change_to_follow_latest_is_modified(self):
+        changes = compare_collection_states(_state(("b1", "t", 2)), _state(("b1", "t", None)))
+        assert changes[1].status == "modified"
+        assert changes[1].after == [{"table": "t", "version": "latest"}]
+
+
+class TestVersionRecording:
+    def test_approve_records_the_approved_members(self, service, sql, monitored_tables):
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="c.s.orders")]
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="pending_approval", version="1"),
+            members=[_member_row("m1", "b1", "2")],
+        )
+        service.approve("p1", "bob@x")
+        insert = next(c for c in _executed(sql) if c.startswith(f"INSERT INTO {_VERSIONS}"))
+        assert ", 2, " in insert
+        assert '"binding_id": "b1", "table": "c.s.orders", "pinned_version": 2' in insert
+        assert "'bob@x'" in insert
+
+    def test_the_first_edit_of_an_unrecorded_approved_collection_records_it_before_the_edit(
+        self, service, sql, monitored_tables
+    ):
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="c.s.orders")]
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="approved", version="3"),
+            members=[_member_row("m1", "b1")],
+        )
+        service.remove_member("p1", "m1", "bob@x")
+        executed = _executed(sql)
+        insert = next(i for i, c in enumerate(executed) if c.startswith(f"INSERT INTO {_VERSIONS}"))
+        delete = next(i for i, c in enumerate(executed) if c.startswith(f"DELETE FROM {_MEMBERS}"))
+        assert insert < delete
+        assert ", 3, " in executed[insert]
+
+    def test_a_recorded_version_is_not_recorded_again(self, service, sql):
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="approved", version="3"),
+            members=[_member_row("m1", "b1")],
+            versions=[[3, "{}", "bob@x", "2026-10-01"]],
+        )
+        service.remove_member("p1", "m1", "bob@x")
+        assert not any(c.startswith(f"INSERT INTO {_VERSIONS}") for c in _executed(sql))
+
+    def test_editing_a_draft_records_nothing(self, service, sql):
+        _route_queries(
+            sql, _product_row(product_id="p1", status="draft", version="3"), members=[_member_row("m1", "b1")]
+        )
+        service.remove_member("p1", "m1", "bob@x")
+        assert not any(c.startswith(f"INSERT INTO {_VERSIONS}") for c in _executed(sql))
+
+    def test_a_schedule_only_update_records_nothing(self, service, sql):
+        _route_queries(sql, _product_row(product_id="p1", status="approved", version="3"))
+        service.update("p1", {"schedule_cron": "0 0 * * *"}, "bob@x")
+        assert not any(c.startswith(f"INSERT INTO {_VERSIONS}") for c in _executed(sql))
+
+    def test_delete_removes_the_recorded_versions(self, service, sql):
+        sql.query.return_value = [["p1"]]
+        service.delete("p1")
+        assert any(f"DELETE FROM {_VERSIONS}" in c for c in _executed(sql))
+
+
+class TestChanges:
+    @staticmethod
+    def _version(version: int, state: dict) -> list[object]:
+        return [version, json.dumps(state), "bob@x", "2026-10-01"]
+
+    def test_pending_compares_the_approved_version_with_the_current_members(self, service, sql, monitored_tables):
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="c.s.orders"),
+            _table_summary(binding_id="b2", table_fqn="c.s.items"),
+        ]
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="draft", version="2"),
+            members=[_member_row("m1", "b1"), _member_row("m2", "b2")],
+            versions=[self._version(2, _state(("b1", "c.s.orders", None)))],
+        )
+        result = service.changes("p1")
+        assert (result.base_version, result.target_version) == (2, None)
+        assert result.has_pending_changes and result.base_recorded
+        assert {c.key: c.status for c in result.changes} == {"settings": "unchanged", "b1": "unchanged", "b2": "added"}
+
+    def test_an_approved_collection_compares_its_last_two_versions(self, service, sql):
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="approved", version="2"),
+            versions=[
+                self._version(2, _state(("b1", "t1", None))),
+                self._version(1, _state(("b1", "t1", None), ("b2", "t2", None))),
+            ],
+        )
+        result = service.changes("p1")
+        assert (result.base_version, result.target_version) == (1, 2)
+        assert {c.key: c.status for c in result.changes}["b2"] == "removed"
+        assert [v.version for v in result.versions] == [2, 1]
+
+    def test_an_unrecorded_approved_version_reads_as_the_current_state(self, service, sql, monitored_tables):
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="t1")]
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="approved", version="2"),
+            members=[_member_row("m1", "b1")],
+            versions=[self._version(1, _state())],
+        )
+        result = service.changes("p1")
+        assert result.base_recorded
+        assert {c.key: c.status for c in result.changes}["b1"] == "added"
+        assert [v.version for v in result.versions] == [2, 1]
+
+    def test_pending_against_an_unrecorded_version_shows_the_current_members_added(
+        self, service, sql, monitored_tables
+    ):
+        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="t1")]
+        _route_queries(
+            sql, _product_row(product_id="p1", status="draft", version="2"), members=[_member_row("m1", "b1")]
+        )
+        result = service.changes("p1")
+        assert not result.base_recorded
+        assert {c.key: c.status for c in result.changes} == {"settings": "added", "b1": "added"}
+
+    def test_two_unrecorded_versions_compare_to_nothing(self, service, sql):
+        _route_queries(sql, _product_row(product_id="p1", status="approved", version="3"))
+        result = service.changes("p1", base=1, target=2)
+        assert not result.base_recorded
+        assert result.changes == []
+
+    def test_a_target_above_the_approved_version_is_refused(self, service, sql):
+        _route_queries(sql, _product_row(product_id="p1", status="approved", version="2"))
+        with pytest.raises(ValueError):
+            service.changes("p1", target=3)
+
+    def test_a_base_not_below_the_target_is_refused(self, service, sql):
+        _route_queries(sql, _product_row(product_id="p1", status="approved", version="2"))
+        with pytest.raises(ValueError):
+            service.changes("p1", base=2, target=2)
+
+    def test_a_missing_collection_raises(self, service, sql):
+        sql.query.return_value = []
+        with pytest.raises(LookupError):
+            service.changes("missing")
