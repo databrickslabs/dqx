@@ -4249,8 +4249,9 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     """
     Checks whether the values in the input column contain specific keys in the outermost JSON object.
 
-    Valid JSON arrays, scalars, and null values fail with a non-object error because they are not JSON objects.
-    SQL NULL values pass; use *is_not_null* separately when the input is required.
+    JSON values that are not objects (e.g. arrays, scalars, or JSON nulls) fail with an *"is not a JSON object"*
+    message. Malformed JSON values fail with an *"is not a valid JSON string"* message. SQL NULL values pass; use
+    *is_not_null* separately when the input is required.
 
     Args:
         column: The name of the column or the column expression to check for JSON keys.

@@ -5175,6 +5175,9 @@ def test_has_json_keys_requires_outermost_object(spark: SparkSession, require_al
         ('{"name": null}', missing_keys if require_all else None),
         ('{"nested": {"id": 1, "name": "test"}}', missing_keys),
         ("Not a JSON string", "is not a valid JSON string"),
+        ("", "is not a valid JSON string"),
+        ("  null  ", "is not a JSON object"),
+        (' {"id": 1, "name": "test"} ', None),
     ]
     original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
     assert original_ansi_enabled is not None
