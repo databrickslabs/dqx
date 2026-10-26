@@ -209,6 +209,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC - `unique: true` → `is_unique`
 # MAGIC - `pattern: regex` → `regex_match`
 # MAGIC - `minimum`/`maximum` → `is_in_range`, or `is_not_less_than` / `is_not_greater_than` for a single bound (row-level: only out-of-range rows are flagged)
+# MAGIC - `exclusiveMinimum`/`exclusiveMaximum` → `sql_expression` (strict bound: value > bound / value < bound)
 # MAGIC - `minLength`/`maxLength` → `sql_expression` for LENGTH checks
 # MAGIC - `format` → `is_valid_date` or `is_valid_timestamp` for date/timestamp fields
 # MAGIC
