@@ -493,8 +493,8 @@ class DQEngineCore(DQEngineCoreBase):
         The current DBR version is resolved via the *current_version().dbr_version* Spark SQL function and compared
         as a *(major, minor)* tuple. The version string may carry a suffix (for example *"18.2.x-photon-scala2.13"*
         on serverless or *"15.4 LTS"*), and in Lakeflow Spark Declarative Pipelines it carries a runtime prefix
-        (for example *"dlt:18.3.8-delta-pipelines-photon-..."*); the prefix is ignored and only the leading *major*
-        and optional *minor* are used. A bare-major
+        (for example *"dlt:18.3.8-delta-pipelines-photon-..."*); the *"dlt:"* prefix is ignored only when running
+        inside a pipeline, and only the leading *major* and optional *minor* are used. A bare-major
         serverless form such as *"17.x-photon-scala2.13"* has no numeric minor, so only the major is compared
         (for example *"17.x"* satisfies a *"17.1"* requirement).
 
@@ -533,8 +533,11 @@ class DQEngineCore(DQEngineCoreBase):
         if dbr_version_str is None or not dbr_version_str.strip():
             return
 
-        # An optional runtime prefix such as "dlt:" (Lakeflow Spark Declarative Pipelines) precedes the version.
-        match = re.match(r"\s*(?:[A-Za-z][\w-]*:)?(\d+)(?:\.(\d+))?", dbr_version_str)
+        version_pattern = r"\s*(\d+)(?:\.(\d+))?"
+        if is_dlt_pipeline(self.spark):
+            # Lakeflow Spark Declarative Pipelines report the runtime with a "dlt:" prefix before the version.
+            version_pattern = r"\s*(?:dlt:)?(\d+)(?:\.(\d+))?"
+        match = re.match(version_pattern, dbr_version_str)
         if match is None:
             raise InvalidCheckError(f"Cannot parse Databricks Runtime version: '{dbr_version_str}'.")
         minor = int(match.group(2)) if match.group(2) is not None else sys.maxsize
