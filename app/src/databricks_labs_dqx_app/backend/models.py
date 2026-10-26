@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import __version__
 from .config import AI_SAMPLE_ROW_LIMIT
-from .sql_utils import validate_row_scope, validate_timezone
+from .sql_utils import validate_row_scope
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
 from .registry_models import RegistryRule as RegistryRuleDomain
@@ -1641,10 +1641,18 @@ class BatchRunFromCatalogIn(BaseModel):
         ),
     )
 
-    @field_validator("sample_interval_timezone")
-    @classmethod
-    def _valid_timezone(cls, value: str | None) -> str | None:
-        return validate_timezone(value) if value else value
+    @model_validator(mode="after")
+    def _valid_row_scope(self) -> "BatchRunFromCatalogIn":
+        # The same rules a schedule's Row Scope is saved with.
+        validate_row_scope(
+            {
+                "sample_interval_minutes": self.sample_interval_minutes,
+                "sample_interval_timezone": self.sample_interval_timezone,
+                "sample_interval_columns": self.sample_interval_columns,
+                "sample_interval_selected_column": self.sample_interval_selected_column,
+            }
+        )
+        return self
 
 
 class BatchRunFromCatalogOut(BaseModel):

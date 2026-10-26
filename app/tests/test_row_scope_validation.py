@@ -25,6 +25,8 @@ def _schedule(**row_scope: object) -> ScheduleConfigIn:
         {"sample_interval_minutes": 60, "sample_interval_timezone": "Singapore"},
         {"sample_interval_minutes": 60, "sample_interval_columns": ["updated_at", "event_time"]},
         {"sample_interval_minutes": 60, "sample_interval_columns": []},
+        {"sample_interval_minutes": 60, "sample_interval_selected_column": "updated_at"},
+        {"sample_interval_minutes": 60, "sample_interval_selected_column": None},
     ],
 )
 def test_valid_row_scope_is_saved(row_scope: dict) -> None:
@@ -41,6 +43,10 @@ def test_valid_row_scope_is_saved(row_scope: dict) -> None:
         {"sample_interval_minutes": 60, "sample_interval_timezone": "America/New_york"},
         {"sample_interval_minutes": 60, "sample_interval_columns": "updated_at"},
         {"sample_interval_minutes": 60, "sample_interval_columns": ["updated_at", 7]},
+        # A pinned column that isn't a name would fail every run on .lower().
+        {"sample_interval_minutes": 60, "sample_interval_selected_column": ["updated_at"]},
+        {"sample_interval_minutes": 60, "sample_interval_selected_column": 123},
+        {"sample_interval_minutes": 60, "sample_interval_selected_column": "  "},
     ],
 )
 def test_invalid_row_scope_is_rejected(row_scope: dict) -> None:
@@ -64,3 +70,17 @@ def test_run_now_accepts_a_region_zone() -> None:
     )
 
     assert body.sample_interval_timezone == "America/Los_Angeles"
+
+
+@pytest.mark.parametrize(
+    "row_scope",
+    [
+        {"sample_interval_columns": ["", " "]},
+        {"sample_interval_selected_column": " "},
+    ],
+)
+def test_run_now_applies_the_same_rules_as_a_schedule(row_scope: dict) -> None:
+    with pytest.raises(ValidationError):
+        _schedule(sample_interval_minutes=60, **row_scope)
+    with pytest.raises(ValidationError):
+        BatchRunFromCatalogIn(table_fqns=["c.s.t"], sample_interval_minutes=60, **row_scope)

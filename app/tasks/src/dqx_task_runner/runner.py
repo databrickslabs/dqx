@@ -24,7 +24,7 @@ from typing import Any, cast
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
-from dqx_task_runner.row_scope import apply_time_window, plan_time_window
+from dqx_task_runner.row_scope import TimeWindow, apply_time_window, plan_time_window
 
 logger = logging.getLogger("dqx_task_runner")
 
@@ -342,15 +342,16 @@ def _read_view_with_retry(
 
 
 def _apply_sample_scope(
-    df: Any,
+    df: DataFrame,
     sample_size: int,
     sample_interval_minutes: int | None,
     sample_interval_timezone: str | None = None,
     sample_interval_columns: Sequence[str] | None = None,
     sample_interval_selected_column: str | None = None,
-) -> Any:
+) -> tuple[DataFrame, TimeWindow | None]:
     """Apply the configured Row Scope: a plain LIMIT, or a time window ("latest N").
 
+    Returns the scoped DataFrame and the window applied (None when none was).
     The window is only planned when ``sample_interval_minutes`` is set —
     detecting and sorting by a time column isn't free. See :mod:`row_scope`
     for how each kind of time column is read. ``sample_interval_columns``
@@ -365,15 +366,35 @@ def _apply_sample_scope(
         sample_interval_selected_column,
     )
     if window is None:
-        return df.limit(sample_size) if sample_size else df
-    return apply_time_window(df, window, sample_size)
+        return (df.limit(sample_size) if sample_size else df), None
+    return apply_time_window(df, window, sample_size), window
 
 
-def _warn_if_window_empty(sample_interval_minutes: int | None, total_rows: int, source_table_fqn: str) -> None:
-    """Log when a time window matched no rows: the run then validated nothing."""
-    if sample_interval_minutes and total_rows == 0:
+def _warn_if_window_empty(window: TimeWindow | None, total_rows: int, source_table_fqn: str) -> None:
+    """Log when an applied time window matched no rows: the run then validated nothing.
+
+    Not logged when no window was applied (no time column found): that run took
+    an unordered sample instead, which :func:`plan_time_window` already logs.
+    """
+    if window is not None and total_rows == 0:
         logger.warning(
-            "Row Scope window of %s minutes matched no rows on %s — this run validated no data",
+            "Row Scope window of the last %s minutes by '%s' matched no rows on %s — this run validated no data",
+            window.minutes,
+            window.column,
+            source_table_fqn,
+        )
+
+
+def _warn_if_window_skipped(sample_interval_minutes: int | None, source_table_fqn: str) -> None:
+    """Log that a cross-table SQL check runs on its whole result even when the run has a time window.
+
+    Its query reads whatever tables it names, not this table's rows, so there
+    is no time column to restrict.
+    """
+    if sample_interval_minutes:
+        logger.warning(
+            "Row Scope window of the last %s minutes doesn't apply to the cross-table SQL check on %s — "
+            "it checks its whole query result",
             sample_interval_minutes,
             source_table_fqn,
         )
@@ -510,6 +531,7 @@ def _run_dryrun(
     start = time.time()
 
     if config.get("is_sql_check"):
+        _warn_if_window_skipped(sample_interval_minutes, source_table_fqn)
         _run_dryrun_sql_check(
             spark,
             view_fqn,
@@ -540,7 +562,7 @@ def _run_dryrun(
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     df = _read_view_with_retry(spark, view_fqn)
-    df = _apply_sample_scope(
+    df, window = _apply_sample_scope(
         df,
         sample_size,
         sample_interval_minutes,
@@ -577,7 +599,7 @@ def _run_dryrun(
     error_rows = int(observed.get("error_row_count", 0) or 0)
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
-    _warn_if_window_empty(sample_interval_minutes, total_rows, source_table_fqn)
+    _warn_if_window_empty(window, total_rows, source_table_fqn)
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
@@ -1138,6 +1160,7 @@ def _run_scheduled(
     start = time.time()
 
     if config.get("is_sql_check"):
+        _warn_if_window_skipped(sample_interval_minutes, source_table_fqn)
         sql_query = config.get("sql_query")
         if sql_query:
             from databricks.labs.dqx.utils import is_sql_query_safe
@@ -1181,7 +1204,7 @@ def _run_scheduled(
     engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     df = _read_view_with_retry(spark, view_fqn)
-    df = _apply_sample_scope(
+    df, window = _apply_sample_scope(
         df,
         sample_size,
         sample_interval_minutes,
@@ -1209,7 +1232,7 @@ def _run_scheduled(
     error_rows = int(observed.get("error_row_count", 0) or 0)
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
-    _warn_if_window_empty(sample_interval_minutes, total_rows, source_table_fqn)
+    _warn_if_window_empty(window, total_rows, source_table_fqn)
 
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
     result_row = spark.createDataFrame(

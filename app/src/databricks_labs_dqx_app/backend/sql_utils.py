@@ -379,7 +379,9 @@ def validate_row_scope(config: dict) -> None:
 
     The lookback must be a positive number of minutes (0 or unset turns the
     window off; a negative one would put the cutoff in the future and match
-    nothing), and the time zone a valid region name. Raises ValueError.
+    nothing), the time zone a valid region name, the candidate columns a list
+    of names, and a pinned column a name. Schedules and "Run Now" both use
+    this, so they accept the same settings. Raises ValueError.
     """
     minutes = config.get("sample_interval_minutes")
     if minutes not in (None, 0) and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1):
@@ -392,3 +394,6 @@ def validate_row_scope(config: dict) -> None:
         not isinstance(columns, list) or not all(isinstance(c, str) and c.strip() for c in columns)
     ):
         raise ValueError("sample_interval_columns must be a list of column names")
+    selected = config.get("sample_interval_selected_column")
+    if selected is not None and not (isinstance(selected, str) and selected.strip()):
+        raise ValueError("sample_interval_selected_column must be a column name")

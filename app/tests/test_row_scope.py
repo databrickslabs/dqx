@@ -9,6 +9,7 @@ Spark session, so these tests cover the planning, which decides all of that.
 
 import importlib
 from collections.abc import Callable
+from datetime import date, datetime, timezone
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -209,3 +210,94 @@ def test_the_tiebreak_hash_skips_maps_at_any_depth(row_scope: ModuleType) -> Non
     )
 
     assert row_scope.hashable_columns(df) == ["id", "point", "names"]
+
+
+# ---------------------------------------------------------------------------
+# A string column is only a time column when its values read as date-times
+# ---------------------------------------------------------------------------
+
+
+def _probed_df(*fields: StructField, string_reads_as_time: bool) -> MagicMock:
+    """A DataFrame whose string probe finds date-times, or doesn't."""
+    df = _df(*fields)
+    probe = MagicMock()
+    probe.select.return_value = probe.where.return_value = probe.limit.return_value = probe
+    probe.count.return_value = 1 if string_reads_as_time else 0
+    df.select.return_value = probe
+    return df
+
+
+def test_candidates_are_named_typed_then_named_strings_then_other_typed(row_scope: ModuleType) -> None:
+    schema = StructType(
+        [
+            StructField("recorded", TimestampType()),
+            StructField("date", StringType()),
+            StructField("updated_at", TimestampNTZType()),
+        ]
+    )
+
+    assert row_scope.time_column_candidates(schema) == [
+        ("updated_at", "timestamp_ntz"),
+        ("date", "string"),
+        ("recorded", "timestamp"),
+    ]
+
+
+def test_a_free_text_string_named_like_a_time_column_is_passed_over(row_scope: ModuleType) -> None:
+    # 'date' holds values like 'Q3 FY26'; windowing on it would match no rows.
+    df = _probed_df(
+        StructField("date", StringType()), StructField("event_dt", TimestampType()), string_reads_as_time=False
+    )
+
+    window = row_scope.plan_time_window(df, 60)
+
+    assert (window.column, window.kind) == ("event_dt", "instant")
+
+
+def test_a_string_holding_date_times_is_still_used(row_scope: ModuleType) -> None:
+    df = _probed_df(
+        StructField("ingestdate", StringType()), StructField("event_dt", TimestampType()), string_reads_as_time=True
+    )
+
+    window = row_scope.plan_time_window(df, 60)
+
+    assert (window.column, window.kind) == ("ingestdate", "wall_clock")
+
+
+# ---------------------------------------------------------------------------
+# window_bounds: one fixed cutoff per run
+# ---------------------------------------------------------------------------
+
+
+def _window(row_scope: ModuleType, minutes: int, zone: str) -> object:
+    return row_scope.TimeWindow(column="c", kind="wall_clock", source_type="string", minutes=minutes, timezone=zone)
+
+
+def test_the_cutoff_is_fixed_at_the_given_time_in_utc(row_scope: ModuleType) -> None:
+    now = datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)
+
+    bounds = row_scope.window_bounds(_window(row_scope, 60, "America/New_York"), now)
+
+    assert bounds.cutoff_utc == datetime(2026, 10, 16, 13, 0)
+    assert bounds.first_day == date(2026, 10, 16)
+
+
+@pytest.mark.parametrize(
+    ("zone", "first_day"),
+    [("America/New_York", date(2026, 10, 16)), ("Asia/Tokyo", date(2026, 10, 17)), ("UTC", date(2026, 10, 16))],
+)
+def test_the_first_day_is_the_cutoffs_day_in_the_windows_zone(
+    row_scope: ModuleType, zone: str, first_day: date
+) -> None:
+    # 02:00Z on the 17th minus 3 hours is 23:00Z on the 16th: 19:00 the 16th in
+    # New York, 08:00 the 17th in Tokyo.
+    now = datetime(2026, 10, 17, 2, 0, tzinfo=timezone.utc)
+
+    assert row_scope.window_bounds(_window(row_scope, 180, zone), now).first_day == first_day
+
+
+def test_a_day_window_reaches_back_to_yesterday(row_scope: ModuleType) -> None:
+    # A 24-hour window at 10:00 in New York starts at 10:00 yesterday.
+    now = datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)
+
+    assert row_scope.window_bounds(_window(row_scope, 24 * 60, "America/New_York"), now).first_day == date(2026, 10, 15)
