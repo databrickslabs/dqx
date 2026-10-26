@@ -1,21 +1,39 @@
+from collections.abc import Callable
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import Column, DataFrame, Row, SparkSession
+from pyspark.sql.functions import col, lit
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
+from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks
 from databricks.labs.dqx.checks_storage import (
     DataFrameConverter,
     LakebaseChecksStorageHandler,
     TableChecksStorageHandler,
     is_table_location,
 )
-from databricks.labs.dqx.config import LakebaseChecksStorageConfig, TableChecksStorageConfig
-from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.config import (
+    InstallationChecksStorageConfig,
+    LakebaseChecksStorageConfig,
+    TableChecksStorageConfig,
+)
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidCheckError, UnsafeSqlQueryError
+from databricks.labs.dqx.rule import DQDatasetRule, register_rule
 
 _SIMPLE_CHECK = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
 _VERSIONING_COLUMNS = ("created_at", "rule_fingerprint", "rule_set_fingerprint")
+_CUSTOM_CHECK = [{"criticality": "error", "check": {"function": "custom_not_null", "arguments": {"column": "id"}}}]
+
+
+def custom_not_null(column: str) -> Column:
+    return col(column)
+
+
+_CUSTOM_CHECK_FUNCTIONS = {"custom_not_null": custom_not_null}
 
 
 @pytest.mark.parametrize(
@@ -419,3 +437,91 @@ def test_row_to_check_dict_handles_null_user_metadata_value():
     check_dict = DataFrameConverter._row_to_check_dict(row)
 
     assert check_dict["user_metadata"] == {"missing": None, "owner": "a@b.com"}
+
+
+def test_save_checks_to_table_stores_resolved_name_and_fingerprint_for_custom_check():
+    ws, spark = _mock_spark_without_table()
+    engine = DQEngine(ws, spark=spark)
+
+    engine.save_checks(
+        _CUSTOM_CHECK,
+        TableChecksStorageConfig(location="catalog.schema.table"),
+        custom_check_functions=_CUSTOM_CHECK_FUNCTIONS,
+    )
+
+    rule = deserialize_checks(_CUSTOM_CHECK, _CUSTOM_CHECK_FUNCTIONS)[0]
+    row = _saved_table_rows(spark)[0]
+    assert row[0] == rule.name
+    assert row[2]["function"] == "custom_not_null"
+    assert row[8] == rule.rule_fingerprint
+    spark.createDataFrame.return_value.write.saveAsTable.assert_called_once()
+
+
+def test_save_checks_to_table_rejects_custom_check_without_custom_check_functions():
+    ws, spark = _mock_spark_without_table()
+    engine = DQEngine(ws, spark=spark)
+
+    with pytest.raises(InvalidCheckError, match="custom_not_null"):
+        engine.save_checks(_CUSTOM_CHECK, TableChecksStorageConfig(location="catalog.schema.table"))
+
+    spark.createDataFrame.assert_not_called()
+
+
+def test_save_checks_to_installation_table_uses_custom_check_functions():
+    ws, spark = _mock_spark_without_table()
+    engine = DQEngine(ws, spark=spark)
+    config = InstallationChecksStorageConfig(
+        location="catalog.schema.table", overwrite_location=True, install_folder="/Workspace/dqx"
+    )
+
+    engine.save_checks(_CUSTOM_CHECK, config, custom_check_functions=_CUSTOM_CHECK_FUNCTIONS)
+
+    rule = deserialize_checks(_CUSTOM_CHECK, _CUSTOM_CHECK_FUNCTIONS)[0]
+    assert _saved_table_rows(spark)[0][8] == rule.rule_fingerprint
+
+
+@register_rule("dataset")
+def custom_dataset_check(col_name: str) -> tuple[Column, Callable]:
+    def apply(df: DataFrame) -> DataFrame:
+        return df.withColumn("tmp_cond", lit(False))
+
+    return make_condition(condition=col("tmp_cond"), message=f"{col_name} failed", alias="tmp_alias"), apply
+
+
+def test_save_checks_to_table_with_serialized_custom_dataset_rule():
+    checks = serialize_checks(
+        [
+            DQDatasetRule(
+                criticality="error",
+                check_func=custom_dataset_check,
+                name="test custom check",
+                check_func_kwargs={"col_name": "x"},
+            )
+        ]
+    )
+    custom_check_functions = {"custom_dataset_check": custom_dataset_check}
+    config = TableChecksStorageConfig(location="catalog.schema.table", mode="append")
+    ws, spark = _mock_spark_without_table()
+    engine = DQEngine(ws, spark=spark)
+
+    with pytest.raises(InvalidCheckError, match="custom_dataset_check"):
+        engine.save_checks(checks, config)
+
+    engine.save_checks(checks, config, custom_check_functions=custom_check_functions)
+
+    rule = deserialize_checks(checks, custom_check_functions)[0]
+    row = _saved_table_rows(spark)[0]
+    assert row[0] == "test custom check"
+    assert row[2]["function"] == "custom_dataset_check"
+    assert row[8] == rule.rule_fingerprint
+
+
+def _saved_table_rows(spark: MagicMock) -> list[list]:
+    return spark.createDataFrame.call_args.args[0]
+
+
+def _mock_spark_without_table() -> tuple[MagicMock, MagicMock]:
+    ws = create_autospec(WorkspaceClient)
+    ws.tables.get.side_effect = NotFound("table not found")
+    spark = create_autospec(SparkSession)
+    return ws, spark

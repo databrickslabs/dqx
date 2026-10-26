@@ -8,15 +8,19 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+import pyspark.sql.functions as F
+from pyspark.sql import Column
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.schema import CreateSchema
 
+from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
+from databricks.labs.dqx.rule import register_rule
 from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
@@ -25,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # Matches the resource names produced by the make_lakebase_instance fixture: dqx-test-<run_id>-<10 alnum>.
 _LAKEBASE_RESOURCE_PATTERN = re.compile(r"^dqx-test-\d+-[A-Za-z0-9]{10}$")
+
+
+@register_rule("row")
+def custom_is_not_null(column: str) -> Column:
+    return make_condition(F.col(column).isNull(), f"{column} is null", f"{column}_custom_is_null")
 
 
 TEST_CHECKS = [
@@ -204,6 +213,41 @@ def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_insta
     checks = dq_engine.load_checks(config=config)
 
     compare_checks(checks, TEST_CHECKS)
+
+
+def test_save_checks_to_lakebase_with_custom_check_stores_applied_name_and_fingerprint(
+    ws, spark, make_lakebase_instance, make_random
+):
+    """A nameless custom check is stored with the same name and rule_fingerprint that apply writes into _errors."""
+    dq_engine = DQEngine(ws, spark)
+
+    instance = make_lakebase_instance()
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+    config = LakebaseChecksStorageConfig(location=lakebase_location, instance_name=instance.name)
+    custom_check_functions = {"custom_is_not_null": custom_is_not_null}
+    nameless_check = {
+        "criticality": "error",
+        "check": {"function": "custom_is_not_null", "arguments": {"column": "col_1"}},
+    }
+
+    dq_engine.save_checks([nameless_check], config=config, custom_check_functions=custom_check_functions)
+    loaded = dq_engine.load_checks(config=config)
+
+    handler = LakebaseChecksStorageHandler(ws=ws, spark=spark)
+    table = LakebaseChecksStorageHandler.get_table_definition(config.schema_name, config.table_name)
+    engine = handler.get_engine(config)
+    try:
+        with engine.connect() as conn:
+            stored = conn.execute(select(table.c.name, table.c.rule_fingerprint)).one()
+    finally:
+        engine.dispose()
+
+    test_df = spark.createDataFrame([[None]], "col_1: int")
+    applied = dq_engine.apply_checks_by_metadata(test_df, loaded, custom_check_functions)
+    applied_error = applied.select(F.explode("_errors").alias("e")).select("e.name", "e.rule_fingerprint").first()
+
+    assert applied_error["name"] == stored.name == loaded[0]["name"] == "col_1_custom_is_null"
+    assert applied_error["rule_fingerprint"] == stored.rule_fingerprint
 
 
 def test_save_and_load_checks_from_lakebase_table_with_run_config(

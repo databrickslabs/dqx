@@ -35,7 +35,7 @@ type Props = {
 //
 // The persisted `value` is a comma-joined list of `{{slot}}` tokens so the
 // materializer binds each to a real column at apply time.
-function refToken(name: string): string {
+export function refToken(name: string): string {
   return name.includes(".") ? name : `{{${name}}}`;
 }
 
@@ -102,7 +102,7 @@ export function GroupByField({ value, onChange, declaredColumns, disabled, label
               <span className="flex flex-wrap gap-1.5 max-w-full">
                 {selected.map((n) => (
                   <Badge key={n} variant="secondary" className="font-mono text-xs">
-                    {n}
+                    {refToken(n)}
                   </Badge>
                 ))}
               </span>
@@ -134,8 +134,8 @@ export function GroupByField({ value, onChange, declaredColumns, disabled, label
                       className="flex items-center gap-2"
                     >
                       <Check className={cn("h-4 w-4", isOn ? "opacity-100" : "opacity-0")} />
-                      <span className="font-mono text-sm flex-1 truncate" title={col.name}>
-                        {col.name}
+                      <span className="font-mono text-sm flex-1 truncate" title={refToken(col.name)}>
+                        {refToken(col.name)}
                       </span>
                       <Badge variant="outline" className="text-[10px]">
                         {FAMILY_LABEL[col.family as Family] ?? col.family}

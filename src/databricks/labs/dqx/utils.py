@@ -316,6 +316,27 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     return _normalize_leaf_value(val, allow_simple_expressions_only)
 
 
+def escape_sql_string_literal(value: str) -> str:
+    """Escape a string for inclusion in a single-quoted Spark SQL literal.
+
+    Spark's parser honours backslash escapes inside string literals by default
+    (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
+
+      * The backslash must be doubled, or the parser consumes it (e.g. a JSON-encoded *\\"*
+        collapses back to a bare *"*).
+      * The single quote must be escaped as *\\'*, not doubled as *''*. ANSI doubling is not
+        honoured in this mode: Spark reads *'it''s'* as two adjacent literals and concatenates
+        them, so the value becomes *its*.
+
+    Args:
+        value: The raw string.
+
+    Returns:
+        The escaped string, without the enclosing quotes.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def quote_column_name(name: str) -> str:
     """
     Wraps a column name in backticks so it can be used as a SQL identifier.
@@ -831,15 +852,20 @@ def missing_required_packages(packages: list[str]) -> bool:
     return not all(find_spec(spec) for spec in packages)
 
 
-def _replace_template(text: str, variables: dict[str, str]) -> str:
-    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
+def get_template_placeholders(text: str) -> set[str]:
+    """Return the names of the placeholders (keys in double curly braces) in *text*."""
+    return {match.strip("{} \t") for match in _UNRESOLVED_PLACEHOLDER_PATTERN.findall(text)}
 
-    Uses a single-pass regex substitution.
-    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
-    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
+
+def replace_template(text: str, variables: dict[str, str]) -> str:
+    """Replace placeholders (keys in double curly braces) in *text* with values from *variables*.
+
+    Uses a single-pass regex substitution, so a replacement value is never substituted again.
+    Tolerates whitespace inside the braces around the key.
+    Logs a warning if any unresolved placeholders remain after substitution.
 
     Args:
-        text: Input string potentially containing **{{ key }}** placeholders.
+        text: Input string potentially containing placeholders.
         variables: Pre-stringified mapping of placeholder names to values.
 
     Returns:
@@ -897,7 +923,7 @@ def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
         A new object with all string values having placeholders replaced.
     """
     if isinstance(obj, str):
-        return _replace_template(obj, variables)
+        return replace_template(obj, variables)
     if isinstance(obj, dict):
         return {k: _substitute_variables(v, variables) for k, v in obj.items()}
     if isinstance(obj, list):

@@ -8363,6 +8363,180 @@
         "total": 1.398985396999933,
         "iterations": 1
       }
+    },
+    {
+      "group": "test_benchmark_profile_semantic_integer_measurement",
+      "name": "test_benchmark_profile_semantic_integer_measurement[default_semantic_registry-n_rows_100000_n_columns_4]",
+      "fullname": "tests/perf/test_profile_semantic.py::test_benchmark_profile_semantic_integer_measurement[default_semantic_registry-n_rows_100000_n_columns_4]",
+      "params": {
+        "semantic_registry": "UNSERIALIZABLE[SemanticRegistry(detectors=(DQSemanticTypeDetector(name='enum', detect=<function _detect_enum at 0x7fea06088680>), DQSemanticTypeDetector(name='key', detect=<function _detect_key at 0x7fea06088900>), DQSemanticTypeDetector(name='measurement', detect=<function _detect_measurement at 0x7fea06088ae0>), DQSemanticTypeDetector(name='text', detect=<function _detect_text at 0x7fea06088b80>)))]",
+        "generated_integer_df": {
+          "n_rows": 100000,
+          "n_columns": 4,
+          "opts": {
+            "minValue": 1,
+            "maxValue": 2000000000,
+            "random": true
+          }
+        }
+      },
+      "param": "default_semantic_registry-n_rows_100000_n_columns_4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 3.225219404001109,
+        "max": 3.4241451990019414,
+        "mean": 3.3547257670009762,
+        "stddev": 0.11225282819077823,
+        "rounds": 3,
+        "median": 3.414812697999878,
+        "iqr": 0.14919434625062422,
+        "q1": 3.2726177275008013,
+        "q3": 3.4218120737514255,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 3.225219404001109,
+        "hd15iqr": 3.4241451990019414,
+        "ops": 0.29808695835486126,
+        "total": 10.064177301002928,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_profile_semantic_integer_measurement",
+      "name": "test_benchmark_profile_semantic_integer_measurement[no_semantic_registry-n_rows_100000_n_columns_4]",
+      "fullname": "tests/perf/test_profile_semantic.py::test_benchmark_profile_semantic_integer_measurement[no_semantic_registry-n_rows_100000_n_columns_4]",
+      "params": {
+        "semantic_registry": null,
+        "generated_integer_df": {
+          "n_rows": 100000,
+          "n_columns": 4,
+          "opts": {
+            "minValue": 1,
+            "maxValue": 2000000000,
+            "random": true
+          }
+        }
+      },
+      "param": "no_semantic_registry-n_rows_100000_n_columns_4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 4.034551290998934,
+        "max": 4.388439987000311,
+        "mean": 4.180827096332602,
+        "stddev": 0.18474571934782497,
+        "rounds": 3,
+        "median": 4.119490010998561,
+        "iqr": 0.2654165220010327,
+        "q1": 4.055785970998841,
+        "q3": 4.321202492999873,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 4.034551290998934,
+        "hd15iqr": 4.388439987000311,
+        "ops": 0.23918712182027196,
+        "total": 12.542481288997806,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_profile_semantic_string_text",
+      "name": "test_benchmark_profile_semantic_string_text[default_semantic_registry-n_rows_100000_n_columns_4]",
+      "fullname": "tests/perf/test_profile_semantic.py::test_benchmark_profile_semantic_string_text[default_semantic_registry-n_rows_100000_n_columns_4]",
+      "params": {
+        "semantic_registry": "UNSERIALIZABLE[SemanticRegistry(detectors=(DQSemanticTypeDetector(name='enum', detect=<function _detect_enum at 0x7fea06088680>), DQSemanticTypeDetector(name='key', detect=<function _detect_key at 0x7fea06088900>), DQSemanticTypeDetector(name='measurement', detect=<function _detect_measurement at 0x7fea06088ae0>), DQSemanticTypeDetector(name='text', detect=<function _detect_text at 0x7fea06088b80>)))]",
+        "generated_string_df": {
+          "n_rows": 100000,
+          "n_columns": 4
+        }
+      },
+      "param": "default_semantic_registry-n_rows_100000_n_columns_4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 4.6799684619982145,
+        "max": 5.236041213000135,
+        "mean": 4.913546238332249,
+        "stddev": 0.28850290678148627,
+        "rounds": 3,
+        "median": 4.824629039998399,
+        "iqr": 0.4170545632514404,
+        "q1": 4.716133606498261,
+        "q3": 5.133188169749701,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 4.6799684619982145,
+        "hd15iqr": 5.236041213000135,
+        "ops": 0.20351899656477415,
+        "total": 14.740638714996749,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_profile_semantic_string_text",
+      "name": "test_benchmark_profile_semantic_string_text[no_semantic_registry-n_rows_100000_n_columns_4]",
+      "fullname": "tests/perf/test_profile_semantic.py::test_benchmark_profile_semantic_string_text[no_semantic_registry-n_rows_100000_n_columns_4]",
+      "params": {
+        "semantic_registry": null,
+        "generated_string_df": {
+          "n_rows": 100000,
+          "n_columns": 4
+        }
+      },
+      "param": "no_semantic_registry-n_rows_100000_n_columns_4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 5.275363196000399,
+        "max": 6.339021308998781,
+        "mean": 5.911968800667334,
+        "stddev": 0.5619399616281642,
+        "rounds": 3,
+        "median": 6.121521897002822,
+        "iqr": 0.7977435847487868,
+        "q1": 5.486902871251004,
+        "q3": 6.284646455999791,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 5.275363196000399,
+        "hd15iqr": 6.339021308998781,
+        "ops": 0.1691483892619869,
+        "total": 17.735906402002,
+        "iterations": 1
+      }
     }
   ],
   "datetime": "2025-08-28T23:23:10.603058+00:00",
