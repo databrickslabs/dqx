@@ -175,7 +175,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'reading_timestamp', 'date_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'date_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'reading_timestamp_valid_date_format',
                 'criticality': 'error',
@@ -206,7 +206,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'calibration_date', 'date_format': '%Y-%m-%d'},
+                    'arguments': {'column': 'calibration_date', 'date_format': 'yyyy-MM-dd'},
                 },
                 'name': 'calibration_date_valid_date_format',
                 'criticality': 'error',
@@ -540,7 +540,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_timestamp',
-                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'valid_reading_timestamp',
                 'criticality': 'error',
@@ -1907,13 +1907,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "event_date",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd"},
                 },
                 {
                     "name": "event_time",
                     "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d %H:%M:%S"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
                 },
             ]
         )
@@ -1927,7 +1927,12 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             timestamp_rules = [r for r in rules if r["check"]["function"] == "is_valid_timestamp"]
 
             assert len(date_rules) == 1
+            assert date_rules[0]["check"]["arguments"] == {"column": "event_date", "date_format": "yyyy-MM-dd"}
             assert len(timestamp_rules) == 1
+            assert timestamp_rules[0]["check"]["arguments"] == {
+                "column": "event_time",
+                "timestamp_format": "yyyy-MM-dd HH:mm:ss",
+            }
         finally:
             os.unlink(temp_path)
 
@@ -3170,8 +3175,12 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     # Additional tests for coverage improvement
 
-    def test_format_generates_timestamp_validation(self, generator):
-        """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
+    @pytest.mark.parametrize(
+        "timestamp_format",
+        ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "dd/MM/yy hh:mm a"],
+    )
+    def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format):
+        """Test that format constraint on timestamp field generates is_valid_timestamp rule with the format unchanged."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
@@ -3179,7 +3188,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
                     "required": True,
-                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
+                    "logicalTypeOptions": {"format": timestamp_format},
                 }
             ]
         )
@@ -3187,14 +3196,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            # Should generate is_valid_timestamp rule
+            # Should generate is_valid_timestamp rule with the JDK DateTimeFormatter pattern Spark expects
             timestamp_rules = [r for r in rules if "is_valid_timestamp" in r["check"]["function"]]
             assert len(timestamp_rules) == 1
-            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == "%Y-%m-%d %H:%M:%S"
+            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == timestamp_format
+            assert "strftime" not in caplog.text
         finally:
             os.unlink(temp_path)
 
@@ -3230,15 +3241,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    def test_python_format_passthrough(self, generator):
-        """Test that Python format strings (with %) are passed through as-is."""
+    def test_python_format_passthrough_warns(self, generator, caplog):
+        """Test that Python strftime formats (with %) are passed through as-is with a warning."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "birth_date",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
+                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Not a JDK DateTimeFormatter pattern
                 }
             ]
         )
@@ -3246,14 +3257,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
             date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
             assert len(date_rules) == 1
-            # Should keep Python format as-is
+            # Should keep the format as-is and warn that Spark will not validate against it as intended
             assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
+            assert "Format '%Y-%m-%d' on 'birth_date' looks like a Python strftime pattern" in caplog.text
         finally:
             os.unlink(temp_path)
 

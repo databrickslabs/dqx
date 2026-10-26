@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
@@ -34,7 +34,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr
+from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -44,6 +44,21 @@ if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
+
+
+class _FormatCheck(NamedTuple):
+    """Check generated for a logicalTypeOptions format."""
+
+    function: str
+    format_argument: str
+    rule_name_suffix: str
+
+
+_FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
+    "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
+    "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+}
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -683,7 +698,7 @@ class DataContractRulesGenerator(DQEngineBase):
             )
 
         # Handle date and timestamp format constraints
-        if prop.logicalType in {'date', 'timestamp', 'datetime'} and opts.get('format'):
+        if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
                 self._generate_format_rules_from_options(
                     column_path, prop.logicalType, field_metadata, default_criticality, opts
@@ -983,91 +998,39 @@ class DataContractRulesGenerator(DQEngineBase):
     def _generate_format_rules_from_options(
         self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate format validation rules from logicalTypeOptions format (for date/timestamp fields)."""
-        format_str = opts.get('format')
-        if not format_str:
-            return []
-
-        python_format = self._convert_to_python_format(format_str)
-
-        if logical_type == 'date':
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_date",
-                        "arguments": {
-                            "column": column_path,
-                            "date_format": python_format,
-                        },
-                    },
-                    "name": f"{column_path}_valid_date_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        if logical_type in {'timestamp', 'datetime'}:
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_timestamp",
-                        "arguments": {
-                            "column": column_path,
-                            "timestamp_format": python_format,
-                        },
-                    },
-                    "name": f"{column_path}_valid_timestamp_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        logger.warning(
-            f"Format '{format_str}' specified for non-date/timestamp type '{logical_type}' on '{column_path}'"
-        )
-        return []
-
-    def _convert_to_python_format(self, format_str: str) -> str:
         """
-        Convert Java SimpleDateFormat or ISO 8601 format to Python strftime format.
+        Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
 
-        Common mappings:
-        - yyyy -> %Y (4-digit year)
-        - MM -> %m (2-digit month)
-        - dd -> %d (2-digit day)
-        - HH -> %H (24-hour format)
-        - mm -> %M (minutes)
-        - ss -> %S (seconds)
+        ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'), which is the pattern
+        syntax Spark datetime functions expect, so it is passed to the check unchanged.
         """
-        # If it's already in Python format (starts with %), return as-is
+        format_str = opts['format']
         if '%' in format_str:
-            return format_str
+            logger.warning(
+                f"Format '{sanitize_for_logging(format_str)}' on '{sanitize_for_logging(column_path)}' looks like a "
+                "Python strftime pattern; ODCS formats are JDK DateTimeFormatter patterns (e.g. 'yyyy-MM-dd') and "
+                "Spark will not validate values against it as intended"
+            )
 
-        # Common Java SimpleDateFormat to Python strftime conversions
-        conversions = {
-            'yyyy': '%Y',
-            'yy': '%y',
-            'MM': '%m',
-            'dd': '%d',
-            'HH': '%H',
-            'hh': '%I',
-            'mm': '%M',
-            'ss': '%S',
-            'SSS': '%f',  # Milliseconds
-            'a': '%p',  # AM/PM
-        }
-
-        result = format_str
-        for java_fmt, python_fmt in conversions.items():
-            result = result.replace(java_fmt, python_fmt)
-
-        return result
+        format_check = _FORMAT_CHECKS_BY_LOGICAL_TYPE[logical_type]
+        return [
+            {
+                "check": {
+                    "function": format_check.function,
+                    "arguments": {
+                        "column": column_path,
+                        format_check.format_argument: format_str,
+                    },
+                },
+                "name": f"{column_path}_{format_check.rule_name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
 
     def _process_text_rules_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard

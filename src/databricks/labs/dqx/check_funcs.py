@@ -1675,7 +1675,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
 
     Args:
         column: column to check; can be a string column name or a column expression
-        date_format: date format (e.g. 'yyyy-mm-dd')
+        date_format: date format (e.g. 'yyyy-MM-dd')
 
     Returns:
         Column object for condition
@@ -1699,7 +1699,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
     Args:
         column: column to check; can be a string column name or a column expression
-        timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
+        timestamp_format: timestamp format (e.g. 'yyyy-MM-dd HH:mm:ss')
 
     Returns:
         Column object for condition
