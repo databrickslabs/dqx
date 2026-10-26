@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.11, <3.13"
 
 [options]
-exclude-newer = "2026-10-19T09:47:29.61346803Z"
+exclude-newer = "2026-10-19T18:42:32.799793Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -611,6 +611,7 @@ name = "mcp-dqx"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "databricks-sdk" },
     { name = "fastmcp" },
     { name = "starlette" },
@@ -619,6 +620,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.10.19" },
     { name = "databricks-sdk", specifier = ">=0.60.0" },
     { name = "fastmcp", specifier = ">=2.12.5" },
     { name = "starlette" },
