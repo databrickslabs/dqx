@@ -404,7 +404,8 @@ class TestDataContractIntegration:
             assert not status.has_errors
 
     def test_generated_format_rules_apply_on_spark(self, ws, spark):
-        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark."""
+        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark; a format
+        Spark cannot parse generates no rule, so it does not fail the run."""
         contract = {
             "kind": "DataContract",
             "apiVersion": "v3.0.2",
@@ -435,6 +436,12 @@ class TestDataContractIntegration:
                             "logicalType": "timestamp",
                             "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
                         },
+                        {
+                            "name": "weekday_date",
+                            "physicalType": "STRING",
+                            "logicalType": "date",
+                            "logicalTypeOptions": {"format": "EEE, dd MMM yyyy"},
+                        },
                     ],
                 },
             ],
@@ -448,27 +455,24 @@ class TestDataContractIntegration:
         )
         test_df = spark.createDataFrame(
             [
-                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
-                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
-                ["null", None, None, None],
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "Mon, 15 Jan 2024"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00", "2024-01-15"],
+                ["null", None, None, None, None],
             ],
-            "case: string, event_date: string, short_date: string, event_ts: string",
+            "case: string, event_date: string, short_date: string, event_ts: string, weekday_date: string",
         )
 
         checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
 
-        errors_by_case = {
-            row["case"]: sorted(error["name"] for error in row["_errors"] or [])
-            for row in checked_df.select("case", "_errors").collect()
-        }
-        assert errors_by_case == {
-            "valid": [],
-            "invalid": [
+        flagged_by_case = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+        assert flagged_by_case == {
+            "valid": set(),
+            "invalid": {
                 "event_date_valid_date_format",
                 "event_ts_valid_timestamp_format",
                 "short_date_valid_date_format",
-            ],
-            "null": [],
+            },
+            "null": set(),
         }
 
     def test_schema_with_empty_properties_no_crash(self, ws, spark, caplog):

@@ -3177,7 +3177,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     @pytest.mark.parametrize(
         "timestamp_format",
-        ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "dd/MM/yy hh:mm a"],
+        ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "dd/MM/yy hh:mm a", "dd 'de' MMMM yyyy HH:mm"],
     )
     def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format):
         """Test that format constraint on timestamp field generates is_valid_timestamp rule with the format unchanged."""
@@ -3205,7 +3205,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             timestamp_rules = [r for r in rules if "is_valid_timestamp" in r["check"]["function"]]
             assert len(timestamp_rules) == 1
             assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == timestamp_format
-            assert "strftime" not in caplog.text
+            assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
         finally:
             os.unlink(temp_path)
 
@@ -3241,15 +3241,28 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    def test_python_format_passthrough_warns(self, generator, caplog):
-        """Test that Python strftime formats (with %) are passed through as-is with a warning."""
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, format_str, reason",
+        [
+            ("date", "DATE", "%Y-%m-%d", "is a Python strftime pattern"),
+            ("timestamp", "TIMESTAMP", "%d/%m/%y %H:%M", "is a Python strftime pattern"),
+            ("date", "DATE", "YYYY-MM-dd", "uses pattern letters Spark cannot parse: Y"),
+            ("date", "DATE", "uuuu-MM-dd", "uses pattern letters Spark cannot parse: u"),
+            ("date", "DATE", "EEE, dd MMM yyyy", "uses pattern letters Spark cannot parse: E"),
+            ("timestamp", "TIMESTAMP", "yyyy-MM-ddTHH:mm", "uses pattern letters Spark cannot parse: T"),
+        ],
+    )
+    def test_unparseable_format_is_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, format_str, reason
+    ):
+        """Test that a format Spark cannot parse generates no rule, so it cannot fail the whole run, and warns."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
-                    "name": "birth_date",
-                    "physicalType": "DATE",
-                    "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Not a JDK DateTimeFormatter pattern
+                    "name": "event",
+                    "physicalType": physical_type,
+                    "logicalType": logical_type,
+                    "logicalTypeOptions": {"format": format_str},
                 }
             ]
         )
@@ -3262,11 +3275,36 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
                 )
 
-            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert f"Skipping format rule for 'event': format '{format_str}' {reason}" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_minute_letter_without_hour_warns(self, generator, caplog):
+        """Test that 'mm' with no hour, a likely typo for the month 'MM', keeps the rule and warns."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "birth_date",
+                    "physicalType": "DATE",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"format": "yyyy-mm-dd"},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
+
+            date_rules = [r for r in rules if r["check"]["function"] == "is_valid_date"]
             assert len(date_rules) == 1
-            # Should keep the format as-is and warn that Spark will not validate against it as intended
-            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
-            assert "Format '%Y-%m-%d' on 'birth_date' looks like a Python strftime pattern" in caplog.text
+            assert date_rules[0]["check"]["arguments"]["date_format"] == "yyyy-mm-dd"
+            assert "Format 'yyyy-mm-dd' on 'birth_date' uses 'm' (minute) without an hour" in caplog.text
         finally:
             os.unlink(temp_path)
 
