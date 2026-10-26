@@ -8,8 +8,10 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Column, SparkSession
 
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.check_funcs import DATASET_AGGREGATE_ATTRIBUTE, DatasetAggregate
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
+    DQDatasetRule,
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
@@ -43,11 +45,14 @@ class DQRuleManager:
 
     Attributes:
         check: The DQRule instance that defines the check to apply.
-        df: The DataFrame on which to apply the check.
+        df: The DataFrame on which to apply the check (unless *process* is given another one).
         engine_user_metadata: Metadata provided by the engine (overridden by check.user_metadata if present).
         run_time_overwrite: Optional timestamp override. If None, current_timestamp() is used for per-micro-batch timestamps.
         ref_dfs: Optional reference DataFrames for dataset-level checks.
         run_id: Optional unique run id.
+        input_df: Optional untouched input DataFrame (defaults to *df*). Check columns are validated against it,
+            and dataset-level checks compute their aggregates from it.
+        reference_cache: Optional per-run cache of compatible reference projections.
     """
 
     check: DQRule
@@ -60,6 +65,8 @@ class DQRuleManager:
     suppress_skipped: bool = False
     rule_fingerprint: str | None = None
     rule_set_fingerprint: str | None = None
+    input_df: DataFrame | None = None
+    reference_cache: dict[tuple[str, str], DataFrame] | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -167,7 +174,27 @@ class DQRuleManager:
                 return field_value
         return None
 
-    def process(self) -> DQCheckResult:
+    @cached_property
+    def skip_message(self) -> str:
+        """
+        Returns the message explaining why the check evaluation is skipped, or an empty string if it is not skipped.
+        """
+        return self._get_invalid_cols_message()
+
+    @cached_property
+    def dataset_aggregate(self) -> DatasetAggregate | None:
+        """
+        Returns the aggregate of a built-in aggregate check that is not skipped, otherwise None.
+
+        The engine adds the aggregates of all such checks to the DataFrame up front, computing compatible ones
+        together, and then calls *process* with *aggregate_added=True*.
+        """
+        if not isinstance(self.check, DQDatasetRule) or self.skip_message:
+            return None
+        _, closure, _ = self.check.check
+        return getattr(closure, DATASET_AGGREGATE_ATTRIBUTE, None)
+
+    def process(self, df: DataFrame | None = None, aggregate_added: bool = False) -> DQCheckResult:
         """
         Process the data quality rule (check) and return results as DQCheckResult containing:
         - Column with the check result
@@ -175,18 +202,29 @@ class DQRuleManager:
 
         Skip the check evaluation if column or columns, or filter in the check cannot be resolved in the input
         DataFrame. Return the check result preserving all fields with message identifying invalid fields.
+
+        Args:
+            df: Optional DataFrame to apply the check to, e.g. the result of the previous checks. Defaults to *df*.
+            aggregate_added: Whether *df* already has the metric column of *dataset_aggregate*, so only the
+                condition column must be added.
         """
-        invalid_cols_message = self._get_invalid_cols_message()
-        if invalid_cols_message:
+        df = self.df if df is None else df
+        if self.skip_message:
+            logger.warning(f"Skipping check '{self.check.name}': {self.skip_message}")
             if self.suppress_skipped:
                 # return null condition so this check produces no entry in _errors/_warnings
-                return DQCheckResult(condition=F.lit(None).cast(dq_result_item_schema), check_df=self.df)
+                return DQCheckResult(condition=F.lit(None).cast(dq_result_item_schema), check_df=df)
             # overwrite message but preserve all other fields in the result, marking the check as skipped
-            result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message), skipped=True)
-            return DQCheckResult(condition=result_struct, check_df=self.df)
+            result_struct = self._build_result_struct(condition=F.lit(self.skip_message), skipped=True)
+            return DQCheckResult(condition=result_struct, check_df=df)
 
-        executor = DQRuleExecutorFactory.create(self.check)
-        raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
+        if aggregate_added and self.dataset_aggregate is not None:
+            raw_result = DQCheckResult(
+                condition=self.check.get_check_condition(), check_df=self.dataset_aggregate.add_condition(df)
+            )
+        else:
+            executor = DQRuleExecutorFactory.create(self.check)
+            raw_result = executor.apply(df, self.spark, self.ref_dfs, self.input_df, self.reference_cache)
         return self._wrap_result(raw_result)
 
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:
@@ -275,20 +313,15 @@ class DQRuleManager:
         invalid_cols_message_parts = []
 
         if self.has_invalid_columns:
-            logger.warning(
-                f"Skipping check evaluation '{self.check.name}' due to invalid check columns: {self.invalid_columns}"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
             )
 
         if self.has_unsafe_filter:
             safe_filter = sanitize_for_logging(self.check.effective_filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to unsafe check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to unsafe check filter: '{safe_filter}'")
         elif self.has_invalid_filter:
             safe_filter = sanitize_for_logging(self.check.effective_filter or "")
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{safe_filter}'")
             invalid_cols_message_parts.append(f"Check evaluation skipped due to invalid check filter: '{safe_filter}'")
 
         if self.has_invalid_custom_message:
@@ -296,17 +329,11 @@ class DQRuleManager:
                 custom_message_detail = f": '{self.check.message_expr}'"
             else:
                 custom_message_detail = ""
-            logger.warning(
-                f"Skipping check '{self.check.name}' due to invalid custom message expression{custom_message_detail}"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid custom message expression{custom_message_detail}"
             )
 
         if self.invalid_sql_expression:
-            logger.warning(
-                f"Skipping check '{self.check.name}' due to invalid sql expression: '{self.invalid_sql_expression}'"
-            )
             invalid_cols_message_parts.append(
                 f"Check evaluation skipped due to invalid sql expression: '{self.invalid_sql_expression}'"
             )
@@ -325,16 +352,27 @@ class DQRuleManager:
         rather than aborting the run.
         """
         resolved: str | Column = normalize_column_expr(column) if isinstance(column, str) else column
-        return self._is_invalid_column(resolved)
+        input_df = self.df if self.input_df is None else self.input_df
+        return not self._resolves(input_df, resolved)
 
     def _is_invalid_column(self, column: str | Column) -> bool:
         """
         Returns True if the specified column or expression is invalid (i.e., cannot be resolved in the
         input DataFrame), otherwise False.
+
+        Filters, custom message expressions, and SQL expressions are resolved against the current DataFrame,
+        preserving support for columns added by an earlier check. Only the check's own columns are resolved
+        against the untouched *input_df* (see *_is_invalid_check_column*).
+        """
+        return not self._resolves(self.df, column)
+
+    def _resolves(self, df: DataFrame, column: str | Column) -> bool:
+        """
+        Returns True if the specified column or expression can be resolved in the given DataFrame.
         """
         try:
             col_expr = F.expr(column) if isinstance(column, str) else column
-            _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
+            _ = df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
             # If column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown.
             # Note: This does not cover all error conditions. Some issues only appear during a Spark action.
@@ -342,5 +380,5 @@ class DQRuleManager:
                 f"Invalid column '{column}' provided in the check '{self.check.name}'",
                 exc_info=e,
             )
-            return True
-        return False
+            return False
+        return True

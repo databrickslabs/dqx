@@ -962,7 +962,7 @@ class TestLibraryMetricsApplyMatrix:
     """Applies every library metric x threshold x unit against real data and asserts the verdict."""
 
     @pytest.mark.parametrize("metric", list(_METRIC_ENTRIES))
-    def test_every_threshold_and_unit_gives_the_expected_verdict(self, ws, spark, metric):
+    def test_every_threshold_and_unit_gives_the_expected_verdict(self, ws, spark, metric) -> None:
         property_name, extra, values = _METRIC_ENTRIES[metric]
         # Rules are applied in small batches (one passing and one failing rule per threshold): the
         # cost of a single apply grows quickly with the number of dataset-level checks in it.

@@ -4,6 +4,7 @@ import re
 import warnings
 import ipaddress
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache, reduce
 from importlib.resources import files
@@ -18,8 +19,8 @@ from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
-from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
+from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds_df
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection, row_preserving
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -27,6 +28,8 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     normalize_column_expr,
     get_columns_as_strings,
+    get_template_placeholders,
+    replace_template,
     to_lowercase,
 )
 from databricks.labs.dqx.errors import (
@@ -36,8 +39,14 @@ from databricks.labs.dqx.errors import (
     UnsafeSqlQueryError,
 )
 
+ReferenceDataFrameCache = dict[tuple[str, str], DataFrame]
+SQL_QUERY_MULTIPLE_ROWS_ERROR = (
+    "Dataset-level sql_query without merge_columns must return exactly one row. "
+    "Provide merge_columns for row-level checks or aggregate the query to a single row."
+)
 _FLOAT_NOISE_THRESHOLD = 1e-9
 _VALUES_DISTRIBUTION = dict[bool, float] | dict[str, float] | dict[int, float] | dict[datetime.date, float]
+_REFERENCE_VALUE_COLUMN = "__dqx_reference_value"
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -122,6 +131,29 @@ _IS_IN_DISTRIBUTION_SPARK_TO_PYTHON_TYPE: dict[type, type] = {
     types.DateType: datetime.date,
 }
 _IS_IN_DISTRIBUTION_SUPPORTED_SPARK_TYPES: tuple[type, ...] = tuple(_IS_IN_DISTRIBUTION_SPARK_TO_PYTHON_TYPE.keys())
+
+
+class _AggregateColumn(NamedTuple):
+    """Normalized aggregate column metadata."""
+
+    normalized_name: str
+    display_name: str
+    expression: Column
+
+
+@dataclass(frozen=True)
+class _ForeignKeyColumns:
+    """Resolved expressions and display names used by a foreign-key check."""
+
+    source_name: str
+    source_display: str
+    source_expression: Column
+    source_display_expression: Column
+    reference_name: str
+    reference_display: str
+    reference_expression: Column
+    reference_cache_key: str | None
+    not_null_condition: Column
 
 
 class DQPattern(Enum):
@@ -607,6 +639,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
@@ -706,12 +739,12 @@ def is_in_distribution(
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
     message_col = f"__message_{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
-        # Resolve the type off the expression itself
-        column_type = _is_in_distribution_get_data_type(df, col_expr, col_expr_str)
+    def apply(df: DataFrame, input_df: DataFrame | None = None) -> DataFrame:
+        source_df = df if input_df is None else input_df
+        column_type = _is_in_distribution_get_data_type(source_df, col_expr, col_expr_str)
         _is_in_distribution_validate_column_key_compatibility(column_type, distribution, col_expr_str)
 
-        filtered = df.filter(safe_filter_expr(row_filter)) if row_filter else df
+        filtered = source_df.filter(safe_filter_expr(row_filter)) if row_filter else source_df
 
         is_string_column = isinstance(column_type, (types.StringType, types.CharType))
         group_expr = col_expr
@@ -2415,6 +2448,7 @@ def is_data_fresh(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
     """
@@ -2441,20 +2475,22 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
+    lower_bound_col = f"__lower_bound_{col_str_norm}_{unique_str}"
+    upper_bound_col = f"__upper_bound_{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
+    def apply(df: DataFrame, input_df: DataFrame | None = None) -> DataFrame:
         """
         Apply the outlier detection logic to the DataFrame.
 
-        Adds columns indicating the median and MAD for the column.
-
         Args:
-            df: The input DataFrame to validate for outliers.
+            df: The DataFrame to validate for outliers.
+            input_df: Optional untouched input DataFrame to compute the bounds from. Defaults to *df*.
 
         Returns:
-            The DataFrame with additional median and MAD columns for outlier detection.
+            The DataFrame with additional bound and condition columns for outlier detection.
         """
-        column_type = df.schema[col_expr_str].dataType
+        source_df = df if input_df is None else input_df
+        column_type = source_df.schema[col_expr_str].dataType
         if not isinstance(column_type, (types.NumericType)):
             raise InvalidParameterError(
                 f"Column '{col_expr_str}' must be of numeric type to perform outlier detection using MAD method, "
@@ -2463,23 +2499,18 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
         # Validate and compile the filter (rejecting unsafe SQL); keep None when no filter is given so
         # the MAD calculation stays a true no-op instead of filtering on F.lit(True).
         filter_condition = safe_filter_expr(row_filter) if row_filter else None
-        bounds = calculate_median_absolute_deviation_bounds(df, col_expr_str, filter_condition)
-        if bounds is not None:
-            lower_bound, upper_bound = bounds
-            lower_bound_expr = get_limit_expr(lower_bound)
-            upper_bound_expr = get_limit_expr(upper_bound)
+        bounds_df = median_absolute_deviation_bounds_df(
+            source_df, col_expr_str, filter_condition, lower_bound_col, upper_bound_col
+        )
 
-            condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
-            # Restrict the flagged rows to the filtered subset when a filter is present.
-            outlier_condition = (filter_condition & condition) if filter_condition is not None else condition
+        # Bounds are null when median or MAD could not be calculated, so no outliers are detected.
+        outside_bounds_condition = (col_expr < F.col(lower_bound_col)) | (col_expr > F.col(upper_bound_col))
+        # Restrict the flagged rows to the filtered subset when a filter is present.
+        outlier_condition = (
+            (filter_condition & outside_bounds_condition) if filter_condition is not None else outside_bounds_condition
+        )
 
-            # Add outlier detection columns
-            result_df = df.withColumn(condition_col, F.when(outlier_condition, True).otherwise(False))
-        else:
-            # If median or mad could not be calculated, no outliers can be detected
-            result_df = df.withColumn(condition_col, F.lit(False))
-
-        return result_df
+        return df.crossJoin(bounds_df).withColumn(condition_col, F.when(outlier_condition, True).otherwise(False))
 
     condition = make_condition(
         condition=F.col(condition_col),
@@ -2494,6 +2525,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -2605,6 +2637,7 @@ def is_unique(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def foreign_key(
     columns: list[str | Column],
@@ -2614,6 +2647,7 @@ def foreign_key(
     negate: bool = False,
     row_filter: str | None = None,
     null_safe: bool = False,
+    broadcast_ref: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -2635,6 +2669,8 @@ def foreign_key(
         row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         null_safe: If True, checks NULL foreign key values to match NULL reference values.
             If False, skips NULL values in the foreign key columns. False is a default.
+        broadcast_ref: If True, adds a broadcast hint to the deduplicated reference values. Values are copied to every
+            executor. Enable this option only for small reference tables. False is a default.
 
     Returns:
         A tuple of:
@@ -2651,30 +2687,16 @@ def foreign_key(
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
-    not_null_condition = F.lit(True)
-    # Wrap single columns in a struct when null_safe=True to distinguish a matched NULL key
-    # from an un-matched FK (struct(NULL) is itself non-NULL, unlike a scalar NULL).
-    if len(columns) == 1 and not null_safe:
-        join_col = columns[0]
-        join_ref_col = ref_columns[0]
-    else:
-        join_col, join_ref_col, not_null_condition = _handle_fk_composite_keys(
-            columns, ref_columns, not_null_condition, null_safe
-        )
-
-    # For single-column FK, render alias/message from the raw column so that enabling
-    # null_safe does not change the rule name or violation message.
-    display_col = columns[0] if len(columns) == 1 else join_col
-    display_ref_col = ref_columns[0] if len(columns) == 1 else join_ref_col
-
-    col_str_norm, col_expr_str, display_col_expr = get_normalized_column_and_expr(display_col)
-    ref_col_str_norm, ref_col_expr_str, _ = get_normalized_column_and_expr(display_ref_col)
-    _, _, col_expr = get_normalized_column_and_expr(join_col)
-    _, _, ref_col_expr = get_normalized_column_and_expr(join_ref_col)
+    key = _resolve_foreign_key_columns(columns, ref_columns, null_safe)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
-    condition_col = f"__{col_str_norm}_{unique_str}"
+    condition_col = f"__{key.source_name}_{unique_str}"
 
-    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+    def apply(
+        df: DataFrame,
+        spark: SparkSession,
+        ref_dfs: dict[str, DataFrame],
+        reference_cache: ReferenceDataFrameCache | None = None,
+    ) -> DataFrame:
         """
         Apply the foreign key check logic to the DataFrame.
 
@@ -2685,14 +2707,23 @@ def foreign_key(
             df: The input DataFrame to validate.
             spark: SparkSession used if reading a reference table.
             ref_dfs: Dictionary of reference DataFrames (by name), used for joins.
+            reference_cache: Optional per-run cache of reference projections shared by compatible checks.
 
         Returns:
             The DataFrame with an additional condition column for foreign key validation.
         """
-        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-
-        ref_alias = f"__ref_{col_str_norm}_{unique_str}"
-        ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
+        ref_alias = f"__ref_{key.source_name}_{unique_str}"
+        ref_df_distinct = _get_distinct_reference_values(
+            ref_df_name,
+            ref_table,
+            ref_dfs,
+            spark,
+            key.reference_expression,
+            key.reference_cache_key,
+            reference_cache,
+        ).select(F.col(_REFERENCE_VALUE_COLUMN).alias(ref_alias))
+        if broadcast_ref:
+            ref_df_distinct = F.broadcast(ref_df_distinct)
 
         filter_expr = safe_filter_expr(row_filter)
 
@@ -2700,10 +2731,12 @@ def foreign_key(
         # when col_expr is a struct (composite keys or null_safe=True), the struct is never NULL
         # so the guard is a no-op but kept for clarity
         joined = df.join(
-            ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
+            ref_df_distinct,
+            on=(key.source_expression == F.col(ref_alias)) & key.source_expression.isNotNull() & filter_expr,
+            how="left",
         )
 
-        base_condition = not_null_condition & col_expr.isNotNull() & filter_expr
+        base_condition = key.not_null_condition & key.source_expression.isNotNull() & filter_expr
         match_failed = F.col(ref_alias).isNull()
         match_succeeded = F.col(ref_alias).isNotNull()
         violation_condition = base_condition & (match_succeeded if negate else match_failed)
@@ -2721,19 +2754,22 @@ def foreign_key(
         message=F.concat_ws(
             "",
             F.lit("Value '"),
-            F.when(display_col_expr.isNull(), F.lit("null")).otherwise(display_col_expr.cast("string")),
+            F.when(key.source_display_expression.isNull(), F.lit("null")).otherwise(
+                key.source_display_expression.cast("string")
+            ),
             F.lit("' in column '"),
-            F.lit(col_expr_str),
+            F.lit(key.source_display),
             F.lit(f"' {'' if negate else 'not '}found in reference column '"),
-            F.lit(ref_col_expr_str),
+            F.lit(key.reference_display),
             F.lit("'"),
         ),
-        alias=f"{col_str_norm}_{op_name}_ref_{ref_col_str_norm}",
+        alias=f"{key.source_name}_{op_name}_ref_{key.reference_name}",
     )
 
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def sql_query(
     query: str,
@@ -2760,10 +2796,13 @@ def sql_query(
             all merge columns (if provided). When merge_columns are provided, the resulting DataFrame is
             automatically joined back to the input DataFrame. When merge_columns are not provided, the check
             applies to all rows (either all pass or all fail), making it useful for dataset-level validation
-            with custom_metrics. Reference DataFrames when provided in the ref_dfs parameter are registered as temp view.
+            with custom_metrics. Reference DataFrames provided in the ref_dfs parameter are registered as temp views
+            when the query refers to them by name in a double-curly-brace placeholder (like *input_placeholder*).
         merge_columns: Optional (can be None or omitted). List of columns to join results back to input DataFrame.
             - If provided: Row-level validation - different rows can have different results
-            - If None/omitted: Dataset-level validation - all rows get same result
+            - If None/omitted: Dataset-level validation - all rows get same result. The query must return at
+              most one row. This is verified lazily: a query returning more than one row makes the Spark action
+              that computes the results fail (e.g. a write or *collect*), not the *apply_checks* call.
             When provided, columns must form a unique key to avoid duplicate records.
         condition_column: Column name indicating violation (boolean). Fail the check if True, pass it if False
         msg: Optional custom message or Column expression.
@@ -2799,16 +2838,9 @@ def sql_query(
     unique_condition_column = f"{alias_name}_{condition_column}_{unique_str}"
     unique_input_view = f"{alias_name}_{input_placeholder}_{unique_str}"
 
-    def _replace_template(sql: str, replacements: dict[str, str]) -> str:
-        """
-        Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
-        """
-        for key, val in replacements.items():
-            pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
-            sql = re.sub(pattern, val, sql)
-        return sql
-
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        # The query runs on df, the result of the previous checks, because it may refer to columns they added
+        # (e.g. the error results of a warning check's query).
         filtered_df = df
         if row_filter:
             filtered_df = df.filter(safe_filter_expr(row_filter))
@@ -2816,13 +2848,9 @@ def sql_query(
         # since the check could be applied multiple times, the views created here must be unique
         filtered_df.createOrReplaceTempView(unique_input_view)
         replacements = {input_placeholder: unique_input_view}
+        replacements.update(_register_referenced_dataframes(query, ref_dfs, unique_str))
 
-        for ref_name, ref_df in (ref_dfs or {}).items():
-            ref_name_unique = f"{ref_name}_{unique_str}"
-            ref_df.createOrReplaceTempView(ref_name_unique)
-            replacements[ref_name] = ref_name_unique
-
-        query_resolved = _replace_template(query, replacements)
+        query_resolved = replace_template(query, replacements)
         if not is_sql_query_safe(query_resolved):
             # we only replace dict keys so there is no risk of SQL injection here,
             # but we still want to ensure the query is safe to execute
@@ -2865,6 +2893,7 @@ def sql_query(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
@@ -2914,6 +2943,7 @@ def is_aggr_not_greater_than(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
@@ -2963,6 +2993,7 @@ def is_aggr_not_less_than(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
@@ -3018,6 +3049,7 @@ def is_aggr_equal(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
@@ -3076,6 +3108,7 @@ def is_aggr_not_equal(
 _VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "week", "month"})
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_aggr_outliers(
     column: str | Column,
@@ -3180,7 +3213,7 @@ def has_no_aggr_outliers(
         name: f"__dq_{name}_{unique_str}" for name in ("grain", "metric", "rn", "current", "mu", "sigma", "n", "jkey")
     }
 
-    def apply(df: DataFrame) -> DataFrame:
+    def apply(df: DataFrame, input_df: DataFrame | None = None) -> DataFrame:
         """
         Apply the rolling-window outlier check to the input DataFrame.
 
@@ -3189,12 +3222,14 @@ def has_no_aggr_outliers(
         adds the condition and message columns to every row of *df*.
 
         Args:
-            df: The input DataFrame to validate.
+            df: The DataFrame to validate.
+            input_df: Optional untouched input DataFrame to compute the aggregates from. Defaults to *df*.
 
         Returns:
             The DataFrame with additional condition and message columns appended.
         """
-        time_col_type = df.schema[time_column].dataType
+        source_df = df if input_df is None else input_df
+        time_col_type = source_df.schema[time_column].dataType
         if not isinstance(time_col_type, (types.DateType, types.TimestampType, types.TimestampNTZType)):
             raise InvalidParameterError(
                 f"Column '{time_column}' must be of date or timestamp type for time-series bucketing, "
@@ -3208,7 +3243,7 @@ def has_no_aggr_outliers(
         grain_expr = F.date_trunc(time_interval, F.col(time_column)).alias(internal_cols["grain"])
 
         # Step 1: aggregate per time-grain (and group)
-        aggregate_df = df.groupBy(*group_cols, grain_expr).agg(aggr_expr.alias(internal_cols["metric"]))
+        aggregate_df = source_df.groupBy(*group_cols, grain_expr).agg(aggr_expr.alias(internal_cols["metric"]))
 
         # Step 2: rank grains per group, most-recent first
         window_spec = (
@@ -3315,6 +3350,7 @@ def has_no_aggr_outliers(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def aggr_matches_dataset(
     column: str | Column,
@@ -3442,7 +3478,9 @@ def aggr_matches_dataset(
         null_safe_limit_compare=True,
     )
 
-    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+    def apply(
+        df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame], input_df: DataFrame | None = None
+    ) -> DataFrame:
         """
         Apply the upstream comparison check logic to the DataFrame.
 
@@ -3458,6 +3496,7 @@ def aggr_matches_dataset(
             df: The input DataFrame to validate.
             spark: SparkSession used if reading a reference table.
             ref_dfs: Dictionary of reference DataFrames (by name), used to resolve *ref_df_name*.
+            input_df: Optional untouched input DataFrame to compute the aggregation from. Defaults to *df*.
 
         Returns:
             The DataFrame with additional condition and metric columns for upstream comparison.
@@ -3487,14 +3526,14 @@ def aggr_matches_dataset(
                 null_safe_row_matching=True,
             )
             joined = joined.select("df.*", F.col(f"ref_df.{ref_metric_col}").alias(ref_metric_col))
-            return aggr_apply(joined)
+            return aggr_apply(joined, input_df=input_df)
 
         ref_metric_df = ref_filtered_df.select(ref_aggr_expr.alias(ref_metric_col)).limit(1)
 
         if aggr_type not in CURATED_AGGR_FUNCTIONS:
             _validate_aggregate_return_type(ref_metric_df, aggr_type, ref_metric_col)
 
-        return aggr_apply(df.crossJoin(ref_metric_df))
+        return aggr_apply(df.crossJoin(ref_metric_df), input_df=input_df)
 
     return condition, apply
 
@@ -3778,6 +3817,7 @@ def compare_datasets(
     )
 
 
+@row_preserving
 @register_rule("dataset")
 def is_data_fresh_per_time_window(
     column: str | Column,
@@ -3892,6 +3932,7 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_gaps_per_time_window(
     column: str | Column,
@@ -3972,17 +4013,23 @@ def has_no_gaps_per_time_window(
     is_trailing_gap_col = f"__gap_is_trailing_{col_str_norm}_{unique_str}" if trailing_gap else None
     condition_col = f"__gap_condition_{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
-        """Bucket rows into fixed time windows and flag the boundary row before each gap."""
-        input_columns = df.columns
-
+    def add_window_start(df: DataFrame) -> DataFrame:
         # Bucket each row into a fixed time window and keep the window start. Null timestamps are
         # coalesced to a sentinel first, because Spark's time-window operator drops rows whose window
         # is null; those rows are excluded from gap detection below (distinct_windows filters nulls)
         # and never match a gap window, so they pass through with no violation and are not lost.
         safe_col_expr = F.coalesce(col_expr.cast("timestamp"), F.lit("1900-01-01 00:00:00").cast("timestamp"))
         df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
-        df = df.withColumn(window_start_col, F.col(interval_col).start)
+        return df.withColumn(window_start_col, F.col(interval_col).start)
+
+    def apply(df: DataFrame, input_df: DataFrame | None = None) -> DataFrame:
+        """Bucket rows into fixed time windows and flag the boundary row before each gap.
+
+        The gaps are found on *input_df* (the untouched input, defaults to *df*) and joined onto *df*.
+        """
+        input_columns = df.columns
+        df = add_window_start(df)
+        source_df = df if input_df is None else add_window_start(input_df)
 
         # For each present window (within each group) find the next present window over the ordered
         # windows. Partitioning the window by the group key keeps per-group gap detection independent
@@ -3990,7 +4037,7 @@ def has_no_gaps_per_time_window(
         # there is no partitionBy and the sort below is a single partition, but distinct() has already
         # collapsed rows to the occupied-window count, so the sort scales with that count, not with
         # row count; this holds for realistic grids (thousands to low millions of occupied windows).
-        distinct_windows = df.filter(col_expr.isNotNull()).select(*group_by_names, window_start_col).distinct()
+        distinct_windows = source_df.filter(col_expr.isNotNull()).select(*group_by_names, window_start_col).distinct()
         ordered_windows = (
             Window.partitionBy(*group_by_names).orderBy(window_start_col)
             if group_by_names
@@ -4048,6 +4095,7 @@ def has_no_gaps_per_time_window(
 
 
 @register_for_original_columns_preselection()
+@row_preserving
 @register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
@@ -4117,16 +4165,19 @@ def has_valid_schema(
     condition_col = f"__schema_condition_{unique_str}"
     message_col = f"__schema_message_{unique_str}"
 
-    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+    def apply(
+        df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame], input_df: DataFrame | None = None
+    ) -> DataFrame:
         """
         Apply the schema compatibility check logic to the DataFrame.
 
         Adds columns indicating whether the DataFrame schema is incompatible with the expected schema.
 
         Args:
-            df: The input DataFrame to validate for schema compatibility.
+            df: The DataFrame to validate for schema compatibility.
             spark: SparkSession used to get the reference table schema
             ref_dfs: A dictionary mapping reference DataFrame names to DataFrame objects.
+            input_df: Optional untouched input DataFrame to read the actual schema from. Defaults to *df*.
 
         Returns:
             The DataFrame with additional condition and message columns for schema validation.
@@ -4139,12 +4190,13 @@ def has_valid_schema(
             _expected_schema = expected_schema
 
         # Use columns (engine-injected or user-provided) to filter actual schema.
-        selected_column_names = column_names if column_names is not None else list(df.columns)
+        source_df = df if input_df is None else input_df
+        selected_column_names = column_names if column_names is not None else list(source_df.columns)
 
         if exclude_column_names:
             ignore_set = set(exclude_column_names)
             selected_column_names = [col for col in selected_column_names if col not in ignore_set]
-        actual_schema = df.select(*selected_column_names).schema
+        actual_schema = source_df.select(*selected_column_names).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
@@ -5359,6 +5411,62 @@ def _build_aggr_condition_result(
     return condition_result
 
 
+DATASET_AGGREGATE_ATTRIBUTE = "dqx_dataset_aggregate"
+
+
+@dataclass(frozen=True)
+class DatasetAggregate:
+    """
+    Aggregate metric over all rows that a built-in aggregate check without *group_by* adds to the checked DataFrame.
+
+    Such checks attach it to their closure (as the *DATASET_AGGREGATE_ATTRIBUTE* attribute) so the engine can
+    compute the metrics of all of them in one aggregation and one cross join (see *add_dataset_aggregates*), and then
+    only add each check's condition column with *add_condition*.
+
+    Attributes:
+        metric_col: Unique name of the column holding the metric.
+        aggr_type: Aggregate function name.
+        build_expression: Builds the (unaliased) aggregate expression, including the check filter. It is built lazily
+            so that invalid parameters or unsafe filters raise when the checks are applied, not when the rule is
+            created.
+        add_condition: Adds the check's condition column to a DataFrame that already has *metric_col*.
+    """
+
+    metric_col: str
+    aggr_type: str
+    build_expression: Callable[[], Column]
+    add_condition: Callable[[DataFrame], DataFrame]
+
+
+def add_dataset_aggregates(df: DataFrame, input_df: DataFrame, aggregates: list[DatasetAggregate]) -> DataFrame:
+    """
+    Add the metric columns of the given aggregates to *df*, computed in one aggregation over all rows of *input_df*.
+
+    The aggregation never includes the columns or logical plan added by earlier checks. Using a window without
+    partitionBy would move all rows into a single partition, so a global aggregation is cross joined onto *df*
+    instead. It returns a single row; the limit is informational only.
+
+    Args:
+        df: The DataFrame to add the metric columns to. Must hold the same rows as *input_df*.
+        input_df: The untouched input DataFrame the aggregations are computed from.
+        aggregates: The aggregates to add.
+
+    Returns:
+        *df* with one additional column per aggregate.
+    """
+    if not aggregates:
+        return df
+    metrics_df = input_df.select(
+        *[aggregate.build_expression().alias(aggregate.metric_col) for aggregate in aggregates]
+    )
+    metrics_df = metrics_df.limit(1)
+    # Validate that non-curated aggregates return a type that can be compared to limits (schema-only).
+    for aggregate in aggregates:
+        if aggregate.aggr_type not in CURATED_AGGR_FUNCTIONS:
+            _validate_aggregate_return_type(metrics_df, aggregate.aggr_type, aggregate.metric_col)
+    return df.crossJoin(metrics_df)  # bring the metrics across all rows
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | Decimal | str | Column,
@@ -5417,8 +5525,7 @@ def _is_aggr_compare(
         raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
 
     # Warn if using non-curated aggregate function
-    is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
-    if not is_curated:
+    if aggr_type not in CURATED_AGGR_FUNCTIONS:
         warnings.warn(
             f"Using non-curated aggregate function '{aggr_type}'. "
             f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
@@ -5427,72 +5534,23 @@ def _is_aggr_compare(
             stacklevel=3,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = resolve_aggregate_column(column)
+    aggr_column = resolve_aggregate_column(column)
     # The star is aggregated via the filtered-count placeholder only when a row filter is present.
-    validate_star_aggregate(aggr_col_str, aggr_type, uses_placeholder=bool(row_filter))
-    name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
+    validate_star_aggregate(aggr_column.display_name, aggr_type, uses_placeholder=bool(row_filter))
+    name, group_by_list_str = _build_aggregate_check_metadata(
+        aggr_column.normalized_name, aggr_type, group_by, compare_op_name
+    )
     limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
-    condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
-    metric_col = f"__metric_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
+    condition_col = f"__condition_{aggr_column.normalized_name}_{aggr_type}_{compare_op_name}_{unique_str}"
+    metric_col = f"__metric_{aggr_column.normalized_name}_{aggr_type}_{compare_op_name}_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
-        """
-        Apply the aggregation comparison check logic to the DataFrame.
+    def build_aggregate_expression() -> Column:
+        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_column.display_name, aggr_column.expression)
+        return _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
-        Computes the specified aggregation over the dataset (or groups if provided)
-        and compares the result against the limit. Adds condition and metric columns
-        used for check evaluation.
-
-        Args:
-            df: The input DataFrame to validate.
-
-        Returns:
-            The DataFrame with additional condition and metric columns for aggregation validation.
-        """
-        filtered_expr = build_filtered_aggregate_input(row_filter, aggr_col_str, aggr_col_expr)
-
-        # Build aggregation expression
-        aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
-
-        if group_by:
-            # Convert group_by to Column expressions (reused for both window and groupBy approaches)
-            group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
-
-            # Check if aggregate is incompatible with window functions (e.g., count_distinct with DISTINCT)
-            if aggr_type in WINDOW_INCOMPATIBLE_AGGREGATES:
-                # Use two-stage aggregation: groupBy + join (instead of window functions)
-                # This is required for aggregates like count_distinct that don't support window DISTINCT operations
-                agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
-
-                # Join aggregated metrics back to original DataFrame to maintain row-level granularity
-                # Note: Aliased Column expressions in group_by are not supported for window-incompatible
-                # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
-                join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
-                df = _join_results_on_null_safe_columns(df, agg_df, join_cols, [metric_col])
-            else:
-                # Use standard window function approach for window-compatible aggregates
-                window_spec = Window.partitionBy(*group_cols)
-                df = df.withColumn(metric_col, aggr_expr.over(window_spec))
-
-                # Validate non-curated aggregates (type check only - window functions return same row count)
-                if not is_curated:
-                    _validate_aggregate_return_type(df, aggr_type, metric_col)
-        else:
-            # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
-            # forcing the window function to process the entire dataset in one task.
-            # To avoid this performance issue, we compute a global aggregation instead.
-            # Note: The aggregation naturally returns a single row without a groupBy clause,
-            # so no explicit limit is required (informational only).
-            agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
-
-            # Validate non-curated aggregates (type check only - we already limited to 1 row)
-            if not is_curated:
-                _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
-
-            df = df.crossJoin(agg_df)  # bring the metric across all rows
-
+    def add_condition(df: DataFrame) -> DataFrame:
         condition_result = _build_aggr_condition_result(
             F.col(metric_col),
             limit_expr,
@@ -5501,9 +5559,59 @@ def _is_aggr_compare(
             rel_tolerance,
             null_safe_limit_compare,
         )
-        df = df.withColumn(condition_col, condition_result)
+        return df.withColumn(condition_col, condition_result)
 
-        return df
+    aggregate = DatasetAggregate(metric_col, aggr_type, build_aggregate_expression, add_condition)
+
+    def apply(df: DataFrame, input_df: DataFrame | None = None) -> DataFrame:
+        """
+        Apply the aggregation comparison check logic to the DataFrame.
+
+        Computes the specified aggregation over the dataset (or groups if provided)
+        and compares the result against the limit. Adds condition and metric columns
+        used for check evaluation.
+
+        Args:
+            df: The DataFrame to validate.
+            input_df: Optional untouched input DataFrame to compute an aggregation over all rows from. Defaults to
+                *df*. Aggregations per group are computed from *df*.
+
+        Returns:
+            The DataFrame with additional condition and metric columns for aggregation validation.
+        """
+        if not group_by:
+            df = add_dataset_aggregates(df, df if input_df is None else input_df, [aggregate])
+            return add_condition(df)
+
+        # Convert group_by to Column expressions (reused for both window and groupBy approaches)
+        group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
+        aggr_expr = build_aggregate_expression()
+
+        # Check if aggregate is incompatible with window functions (e.g., count_distinct with DISTINCT)
+        if aggr_type in WINDOW_INCOMPATIBLE_AGGREGATES:
+            # Use two-stage aggregation: groupBy + join (instead of window functions)
+            # This is required for aggregates like count_distinct that don't support window DISTINCT operations
+            agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
+
+            # Join aggregated metrics back to original DataFrame to maintain row-level granularity
+            # Note: Aliased Column expressions in group_by are not supported for window-incompatible
+            # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
+            join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
+            df = _join_results_on_null_safe_columns(df, agg_df, join_cols, [metric_col])
+        else:
+            # Use standard window function approach for window-compatible aggregates
+            window_spec = Window.partitionBy(*group_cols)
+            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+
+            # Validate non-curated aggregates (type check only - window functions return same row count)
+            if aggr_type not in CURATED_AGGR_FUNCTIONS:
+                _validate_aggregate_return_type(df, aggr_type, metric_col)
+
+        return add_condition(df)
+
+    if not group_by:
+        # Lets the engine compute this metric together with the metrics of other aggregate checks over all rows.
+        setattr(apply, DATASET_AGGREGATE_ATTRIBUTE, aggregate)
 
     condition = make_condition(
         condition=F.col(condition_col),
@@ -5512,7 +5620,7 @@ def _is_aggr_compare(
             # Human-readable display name for aggregate function (including params if present)
             F.lit(f"{_get_aggregate_display_name(aggr_type, aggr_params)} value "),
             F.col(metric_col).cast("string"),
-            F.lit(f" in column '{aggr_col_str}'"),
+            F.lit(f" in column '{aggr_column.display_name}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
             F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
             F.lit(f" is {compare_op_label} limit: "),
@@ -5522,6 +5630,94 @@ def _is_aggr_compare(
     )
 
     return condition, apply
+
+
+def _register_referenced_dataframes(
+    query: str, ref_dfs: dict[str, DataFrame] | None, unique_str: str
+) -> dict[str, str]:
+    """Register and return replacements only for reference DataFrames used by *query*."""
+    replacements: dict[str, str] = {}
+    placeholders = get_template_placeholders(query)
+    for ref_name, ref_df in (ref_dfs or {}).items():
+        if ref_name in placeholders:
+            unique_name = f"{ref_name}_{unique_str}"
+            ref_df.createOrReplaceTempView(unique_name)
+            replacements[ref_name] = unique_name
+    return replacements
+
+
+def _get_distinct_reference_values(
+    ref_df_name: str | None,
+    ref_table: str | None,
+    ref_dfs: dict[str, DataFrame] | None,
+    spark: SparkSession,
+    ref_col_expr: Column,
+    ref_col_key: str | None,
+    reference_cache: ReferenceDataFrameCache | None,
+) -> DataFrame:
+    """
+    Return one distinct reference projection, reusing it across compatible foreign-key checks.
+
+    The projection is cached only when *ref_col_key* is given, i.e. when the reference key is built from column names.
+    """
+
+    def project() -> DataFrame:
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+        return ref_df.select(ref_col_expr.alias(_REFERENCE_VALUE_COLUMN)).distinct()
+
+    if reference_cache is None or ref_col_key is None:
+        return project()
+    source_key = f"dataframe:{ref_df_name}" if ref_df_name else f"table:{ref_table}"
+    cache_key = source_key, ref_col_key
+    if cache_key not in reference_cache:
+        reference_cache[cache_key] = project()
+    return reference_cache[cache_key]
+
+
+def _resolve_foreign_key_columns(
+    columns: list[str | Column], ref_columns: list[str | Column], null_safe: bool
+) -> _ForeignKeyColumns:
+    """Resolve source/reference key expressions and stable display names."""
+    not_null_condition = F.lit(True)
+    if len(columns) == 1 and not null_safe:
+        join_col, join_ref_col = columns[0], ref_columns[0]
+    else:
+        join_col, join_ref_col, not_null_condition = _handle_fk_composite_keys(
+            columns, ref_columns, not_null_condition, null_safe
+        )
+
+    display_col = columns[0] if len(columns) == 1 else join_col
+    display_ref_col = ref_columns[0] if len(columns) == 1 else join_ref_col
+    source_name, source_display, source_display_expression = get_normalized_column_and_expr(display_col)
+    reference_name, reference_display, _ = get_normalized_column_and_expr(display_ref_col)
+    _, _, source_expression = get_normalized_column_and_expr(join_col)
+    _, _, reference_expression = get_normalized_column_and_expr(join_ref_col)
+    return _ForeignKeyColumns(
+        source_name,
+        source_display,
+        source_expression,
+        source_display_expression,
+        reference_name,
+        reference_display,
+        reference_expression,
+        _reference_cache_key(columns, ref_columns, null_safe),
+        not_null_condition,
+    )
+
+
+def _reference_cache_key(columns: list[str | Column], ref_columns: list[str | Column], null_safe: bool) -> str | None:
+    """
+    Return a key that identifies the reference expression of a foreign-key check, or None if it cannot be cached.
+
+    The key is built only from column names. *Column* inputs are not cached: their string form is a diagnostic
+    rendering, not a reliable identity, so two different expressions could share a key.
+    """
+    # composite and null-safe keys are structs whose field names come from the source columns
+    builds_struct = len(columns) > 1 or null_safe
+    key_columns = [*ref_columns, *columns] if builds_struct else ref_columns
+    if not all(isinstance(column, str) for column in key_columns):
+        return None
+    return repr((tuple(ref_columns), null_safe, tuple(columns) if builds_struct else ()))
 
 
 def _get_ref_df(
@@ -5663,7 +5859,7 @@ def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Colu
 _STAR_COLUMN_FORMS = frozenset({"*", "unresolvedstar()"})
 
 
-def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
+def resolve_aggregate_column(column: str | Column) -> _AggregateColumn:
     """Resolve an aggregate column like *get_normalized_column_and_expr*, canonicalizing every "*" form.
 
     Any bare-star form (the string *"*"*, *F.expr("*")*, or *F.col("*")*) is canonicalized to the
@@ -5679,8 +5875,8 @@ def resolve_aggregate_column(column: str | Column) -> tuple[str, str, Column]:
     """
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
     if aggr_col_str in _STAR_COLUMN_FORMS:
-        return "", "*", aggr_col_expr
-    return aggr_col_str_norm, aggr_col_str, aggr_col_expr
+        return _AggregateColumn("", "*", aggr_col_expr)
+    return _AggregateColumn(aggr_col_str_norm, aggr_col_str, aggr_col_expr)
 
 
 def build_filtered_aggregate_input(row_filter: str | None, aggr_col_str: str, aggr_col_expr: Column) -> Column:
@@ -6042,30 +6238,27 @@ def _apply_dataset_level_sql_check(
     # Query should only return the condition column
     user_query_df = spark.sql(query_resolved).select(F.col(condition_column).alias(unique_condition_column))
 
-    # Capture up to two rows to detect accidental multi-row outputs
-    condition_rows = user_query_df.take(2)
-    if not condition_rows:
-        # No rows returned: treat as condition not met (False)
-        condition_value = False
-    elif len(condition_rows) > 1:
-        raise InvalidParameterError(
-            "Dataset-level sql_query without merge_columns must return exactly one row. "
-            "Provide merge_columns for row-level checks or aggregate the query to a single row."
-        )
-    else:
-        condition_value = condition_rows[0][unique_condition_column]
+    # Reduce the query result to one row inside the Spark plan instead of collecting it to the driver:
+    # - no rows: condition not met (False)
+    # - one row: its condition value
+    # - more than one row: fail when the result is computed (Spark action), not when the check is applied
+    row_count = F.count(F.lit(1))
+    condition_df = user_query_df.agg(
+        F.when(row_count == 0, F.lit(False))
+        .when(row_count == 1, F.first(unique_condition_column))
+        .otherwise(F.raise_error(F.lit(SQL_QUERY_MULTIPLE_ROWS_ERROR)))
+        .alias(unique_condition_column)
+    )
+    result_df = df.crossJoin(condition_df)
 
     # Apply the condition consistently with row_filter behavior:
     # - If row_filter is provided, only rows matching the filter get the condition value
     # - Rows not matching the filter get None (consistent with row-level checks)
     if row_filter:
         filter_expr = safe_filter_expr(row_filter)
-        result_df = df.withColumn(
-            unique_condition_column, F.when(filter_expr, F.lit(condition_value)).otherwise(F.lit(None))
+        result_df = result_df.withColumn(
+            unique_condition_column, F.when(filter_expr, F.col(unique_condition_column)).otherwise(F.lit(None))
         )
-    else:
-        # No filter: apply condition to all rows
-        result_df = df.withColumn(unique_condition_column, F.lit(condition_value))
 
     return result_df
 
