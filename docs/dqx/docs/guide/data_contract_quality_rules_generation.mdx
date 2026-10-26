@@ -176,15 +176,30 @@ Predefined rules are automatically derived from schema field constraints defined
 | `required: true` | Direct property attribute | `is_not_null` | All mandatory properties |
 | `unique: true` | Direct property attribute | `is_unique` | Primary keys, identifiers |
 | `pattern` | `logicalTypeOptions` | `regex_match` | Email, phone, ID formats |
-| `minimum` + `maximum` | `logicalTypeOptions` | `is_in_range` or `sql_expression` (floats) | Age, amount limits |
-| `minimum` only | `logicalTypeOptions` | `is_aggr_not_less_than` | Positive amounts |
-| `maximum` only | `logicalTypeOptions` | `is_aggr_not_greater_than` | Upper bounds |
+| `minimum` + `maximum` | `logicalTypeOptions` | `is_in_range` | Age, amount limits |
+| `minimum` only | `logicalTypeOptions` | `is_not_less_than` | Positive amounts |
+| `maximum` only | `logicalTypeOptions` | `is_not_greater_than` | Upper bounds |
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
 | `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
 
 **Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
+
+#### Range constraints
+
+ODCS defines `minimum` and `maximum` for each value, in every v3.x version, so DQX generates row-level checks that flag only the rows outside the bounds. A bound must be:
+
+- a number for `integer` and `number` fields (a numeric string such as `"10"` is accepted), or
+- an ISO 8601 date or timestamp for `date` and `timestamp` fields, e.g. `2020-01-01` or `2020-01-01T10:00:00`.
+
+A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast`, so a malformed value doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
+
+A bound that doesn't fit the field (e.g. `minimum: abc` on an integer field, or a number on a date field), an integer outside the 64-bit range, or a `minimum` and `maximum` of different kinds is skipped with a warning.
+
+<Admonition type="note" title="Previous behavior">
+In DQX v0.17.0 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
+</Admonition>
 
 ### Example Contract with Predefined Rules
 
@@ -224,8 +239,8 @@ Predefined rules are automatically derived from schema field constraints defined
             physicalType: decimal(10,2)
             required: true              # → is_not_null
             logicalTypeOptions:
-              minimum: 0.01               # → sql_expression (floats)
-              maximum: 100000.00          # → sql_expression (floats)
+              minimum: 0.01               # → is_in_range
+              maximum: 100000.00          # → is_in_range
           
           - name: order_status
             logicalType: string
@@ -253,7 +268,7 @@ Predefined rules are automatically derived from schema field constraints defined
     # - is_unique for order_id
     # - regex_match for order_id (pattern validation)
     # - regex_match for customer_email (email validation)
-    # - sql_expression for order_total (float range: 0.01 to 100000.00)
+    # - is_in_range for order_total (range: 0.01 to 100000.00)
     # - regex_match for order_status (pattern validation)
     ```
   </TabItem>
@@ -591,7 +606,7 @@ Every metric shares the same **threshold fields** (one of which must be set) and
 Every library metric is evaluated against the eight ODCS threshold fields: `mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`, `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`. Each field set on an entry produces its own rule, so a range written as two fields on one entry (e.g. `mustBeGreaterOrEqualTo: 10` and `mustBeLessOrEqualTo: 1000`) enforces both bounds.
 
 - **`mustBe: 0`** is special-cased for `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`: it maps onto a cheap **row-level** check (`is_not_null`, `is_not_in_list`, `is_in_list`/`regex_match`, or `is_unique`) that pinpoints the offending rows, rather than a dataset-level count.
-- **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`.
+- **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`. They are dataset-level by design, because a library metric describes the whole dataset; `logicalTypeOptions` bounds such as `minimum` apply to each value and generate row-level checks (see [Range constraints](#range-constraints)).
 - **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict-inequality or range equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check. For `mustBeBetween`/`mustNotBeBetween`, **both bounds are inclusive** — a value exactly equal to either bound counts as being "between" them. The ODCS spec is inconsistent here: its operator table writes `mustBeBetween: [0, 100]` as `∈` (a closed interval), while a note calls it equivalent to `mustBeGreaterThan` + `mustBeLessThan`. DQX follows SQL `BETWEEN`, so `mustBeBetween: [0, 5]` passes a column with no nulls.
 - **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold falls back to `sql_query`, not just the four above. See [duplicateValues](#duplicatevalues) below for exactly what it counts.
 
@@ -876,8 +891,8 @@ Here's a complete example showing contract-based rule generation with every rule
             physicalType: decimal(5,2)
             required: true           # Predefined: is_not_null
             logicalTypeOptions:
-              minimum: -40.0           # Predefined: sql_expression (range check)
-              maximum: 125.0           # Predefined: sql_expression (range check)
+              minimum: -40.0           # Predefined: is_in_range (range check)
+              maximum: 125.0           # Predefined: is_in_range (range check)
             quality:
               # Text (rule_type: text_llm): property-level expectation
               - type: text
