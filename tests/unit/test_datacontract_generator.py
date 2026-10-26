@@ -3199,6 +3199,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
     def test_format_generates_time_validation(self, generator):
+        """Test that format on a time field generates an is_valid_timestamp rule."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
@@ -3226,6 +3227,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
     def test_time_bounds_are_skipped_with_warning(self, generator, caplog):
+        """Test that time bounds are skipped and log a warning."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
