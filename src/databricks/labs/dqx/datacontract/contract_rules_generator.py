@@ -282,7 +282,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
-            self._warn_about_skipped_quality(schema_obj, schema_name, process_text_rules)
+            self._warn_about_skipped_quality(schema_obj, schema_name, process_text_rules, process_library_rules)
 
             if process_library_rules:
                 taken_names.update(rule["name"] for rule in dq_rules[schema_start:] if rule.get("name"))
@@ -1264,13 +1264,15 @@ class DataContractRulesGenerator(DQEngineBase):
                     rules.append(rule)
         return rules
 
-    def _warn_about_skipped_quality(self, schema_obj: SchemaObject, schema_name: str, process_text_rules: bool) -> None:
+    def _warn_about_skipped_quality(
+        self, schema_obj: SchemaObject, schema_name: str, process_text_rules: bool, process_library_rules: bool
+    ) -> None:
         """Log a warning for each quality entry of the schema that does not become a rule."""
         targets = [(MetricTarget(schema_name, prop.name), prop.quality) for prop in schema_obj.properties or []]
         targets.append((MetricTarget(schema_name, None), schema_obj.quality))
         for target, quality_list in targets:
             for quality_rule in quality_list or []:
-                reason = self._skip_reason(quality_rule, process_text_rules)
+                reason = self._skip_reason(quality_rule, process_text_rules, process_library_rules)
                 if reason is None:
                     continue
                 description = sanitize_for_logging(quality_rule.description or "")
@@ -1279,9 +1281,13 @@ class DataContractRulesGenerator(DQEngineBase):
                     f"(description: '{description}'): {reason}."
                 )
 
-    def _skip_reason(self, quality_rule: DataQuality, process_text_rules: bool) -> str | None:
+    def _skip_reason(
+        self, quality_rule: DataQuality, process_text_rules: bool, process_library_rules: bool
+    ) -> str | None:
         """Return why a quality entry does not become a rule, or None if it does (or was opted out of)."""
-        if is_library_entry(quality_rule) or self._is_dqx_explicit_rule(quality_rule):
+        if is_library_entry(quality_rule):
+            return None if process_library_rules else "process_library_rules is False"
+        if self._is_dqx_explicit_rule(quality_rule):
             return None
         if quality_rule.type == "text":
             if not process_text_rules:
@@ -1297,9 +1303,7 @@ class DataContractRulesGenerator(DQEngineBase):
             return "type: sql rules are not supported yet"
         if quality_rule.type == "custom":
             if quality_rule.engine != "dqx":
-                return (
-                    f"engine '{sanitize_for_logging(str(quality_rule.engine))}' is not supported; only engine: dqx is"
-                )
+                return f"engine '{sanitize_for_logging(str(quality_rule.engine))}' is not supported; only engine: dqx is supported"
             return "engine: dqx rules need an implementation with a 'check'"
         return "this quality type is not supported; use library, custom (engine: dqx) or text"
 

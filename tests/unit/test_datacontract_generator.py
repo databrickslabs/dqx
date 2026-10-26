@@ -3660,7 +3660,36 @@ class TestDataContractGeneratorSkippedQuality(DataContractGeneratorTestBase):
         )
 
         assert rules == []
-        assert any("type: custom" in message and "engine 'soda' is not supported" in message for message in warnings)
+        assert any(
+            "type: custom" in message and "engine 'soda' is not supported; only engine: dqx is supported" in message
+            for message in warnings
+        )
+
+    def test_library_quality_entry_is_skipped_with_warning_when_library_processing_disabled(self, generator, caplog):
+        contract_dict = self.create_contract_with_quality(
+            property_name="qty",
+            logical_type="integer",
+            quality_checks=[{"type": "library", "metric": "nullValues", "mustBe": 0}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    generate_schema_validation=False,
+                    process_library_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+        assert rules == []
+        assert any(
+            "type: library" in rec.message
+            and "property 'qty'" in rec.message
+            and "process_library_rules is False" in rec.message
+            for rec in caplog.records
+        )
 
     def test_text_quality_entry_is_not_warned_when_text_processing_disabled(self, generator, caplog):
         contract_dict = self.create_contract_with_quality(
