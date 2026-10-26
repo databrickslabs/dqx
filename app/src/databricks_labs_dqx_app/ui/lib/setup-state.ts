@@ -54,6 +54,19 @@ function configurableStep(status: SetupStatusResponse): SetupStep | undefined {
 }
 
 /**
+ * Whether to show the optional "deploy the demo" step before entering Studio: only to
+ * an administrator who worked through the setup steps this session, and only once.
+ * Restarts and later visits to an already ready Studio skip it.
+ */
+export function offersSetupCompletion(
+  view: SetupViewModel,
+  workedThroughSetup: boolean,
+  dismissed: boolean,
+): boolean {
+  return view.kind === "ready" && view.canManage && workedThroughSetup && !dismissed;
+}
+
+/**
  * Whether the configuration form's catalog and group lists should load: only while
  * the form shows, not merely because the backend still offers to change saved choices.
  */

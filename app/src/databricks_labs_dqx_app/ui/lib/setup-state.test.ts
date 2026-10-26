@@ -7,6 +7,7 @@ import it from "./i18n/locales/it.json";
 import ptBR from "./i18n/locales/pt-BR.json";
 import {
   configurationListsWanted,
+  offersSetupCompletion,
   setupView,
   unacknowledgedWarnings,
   warningKey,
@@ -211,6 +212,24 @@ describe("setup warnings review", () => {
     expect(
       unacknowledgedWarnings({ state: "ready", steps: [step] }, new Set(["app_sharing"])),
     ).toEqual([]);
+  });
+});
+
+describe("setup completion step", () => {
+  const ready = status(report("ready"), true);
+
+  test("is offered once to an administrator who worked through setup", () => {
+    expect(offersSetupCompletion(setupView(ready), true, false)).toBe(true);
+    expect(offersSetupCompletion(setupView(ready), true, true)).toBe(false);
+  });
+
+  test("is skipped when Studio was already ready, e.g. after a restart", () => {
+    expect(offersSetupCompletion(setupView(ready), false, false)).toBe(false);
+  });
+
+  test("is never offered to non-administrators or before setup is ready", () => {
+    expect(offersSetupCompletion(setupView(status(report("ready"), false)), true, false)).toBe(false);
+    expect(offersSetupCompletion(setupView(status(report("setup_required"), true)), true, false)).toBe(false);
   });
 });
 

@@ -20,7 +20,9 @@ Scope decisions:
   ``dq_migrations`` version tracker) must survive so the app keeps working
   without a redeploy/re-migrate.
 - ``dq_app_settings`` is cleared EXCEPT the two in-flight job-status keys
-  (``reset_database_status`` / ``demo_content_status``), then the fresh-install
+  (``reset_database_status`` / ``demo_content_status``) and setup's own
+  ``setup_*`` keys (storage choices, storage lock, task-runner job, overrides),
+  which describe the installation rather than its data, then the fresh-install
   DEFAULT content it held is immediately RE-PROVISIONED in the same request
   by re-running the app's first-boot seed routines (see
   :meth:`DatabaseResetService._reprovision_defaults`). A "full reset" returns
@@ -55,6 +57,7 @@ from databricks_labs_dqx_app.backend.migrations import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.reset_status import RESET_STATUS_KEY
+from databricks_labs_dqx_app.backend.setup.configuration import SETUP_SETTING_KEY_PREFIX
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -303,7 +306,7 @@ class DatabaseResetService:
         cleared: list[str],
         failed: dict[str, str],
     ) -> None:
-        """Clear ``dq_app_settings`` EXCEPT the in-flight job-status keys.
+        """Clear ``dq_app_settings`` EXCEPT the in-flight job-status keys and setup's keys.
 
         The reset clears ``dq_app_settings``, but the ``running`` status row the
         route persisted immediately before launching the reset lives there too.
@@ -325,8 +328,15 @@ class DatabaseResetService:
         # literals, so they are escaped with ``escape_sql_string`` (doubled
         # single quotes) exactly like the admin-role literal there.
         preserved = ", ".join(f"'{escape_sql_string(k)}'" for k in _PRESERVED_APP_SETTINGS_KEYS)
+        # Setup's own keys (storage choices and lock, task-runner job, overrides) describe
+        # the installation, not its data: wiping them sends the next restart back to the
+        # setup form. "!" escapes LIKE's "_" wildcard on both Postgres and Delta.
+        setup_keys = escape_sql_string(SETUP_SETTING_KEY_PREFIX.replace("_", "!_")) + "%"
         try:
-            self._oltp.execute(f"DELETE FROM {fqn} WHERE {_SETTINGS_KEY_COLUMN} NOT IN ({preserved})")
+            self._oltp.execute(
+                f"DELETE FROM {fqn} WHERE {_SETTINGS_KEY_COLUMN} NOT IN ({preserved}) "
+                f"AND {_SETTINGS_KEY_COLUMN} NOT LIKE '{setup_keys}' ESCAPE '!'"
+            )
             cleared.append(_APP_SETTINGS_TABLE)
         except Exception as exc:
             # Best-effort: recorded, not swallowed, and never aborts the reset.

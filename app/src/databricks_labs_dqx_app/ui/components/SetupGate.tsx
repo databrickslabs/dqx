@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import {
   configurationListsWanted,
+  offersSetupCompletion,
   setupErrorCode,
   setupView,
   unacknowledgedWarnings,
@@ -45,6 +46,7 @@ import {
   SetupWizard,
 } from "@/components/setup/SetupWizard";
 import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
+import { SetupComplete } from "@/components/setup/SetupComplete";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -147,6 +149,9 @@ export function SetupGate({ children }: SetupGateProps) {
     refetchIntervalInBackground: setupPollingInBackground(),
   });
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedWarnings);
+  // Set once this administrator sees setup steps to work through this session.
+  const [workedThroughSetup, setWorkedThroughSetup] = useState(false);
+  const [completionDismissed, setCompletionDismissed] = useState(false);
   const workspaceHost = useWorkspaceHost({
     query: {
       enabled:
@@ -185,6 +190,10 @@ export function SetupGate({ children }: SetupGateProps) {
     acknowledged,
     editingConfiguration,
   );
+  if (view.kind === "wizard" && !workedThroughSetup) setWorkedThroughSetup(true);
+  if (offersSetupCompletion(view, workedThroughSetup, completionDismissed)) {
+    return <SetupComplete onContinue={() => setCompletionDismissed(true)} />;
+  }
   if (view.kind === "ready") return <>{children}</>;
 
   const grantStepId = applyGrants.variables?.stepId;

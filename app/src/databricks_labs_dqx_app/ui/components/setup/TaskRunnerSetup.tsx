@@ -265,7 +265,10 @@ export function TaskRunnerSteps({
     <ol className="space-y-3">
       <SubStep number={1} title={t("setup.taskRunner.steps.pick")}>
         <div className="space-y-1">
-          <Label htmlFor="task-runner-principal">{t("setup.taskRunner.pick.label")}</Label>
+          {/* The sub-step title already says what to pick, so the label is for screen readers only. */}
+          <Label htmlFor="task-runner-principal" className="sr-only">
+            {t("setup.taskRunner.pick.label")}
+          </Label>
           {principalList.status === "unavailable" ? (
             <>
               <Input

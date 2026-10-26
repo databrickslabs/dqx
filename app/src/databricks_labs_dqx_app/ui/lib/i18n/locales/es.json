@@ -3176,6 +3176,22 @@
       "description": "Studio está listo para usarse. Revise las advertencias a continuación, que puede resolver ahora o más tarde, y continúe. Use Comprobar de nuevo después de resolverlas.",
       "acknowledge": "Entendido, continuar a Studio"
     },
+    "complete": {
+      "title": "DQX Studio está listo",
+      "description": "Puedes desplegar la demo ahora, u omitirla e ir directamente a Studio.",
+      "skip": "Omitir y abrir Studio",
+      "continue": "Abrir Studio",
+      "demo": {
+        "title": "Desplegar la demo",
+        "optional": "Opcional",
+        "body": "Añade tablas, reglas e historial de ejecuciones de ejemplo para probar Studio. Se ejecuta en segundo plano y tarda unos 30 minutos.",
+        "deploy": "Desplegar demo",
+        "started": "Despliegue de la demo iniciado. Tarda unos 30 minutos y puedes usar Studio mientras tanto.",
+        "running": "Ya hay un despliegue de la demo en curso.",
+        "deployed": "La demo ya está desplegada.",
+        "failed": "No se pudo iniciar el despliegue de la demo. Puedes desplegarla más tarde desde la página Marketplace de Studio."
+      }
+    },
     "instructions": "Cómo resolverlo",
     "grants": {
       "partial": "Listo: {{applied}} de {{total}}.",
@@ -3251,51 +3267,51 @@
         "useTyped": "Usar el ID de aplicación {{id}}",
         "noMatches": "Ninguna entidad de servicio coincide. Pega su ID de aplicación para usarla.",
         "pastePlaceholder": "ID de aplicación, por ejemplo 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
-        "listUnavailable": "Studio no pudo cargar la lista de entidades de servicio. Pega el ID de aplicación de la entidad de servicio. La encontrarás en su página, en Settings → Identity and access.",
+        "listUnavailable": "Studio no pudo cargar la lista de entidades de servicio. Pega el Application ID en su lugar. Lo encontrarás en la página de la entidad de servicio.",
         "listTruncated_one": "Se muestra solo {{count}} entidad de servicio. Si la tuya no aparece, pega su ID de aplicación.",
         "listTruncated_other": "Se muestran las primeras {{count}} entidades de servicio. Si la tuya no aparece, pega su ID de aplicación.",
         "invalidId": "Un ID de aplicación tiene este aspecto: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "¿No tienes una? Créala",
-        "createStep1": "Abre el menú de tu perfil (arriba a la derecha) → Settings → Identity and access → Service principals. Haz clic en Add service principal y crea una nueva llamada dqx-studio-task-runner.",
-        "createStep2": "Vuelve aquí y elígela arriba. Configurarás sus permisos en el paso 2.",
+        "createStep1": "En Settings → Identity and access → Service principals, haz clic en Add service principal y llámala dqx-studio-task-runner.",
+        "createStep2": "Vuelve aquí y selecciónala arriba.",
         "openServicePrincipals": "Abrir entidades de servicio"
       },
       "access": {
-        "intro": "En la pestaña Permissions de esta entidad de servicio (menú del perfil (arriba a la derecha) → Settings → Identity and access → Service principals → {{name}} → Permissions):",
+        "intro": "En la pestaña Permissions de {{name}}, haz clic en Grant access y añade:",
         "nameFallback": "tu entidad de servicio",
-        "self": "Haz clic en Grant access, busca tu usuario y date CAN USE (aparece como \"Service Principal: User\" en la pestaña Permissions) y CAN MANAGE (aparece como \"Service Principal: Manager\"). Si ya los tienes, omite este paso.",
-        "app": "Haz clic en Grant access, busca la aplicación DQX Studio ({{appName}}) y dale CAN USE.",
+        "self": "A ti mismo, con Service Principal: User y Service Principal: Manager. Omite esto si ya los tienes.",
+        "app": "La aplicación DQX Studio ({{appName}}), con Service Principal: User.",
         "appFallback": "la entidad de servicio propia de la aplicación",
         "openServicePrincipal": "Abrir esta entidad de servicio",
         "button": "Confirmar acceso",
         "result": {
           "confirmed": "Acceso confirmado. Studio puede usar esta entidad de servicio.",
           "permissionConfirmed": "Studio puede usar esta entidad de servicio.",
-          "missing": "La aplicación DQX Studio aún no tiene CAN USE en esta entidad de servicio. Agrégala en la pestaña Permissions (paso b de arriba) y luego haz clic de nuevo en Confirmar acceso. Si estás seguro de que Studio ya tiene este permiso (por ejemplo, a través de un grupo de administradores), puedes continuar con el paso 3.",
-          "unverified": "Studio no puede comprobar por sí mismo los permisos de esta entidad de servicio. Asegúrate de haber completado los pasos a y b y continúa. El paso 3 lo confirmará.",
-          "grantsPending": "Esta entidad de servicio también necesita acceso a los datos de Studio. Ejecuta los siguientes comandos. Si no tienes permisos, pide al propietario del catálogo que los ejecute.",
+          "missing": "La aplicación DQX Studio todavía no tiene Service Principal: User en esta entidad de servicio. Añádelo (paso b) y vuelve a confirmar. Si tiene acceso de otra forma, por ejemplo a través de un grupo, continúa con el paso 3.",
+          "unverified": "Studio no puede leer los permisos de esta entidad de servicio. Asegúrate de haber hecho los pasos a y b y continúa. El paso 3 lo confirmará.",
+          "grantsPending": "Esta entidad de servicio también necesita acceso a los datos de Studio. Ejecuta estos comandos o pide al propietario del catálogo que los ejecute.",
           "automaticGrants": "Studio configurará automáticamente el resto del acceso de esta entidad de servicio cuando se asigne al job.",
           "grantsUnverified": "Studio no pudo comprobar todo el acceso de esta entidad de servicio a los datos de Studio. La configuración lo vuelve a comprobar después del paso 3."
         },
         "errors": {
           "task_runner_principal_invalid": "Eso no es un ID de aplicación. Elige de nuevo la entidad de servicio o pega su ID de aplicación.",
           "task_runner_principal_is_app": "Esa es la entidad de servicio propia de la aplicación DQX Studio. Elige otra.",
-          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, por lo que la entidad de servicio de este job se elige en la instalación y no se puede cambiar aquí. Pide a quien instaló Studio que establezca dqx_service_principal_application_id en la configuración del bundle con el ID de aplicación de una entidad de servicio (no el de la propia aplicación) y que vuelva a desplegar Studio. Después, haz clic en Comprobar de nuevo.",
+          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Verificar de nuevo.",
           "task_runner_job_unavailable": "El job de ejecución de Studio aún no está listo. Haz clic en Comprobar de nuevo y vuelve a intentarlo.",
           "default": "Studio no pudo comprobar esta entidad de servicio. Inténtalo de nuevo en un minuto."
         }
       },
       "apply": {
-        "help": "Studio configura su job de ejecución, el job en segundo plano que ejecuta las comprobaciones programadas, para que use esta entidad de servicio y luego vuelve a comprobar la configuración.",
+        "help": "Studio configura el job de ejecución para que se ejecute como esta entidad de servicio y luego vuelve a comprobar la configuración.",
         "button": "Usar esta entidad de servicio",
         "confirmFirst": "Confirma primero el acceso.",
-        "grantsStillMissing": "Aún falta parte del acceso a los datos. Puedes continuar. La configuración lo volverá a listar después de este paso.",
+        "grantsStillMissing": "Todavía falta parte del acceso a los datos. Puedes continuar de todos modos, y la configuración mostrará después lo que falte.",
         "errors": {
-          "task_runner_run_as_forbidden": "Studio aún no tiene permiso para usar esta entidad de servicio. Normalmente significa que la aplicación DQX Studio no tiene CAN USE en ella (paso 2b). Agrégala y luego haz clic de nuevo en Usar esta entidad de servicio. O haz clic en Abrir el job de ejecución abajo, busca Run as (la identidad con la que se ejecuta el job) en el panel Job details, elige esta entidad de servicio y haz clic en Comprobar de nuevo.",
+          "task_runner_run_as_forbidden": "Studio todavía no puede usar esta entidad de servicio, normalmente porque la aplicación no tiene Service Principal: User en ella (paso 2b). Añádelo e inténtalo de nuevo. O abre el job de ejecución, cambia tú mismo Run as a esta entidad de servicio y haz clic en Verificar de nuevo.",
           "task_runner_principal_not_found": "Studio no encontró esa entidad de servicio. Comprueba que se creó en este espacio de trabajo y vuelve a elegirla.",
           "task_runner_principal_invalid": "Eso no es un ID de aplicación. Elige de nuevo la entidad de servicio o pega su ID de aplicación.",
           "task_runner_principal_is_app": "Esa es la entidad de servicio propia de la aplicación DQX Studio. Elige otra.",
-          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, por lo que la entidad de servicio de este job se elige en la instalación y no se puede cambiar aquí. Pide a quien instaló Studio que establezca dqx_service_principal_application_id en la configuración del bundle con el ID de aplicación de una entidad de servicio (no el de la propia aplicación) y que vuelva a desplegar Studio. Después, haz clic en Comprobar de nuevo.",
+          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Verificar de nuevo.",
           "task_runner_job_unavailable": "El job de ejecución de Studio aún no está listo. Haz clic en Comprobar de nuevo y vuelve a intentarlo.",
           "default": "Studio no pudo actualizar su job de ejecución. Inténtalo de nuevo, o abre el job y cambia tú mismo su ajuste Run as a esta entidad de servicio; luego haz clic en Comprobar de nuevo."
         }

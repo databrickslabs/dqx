@@ -15,11 +15,11 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from databricks_labs_dqx_app.backend.setup.configuration import SetupSettings
+from databricks_labs_dqx_app.backend.setup.configuration import SETUP_SETTING_KEY_PREFIX, SetupSettings
 from databricks_labs_dqx_app.backend.setup.models import SetupStepId
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources
 
-_KEY_PREFIX = "setup_override_"
+_KEY_PREFIX = f"{SETUP_SETTING_KEY_PREFIX}override_"
 _CLEARED = ""
 logger = logging.getLogger(__name__)
 
