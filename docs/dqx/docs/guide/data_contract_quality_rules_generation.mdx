@@ -182,9 +182,10 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
-| `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
+| `format` | `logicalTypeOptions` | `is_valid_date` or `is_valid_timestamp` | Date/timestamp/datetime/time formats |
 
 **Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
+For `time` fields, format validation is supported, while minimum and maximum bounds are skipped with a warning.
 
 ### Example Contract with Predefined Rules
 

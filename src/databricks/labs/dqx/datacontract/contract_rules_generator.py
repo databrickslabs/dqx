@@ -672,9 +672,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         # Handle range constraints from minimum and maximum
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
-            rules.extend(
-                self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
-            )
+            if prop.logicalType == 'time':
+                logger.warning(f"Time bounds aren't supported yet for field {column_path!r}; skipping them.")
+            else:
+                rules.extend(
+                    self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
+                )
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
@@ -683,7 +686,7 @@ class DataContractRulesGenerator(DQEngineBase):
             )
 
         # Handle date and timestamp format constraints
-        if prop.logicalType in {'date', 'timestamp', 'datetime'} and opts.get('format'):
+        if prop.logicalType in {'date', 'timestamp', 'datetime', 'time'} and opts.get('format'):
             rules.extend(
                 self._generate_format_rules_from_options(
                     column_path, prop.logicalType, field_metadata, default_criticality, opts
@@ -1009,7 +1012,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     },
                 }
             ]
-        if logical_type in {'timestamp', 'datetime'}:
+        if logical_type in {'timestamp', 'datetime', 'time'}:
             return [
                 {
                     "check": {
