@@ -3595,6 +3595,87 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
 
+class TestDataContractGeneratorSkippedQuality(DataContractGeneratorTestBase):
+    """Test that quality entries which do not become rules are logged as warnings."""
+
+    def _generate_with_warnings(self, generator, caplog, quality_checks):
+        contract_dict = self.create_contract_with_quality(
+            property_name="qty", logical_type="integer", quality_checks=quality_checks
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=False, generate_schema_validation=False
+                )
+        finally:
+            os.unlink(temp_path)
+        return rules, [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
+
+    def test_sql_quality_entry_is_skipped_with_warning(self, generator, caplog):
+        rules, warnings = self._generate_with_warnings(
+            generator,
+            caplog,
+            [
+                {
+                    "type": "sql",
+                    "description": "no negative quantities",
+                    "query": "SELECT COUNT(*) FROM {object} WHERE {property} < 0",
+                    "mustBe": 0,
+                }
+            ],
+        )
+
+        assert rules == []
+        assert any(
+            "type: sql" in message
+            and "property 'qty'" in message
+            and "no negative quantities" in message
+            and "not supported yet" in message
+            for message in warnings
+        )
+
+    def test_text_quality_entry_is_skipped_with_warning_without_llm_extras(
+        self, mock_workspace_client, mock_spark, caplog, monkeypatch
+    ):
+        monkeypatch.setattr(generator_module, "LLM_ENABLED", False)
+        generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, [{"type": "text", "description": "Quantity should be positive"}]
+        )
+
+        assert rules == []
+        assert any(
+            "type: text" in message
+            and "property 'qty'" in message
+            and "Quantity should be positive" in message
+            and "databricks-labs-dqx[llm]" in message
+            for message in warnings
+        )
+
+    def test_custom_quality_entry_with_other_engine_is_skipped_with_warning(self, generator, caplog):
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, [{"type": "custom", "engine": "soda", "description": "soda check"}]
+        )
+
+        assert rules == []
+        assert any("type: custom" in message and "engine 'soda' is not supported" in message for message in warnings)
+
+    def test_text_quality_entry_is_not_warned_when_text_processing_disabled(self, generator, caplog):
+        contract_dict = self.create_contract_with_quality(
+            property_name="qty", logical_type="integer", quality_checks=[{"type": "text", "description": "positive"}]
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                generator.generate_rules_from_contract(contract_file=temp_path, process_text_rules=False)
+        finally:
+            os.unlink(temp_path)
+
+        assert not any("Skipping type: text" in rec.message for rec in caplog.records)
+
+
 class TestDataContractGeneratorLibraryRules(DataContractGeneratorTestBase):
     """Tests for type: library quality metric dispatch and warn-and-skip handling."""
 
