@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.errors import AnalysisException
 
@@ -5150,6 +5151,49 @@ def test_has_json_keys_require_at_least_one(spark):
         expected_schema,
     )
     assertDataFrameEqual(actual, expected)
+
+
+@pytest.mark.parametrize("require_all", [True, False])
+@pytest.mark.parametrize("ansi_enabled", ["true", "false"])
+def test_has_json_keys_requires_outermost_object(spark: SparkSession, require_all: bool, ansi_enabled: str) -> None:
+    missing_keys = "is missing keys in the list: [id, name]"
+    non_object = "is not a JSON object"
+    cases = [
+        (None, None),
+        ("[]", non_object),
+        ("[1, 2]", non_object),
+        ('[{"id": 1, "name": "test"}]', non_object),
+        ("123", non_object),
+        ('"a string"', non_object),
+        ("true", non_object),
+        ("false", non_object),
+        ("null", non_object),
+        ('{"id": 1, "name": "test"}', None),
+        ('{"id": null, "name": null}', None),
+        ("{}", missing_keys),
+        ('{"id": 1}', missing_keys if require_all else None),
+        ('{"name": null}', missing_keys if require_all else None),
+        ('{"nested": {"id": 1, "name": "test"}}', missing_keys),
+        ("Not a JSON string", "is not a valid JSON string"),
+        ("", "is not a valid JSON string"),
+        ("  null  ", "is not a JSON object"),
+        (' {"id": 1, "name": "test"} ', None),
+    ]
+    original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+    assert original_ansi_enabled is not None
+    try:
+        spark.conf.set("spark.sql.ansi.enabled", ansi_enabled)
+        test_df = spark.createDataFrame([(value,) for value, _ in cases], "a: string")
+
+        actual = test_df.select("a", has_json_keys("a", ["id", "name"], require_all=require_all))
+        expected = spark.createDataFrame(
+            [(value, f"Value '{value}' in Column 'a' {reason}" if reason else None) for value, reason in cases],
+            "a: string, a_does_not_have_json_keys: string",
+        )
+
+        assertDataFrameEqual(actual, expected)
+    finally:
+        spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
 
 
 def test_has_valid_json_schema(spark):
