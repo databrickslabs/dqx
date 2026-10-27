@@ -876,7 +876,7 @@ class Materializer:
         tableless checks on other bindings are left intact.
         """
         e_table = escape_sql_string(table_fqn)
-        like_prefix = "".join(f"\\{ch}" if ch in "_%" else ch for ch in f"{_SYNTHETIC_TABLE_PREFIX}/")
+        e_prefix = escape_sql_string(f"{_SYNTHETIC_TABLE_PREFIX}/")
         applied_table = self._sql.fqn("dq_applied_rules")
         not_in_clause = ""
         if applied_ids:
@@ -886,7 +886,7 @@ class Materializer:
             f"SELECT r.rule_id, r.applied_rule_id FROM {self._quality_rules_table} r "  # noqa: S608
             f"WHERE r.applied_rule_id IS NOT NULL {not_in_clause}"
             f"AND (r.table_fqn = '{e_table}' OR ("
-            f"r.table_fqn LIKE '{like_prefix}%' ESCAPE '\\\\' "
+            f"starts_with(r.table_fqn, '{e_prefix}') "
             f"AND NOT EXISTS (SELECT 1 FROM {applied_table} a WHERE a.id = r.applied_rule_id)))"
         )
         rows = self._sql.query(sql)

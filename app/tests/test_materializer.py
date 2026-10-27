@@ -1533,7 +1533,9 @@ class TestCleanup:
         def fake_query(sql_text: str):
             if "applied_rule_id NOT IN" in sql_text:
                 assert "table_fqn = 'cat.schema.orders'" in sql_text
-                assert "ESCAPE" in sql_text
+                assert "starts_with(r.table_fqn, '__sql_check__/')" in sql_text
+                assert "LIKE" not in sql_text
+                assert "ESCAPE" not in sql_text
                 assert "a.id = r.applied_rule_id" in sql_text
                 results = []
                 for rule_id, applied_id, fqn in resolved_rows:
