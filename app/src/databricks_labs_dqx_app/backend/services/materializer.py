@@ -866,26 +866,27 @@ class Materializer:
                 self._sql.delete(self._quality_rules_table, where={"rule_id": existing_id})
 
     def _cleanup_orphans(self, *, table_fqn: str, applied_ids: set[str], written_ids: set[str]) -> None:
-        """Delete materialized rows whose owning applied rule no longer exists under this binding.
+        """Delete materialized rows whose owning applied rule is gone.
 
-        Column-backed rows are matched on the binding's stored *table_fqn* (the
+        Column-backed rows are limited to this binding's stored *table_fqn* (the
         same exact string written at INSERT; Unity Catalog FQNs are compared as
-        persisted, not case-folded). Tableless SQL checks are stored under
-        ``__sql_check__/<name>`` instead, so those orphans are included only when
-        their ``applied_rule_id`` is no longer a live ``dq_applied_rules`` row —
-        other bindings' still-applied tableless checks are left intact.
+        persisted, not case-folded). Tableless SQL-check rows
+        (``__sql_check__/<name>``) are cleaned for any binding whose
+        ``applied_rule_id`` is no longer in ``dq_applied_rules``; still-applied
+        tableless checks on other bindings are left intact.
         """
-        if not applied_ids:
-            return
-        placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
         e_table = escape_sql_string(table_fqn)
-        e_prefix = escape_sql_string(f"{_SYNTHETIC_TABLE_PREFIX}/")
+        like_prefix = "".join(f"\\{ch}" if ch in "_%" else ch for ch in f"{_SYNTHETIC_TABLE_PREFIX}/")
         applied_table = self._sql.fqn("dq_applied_rules")
+        not_in_clause = ""
+        if applied_ids:
+            placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+            not_in_clause = f"AND r.applied_rule_id NOT IN ({placeholders}) "
         sql = (
             f"SELECT r.rule_id, r.applied_rule_id FROM {self._quality_rules_table} r "  # noqa: S608
-            f"WHERE r.applied_rule_id IS NOT NULL AND r.applied_rule_id NOT IN ({placeholders}) "
+            f"WHERE r.applied_rule_id IS NOT NULL {not_in_clause}"
             f"AND (r.table_fqn = '{e_table}' OR ("
-            f"r.table_fqn LIKE '{e_prefix}%' "
+            f"r.table_fqn LIKE '{like_prefix}%' ESCAPE '\\\\' "
             f"AND NOT EXISTS (SELECT 1 FROM {applied_table} a WHERE a.id = r.applied_rule_id)))"
         )
         rows = self._sql.query(sql)

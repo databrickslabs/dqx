@@ -1439,15 +1439,21 @@ class TestCleanup:
         assert any("'ar1-1'" in c for c in delete_calls)
 
     def test_removed_application_orphan_is_deleted(self, materializer, sql, registry, monitored_tables):
-        # binding now has NO applied rules at all (the application was
-        # removed directly from dq_applied_rules), but a stale
-        # dq_resolved_rules row from it still exists.
+        # Binding has no applied rules left; leftover dq_resolved_rules rows
+        # for this table must still be cleaned (empty NOT IN is omitted).
         table = MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="draft")
         monitored_tables.get.return_value = MonitoredTableDetail(table=table, applied_rules=[])
 
+        def fake_query(sql_text: str):
+            if "NOT EXISTS" in sql_text and "table_fqn = 'cat.schema.customers'" in sql_text:
+                assert "NOT IN" not in sql_text
+                return [["ar_old-0", "ar_old"]]
+            return []
+
+        sql.query.side_effect = fake_query
         materializer.materialize_binding("b1")
-        # No applied rules -> no orphan cleanup query needed (nothing to scope to).
-        sql.execute.assert_not_called()
+        delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
+        assert any("ar_old-0" in sql_text for sql_text in delete_sql)
 
     def test_cleanup_does_not_delete_other_tables_resolved_rules(self, materializer, sql, registry, monitored_tables):
         # Approving table B must not wipe table A's already-materialized checks
@@ -1518,18 +1524,33 @@ class TestCleanup:
         registry.get_rule.return_value = _published_rule()
         registry.get_version.return_value = _version_snapshot()
 
+        live_applied = {"ar_col", "ar_other"}
+        resolved_rows = [
+            ("ar_sql-0", "ar_sql", "__sql_check__/orders-count"),
+            ("ar_other-0", "ar_other", "__sql_check__/other-count"),
+        ]
+
         def fake_query(sql_text: str):
             if "applied_rule_id NOT IN" in sql_text:
                 assert "table_fqn = 'cat.schema.orders'" in sql_text
-                assert "__sql_check__/" in sql_text
-                assert "dq_applied_rules" in sql_text
-                return [["ar_sql-0", "ar_sql"]]
+                assert "ESCAPE" in sql_text
+                assert "a.id = r.applied_rule_id" in sql_text
+                results = []
+                for rule_id, applied_id, fqn in resolved_rows:
+                    if applied_id == "ar_col":
+                        continue
+                    table_match = fqn == "cat.schema.orders"
+                    tableless_orphan = fqn.startswith("__sql_check__/") and applied_id not in live_applied
+                    if table_match or tableless_orphan:
+                        results.append([rule_id, applied_id])
+                return results
             return []
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b2")
         delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
         assert any("ar_sql-0" in sql_text for sql_text in delete_sql)
+        assert not any("ar_other-0" in sql_text for sql_text in delete_sql)
 
 
 class TestAllGroupsFailRenderIsNonDestructive:
