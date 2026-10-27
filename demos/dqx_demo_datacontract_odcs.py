@@ -432,6 +432,7 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC | `unique: true` | Direct property attribute | `is_unique` | Primary keys |
 # MAGIC | `pattern` | `logicalTypeOptions` | `regex_match` | Email, phone formats |
 # MAGIC | `minimum`/`maximum` | `logicalTypeOptions` | `is_in_range`, `is_not_less_than`, `is_not_greater_than` | Age, amount limits |
+# MAGIC | `exclusiveMinimum`/`exclusiveMaximum` | `logicalTypeOptions` | `sql_expression` (strict bound) | Strictly positive amounts |
 # MAGIC | `minLength`/`maxLength` | `logicalTypeOptions` | `sql_expression` | String length validation |
 # MAGIC | `format` | `logicalTypeOptions` | `is_valid_date`, `is_valid_timestamp` | Date/timestamp formats |
 # MAGIC

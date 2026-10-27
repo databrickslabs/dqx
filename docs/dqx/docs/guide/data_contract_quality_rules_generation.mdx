@@ -179,8 +179,7 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minimum` + `maximum` | `logicalTypeOptions` | `is_in_range` | Age, amount limits |
 | `minimum` only | `logicalTypeOptions` | `is_not_less_than` | Positive amounts |
 | `maximum` only | `logicalTypeOptions` | `is_not_greater_than` | Upper bounds |
-| `exclusiveMinimum` | `logicalTypeOptions` | `sql_expression` (value &gt; bound) | Strictly positive amounts |
-| `exclusiveMaximum` | `logicalTypeOptions` | `sql_expression` (value &lt; bound) | Percentages below 100 |
+| `exclusiveMinimum` / `exclusiveMaximum` | `logicalTypeOptions` | One extra `sql_expression` rule (value &gt; / &lt; bound); see [Exclusive bounds](#exclusive-bounds) | Strictly positive amounts, percentages below 100 |
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
@@ -192,22 +191,28 @@ Predefined rules are automatically derived from schema field constraints defined
 
 ODCS defines `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` for each value, in every v3.x version, so DQX generates row-level checks that flag only the rows outside the bounds.
 
-`exclusiveMinimum` and `exclusiveMaximum` have two forms, and DQX reads both, whatever the contract's `apiVersion`:
-
-| ODCS version | Form | Example | Generated rule |
-|---|---|---|---|
-| v3.0.x | A flag that makes `minimum` / `maximum` exclusive | `minimum: 0` with `exclusiveMinimum: true` | `<column>_below_minimum` (value &gt;= 0) and `<column>_at_or_below_exclusive_minimum` (value &gt; 0) |
-| v3.1.0 and later | A bound of its own | `exclusiveMaximum: 100` | `<column>_at_or_above_exclusive_maximum` (value &lt; 100) |
-
-An exclusive bound adds an `sql_expression` rule, because DQX has no strict comparison checks. The inclusive rules don't change. `exclusiveMinimum: true` without a `minimum` is skipped with a warning.
-
-The bounds are passed to the checks as written: a number, or a date or timestamp such as `2020-01-01` or `2020-01-01T10:00:00`. A string bound that is neither (e.g. `minimum: other_column`) is skipped with a warning, so a contract value is never evaluated as a SQL expression.
+The bounds are passed to the checks as written: a number, or a date or timestamp such as `2020-01-01` or `2020-01-01T10:00:00`. A bound that is neither, such as `minimum: other_column` or `.inf`, is skipped with a warning, so a contract value is never evaluated as a SQL expression.
 
 A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number`. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
 
 <Admonition type="note" title="Previous behavior">
 In DQX v0.17.0 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
 </Admonition>
+
+##### Exclusive bounds
+
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.18.0" heading={false} />
+</FeatureTags>
+
+`exclusiveMinimum` and `exclusiveMaximum` have two forms, and DQX reads both, whatever the contract's `apiVersion`:
+
+| ODCS version | Form | Example | Generated rules |
+|---|---|---|---|
+| v3.0.x | A flag that makes `minimum` / `maximum` exclusive | `minimum: 0` with `exclusiveMinimum: true` | `<column>_below_minimum` (value &gt;= 0) and `<column>_at_or_below_exclusive_minimum` (value &gt; 0) |
+| v3.1.0 and later | A bound of its own | `exclusiveMaximum: 100` | `<column>_at_or_above_exclusive_maximum` (value &lt; 100) |
+
+Exclusive bounds add one `sql_expression` rule, because DQX has no strict comparison checks, and the inclusive rules don't change. When a column has both, they go into a single `<column>_out_of_exclusive_range` rule (value &gt; minimum and &lt; maximum). `exclusiveMinimum: true` without a `minimum` is skipped with a warning.
 
 ### Example Contract with Predefined Rules
 

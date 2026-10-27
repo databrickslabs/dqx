@@ -10,6 +10,7 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 import datetime
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -30,7 +31,7 @@ from pydantic import ValidationError  # type: ignore
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.datacontract.library_metrics import LibraryMetricRulesBuilder, sql_literal
+from databricks.labs.dqx.datacontract.library_metrics import LibraryMetricRulesBuilder
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
@@ -50,13 +51,6 @@ _NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
 _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
 # Type a range check casts a column stored as text to, by ODCS logical type.
 _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {"date": "DATE", "timestamp": "TIMESTAMP", "integer": "DOUBLE", "number": "DOUBLE"}
-_RANGE_OPTION_KEYS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
-# Per exclusive bound: the inclusive option it modifies in ODCS v3.0.x, the operator a value must satisfy, the
-# rule name suffix, and the comparison used in the rule message.
-_EXCLUSIVE_RANGE_BOUNDS = (
-    ("exclusiveMinimum", "minimum", ">", "at_or_below_exclusive_minimum", "greater than"),
-    ("exclusiveMaximum", "maximum", "<", "at_or_above_exclusive_maximum", "less than"),
-)
 
 
 def _is_range_bound(value: object) -> bool:
@@ -67,7 +61,9 @@ def _is_range_bound(value: object) -> bool:
     """
     if isinstance(value, bool):
         return False
-    if isinstance(value, (int, float, datetime.date)):  # datetime.date also covers datetime.datetime
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, (int, datetime.date)):  # datetime.date also covers datetime.datetime
         return True
     if not isinstance(value, str):
         return False
@@ -90,6 +86,67 @@ def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str 
     if not physical_type or not _TEXT_PHYSICAL_TYPE.match(physical_type):
         return None
     return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type or "")
+
+
+def _sql_bound_literal(bound: object) -> str:
+    """Render a range bound accepted by *_is_range_bound* as a typed Spark SQL literal for a strict comparison.
+
+    Numbers stay unquoted. Dates and timestamps (or ISO strings of them) become *DATE* or *TIMESTAMP* literals, so
+    Spark compares them as dates and times, never as text, and doesn't re-parse the contract's string.
+    """
+    if isinstance(bound, (int, float)) or (isinstance(bound, str) and _NUMBER_TEXT.match(bound)):
+        return str(bound)
+    if isinstance(bound, datetime.datetime):
+        return f"TIMESTAMP '{bound.isoformat(sep=' ')}'"
+    if isinstance(bound, datetime.date):
+        return f"DATE '{bound.isoformat()}'"
+    try:
+        return f"DATE '{datetime.date.fromisoformat(str(bound)).isoformat()}'"
+    except ValueError:
+        return f"TIMESTAMP '{datetime.datetime.fromisoformat(str(bound)).isoformat(sep=' ')}'"
+
+
+def _inclusive_range_check(column: str, minimum: object, maximum: object) -> tuple[dict, str] | None:
+    """Return the row-level check and rule name suffix for minimum/maximum, or None when neither is set."""
+    if minimum is not None and maximum is not None:
+        arguments = {"column": column, "min_limit": minimum, "max_limit": maximum}
+        return {"function": "is_in_range", "arguments": arguments}, "out_of_range"
+    if minimum is not None:
+        return {"function": "is_not_less_than", "arguments": {"column": column, "limit": minimum}}, "below_minimum"
+    if maximum is not None:
+        return {"function": "is_not_greater_than", "arguments": {"column": column, "limit": maximum}}, "above_maximum"
+    return None
+
+
+def _exclusive_range_check(
+    sql_column: str, column_path: str, exclusive_minimum: object, exclusive_maximum: object
+) -> tuple[dict, str] | None:
+    """Return the strict *sql_expression* check and rule name suffix for exclusive bounds, or None when neither is set.
+
+    Both bounds go into one rule, like *is_in_range* for minimum/maximum, so a column never carries two
+    *sql_expression* range rules that the semantic validator would report as conflicting.
+    """
+    conditions, comparisons = [], []
+    if exclusive_minimum is not None:
+        conditions.append(f"{sql_column} > {_sql_bound_literal(exclusive_minimum)}")
+        comparisons.append(f"greater than {exclusive_minimum}")
+    if exclusive_maximum is not None:
+        conditions.append(f"{sql_column} < {_sql_bound_literal(exclusive_maximum)}")
+        comparisons.append(f"less than {exclusive_maximum}")
+    if not conditions:
+        return None
+    if exclusive_minimum is not None and exclusive_maximum is not None:
+        name_suffix = "out_of_exclusive_range"
+    else:
+        name_suffix = (
+            "at_or_below_exclusive_minimum" if exclusive_minimum is not None else "at_or_above_exclusive_maximum"
+        )
+    arguments = {
+        "expression": " AND ".join(conditions),
+        "msg": f"Value in column '{column_path}' is not {' and '.join(comparisons)}",
+        "columns": [column_path],
+    }
+    return {"function": "sql_expression", "arguments": arguments}, name_suffix
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -716,13 +773,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 self._generate_pattern_rules_from_options(column_path, field_metadata, default_criticality, opts)
             )
 
-        # Handle range constraints from minimum, maximum and their exclusive variants
-        if any(opts.get(key) is not None for key in _RANGE_OPTION_KEYS):
-            rules.extend(
-                self._generate_range_rules_from_options(
-                    column_path, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
-                )
+        # Handle range constraints from minimum, maximum and their exclusive variants (no rules if none is set)
+        rules.extend(
+            self._generate_range_rules_from_options(
+                column_path, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
             )
+        )
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
@@ -808,52 +864,26 @@ class DataContractRulesGenerator(DQEngineBase):
         Generate range rules from logicalTypeOptions minimum/maximum and exclusiveMinimum/exclusiveMaximum.
 
         ODCS defines every bound per value, so each becomes a row-level check that flags only the rows out of range.
-        minimum/maximum use *is_in_range*, *is_not_less_than* or *is_not_greater_than*. An exclusive bound adds an
+        minimum/maximum use *is_in_range*, *is_not_less_than* or *is_not_greater_than*. Exclusive bounds add one
         *sql_expression* rule (DQX has no strict comparison checks), in either ODCS form: a flag that makes
         minimum/maximum exclusive (v3.0.x) or a bound of its own (v3.1.0+).
 
-        The bounds are passed to the check as written. A string bound that is not a number, date or timestamp is
-        skipped with a warning, and a column stored as text is compared through *try_cast*.
+        The bounds are passed to the checks as written. A bound that is not a finite number, a date or a timestamp
+        is skipped with a warning, and a column stored as text is compared through *try_cast*.
         """
-        bounds = {option: opts.get(option) for option in ("minimum", "maximum")}
-        for option, inclusive_option, *_ in _EXCLUSIVE_RANGE_BOUNDS:
-            bounds[option] = self._exclusive_bound_value(column_path, option, inclusive_option, opts)
-        for option, value in bounds.items():
-            if value is not None and not _is_range_bound(value):
-                logger.warning(
-                    f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
-                    f"'{sanitize_for_logging(str(value))}' is not a number, date or timestamp."
-                )
-                bounds[option] = None
+        minimum = self._range_bound(column_path, "minimum", opts.get("minimum"))
+        maximum = self._range_bound(column_path, "maximum", opts.get("maximum"))
+        exclusive_minimum = self._exclusive_bound(column_path, "exclusiveMinimum", "minimum", minimum, opts)
+        exclusive_maximum = self._exclusive_bound(column_path, "exclusiveMaximum", "maximum", maximum, opts)
 
         cast_type = _text_cast_type(logical_type, physical_type)
         sql_column = normalize_column_expr(column_path)
         if cast_type:
             sql_column = f"try_cast({sql_column} AS {cast_type})"
-        check_column = sql_column if cast_type else column_path
-
-        minimum, maximum = bounds["minimum"], bounds["maximum"]
-        checks: list[tuple[dict, str]] = []
-        if minimum is not None and maximum is not None:
-            arguments: dict[str, object] = {"column": check_column, "min_limit": minimum, "max_limit": maximum}
-            checks.append(({"function": "is_in_range", "arguments": arguments}, "out_of_range"))
-        elif minimum is not None:
-            arguments = {"column": check_column, "limit": minimum}
-            checks.append(({"function": "is_not_less_than", "arguments": arguments}, "below_minimum"))
-        elif maximum is not None:
-            arguments = {"column": check_column, "limit": maximum}
-            checks.append(({"function": "is_not_greater_than", "arguments": arguments}, "above_maximum"))
-        for option, _, operator, name_suffix, comparison in _EXCLUSIVE_RANGE_BOUNDS:
-            bound = bounds[option]
-            if bound is not None:
-                literal = sql_literal(bound if isinstance(bound, (int, float, str)) else str(bound))
-                arguments = {
-                    "expression": f"{sql_column} {operator} {literal}",
-                    "msg": f"Value in column '{column_path}' is not {comparison} {bound}",
-                    "columns": [column_path],
-                }
-                checks.append(({"function": "sql_expression", "arguments": arguments}, name_suffix))
-
+        checks = [
+            _inclusive_range_check(sql_column if cast_type else column_path, minimum, maximum),
+            _exclusive_range_check(sql_column, column_path, exclusive_minimum, exclusive_maximum),
+        ]
         return [
             {
                 "check": check,
@@ -865,19 +895,33 @@ class DataContractRulesGenerator(DQEngineBase):
                     "rule_type": "predefined",
                 },
             }
-            for check, name_suffix in checks
+            for check, name_suffix in filter(None, checks)
         ]
 
     @staticmethod
-    def _exclusive_bound_value(column_path: str, option: str, inclusive_option: str, opts: dict) -> object:
+    def _range_bound(column_path: str, option: str, value: object) -> object:
+        """Return the bound, or None (with a warning when it is not a number, date or timestamp)."""
+        if value is None or _is_range_bound(value):
+            return value
+        logger.warning(
+            f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
+            f"'{sanitize_for_logging(str(value))}' is not a number, date or timestamp."
+        )
+        return None
+
+    @classmethod
+    def _exclusive_bound(
+        cls, column_path: str, option: str, inclusive_option: str, inclusive_bound: object, opts: dict
+    ) -> object:
         """Return the bound an exclusiveMinimum/exclusiveMaximum sets, in either ODCS form, or None.
 
         ODCS v3.0.x makes it a flag that turns minimum/maximum exclusive; from v3.1.0 it is a bound of its own.
         The form is taken from the value's type, not from apiVersion, because contracts often keep an older one.
+        The flag reuses the already validated *inclusive_bound*, so an invalid minimum/maximum is reported once.
         """
         value = opts.get(option)
         if not isinstance(value, bool):  # checked first: bool is a subclass of int
-            return value
+            return cls._range_bound(column_path, option, value)
         if not value:
             return None
         if opts.get(inclusive_option) is None:
@@ -886,7 +930,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 f"{inclusive_option} to make exclusive."
             )
             return None
-        return opts[inclusive_option]
+        return inclusive_bound
 
     def _generate_string_length_rules_from_options(
         self, column_path: str, contract_metadata: dict, criticality: str, opts: dict

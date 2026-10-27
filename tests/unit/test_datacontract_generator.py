@@ -14,6 +14,7 @@ from datacontract.lint.resolve import resolve_data_contract
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidationMode
 import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
@@ -33,6 +34,7 @@ _RANGE_RULE_NAME_SUFFIXES = (
     "_out_of_range",
     "_at_or_below_exclusive_minimum",
     "_at_or_above_exclusive_maximum",
+    "_out_of_exclusive_range",
 )
 
 
@@ -2519,6 +2521,18 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {"exclusiveMinimum": True},
                 "Skipping exclusiveMinimum on 'value': it is true, but there is no minimum to make exclusive.",
             ),
+            (
+                "number",
+                "DOUBLE",
+                {"exclusiveMaximum": float("inf")},
+                "Skipping exclusiveMaximum on 'value': 'inf' is not a number, date or timestamp.",
+            ),
+            (
+                "number",
+                "DOUBLE",
+                {"maximum": float("nan")},
+                "Skipping maximum on 'value': 'nan' is not a number, date or timestamp.",
+            ),
         ],
     )
     def test_invalid_range_bound_is_skipped_with_warning(
@@ -3034,66 +3048,101 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 "integer",
                 "INT",
                 {"minimum": 0, "exclusiveMinimum": True},
-                [("below_minimum", None), ("at_or_below_exclusive_minimum", "value > 0")],
+                [
+                    ("below_minimum", {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}),
+                    ("at_or_below_exclusive_minimum", "value > 0"),
+                ],
             ),
             (
                 "integer",
                 "INT",
                 {"maximum": 10, "exclusiveMaximum": True},
-                [("above_maximum", None), ("at_or_above_exclusive_maximum", "value < 10")],
+                [
+                    (
+                        "above_maximum",
+                        {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 10}},
+                    ),
+                    ("at_or_above_exclusive_maximum", "value < 10"),
+                ],
             ),
-            ("integer", "INT", {"maximum": 10, "exclusiveMaximum": False}, [("above_maximum", None)]),
+            (
+                "integer",
+                "INT",
+                {"maximum": 10, "exclusiveMaximum": False},
+                [("above_maximum", {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 10}})],
+            ),
             # ODCS v3.1.0+: a bound of its own
             ("number", "DOUBLE", {"exclusiveMinimum": 0.5}, [("at_or_below_exclusive_minimum", "value > 0.5")]),
-            ("integer", "INT", {"exclusiveMinimum": "5"}, [("at_or_below_exclusive_minimum", "value > '5'")]),
+            ("integer", "INT", {"exclusiveMinimum": "5"}, [("at_or_below_exclusive_minimum", "value > 5")]),
+            ("integer", "INT", {"exclusiveMaximum": "5.5"}, [("at_or_above_exclusive_maximum", "value < 5.5")]),
             (
                 "integer",
                 "INT",
                 {"minimum": 1, "exclusiveMaximum": 100},
-                [("below_minimum", None), ("at_or_above_exclusive_maximum", "value < 100")],
+                [
+                    ("below_minimum", {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 1}}),
+                    ("at_or_above_exclusive_maximum", "value < 100"),
+                ],
             ),
             (
                 "integer",
                 "INT",
                 {"exclusiveMinimum": 0, "exclusiveMaximum": 100},
-                [("at_or_below_exclusive_minimum", "value > 0"), ("at_or_above_exclusive_maximum", "value < 100")],
+                [("out_of_exclusive_range", "value > 0 AND value < 100")],
             ),
             (
                 "date",
                 "DATE",
                 {"exclusiveMaximum": "2030-01-01"},
-                [("at_or_above_exclusive_maximum", "value < '2030-01-01'")],
+                [("at_or_above_exclusive_maximum", "value < DATE '2030-01-01'")],
+            ),
+            (
+                "date",
+                "DATE",
+                {"exclusiveMaximum": "2030-01-01T10:00:00"},
+                [("at_or_above_exclusive_maximum", "value < TIMESTAMP '2030-01-01 10:00:00'")],
             ),
             (
                 "timestamp",
                 "TIMESTAMP",
                 {"exclusiveMinimum": datetime.datetime(2024, 1, 1, 10)},
-                [("at_or_below_exclusive_minimum", "value > '2024-01-01 10:00:00'")],
+                [("at_or_below_exclusive_minimum", "value > TIMESTAMP '2024-01-01 10:00:00'")],
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"exclusiveMinimum": "2024-01-01T10:00:00+00:00"},
+                [("at_or_below_exclusive_minimum", "value > TIMESTAMP '2024-01-01 10:00:00+00:00'")],
             ),
             (
                 "timestamp",
                 "STRING",
                 {"exclusiveMinimum": "2024-01-01T00:00:00"},
-                [("at_or_below_exclusive_minimum", "try_cast(value AS TIMESTAMP) > '2024-01-01T00:00:00'")],
+                [("at_or_below_exclusive_minimum", "try_cast(value AS TIMESTAMP) > TIMESTAMP '2024-01-01 00:00:00'")],
             ),
         ],
     )
     def test_exclusive_bounds_generate_strict_checks(
         self, generator, caplog, logical_type, physical_type, options, expected
     ):
-        """Test that exclusiveMinimum/exclusiveMaximum in either ODCS form add one strict row-level rule each."""
-        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
-        if logical_type:
-            prop["logicalType"] = logical_type
+        """Test that exclusive bounds in either ODCS form add a strict rule with a typed SQL literal."""
+        prop = {
+            "name": "value",
+            "physicalType": physical_type,
+            "logicalType": logical_type,
+            "logicalTypeOptions": options,
+        }
 
         with caplog.at_level(logging.WARNING):
             rules = self._generate_range_rules(generator, prop)
 
         assert [r["name"] for r in rules] == [f"value_{name_suffix}" for name_suffix, _ in expected]
-        for rule, (_, expression) in zip(rules, expected):
-            if expression is not None:
+        for rule, (_, check) in zip(rules, expected):
+            if isinstance(check, dict):
+                assert rule["check"] == check
+            else:
                 assert rule["check"]["function"] == "sql_expression"
-                assert rule["check"]["arguments"]["expression"] == expression
+                assert rule["check"]["arguments"]["expression"] == check
                 assert rule["check"]["arguments"]["columns"] == ["value"]
         assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
 
@@ -3131,6 +3180,59 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                     "rule_type": "predefined",
                 },
             }
+        ]
+
+    def test_all_range_bounds_on_one_column_do_not_conflict(self, generator):
+        """Test that inclusive and exclusive bounds on one column pass the semantic validator in fail mode."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "INT",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": 1, "maximum": 99, "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+            },
+        )
+
+        assert [r["name"] for r in rules] == ["value_out_of_range", "value_out_of_exclusive_range"]
+        assert (
+            rules[1]["check"]["arguments"]["msg"] == "Value in column 'value' is not greater than 0 and less than 100"
+        )
+        assert not DQEngine.validate_checks(rules, semantic_validation_mode=ChecksSemanticValidationMode.FAIL).errors
+
+    @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
+    def test_exclusive_bounds_are_read_in_every_odcs_version(self, generator, api_version):
+        """Test that both exclusive forms are read by the value's type, whatever the contract's apiVersion."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "INT",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": 0, "exclusiveMinimum": True, "exclusiveMaximum": 100},
+            },
+            api_version=api_version,
+        )
+
+        assert [r["name"] for r in rules] == ["value_below_minimum", "value_out_of_exclusive_range"]
+        assert rules[1]["check"]["arguments"]["expression"] == "value > 0 AND value < 100"
+
+    def test_flag_with_invalid_bound_warns_once(self, generator, caplog):
+        """Test that exclusiveMinimum: true reuses the validated minimum, so an invalid one is reported once."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(
+                generator,
+                {
+                    "name": "value",
+                    "physicalType": "INT",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {"minimum": "other_column", "exclusiveMinimum": True},
+                },
+            )
+
+        assert not rules
+        assert [r.getMessage() for r in caplog.records if r.name == contract_rules_generator_module.__name__] == [
+            "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp."
         ]
 
 
