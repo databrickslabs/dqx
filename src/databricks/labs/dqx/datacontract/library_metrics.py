@@ -152,19 +152,12 @@ def _is_scalar(value: object) -> bool:
     return isinstance(value, (int, float)) and _is_sql_number(value)
 
 
-def as_number(value: object) -> Number | None:
-    """Normalize a contract value to a finite number that has a Spark SQL literal form.
+def _as_number(value: object) -> Number | None:
+    """Normalize a threshold value to a finite number, or None if it is not one.
 
-    ODCS fields such as *mustBe* or *logicalTypeOptions* bounds are untyped on the model, so a
-    boolean, list or arbitrary string can reach this point. Booleans are rejected (*False == 0* in
-    Python), and numeric strings such as "0" are accepted.
-
-    Args:
-        value: The contract value to normalize.
-
-    Returns:
-        The value as an int or float, or None if it is not a finite number (NaN, infinity and
-        integers too large for *DECIMAL(38)* are rejected).
+    *mustBe*/*mustNotBe* are untyped on the ODCS model, so a boolean, list or arbitrary string can
+    reach this point. Booleans are rejected (*False == 0* in Python), numeric strings such as "0"
+    are accepted.
     """
     if isinstance(value, bool):
         return None
@@ -422,7 +415,7 @@ def resolve_thresholds(entry: DataQuality, location: str, metric: str) -> list[T
                 continue
             thresholds.append(Threshold(field_name, bounds=bounds))
             continue
-        value = as_number(raw)
+        value = _as_number(raw)
         if value is None:
             _warn_skip(metric, location, f"'{field_name}' must be a number (got {sanitize_for_logging(repr(raw))})")
             continue
@@ -440,7 +433,7 @@ def resolve_thresholds(entry: DataQuality, location: str, metric: str) -> list[T
 def _as_bounds(raw: object) -> tuple[Number, Number] | None:
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None
-    low, high = as_number(raw[0]), as_number(raw[1])
+    low, high = _as_number(raw[0]), _as_number(raw[1])
     if low is None or high is None or low > high:
         return None
     return low, high
