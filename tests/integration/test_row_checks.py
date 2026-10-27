@@ -1339,41 +1339,73 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
 
 
 def test_col_is_greater_than(spark, set_utc_timezone):
-    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: float"
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), 1.2],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), 3.6],
-            [None, None, None, None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), [2], 3.6],
+            [None, None, None, None, None, [None], None],
         ],
         schema,
     )
 
     actual = test_df.select(
         is_greater_than("a", 1),
+        is_greater_than("a", "1"),
+        is_greater_than("b", F.col("a") * 2),
         is_greater_than("b", "a"),
         is_greater_than("c", datetime(2025, 1, 1).date()),
+        is_greater_than("c", "2025-01-01"),
+        is_greater_than("c", F.lit("2025-01-01")),
         is_greater_than("d", datetime(2025, 1, 1)),
+        is_greater_than("d", "2025-01-01"),
+        is_greater_than("d", "2025-01-01 00:00:00"),
         is_greater_than("e", 1),
-        is_greater_than("f", 2.4),
+        is_greater_than(F.try_element_at("f", F.lit(1)), 1),
+        is_greater_than("g", 2.4),
     )
 
     checked_schema = (
-        "a_not_greater_than_limit: string, b_not_greater_than_limit: string, c_not_greater_than_limit: string, "
-        "d_not_greater_than_limit: string, e_not_greater_than_limit: string, f_not_greater_than_limit: string"
+        "a_not_greater_than_limit: string, a_not_greater_than_limit: string, "
+        "b_not_greater_than_limit: string, b_not_greater_than_limit: string, "
+        "c_not_greater_than_limit: string, c_not_greater_than_limit: string, c_not_greater_than_limit: string, "
+        "d_not_greater_than_limit: string, d_not_greater_than_limit: string, d_not_greater_than_limit: string, "
+        "e_not_greater_than_limit: string, try_element_at_f_1_not_greater_than_limit: string, "
+        "g_not_greater_than_limit: string"
     )
     expected = spark.createDataFrame(
         [
             [
                 "Value '1' in Column 'a' is not greater than limit: 1",
+                "Value '1' in Column 'a' is not greater than limit: 1",
+                "Value '1' in Column 'b' is not greater than limit: 2",
                 "Value '1' in Column 'b' is not greater than limit: 1",
                 "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01 00:00:00",
+                "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01",
                 "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01 00:00:00",
                 "Value '1.00' in Column 'e' is not greater than limit: 1",
-                "Value '1.2' in Column 'f' is not greater than limit: 2.4",
+                "Value '1' in Column 'try_element_at(f, 1)' is not greater than limit: 1",
+                "Value '1.2' in Column 'g' is not greater than limit: 2.4",
             ],
-            [None, None, None, None, None, None],
-            [None, None, None, None, None, None],
+            [
+                None,
+                None,
+                "Value '4' in Column 'b' is not greater than limit: 4",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -1382,41 +1414,73 @@ def test_col_is_greater_than(spark, set_utc_timezone):
 
 
 def test_col_is_less_than(spark, set_utc_timezone):
-    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: float"
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), 1.2],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), 3.6],
-            [None, None, None, None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), [2], 3.6],
+            [None, None, None, None, None, [None], None],
         ],
         schema,
     )
 
     actual = test_df.select(
         is_less_than("a", 2),
+        is_less_than("a", "2"),
+        is_less_than("b", F.col("a") * 2),
         is_less_than("b", "a"),
         is_less_than("c", datetime(2025, 2, 1).date()),
+        is_less_than("c", "2025-02-01"),
+        is_less_than("c", F.lit("2025-02-01")),
         is_less_than("d", datetime(2025, 2, 1)),
+        is_less_than("d", "2025-02-01"),
+        is_less_than("d", "2025-02-01 00:00:00"),
         is_less_than("e", 2),
-        is_less_than("f", 2.4),
+        is_less_than(F.try_element_at("f", F.lit(1)), 2),
+        is_less_than("g", 2.4),
     )
 
     checked_schema = (
-        "a_not_less_than_limit: string, b_not_less_than_limit: string, c_not_less_than_limit: string, "
-        "d_not_less_than_limit: string, e_not_less_than_limit: string, f_not_less_than_limit: string"
+        "a_not_less_than_limit: string, a_not_less_than_limit: string, "
+        "b_not_less_than_limit: string, b_not_less_than_limit: string, "
+        "c_not_less_than_limit: string, c_not_less_than_limit: string, c_not_less_than_limit: string, "
+        "d_not_less_than_limit: string, d_not_less_than_limit: string, d_not_less_than_limit: string, "
+        "e_not_less_than_limit: string, try_element_at_f_1_not_less_than_limit: string, "
+        "g_not_less_than_limit: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is not less than limit: 1", None, None, None, None],
+            [
+                None,
+                None,
+                None,
+                "Value '1' in Column 'b' is not less than limit: 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             [
                 "Value '2' in Column 'a' is not less than limit: 2",
+                "Value '2' in Column 'a' is not less than limit: 2",
+                "Value '4' in Column 'b' is not less than limit: 4",
                 "Value '4' in Column 'b' is not less than limit: 2",
                 "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01 00:00:00",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01",
                 "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01 00:00:00",
                 "Value '2.01' in Column 'e' is not less than limit: 2",
-                "Value '3.6' in Column 'f' is not less than limit: 2.4",
+                "Value '2' in Column 'try_element_at(f, 1)' is not less than limit: 2",
+                "Value '3.6' in Column 'g' is not less than limit: 2.4",
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
