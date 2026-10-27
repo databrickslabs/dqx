@@ -184,7 +184,7 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
 | `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp) | Date/timestamp formats such as `yyyy-MM-dd` |
 
-**Note**: As defined by ODCS, `format` is a JDK `DateTimeFormatter` pattern (e.g. `yyyy-MM-dd'T'HH:mm:ss`), and it is passed to the check unchanged. Spark parses a subset of that syntax, its [datetime patterns](https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html). A format that is certain to fail generates no rule and logs a warning: a Python `strftime` pattern such as `%Y-%m-%d`, week-based letters such as `Y`, or letters Spark only uses for formatting such as `E`. Any other invalid pattern, such as an unquoted `T` in `yyyy-MM-ddTHH:mm` (write `'T'`), fails when the checks run. Use `MM` for the month: `mm` is minutes.
+**Note**: As defined by ODCS, `format` is a JDK `DateTimeFormatter` pattern (e.g. `yyyy-MM-dd'T'HH:mm:ss`), and it is passed to the check unchanged. It must be one of Spark's [datetime patterns](https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html), which cover most of that syntax: an invalid pattern, such as a Python `strftime` pattern (`%Y-%m-%d`) or the week-based `YYYY`, fails when the checks run. Use `MM` for the month: `mm` is minutes.
 
 **Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
 
@@ -1231,7 +1231,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 - Verify field constraints are properly defined in the contract
 - Check that `generate_predefined_rules=True` (default)
 - Review supported constraint types in the [Predefined Rule Generation](#predefined-rule-generation) section
-- `format` must be a Spark datetime pattern (e.g., `format: 'yyyy-MM-dd'`). A Python `strftime` pattern such as `'%Y-%m-%d'`, or a pattern using letters Spark can't parse (e.g. `YYYY` or `EEE`), is skipped with a warning
+- `format` must be a Spark datetime pattern (e.g., `format: 'yyyy-MM-dd'`), not a Python `strftime` pattern such as `'%Y-%m-%d'`
 
 ### Explicit Rules Not Recognized
 

@@ -34,7 +34,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
+from databricks.labs.dqx.utils import normalize_column_expr
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -59,42 +59,6 @@ _FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
     "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
     "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
 }
-
-# Pattern letters Spark has refused to parse since 3.0: the week-based Y, w, u, W, e and c, and E, F, q and Q,
-# which are for formatting only. A check using one fails the whole run.
-_UNPARSEABLE_PATTERN_LETTERS = frozenset("YwuWecEFqQ")
-_HOUR_PATTERN_LETTERS = frozenset("hKkH")
-_QUOTED_PATTERN_TEXT = re.compile(r"'[^']*'")
-
-
-def _datetime_format_problem(format_value: object) -> str | None:
-    """Return why a logicalTypeOptions format can't be used by a date/timestamp check, or None if it can.
-
-    Only mistakes certain to fail the whole run are caught, without a Spark session (the generator also runs in
-    DQX Studio, which has none): a value that is not a string, a Python strftime pattern, or a letter Spark refuses
-    to parse. Any other invalid pattern fails when the checks run, as it would in a hand-written rule.
-
-    Args:
-        format_value: The format from the contract.
-
-    Returns:
-        The reason the format can't be used, or None.
-    """
-    if not isinstance(format_value, str):
-        return "is not a string"
-    unquoted_format = _QUOTED_PATTERN_TEXT.sub("", format_value)
-    if "%" in unquoted_format:
-        return "is a Python strftime pattern"
-    unparseable_letters = sorted(set(unquoted_format) & _UNPARSEABLE_PATTERN_LETTERS)
-    if unparseable_letters:
-        return f"uses pattern letters Spark can't parse: {', '.join(unparseable_letters)}"
-    return None
-
-
-def _uses_minutes_without_hour(format_str: str) -> bool:
-    """Whether a format uses 'm' (minutes) without an hour, which is usually a typo for 'M' (month)."""
-    pattern_letters = set(_QUOTED_PATTERN_TEXT.sub("", format_str))
-    return "m" in pattern_letters and not pattern_letters & _HOUR_PATTERN_LETTERS
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -736,8 +700,8 @@ class DataContractRulesGenerator(DQEngineBase):
         # Handle date and timestamp format constraints
         if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
-                self._generate_format_rules(
-                    column_path, prop.logicalType, field_metadata, default_criticality, opts['format']
+                self._generate_format_rules_from_options(
+                    column_path, prop.logicalType, field_metadata, default_criticality, opts
                 )
             )
 
@@ -1031,30 +995,15 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return []
 
-    def _generate_format_rules(
-        self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, format_value: object
+    def _generate_format_rules_from_options(
+        self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """
         Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
 
-        ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'). Spark parses a subset of
-        that syntax, so the format is passed to the check unchanged. A format certain to fail is skipped with a
-        warning, because the generated check would fail the whole run.
+        ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'), the syntax Spark datetime
+        patterns are based on, so it is passed to the check unchanged.
         """
-        problem = _datetime_format_problem(format_value)
-        if problem is not None:
-            logger.warning(
-                f"Skipping format on '{sanitize_for_logging(column_path)}': "
-                f"'{sanitize_for_logging(str(format_value))}' {problem}."
-            )
-            return []
-        format_str = str(format_value)  # a string: _datetime_format_problem rejects anything else
-        if _uses_minutes_without_hour(format_str):
-            logger.warning(
-                f"Format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_str)}' uses 'm' "
-                "(minutes) without an hour; use 'M' for the month."
-            )
-
         format_check = _FORMAT_CHECKS_BY_LOGICAL_TYPE[logical_type]
         return [
             {
@@ -1062,7 +1011,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "function": format_check.function,
                     "arguments": {
                         "column": column_path,
-                        format_check.format_argument: format_str,
+                        format_check.format_argument: opts['format'],
                     },
                 },
                 "name": f"{column_path}_{format_check.rule_name_suffix}",

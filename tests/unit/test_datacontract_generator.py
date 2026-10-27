@@ -3247,55 +3247,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    @pytest.mark.parametrize(
-        "logical_type, physical_type, format_str, reason",
-        [
-            ("date", "DATE", "%Y-%m-%d", "is a Python strftime pattern"),
-            ("timestamp", "TIMESTAMP", "%d/%m/%y %H:%M", "is a Python strftime pattern"),
-            ("date", "DATE", "YYYY-MM-dd", "uses pattern letters Spark can't parse: Y"),
-            ("date", "DATE", "uuuu-MM-dd", "uses pattern letters Spark can't parse: u"),
-            ("date", "DATE", "EEE, dd MMM yyyy", "uses pattern letters Spark can't parse: E"),
-            ("timestamp", "TIMESTAMP", 123, "is not a string"),
-            ("date", "DATE", True, "is not a string"),
-        ],
-    )
-    def test_unparseable_format_is_skipped_with_warning(
-        self, generator, caplog, logical_type, physical_type, format_str, reason
-    ):
-        """Test that a format certain to fail generates no rule, so it can't fail the whole run, and warns."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "event",
-                    "physicalType": physical_type,
-                    "logicalType": logical_type,
-                    "logicalTypeOptions": {"format": format_str},
-                }
-            ]
-        )
-
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-
-        try:
-            with caplog.at_level(logging.WARNING):
-                rules = generator.generate_rules_from_contract(
-                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-                )
-
-            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
-            assert f"Skipping format on 'event': '{format_str}' {reason}." in caplog.messages
-        finally:
-            os.unlink(temp_path)
-
-    def test_minute_letter_without_hour_warns(self, generator, caplog):
-        """Test that 'mm' with no hour, a likely typo for the month 'MM', keeps the rule and warns."""
+    def test_python_format_passthrough(self, generator):
+        """Test that Python format strings (with %) are passed through as-is."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "birth_date",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": "yyyy-mm-dd"},
+                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
                 }
             ]
         )
@@ -3303,18 +3263,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            with caplog.at_level(logging.WARNING):
-                rules = generator.generate_rules_from_contract(
-                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-                )
-
-            date_rules = [r for r in rules if r["check"]["function"] == "is_valid_date"]
-            assert len(date_rules) == 1
-            assert date_rules[0]["check"]["arguments"]["date_format"] == "yyyy-mm-dd"
-            assert (
-                "Format on 'birth_date': 'yyyy-mm-dd' uses 'm' (minutes) without an hour; use 'M' for the month."
-                in caplog.messages
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
+
+            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
+            assert len(date_rules) == 1
+            # Should keep Python format as-is
+            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
         finally:
             os.unlink(temp_path)
 

@@ -404,8 +404,7 @@ class TestDataContractIntegration:
             assert not status.has_errors
 
     def test_generated_format_rules_apply_on_spark(self, ws, spark):
-        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark; a format
-        Spark cannot parse generates no rule, so it does not fail the run."""
+        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark."""
         contract = {
             "kind": "DataContract",
             "apiVersion": "v3.0.2",
@@ -436,12 +435,6 @@ class TestDataContractIntegration:
                             "logicalType": "timestamp",
                             "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
                         },
-                        {
-                            "name": "weekday_date",
-                            "physicalType": "STRING",
-                            "logicalType": "date",
-                            "logicalTypeOptions": {"format": "EEE, dd MMM yyyy"},
-                        },
                     ],
                 },
             ],
@@ -455,11 +448,11 @@ class TestDataContractIntegration:
         )
         test_df = spark.createDataFrame(
             [
-                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "Mon, 15 Jan 2024"],
-                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00", "2024-01-15"],
-                ["null", None, None, None, None],
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
+                ["null", None, None, None],
             ],
-            "case: string, event_date: string, short_date: string, event_ts: string, weekday_date: string",
+            "case: string, event_date: string, short_date: string, event_ts: string",
         )
 
         checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
