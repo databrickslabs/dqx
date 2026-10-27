@@ -3177,7 +3177,13 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     @pytest.mark.parametrize(
         "timestamp_format",
-        ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "dd/MM/yy hh:mm a", "dd 'de' MMMM yyyy HH:mm"],
+        [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "dd/MM/yy hh:mm a",
+            "dd 'de' MMMM yyyy HH:mm",
+            "hh 'o''clock' a",
+        ],
     )
     def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format):
         """Test that format constraint on timestamp field generates is_valid_timestamp rule with the format unchanged."""
@@ -3246,16 +3252,17 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         [
             ("date", "DATE", "%Y-%m-%d", "is a Python strftime pattern"),
             ("timestamp", "TIMESTAMP", "%d/%m/%y %H:%M", "is a Python strftime pattern"),
-            ("date", "DATE", "YYYY-MM-dd", "uses pattern letters Spark cannot parse: Y"),
-            ("date", "DATE", "uuuu-MM-dd", "uses pattern letters Spark cannot parse: u"),
-            ("date", "DATE", "EEE, dd MMM yyyy", "uses pattern letters Spark cannot parse: E"),
-            ("timestamp", "TIMESTAMP", "yyyy-MM-ddTHH:mm", "uses pattern letters Spark cannot parse: T"),
+            ("date", "DATE", "YYYY-MM-dd", "uses pattern letters Spark can't parse: Y"),
+            ("date", "DATE", "uuuu-MM-dd", "uses pattern letters Spark can't parse: u"),
+            ("date", "DATE", "EEE, dd MMM yyyy", "uses pattern letters Spark can't parse: E"),
+            ("timestamp", "TIMESTAMP", 123, "is not a string"),
+            ("date", "DATE", True, "is not a string"),
         ],
     )
     def test_unparseable_format_is_skipped_with_warning(
         self, generator, caplog, logical_type, physical_type, format_str, reason
     ):
-        """Test that a format Spark cannot parse generates no rule, so it cannot fail the whole run, and warns."""
+        """Test that a format certain to fail generates no rule, so it can't fail the whole run, and warns."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
@@ -3276,7 +3283,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 )
 
             assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
-            assert f"Skipping format rule for 'event': format '{format_str}' {reason}" in caplog.text
+            assert f"Skipping format on 'event': '{format_str}' {reason}." in caplog.messages
         finally:
             os.unlink(temp_path)
 
@@ -3304,7 +3311,10 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             date_rules = [r for r in rules if r["check"]["function"] == "is_valid_date"]
             assert len(date_rules) == 1
             assert date_rules[0]["check"]["arguments"]["date_format"] == "yyyy-mm-dd"
-            assert "Format 'yyyy-mm-dd' on 'birth_date' uses 'm' (minute) without an hour" in caplog.text
+            assert (
+                "Format on 'birth_date': 'yyyy-mm-dd' uses 'm' (minutes) without an hour; use 'M' for the month."
+                in caplog.messages
+            )
         finally:
             os.unlink(temp_path)
 
