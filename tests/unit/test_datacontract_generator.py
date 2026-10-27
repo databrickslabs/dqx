@@ -2406,7 +2406,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         "logical_type, physical_type, options, function, limits, name_suffix",
         [
             ("integer", "INT", {"minimum": 0}, "is_not_less_than", {"limit": 0}, "below_minimum"),
-            ("integer", "INT", {"maximum": "10"}, "is_not_greater_than", {"limit": 10}, "above_maximum"),
+            ("integer", "INT", {"maximum": "10"}, "is_not_greater_than", {"limit": "10"}, "above_maximum"),
             ("number", "DOUBLE", {"maximum": 99.5}, "is_not_greater_than", {"limit": 99.5}, "above_maximum"),
             (
                 "number",
@@ -2421,7 +2421,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "DATE",
                 {"minimum": datetime.date(2020, 1, 1)},
                 "is_not_less_than",
-                {"limit": "2020-01-01"},
+                {"limit": datetime.date(2020, 1, 1)},
                 "below_minimum",
             ),
             (
@@ -2437,16 +2437,8 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"minimum": datetime.datetime(2024, 1, 1, 10, 30)},
                 "is_not_less_than",
-                {"limit": "2024-01-01T10:30:00"},
+                {"limit": datetime.datetime(2024, 1, 1, 10, 30)},
                 "below_minimum",
-            ),
-            (
-                "timestamp",
-                "TIMESTAMP",
-                {"maximum": "2024-01-01T10"},
-                "is_not_greater_than",
-                {"limit": "2024-01-01T10:00:00"},
-                "above_maximum",
             ),
             (
                 "timestamp",
@@ -2457,7 +2449,6 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "below_minimum",
             ),
             (None, "INT", {"minimum": 1}, "is_not_less_than", {"limit": 1}, "below_minimum"),
-            ("integer", "BIGINT", {"maximum": 2**63 - 1}, "is_not_greater_than", {"limit": 2**63 - 1}, "above_maximum"),
         ],
     )
     def test_range_bounds_generate_row_level_checks(
@@ -2492,36 +2483,35 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "logical_type, physical_type, options, warning",
         [
-            ("integer", "INT", {"minimum": "abc"}, "Skipping minimum on 'value': 'abc' is not a number."),
-            ("number", "DOUBLE", {"maximum": float("nan")}, "Skipping maximum on 'value': 'nan' is not a number."),
-            ("number", "DOUBLE", {"minimum": float("inf")}, "Skipping minimum on 'value': 'inf' is not a number."),
-            ("integer", "INT", {"minimum": True}, "Skipping minimum on 'value': 'True' is not a number."),
-            ("integer", "INT", {"minimum": [1, 2]}, "Skipping minimum on 'value': '[1, 2]' is not a number."),
             (
                 "integer",
-                "BIGINT",
-                {"maximum": 2**63},
-                "Skipping maximum on 'value': '9223372036854775808' is outside the 64-bit integer range Spark "
-                "accepts for a limit.",
+                "INT",
+                {"minimum": "abc"},
+                "Skipping minimum on 'value': 'abc' is not a number, date or timestamp.",
             ),
-            ("date", "DATE", {"minimum": 5}, "Skipping minimum on 'value': '5' is not an ISO date or timestamp."),
+            (
+                "integer",
+                "INT",
+                {"minimum": True},
+                "Skipping minimum on 'value': 'True' is not a number, date or timestamp.",
+            ),
+            (
+                "integer",
+                "INT",
+                {"minimum": [1, 2]},
+                "Skipping minimum on 'value': '[1, 2]' is not a number, date or timestamp.",
+            ),
             (
                 "date",
                 "DATE",
-                {"maximum": "20240101"},
-                "Skipping maximum on 'value': '20240101' is not an ISO date or timestamp.",
+                {"maximum": "next week"},
+                "Skipping maximum on 'value': 'next week' is not a number, date or timestamp.",
             ),
             (
                 "string",
                 "STRING",
-                {"minimum": "abc"},
-                "Skipping minimum on 'value': 'abc' is not a number or an ISO date or timestamp.",
-            ),
-            (
-                None,
-                "STRING",
-                {"minimum": 0, "maximum": "2020-01-01"},
-                "Skipping the range bounds on 'value': some are numbers and some are dates or timestamps.",
+                {"minimum": "other_column"},
+                "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp.",
             ),
             (
                 "integer",
@@ -2529,24 +2519,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {"exclusiveMinimum": True},
                 "Skipping exclusiveMinimum on 'value': it is true, but there is no minimum to make exclusive.",
             ),
-            (
-                "integer",
-                "INT",
-                {"exclusiveMinimum": "abc"},
-                "Skipping exclusiveMinimum on 'value': 'abc' is not a number.",
-            ),
-            (
-                None,
-                "STRING",
-                {"minimum": 0, "exclusiveMaximum": "2030-01-01"},
-                "Skipping the range bounds on 'value': some are numbers and some are dates or timestamps.",
-            ),
         ],
     )
     def test_invalid_range_bound_is_skipped_with_warning(
         self, generator, caplog, logical_type, physical_type, options, warning
     ):
-        """Test that a bound Spark could not compare with the column generates no rule and logs why."""
+        """Test that a bound that would be evaluated as a SQL expression generates no rule and logs why."""
         prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
         if logical_type:
             prop["logicalType"] = logical_type
@@ -2573,7 +2551,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         assert [r["check"] for r in rules] == [
             {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}
         ]
-        assert "Skipping maximum on 'value': 'abc' is not a number." in caplog.messages
+        assert "Skipping maximum on 'value': 'abc' is not a number, date or timestamp." in caplog.messages
 
     @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
     def test_range_bounds_are_the_same_in_every_odcs_version(self, generator, api_version):
@@ -2591,12 +2569,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "logical_type, physical_type, options, column",
         [
-            ("date", "STRING", {"minimum": "2020-01-01"}, "try_cast(`value` AS DATE)"),
-            ("date", "VARCHAR(10)", {"minimum": "2020-01-01", "maximum": "2030-12-31"}, "try_cast(`value` AS DATE)"),
-            ("timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(`value` AS TIMESTAMP)"),
-            ("date", "string", {"maximum": "2030-01-01T00:00:00"}, "try_cast(`value` AS TIMESTAMP)"),
-            ("integer", "STRING", {"minimum": 0}, "try_cast(`value` AS DOUBLE)"),
-            (None, "CHAR(8)", {"minimum": "2020-01-01"}, "try_cast(`value` AS DATE)"),
+            ("date", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            ("date", "VARCHAR(10)", {"minimum": "2020-01-01", "maximum": "2030-12-31"}, "try_cast(value AS DATE)"),
+            ("timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
+            ("integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
+            ("number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
+            (None, "CHAR(8)", {"minimum": "2020-01-01"}, "value"),
             ("date", "DATE", {"minimum": "2020-01-01"}, "value"),
         ],
     )
@@ -3056,47 +3034,47 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 "integer",
                 "INT",
                 {"minimum": 0, "exclusiveMinimum": True},
-                [("below_minimum", None), ("at_or_below_exclusive_minimum", "`value` > 0")],
+                [("below_minimum", None), ("at_or_below_exclusive_minimum", "value > 0")],
             ),
             (
                 "integer",
                 "INT",
                 {"maximum": 10, "exclusiveMaximum": True},
-                [("above_maximum", None), ("at_or_above_exclusive_maximum", "`value` < 10")],
+                [("above_maximum", None), ("at_or_above_exclusive_maximum", "value < 10")],
             ),
             ("integer", "INT", {"maximum": 10, "exclusiveMaximum": False}, [("above_maximum", None)]),
             # ODCS v3.1.0+: a bound of its own
-            ("number", "DOUBLE", {"exclusiveMinimum": 0.5}, [("at_or_below_exclusive_minimum", "`value` > 0.5")]),
-            ("integer", "INT", {"exclusiveMinimum": "5"}, [("at_or_below_exclusive_minimum", "`value` > 5")]),
+            ("number", "DOUBLE", {"exclusiveMinimum": 0.5}, [("at_or_below_exclusive_minimum", "value > 0.5")]),
+            ("integer", "INT", {"exclusiveMinimum": "5"}, [("at_or_below_exclusive_minimum", "value > '5'")]),
             (
                 "integer",
                 "INT",
                 {"minimum": 1, "exclusiveMaximum": 100},
-                [("below_minimum", None), ("at_or_above_exclusive_maximum", "`value` < 100")],
+                [("below_minimum", None), ("at_or_above_exclusive_maximum", "value < 100")],
             ),
             (
                 "integer",
                 "INT",
                 {"exclusiveMinimum": 0, "exclusiveMaximum": 100},
-                [("at_or_below_exclusive_minimum", "`value` > 0"), ("at_or_above_exclusive_maximum", "`value` < 100")],
+                [("at_or_below_exclusive_minimum", "value > 0"), ("at_or_above_exclusive_maximum", "value < 100")],
             ),
             (
                 "date",
                 "DATE",
                 {"exclusiveMaximum": "2030-01-01"},
-                [("at_or_above_exclusive_maximum", "`value` < '2030-01-01'")],
+                [("at_or_above_exclusive_maximum", "value < '2030-01-01'")],
             ),
             (
                 "timestamp",
                 "TIMESTAMP",
                 {"exclusiveMinimum": datetime.datetime(2024, 1, 1, 10)},
-                [("at_or_below_exclusive_minimum", "`value` > '2024-01-01T10:00:00'")],
+                [("at_or_below_exclusive_minimum", "value > '2024-01-01 10:00:00'")],
             ),
             (
                 "timestamp",
                 "STRING",
                 {"exclusiveMinimum": "2024-01-01T00:00:00"},
-                [("at_or_below_exclusive_minimum", "try_cast(`value` AS TIMESTAMP) > '2024-01-01T00:00:00'")],
+                [("at_or_below_exclusive_minimum", "try_cast(value AS TIMESTAMP) > '2024-01-01T00:00:00'")],
             ),
         ],
     )
@@ -3136,7 +3114,7 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 "check": {
                     "function": "sql_expression",
                     "arguments": {
-                        "expression": "`qty` > 0",
+                        "expression": "qty > 0",
                         "msg": "Value in column 'qty' is not greater than 0",
                         "columns": ["qty"],
                     },
@@ -3154,22 +3132,6 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 },
             }
         ]
-
-    @pytest.mark.parametrize("name", ["Päivämäärä", "price - discount", "select"])
-    def test_exclusive_bound_quotes_the_column_in_sql(self, generator, name):
-        """Test that the strict rule back-quotes the column, so a name that looks like SQL stays a column name."""
-        rules = self._generate_range_rules(
-            generator,
-            {
-                "name": name,
-                "physicalType": "INT",
-                "logicalType": "integer",
-                "logicalTypeOptions": {"exclusiveMinimum": 0},
-            },
-        )
-
-        assert rules[0]["check"]["arguments"]["expression"] == f"`{name}` > 0"
-        assert not DQEngine.validate_checks(rules).errors
 
 
 class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):

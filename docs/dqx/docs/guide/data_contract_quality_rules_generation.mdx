@@ -201,14 +201,9 @@ ODCS defines `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` for
 
 An exclusive bound adds an `sql_expression` rule, because DQX has no strict comparison checks. The inclusive rules don't change. `exclusiveMinimum: true` without a `minimum` is skipped with a warning.
 
-Every bound must be:
+The bounds are passed to the checks as written: a number, or a date or timestamp such as `2020-01-01` or `2020-01-01T10:00:00`. A string bound that is neither (e.g. `minimum: other_column`) is skipped with a warning, so a contract value is never evaluated as a SQL expression.
 
-- a number for `integer` and `number` fields (a numeric string such as `"10"` is accepted), or
-- an ISO 8601 date or timestamp for `date` and `timestamp` fields, e.g. `2020-01-01` or `2020-01-01T10:00:00`.
-
-A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast`, so a malformed value doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
-
-A bound that doesn't fit the field (e.g. `minimum: abc` on an integer field, or a number on a date field), or an integer outside the 64-bit range, is skipped with a warning. So are all of a column's bounds when they mix kinds, e.g. a numeric `minimum` with a date `exclusiveMaximum`.
+A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number`. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
 
 <Admonition type="note" title="Previous behavior">
 In DQX v0.17.0 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
