@@ -53,7 +53,28 @@ from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 logger = logging.getLogger(__name__)
 
-_STEP_ORDER = tuple(SetupStepId)
+# The order *_run_steps* reports results in. Lakebase reports three results (connection,
+# schema, migrations) and the task runner two (the job, then the runner's access). Keep
+# this in step with *_run_steps* so progress highlights the step that actually runs next,
+# never one that already finished.
+_RUN_SEQUENCE = (
+    SetupStepId.IDENTITY,
+    SetupStepId.LAKEBASE,
+    SetupStepId.LAKEBASE,
+    SetupStepId.LAKEBASE,
+    SetupStepId.CONFIGURATION,
+    SetupStepId.UNITY_CATALOG,
+    SetupStepId.STORAGE,
+    SetupStepId.WAREHOUSE,
+    SetupStepId.TASK_RUNNER,
+    SetupStepId.WHEELS,
+    SetupStepId.MIGRATIONS,
+    SetupStepId.TASK_RUNNER,
+    SetupStepId.ACTIVATION,
+    SetupStepId.ACCESS,
+    SetupStepId.AI,
+    SetupStepId.APP_SHARING,
+)
 _BLOCKING_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.FAILED})
 _OVERRIDE_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.WARNING})
 _CONFIGURED_SUMMARY = "Studio's catalog, storage prefix and default user group are set."
@@ -665,9 +686,12 @@ class SetupOrchestrator:
         progress: bool,
     ) -> SetupReport:
         steps: list[SetupStep] = []
+        position = 0
 
         def advance(step: SetupStep) -> SetupReport | None:
-            return self._record(steps, step, progress=progress)
+            nonlocal position
+            position, upcoming = _upcoming_step(position, step.id)
+            return self._record(steps, step, progress=progress, upcoming=upcoming)
 
         async def advance_bound(step: SetupStep) -> SetupReport | None:
             return advance(await asyncio.to_thread(self._apply_override, step))
@@ -1005,8 +1029,22 @@ class SetupOrchestrator:
             )
         return _passed(SetupStepId.MIGRATIONS, "Studio's Delta tables are up to date.")
 
-    def _record(self, steps: list[SetupStep], step: SetupStep, *, progress: bool) -> SetupReport | None:
-        """Record *step*, replacing an earlier result for the same step, and stop when it blocks."""
+    def _record(
+        self,
+        steps: list[SetupStep],
+        step: SetupStep,
+        *,
+        progress: bool,
+        upcoming: SetupStepId | None = None,
+    ) -> SetupReport | None:
+        """Record *step*, replacing an earlier result for the same step, and stop when it blocks.
+
+        Args:
+            steps: Results recorded so far in this run.
+            step: The result to record.
+            progress: Whether to publish an in-progress report naming *upcoming*.
+            upcoming: The step that runs next, shown as in progress.
+        """
         existing_index = next((index for index, existing in enumerate(steps) if existing.id == step.id), None)
         if existing_index is not None:
             steps[existing_index] = step
@@ -1017,15 +1055,23 @@ class SetupOrchestrator:
             self.runtime.publish(report)
             return report
         if progress:
-            self.runtime.publish(
-                SetupReport(state=SetupState.INITIALIZING, current_step=_next_step(step.id), steps=tuple(steps))
-            )
+            self.runtime.publish(SetupReport(state=SetupState.INITIALIZING, current_step=upcoming, steps=tuple(steps)))
         return None
 
 
-def _next_step(step_id: SetupStepId) -> SetupStepId | None:
-    index = _STEP_ORDER.index(step_id) + 1
-    return _STEP_ORDER[index] if index < len(_STEP_ORDER) else None
+def _upcoming_step(position: int, step_id: SetupStepId) -> tuple[int, SetupStepId | None]:
+    """Advance past *step_id*'s next occurrence in the run sequence, from *position* on.
+
+    Returns:
+        The new position and the step that runs next, or *None* after the last step. A
+        step missing from the rest of the sequence leaves the position unchanged.
+    """
+    try:
+        index = _RUN_SEQUENCE.index(step_id, position)
+    except ValueError:
+        return position, (_RUN_SEQUENCE[position] if position < len(_RUN_SEQUENCE) else None)
+    position = index + 1
+    return position, (_RUN_SEQUENCE[position] if position < len(_RUN_SEQUENCE) else None)
 
 
 def _diagnostic(error: Exception) -> str:
