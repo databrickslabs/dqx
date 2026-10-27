@@ -868,17 +868,25 @@ class Materializer:
     def _cleanup_orphans(self, *, table_fqn: str, applied_ids: set[str], written_ids: set[str]) -> None:
         """Delete materialized rows whose owning applied rule no longer exists under this binding.
 
-        Scoped to *table_fqn* so submitting one monitored table cannot delete
-        another table's ``dq_resolved_rules`` rows (those power ``dq_rules_core``).
+        Column-backed rows are matched on the binding's stored *table_fqn* (the
+        same exact string written at INSERT; Unity Catalog FQNs are compared as
+        persisted, not case-folded). Tableless SQL checks are stored under
+        ``__sql_check__/<name>`` instead, so those orphans are included only when
+        their ``applied_rule_id`` is no longer a live ``dq_applied_rules`` row —
+        other bindings' still-applied tableless checks are left intact.
         """
         if not applied_ids:
             return
         placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
         e_table = escape_sql_string(table_fqn)
+        e_prefix = escape_sql_string(f"{_SYNTHETIC_TABLE_PREFIX}/")
+        applied_table = self._sql.fqn("dq_applied_rules")
         sql = (
-            f"SELECT rule_id, applied_rule_id FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE table_fqn = '{e_table}' "
-            f"AND applied_rule_id IS NOT NULL AND applied_rule_id NOT IN ({placeholders})"
+            f"SELECT r.rule_id, r.applied_rule_id FROM {self._quality_rules_table} r "  # noqa: S608
+            f"WHERE r.applied_rule_id IS NOT NULL AND r.applied_rule_id NOT IN ({placeholders}) "
+            f"AND (r.table_fqn = '{e_table}' OR ("
+            f"r.table_fqn LIKE '{e_prefix}%' "
+            f"AND NOT EXISTS (SELECT 1 FROM {applied_table} a WHERE a.id = r.applied_rule_id)))"
         )
         rows = self._sql.query(sql)
         for row in rows:

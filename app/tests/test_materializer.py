@@ -1467,8 +1467,8 @@ class TestCleanup:
         registry.get_version.return_value = _version_snapshot()
 
         def fake_query(sql_text: str):
-            if "SELECT rule_id, applied_rule_id" in sql_text:
-                scoped_to_orders = "table_fqn" in sql_text and "cat.schema.orders" in sql_text
+            if "applied_rule_id NOT IN" in sql_text:
+                scoped_to_orders = "table_fqn = 'cat.schema.orders'" in sql_text
                 if scoped_to_orders:
                     return []
                 return [["ar_a-0", "ar_a"]]
@@ -1476,6 +1476,8 @@ class TestCleanup:
 
         sql.query.side_effect = fake_query
         materializer.materialize_binding("b2")
+        select_sql = [c.args[0] for c in sql.query.call_args_list if "applied_rule_id NOT IN" in c.args[0]]
+        assert select_sql and all("table_fqn = 'cat.schema.orders'" in s for s in select_sql)
         delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
         assert not any("ar_a-0" in sql_text for sql_text in delete_sql)
 
@@ -1492,8 +1494,8 @@ class TestCleanup:
         registry.get_version.return_value = _version_snapshot()
 
         def fake_query(sql_text: str):
-            if "SELECT rule_id, applied_rule_id" in sql_text:
-                assert "table_fqn" in sql_text and "cat.schema.orders" in sql_text
+            if "applied_rule_id NOT IN" in sql_text:
+                assert "table_fqn = 'cat.schema.orders'" in sql_text
                 return [["ar_old-0", "ar_old"]]
             return []
 
@@ -1501,6 +1503,33 @@ class TestCleanup:
         materializer.materialize_binding("b2")
         delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
         assert any("ar_old-0" in sql_text for sql_text in delete_sql)
+
+    def test_cleanup_deletes_removed_tableless_sql_check_when_another_rule_stays(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        remaining = AppliedRule(
+            id="ar_col",
+            binding_id="b2",
+            rule_id="r1",
+            column_mapping=[{"column": "order_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(remaining, table_fqn="cat.schema.orders")
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "applied_rule_id NOT IN" in sql_text:
+                assert "table_fqn = 'cat.schema.orders'" in sql_text
+                assert "__sql_check__/" in sql_text
+                assert "dq_applied_rules" in sql_text
+                return [["ar_sql-0", "ar_sql"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b2")
+        delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
+        assert any("ar_sql-0" in sql_text for sql_text in delete_sql)
 
 
 class TestAllGroupsFailRenderIsNonDestructive:
