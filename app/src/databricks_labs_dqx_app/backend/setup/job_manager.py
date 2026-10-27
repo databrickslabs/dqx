@@ -48,10 +48,12 @@ _INVALID_APPLICATION_ID = "A service principal Application ID is a value like 1a
 _RUN_AS_SUMMARIES = {
     "task_runner_run_as_missing": "The task-runner job needs its own service principal, separate from the app's.",
     "task_runner_run_as_matches_app": (
-        "The task-runner job runs as the app's own service principal. Give it a dedicated one instead."
+        "The task-runner job is currently using the app's own service principal instead of a dedicated service "
+        "principal. Follow the steps below to create one."
     ),
     "task_runner_run_as_not_service_principal": (
-        "The task-runner job runs as a person, so it would stop working if they left. Give it a service principal."
+        "The task-runner job runs as a person, so it would stop working if they left. "
+        "It needs a service principal. Follow the three steps below."
     ),
 }
 _DEPLOYMENT_RUN_AS_SUMMARY = (

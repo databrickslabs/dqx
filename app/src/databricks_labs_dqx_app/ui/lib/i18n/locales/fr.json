@@ -3277,10 +3277,10 @@
         "openServicePrincipals": "Ouvrir les principaux de service"
       },
       "access": {
-        "intro": "Dans l'onglet Permissions de {{name}}, cliquez sur Grant access et ajoutez :",
+        "intro": "Dans l'onglet Permissions de ce principal de service (menu du profil (en haut à droite) → Settings → Identity and access → Service principals → {{name}} → Permissions) :",
         "nameFallback": "votre principal de service",
-        "self": "Vous-même, avec Service Principal: User et Service Principal: Manager. Passez cette étape si vous les avez déjà.",
-        "app": "L'application DQX Studio ({{appName}}), avec Service Principal: User.",
+        "self": "Cliquez sur Grant access, trouvez votre nom et accordez-vous CAN USE (affiché « Service Principal: User » dans l'onglet Permissions) et CAN MANAGE (affiché « Service Principal: Manager »). Si vous les avez déjà, passez cette étape.",
+        "app": "Cliquez sur Grant access, trouvez l'application DQX Studio ({{appName}}) et accordez-lui CAN USE.",
         "appFallback": "le principal de service propre à l'application",
         "openServicePrincipal": "Ouvrir ce principal de service",
         "button": "Confirmer l'accès",

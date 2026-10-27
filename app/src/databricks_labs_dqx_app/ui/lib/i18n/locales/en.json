@@ -3277,10 +3277,10 @@
         "openServicePrincipals": "Open service principals"
       },
       "access": {
-        "intro": "On the Permissions tab of {{name}}, click Grant access and add:",
+        "intro": "On this service principal's Permissions tab (profile menu (top right) → Settings → Identity and access → Service principals → {{name}} → Permissions):",
         "nameFallback": "your service principal",
-        "self": "Yourself, with Service Principal: User and Service Principal: Manager. Skip this if you already have them.",
-        "app": "The DQX Studio app ({{appName}}), with Service Principal: User.",
+        "self": "Click Grant access, find yourself, and give yourself CAN USE (shown as \"Service Principal: User\" on the Permissions tab) and CAN MANAGE (shown as \"Service Principal: Manager\"). If you already have them, skip this.",
+        "app": "Click Grant access, find the DQX Studio app ({{appName}}), and give it CAN USE.",
         "appFallback": "the app's own service principal",
         "openServicePrincipal": "Open this service principal",
         "button": "Confirm access",

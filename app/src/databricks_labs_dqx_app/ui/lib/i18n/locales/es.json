@@ -3277,10 +3277,10 @@
         "openServicePrincipals": "Abrir entidades de servicio"
       },
       "access": {
-        "intro": "En la pestaña Permissions de {{name}}, haz clic en Grant access y añade:",
+        "intro": "En la pestaña Permissions de esta entidad de servicio (menú del perfil (arriba a la derecha) → Settings → Identity and access → Service principals → {{name}} → Permissions):",
         "nameFallback": "tu entidad de servicio",
-        "self": "A ti mismo, con Service Principal: User y Service Principal: Manager. Omite esto si ya los tienes.",
-        "app": "La aplicación DQX Studio ({{appName}}), con Service Principal: User.",
+        "self": "Haz clic en Grant access, busca tu usuario y date CAN USE (aparece como \"Service Principal: User\" en la pestaña Permissions) y CAN MANAGE (aparece como \"Service Principal: Manager\"). Si ya los tienes, omite este paso.",
+        "app": "Haz clic en Grant access, busca la aplicación DQX Studio ({{appName}}) y dale CAN USE.",
         "appFallback": "la entidad de servicio propia de la aplicación",
         "openServicePrincipal": "Abrir esta entidad de servicio",
         "button": "Confirmar acceso",

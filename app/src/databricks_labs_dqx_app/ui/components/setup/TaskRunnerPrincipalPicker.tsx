@@ -122,15 +122,15 @@ export function TaskRunnerPrincipalPicker({
                     })
                   }
                   className={cn(
-                    "flex-col items-start gap-0",
+                    "flex-col items-start gap-0.5 py-2.5",
                     principal.application_id === value?.applicationId &&
                       "bg-primary/10",
                   )}
                 >
-                  <span className="truncate text-sm" title={principal.display_name}>
+                  <span className="w-full truncate text-sm" title={principal.display_name}>
                     {principal.display_name}
                   </span>
-                  <span className="truncate font-mono text-xs text-muted-foreground">
+                  <span className="w-full truncate font-mono text-xs text-muted-foreground">
                     {principal.application_id}
                   </span>
                 </CommandItem>
