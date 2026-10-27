@@ -30,6 +30,7 @@ _LOG = "databricks.labs.dqx.actions.destinations.log"
 def _make_message(
     summary: str = "Action 'notify_on_errors' triggered on table 'catalog.schema.t'.",
     user_metadata: dict[str, str] | None = None,
+    extras: dict[str, dict[str, str]] | None = None,
 ) -> AlertMessage:
     return AlertMessage(
         title="DQX alert: notify_on_errors",
@@ -42,6 +43,7 @@ def _make_message(
         severity="error",
         fields={"condition": "error_row_count > 0", "run_id": "run-abc"},
         user_metadata=user_metadata or {},
+        extras=extras or {},
     )
 
 
@@ -147,6 +149,31 @@ def test_deliver_omits_metadata_segment_when_absent(
 
     rendered = next(r for r in caplog.records if r.name == _LOG).getMessage()
     assert "metadata:" not in rendered
+
+
+def test_deliver_renders_extras_when_present(
+    caplog: pytest.LogCaptureFixture, action_context: ActionContext, action_services: ActionServices
+) -> None:
+    destination = DQLogAlertDestination(name="log", level="error")
+    message = _make_message(extras={"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}})
+
+    with caplog.at_level(logging.DEBUG, logger=_LOG):
+        destination.deliver(message, action_context, action_services)
+
+    rendered = next(r for r in caplog.records if r.name == _LOG).getMessage()
+    assert "extras: collect_lineage.lineage_location=cat.sch.lineage_edges" in rendered
+
+
+def test_deliver_omits_extras_segment_when_absent(
+    caplog: pytest.LogCaptureFixture, action_context: ActionContext, action_services: ActionServices
+) -> None:
+    destination = DQLogAlertDestination(name="log", level="error")
+
+    with caplog.at_level(logging.DEBUG, logger=_LOG):
+        destination.deliver(_make_message(), action_context, action_services)
+
+    rendered = next(r for r in caplog.records if r.name == _LOG).getMessage()
+    assert "extras:" not in rendered
 
 
 def test_metadata_round_trip() -> None:

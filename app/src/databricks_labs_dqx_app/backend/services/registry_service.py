@@ -723,6 +723,7 @@ class RegistryService:
         owner: str | None = None,
         owner_display_name: str | None = None,
         author_kind: AuthorKind | None = None,
+        clear_polarity: bool = False,
     ) -> RegistryRule:
         """Update a registry rule's LIVE ``dq_rules`` row in place.
 
@@ -743,6 +744,11 @@ class RegistryService:
         (e.g. a human accepts an AI-suggested field on an otherwise
         human-authored draft, or vice versa) — omit it to leave the rule's
         existing provenance untouched.
+
+        A *polarity* of ``None`` leaves the stored polarity unchanged unless
+        *clear_polarity* is set. The editor sends an explicit null when the
+        rule's check has no polarity (a native function without ``negate``),
+        e.g. after switching a SQL rule to ``is_not_in_list``.
         """
         rule = self._get(rule_id)
         if rule is None:
@@ -759,6 +765,8 @@ class RegistryService:
             rule.definition = definition
         if polarity is not None:
             rule.polarity = polarity
+        elif clear_polarity:
+            rule.polarity = None
         if user_metadata is not None:
             rule.user_metadata = dict(user_metadata)
         if owner is not None:

@@ -511,6 +511,8 @@ def update_registry_rule(
             owner=body.owner,
             owner_display_name=body.owner_display_name,
             author_kind=body.author_kind,
+            # An explicit "polarity": null clears it; an omitted field leaves it.
+            clear_polarity="polarity" in body.model_fields_set and body.polarity is None,
         )
         return RegistryRuleOut.from_domain(rule)
     except UnsafeSqlQueryError as e:

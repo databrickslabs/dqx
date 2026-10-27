@@ -134,6 +134,8 @@ rows.
 When you need aggregates per key, filters, or more control, write the full
 `SELECT` yourself. Include every **merge column** in the select list, plus a
 boolean `condition` column (`TRUE` = fail).
+Set the merge columns in **Advanced → Merge results back on** as column slots
+like `{{order_id}}`, which Studio maps to the table's real columns.
 
 ```sql
 -- Orphaned orders, written as a full query
