@@ -1449,6 +1449,59 @@ class TestCleanup:
         # No applied rules -> no orphan cleanup query needed (nothing to scope to).
         sql.execute.assert_not_called()
 
+    def test_cleanup_does_not_delete_other_tables_resolved_rules(self, materializer, sql, registry, monitored_tables):
+        # Approving table B must not wipe table A's already-materialized checks
+        # (https://github.com/databrickslabs/dqx/issues/1639). The orphan
+        # SELECT is a stand-in for dq_resolved_rules / dq_rules_core: an
+        # unscoped query would return A's row because A's applied_rule_id is
+        # not in B's applied set.
+        applied = AppliedRule(
+            id="ar_b",
+            binding_id="b2",
+            rule_id="r1",
+            column_mapping=[{"column": "order_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied, table_fqn="cat.schema.orders")
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT rule_id, applied_rule_id" in sql_text:
+                scoped_to_orders = "table_fqn" in sql_text and "cat.schema.orders" in sql_text
+                if scoped_to_orders:
+                    return []
+                return [["ar_a-0", "ar_a"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b2")
+        delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
+        assert not any("ar_a-0" in sql_text for sql_text in delete_sql)
+
+    def test_cleanup_still_deletes_same_table_orphans(self, materializer, sql, registry, monitored_tables):
+        applied = AppliedRule(
+            id="ar_b",
+            binding_id="b2",
+            rule_id="r1",
+            column_mapping=[{"column": "order_id"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied, table_fqn="cat.schema.orders")
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT rule_id, applied_rule_id" in sql_text:
+                assert "table_fqn" in sql_text and "cat.schema.orders" in sql_text
+                return [["ar_old-0", "ar_old"]]
+            return []
+
+        sql.query.side_effect = fake_query
+        materializer.materialize_binding("b2")
+        delete_sql = [c.args[0] for c in sql.execute.call_args_list if str(c.args[0]).startswith("DELETE")]
+        assert any("ar_old-0" in sql_text for sql_text in delete_sql)
+
 
 class TestAllGroupsFailRenderIsNonDestructive:
     """DATA-LOSS GUARD (B2-27): when an update/auto-upgrade re-renders a

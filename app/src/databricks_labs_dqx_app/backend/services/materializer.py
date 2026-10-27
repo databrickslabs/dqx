@@ -536,7 +536,7 @@ class Materializer:
             expected_ids = self._materialize_applied_rule(detail.table.table_fqn, applied, auto_upgrade)
             written_ids.update(expected_ids)
 
-        self._cleanup_orphans(applied_ids=applied_ids, written_ids=written_ids)
+        self._cleanup_orphans(table_fqn=detail.table.table_fqn, applied_ids=applied_ids, written_ids=written_ids)
         return sorted(written_ids)
 
     def _resolve_registry(
@@ -865,14 +865,20 @@ class Materializer:
             if existing_id not in expected_ids:
                 self._sql.delete(self._quality_rules_table, where={"rule_id": existing_id})
 
-    def _cleanup_orphans(self, *, applied_ids: set[str], written_ids: set[str]) -> None:
-        """Delete materialized rows whose owning applied rule no longer exists under this binding."""
+    def _cleanup_orphans(self, *, table_fqn: str, applied_ids: set[str], written_ids: set[str]) -> None:
+        """Delete materialized rows whose owning applied rule no longer exists under this binding.
+
+        Scoped to *table_fqn* so submitting one monitored table cannot delete
+        another table's ``dq_resolved_rules`` rows (those power ``dq_rules_core``).
+        """
         if not applied_ids:
             return
         placeholders = ", ".join(f"'{escape_sql_string(i)}'" for i in applied_ids)
+        e_table = escape_sql_string(table_fqn)
         sql = (
             f"SELECT rule_id, applied_rule_id FROM {self._quality_rules_table} "  # noqa: S608
-            f"WHERE applied_rule_id IS NOT NULL AND applied_rule_id NOT IN ({placeholders})"
+            f"WHERE table_fqn = '{e_table}' "
+            f"AND applied_rule_id IS NOT NULL AND applied_rule_id NOT IN ({placeholders})"
         )
         rows = self._sql.query(sql)
         for row in rows:
