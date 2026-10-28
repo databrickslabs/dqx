@@ -9,6 +9,7 @@ import pyspark.sql.functions as F
 import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
@@ -1178,6 +1179,18 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         contract = DataContract(data_contract_file=sample_contract_path)
         rules_from_object = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
         assert rules_from_object == self.get_expected_contract_rules()
+
+    @pytest.mark.parametrize("source", ["data_contract_str", "data_contract"])
+    def test_generate_rules_from_datacontract_object_without_path(self, generator, sample_contract_path, source):
+        """Test generating rules from a DataContract built from a YAML string or a parsed ODCS model."""
+        with open(sample_contract_path, encoding="utf-8") as f:
+            contract_str = f.read()
+        if source == "data_contract_str":
+            contract = DataContract(data_contract_str=contract_str)
+        else:
+            contract = DataContract(data_contract=OpenDataContractStandard.model_validate(yaml.safe_load(contract_str)))
+        rules = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
+        assert rules == self.get_expected_contract_rules()
 
     def test_generate_rules_with_default_criticality(self, generator, sample_contract_path):
         """Test that default_criticality is correctly applied."""

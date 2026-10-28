@@ -64,7 +64,7 @@ To use the data contract-based quality rules generation feature, you need to ins
 pip install 'databricks-labs-dqx[datacontract]'
 ```
 
-This will install the required packages including `datacontract-cli` for ODCS contract parsing and validation.
+This will install the required packages including `datacontract-cli` (version 1.2 or later) for ODCS contract parsing and validation.
 
 <Admonition type="info" title="Optional: LLM Support for Text-Based Rules">
 If your contracts include text-based quality expectations (natural language descriptions), you'll also need to install the LLM dependencies:
@@ -872,7 +872,7 @@ Here's a complete example showing contract-based rule generation with every rule
               pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Predefined: regex_match
           
           - name: temperature
-            logicalType: decimal
+            logicalType: number
             physicalType: decimal(5,2)
             required: true           # Predefined: is_not_null
             logicalTypeOptions:
@@ -1108,7 +1108,7 @@ schema:
         logicalTypeOptions:
           pattern: '^[a-zA-Z0-9._%+-]+@.+$'
       - name: lifetime_value
-        logicalType: decimal
+        logicalType: number
         physicalType: decimal(18,2)
         logicalTypeOptions:
           minimum: 0

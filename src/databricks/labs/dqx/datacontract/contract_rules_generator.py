@@ -173,6 +173,8 @@ class DataContractRulesGenerator(DQEngineBase):
             return self._load_contract_from_file(contract_file)
 
         if contract is not None:
+            # Read the inputs DataContract stores: its public get_data_contract() always lints against the
+            # ODCS JSON schema, which would reject a whole contract that DQX handles entry by entry.
             # Try to load from file path if available
             contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
                 contract, 'data_contract_file', None
@@ -185,6 +187,11 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_data = getattr(contract, 'data_contract', None)
             if contract_data:
                 return OpenDataContractStandard.model_validate(contract_data)
+
+            # Try to load from a parsed ODCS model (DataContract(data_contract=...))
+            contract_model = getattr(contract, '_data_contract', None)
+            if isinstance(contract_model, OpenDataContractStandard):
+                return contract_model
 
             # Try to load from data_contract_str attribute (YAML/JSON string)
             contract_str = getattr(contract, '_data_contract_str', None) or getattr(contract, 'data_contract_str', None)

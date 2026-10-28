@@ -429,5 +429,5 @@ targets:
           - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.runner_wheel_filename}"
           - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.dqx_wheel_filename}"
           # Stands in for the [datacontract] extra, which a wheel path cannot carry (see above).
-          - "datacontract-cli>=0.11.1,<1.0"
+          - "datacontract-cli>=1.2.0,<2.0"
           - "/Volumes/${var.catalog_name}/${var.tmp_schema_name}/dqx_artifacts/${var.coverage_bootstrap_wheel_filename}"
