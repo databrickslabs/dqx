@@ -34,7 +34,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr
+from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -1002,8 +1002,17 @@ class DataContractRulesGenerator(DQEngineBase):
         Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
 
         ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'), the syntax Spark datetime
-        patterns are based on, so it is passed to the check unchanged.
+        patterns are based on, so it is passed to the check unchanged. A Python strftime pattern (with '%') is
+        skipped with a warning: one without '%Y' doesn't raise, it would just flag every row as invalid.
         """
+        format_value = opts['format']
+        if "%" in str(format_value):
+            logger.warning(
+                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(str(format_value))}' "
+                "is a Python strftime pattern; use a Spark datetime pattern such as 'yyyy-MM-dd'."
+            )
+            return []
+
         format_check = _FORMAT_CHECKS_BY_LOGICAL_TYPE[logical_type]
         return [
             {
@@ -1011,7 +1020,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "function": format_check.function,
                     "arguments": {
                         "column": column_path,
-                        format_check.format_argument: opts['format'],
+                        format_check.format_argument: format_value,
                     },
                 },
                 "name": f"{column_path}_{format_check.rule_name_suffix}",

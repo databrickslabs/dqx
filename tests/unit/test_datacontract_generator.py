@@ -3247,15 +3247,21 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    def test_python_format_passthrough(self, generator):
-        """Test that Python format strings (with %) are passed through as-is."""
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, format_str",
+        [("date", "DATE", "%Y-%m-%d"), ("date", "DATE", "%d/%m/%y"), ("timestamp", "TIMESTAMP", "%H:%M")],
+    )
+    def test_python_strftime_format_is_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, format_str
+    ):
+        """Test that a Python strftime format generates no rule, because Spark would flag every row, and warns."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
-                    "name": "birth_date",
-                    "physicalType": "DATE",
-                    "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
+                    "name": "event",
+                    "physicalType": physical_type,
+                    "logicalType": logical_type,
+                    "logicalTypeOptions": {"format": format_str},
                 }
             ]
         )
@@ -3263,14 +3269,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
-            assert len(date_rules) == 1
-            # Should keep Python format as-is
-            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert (
+                f"Skipping format on 'event': '{format_str}' is a Python strftime pattern; use a Spark datetime "
+                "pattern such as 'yyyy-MM-dd'." in caplog.messages
+            )
         finally:
             os.unlink(temp_path)
 
