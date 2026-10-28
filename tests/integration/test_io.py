@@ -72,9 +72,9 @@ def test_read_invalid_input_table(spark):
         read_input_data(spark, input_config)
 
 
-def test_read_input_data_from_table(spark, make_schema, make_random):
+def test_read_input_data_from_table(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema_name = make_schema(catalog_name=catalog_name).name
+    schema_name = make_schema_and_wait(catalog_name=catalog_name).name
     input_location = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     input_config = InputConfig(location=input_location)
 
@@ -86,9 +86,9 @@ def test_read_input_data_from_table(spark, make_schema, make_random):
     assertDataFrameEqual(input_df, result_df, checkRowOrder=False)
 
 
-def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema, make_random):
+def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema_name = make_schema(catalog_name=catalog_name).name
+    schema_name = make_schema_and_wait(catalog_name=catalog_name).name
     input_location = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     input_format = None
     input_read_options = {"versionAsOf": "0"}
@@ -163,9 +163,9 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
     assertDataFrameEqual(input_df_ver0, result_df, checkRowOrder=False)
 
 
-def test_save_dataframe_as_table(spark, make_schema, make_random):
+def test_save_dataframe_as_table(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema = make_schema(catalog_name=catalog_name)
+    schema = make_schema_and_wait(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     mode = "overwrite"
     output_config = OutputConfig(location=table_name, mode=mode)
@@ -190,9 +190,9 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     assertDataFrameEqual(expected_df.sort("c"), result_df.sort("c"))
 
 
-def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_random):
+def test_save_dataframe_as_table_with_partition_by(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema = make_schema(catalog_name=catalog_name)
+    schema = make_schema_and_wait(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     output_config = OutputConfig(location=table_name, mode="overwrite", partition_by=["a"])
 
@@ -207,9 +207,9 @@ def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_rand
     assert table_detail["partitionColumns"] == ["a"]
 
 
-def test_save_dataframe_as_table_with_cluster_by(spark, make_schema, make_random):
+def test_save_dataframe_as_table_with_cluster_by(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema = make_schema(catalog_name=catalog_name)
+    schema = make_schema_and_wait(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.t{make_random(10).lower()}"
     output_config = OutputConfig(location=table_name, mode="overwrite", cluster_by=["a"])
 
@@ -496,9 +496,9 @@ def test_save_dataframe_invalid_location(spark):
         save_dataframe_as_table(input_df, output_config)
 
 
-def test_get_reference_dataframes(spark, make_schema, make_random):
+def test_get_reference_dataframes(spark, make_schema_and_wait, make_random):
     catalog_name = TEST_CATALOG
-    schema_name = make_schema(catalog_name=catalog_name).name
+    schema_name = make_schema_and_wait(catalog_name=catalog_name).name
     input_location_1 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
     input_location_2 = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
 

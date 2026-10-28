@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
@@ -10,6 +11,7 @@ from pyspark.sql.types import ArrayType, StructType
 from pyspark.testing.utils import assertDataFrameEqual
 
 import pytest
+from databricks.sdk.service.catalog import SchemaInfo
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
@@ -39,6 +41,8 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 
 
 FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
+
+SCHEMA_WAIT_SECONDS = 20.0
 
 
 def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
@@ -231,6 +235,21 @@ def spark_keep_alive(spark):
     keep_alive.start()
     yield keep_alive
     keep_alive.stop()
+
+
+@pytest.fixture
+def make_schema_and_wait(make_schema):
+    """
+    Create a schema with *make_schema* and wait *DQX_TEST_SCHEMA_WAIT_SECONDS* (default 20, 0 disables)
+    before returning it. Accepts the same keyword arguments as *make_schema*, which also removes the schema.
+    """
+
+    def create(**kwargs) -> SchemaInfo:
+        schema = make_schema(**kwargs)
+        time.sleep(float(os.environ.get("DQX_TEST_SCHEMA_WAIT_SECONDS", SCHEMA_WAIT_SECONDS)))
+        return schema
+
+    return create
 
 
 @pytest.fixture

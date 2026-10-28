@@ -72,6 +72,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DQX_TEST_SCHEMA_WAIT_SECONDS: 20
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
@@ -128,6 +129,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          DQX_TEST_SCHEMA_WAIT_SECONDS: 20
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
       - name: Merge coverage reports and convert them to XML
         run: make combine-coverage
