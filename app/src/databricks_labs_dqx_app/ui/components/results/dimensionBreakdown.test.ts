@@ -76,4 +76,9 @@ describe("compareRows (Failed / Total sort)", () => {
     expect(compareRows(tableOnly, untested, "failed_tests")).toBeLessThan(0);
     expect(compareRows(untested, tableOnly, "total_tests")).toBeGreaterThan(0);
   });
+
+  it("sorts descending with rows that have no tests still last", () => {
+    const sorted = [untested, tableOnly, rowOnly].sort((a, b) => compareRows(a, b, "failed_tests", "desc"));
+    expect(sorted.map((r) => r.label)).toEqual(["r", "t", "u"]);
+  });
 });

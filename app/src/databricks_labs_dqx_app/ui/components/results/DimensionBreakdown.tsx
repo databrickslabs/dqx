@@ -116,8 +116,8 @@ function sortValue(row: BreakdownRow, key: SortKey): string | number | null | un
   return key === "failed_tests" ? tests.failed : tests.total;
 }
 
-/** Compare two rows on a key; nulls always sort last regardless of direction. */
-export function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): number {
+/** Compare two rows on a key in *dir* order; nulls always sort last regardless of direction. */
+export function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey, dir: "asc" | "desc" = "asc"): number {
   const av = sortValue(a, key);
   const bv = sortValue(b, key);
   const an = av == null;
@@ -125,10 +125,8 @@ export function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): num
   if (an && bn) return 0;
   if (an) return 1;
   if (bn) return -1;
-  if (typeof av === "string" && typeof bv === "string") {
-    return av.localeCompare(bv);
-  }
-  return (av as number) - (bv as number);
+  const c = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv) : (av as number) - (bv as number);
+  return dir === "asc" ? c : -c;
 }
 
 /**
@@ -236,10 +234,7 @@ export function DimensionBreakdown({
   // defaultSort; otherwise incoming (API) order.
   const effectiveSort = sort ?? defaultSort ?? null;
   const sortedRows = effectiveSort
-    ? [...displayRows].sort((a, b) => {
-        const c = compareRows(a, b, effectiveSort.key);
-        return effectiveSort.dir === "asc" ? c : -c;
-      })
+    ? [...displayRows].sort((a, b) => compareRows(a, b, effectiveSort.key, effectiveSort.dir))
     : displayRows;
 
   // Slice the current page out of the full sorted set; the clamp keeps the
