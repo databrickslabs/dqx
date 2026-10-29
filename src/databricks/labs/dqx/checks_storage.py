@@ -47,6 +47,7 @@ from databricks.labs.dqx.config import (
     VolumeFileChecksStorageConfig,
     RunConfig,
     is_table_location,
+    validate_lakebase_connection,
 )
 from databricks.labs.dqx.errors import (
     CheckDownloadError,
@@ -546,13 +547,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             Lakebase connection URL.
         """
-        if not config.instance_name:
-            raise InvalidConfigError("instance_name must be provided for Lakebase storage")
+        if not config.instance_name and not config.endpoint:
+            raise InvalidConfigError("instance_name or endpoint must be provided for Lakebase storage")
         if not config.location:
             raise InvalidConfigError("location must be provided for Lakebase storage")
 
-        instance = self.ws.database.get_database_instance(config.instance_name)
-        host = instance.read_write_dns
+        host = self._get_host(config)
         prefix = "postgresql+psycopg2"
         port = config.port
         database = config.database_name
@@ -560,9 +560,36 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         return f"{prefix}://{user}@{host}:{port}/{database}?sslmode=require"
 
+    def _get_host(self, config: LakebaseChecksStorageConfig) -> str | None:
+        """
+        Resolve the read/write host of the Lakebase database instance or Autoscaling endpoint.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            The read/write host.
+
+        Raises:
+            InvalidConfigError: If the Autoscaling endpoint has no read/write host.
+        """
+        if config.endpoint:
+            status = self.ws.postgres.get_endpoint(name=config.endpoint).status
+            host = status.hosts.host if status and status.hosts else None
+            if not host:
+                raise InvalidConfigError(
+                    f"Lakebase endpoint '{config.endpoint}' has no read/write host. "
+                    "Check that the endpoint exists and is a read/write endpoint."
+                )
+            return host
+
+        if not config.instance_name:
+            raise InvalidConfigError("instance_name or endpoint must be provided for Lakebase storage")
+        return self.ws.database.get_database_instance(config.instance_name).read_write_dns
+
     def _prepare_before_connect(self, config: LakebaseChecksStorageConfig):
         """
-        Prepare the before_connect event listener with the instance_name captured in closure.
+        Prepare the before_connect event listener with the instance name or endpoint captured in closure.
 
         Args:
             config: Configuration for saving and loading checks to Lakebase.
@@ -571,10 +598,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             The _before_connect event listener function.
 
         Raises:
-            InvalidConfigError: If instance_name is not provided.
+            InvalidConfigError: If neither instance_name nor endpoint is provided.
         """
+        if config.endpoint:
+            endpoint = config.endpoint
+
+            def _before_connect_endpoint(_dialect, _conn_rec, _cargs, cparams) -> None:
+                cred = self.ws.postgres.generate_database_credential(endpoint=endpoint)
+                cparams["password"] = cred.token
+
+            return _before_connect_endpoint
+
         if not config.instance_name:
-            raise InvalidConfigError("instance_name must be provided for Lakebase storage")
+            raise InvalidConfigError("instance_name or endpoint must be provided for Lakebase storage")
 
         instance_name = config.instance_name
 
@@ -1259,7 +1295,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             checks_location = run_config.checks_location
 
             # transfer lakebase fields from run config to storage config if not already set
-            if run_config.lakebase_instance_name and not config.instance_name:
+            # an explicit endpoint selects a Lakebase Autoscaling endpoint, so do not add the run config's instance
+            if run_config.lakebase_instance_name and not config.instance_name and not config.endpoint:
                 config.instance_name = run_config.lakebase_instance_name
             if run_config.lakebase_client_id and not config.client_id:
                 config.client_id = run_config.lakebase_client_id
@@ -1274,9 +1311,11 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         config.location = checks_location
 
         matches_table_pattern = is_table_location(config.location)
-        is_lakebase_storage = config.instance_name is not None
+        is_lakebase_storage = config.instance_name is not None or config.endpoint is not None
 
         if matches_table_pattern and is_lakebase_storage:
+            # validators of LakebaseChecksStorageConfig skip subclasses, so validate the connection target here
+            validate_lakebase_connection(config.instance_name, config.endpoint)
             logger.debug(f"Using LakebaseChecksStorageHandler for location '{config.location}'")
             return self.lakebase_handler, config
 

@@ -41,6 +41,10 @@ checks: list[dict] = engine.load_checks(
 checked_df = engine.apply_checks_by_metadata(df, checks)
 ```
 
+If Studio's Lakebase is a Lakebase Autoscaling project rather than a database instance, pass the
+project's endpoint instead of `instance_name`:
+`endpoint="projects/<project>/branches/<branch>/endpoints/<endpoint>"`.
+
 Only **approved** rules are loaded — drafts and rejected rules are never returned. You get the
 table's current approved set, so no version pinning is needed. There's no argument for loading a single
 rule; if you want just one, filter the returned list in your own code. 

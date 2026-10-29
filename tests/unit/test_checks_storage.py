@@ -9,8 +9,10 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     DataFrameConverter,
+    InstallationChecksStorageHandler,
     LakebaseChecksStorageHandler,
     TableChecksStorageHandler,
     is_table_location,
@@ -18,10 +20,11 @@ from databricks.labs.dqx.checks_storage import (
 from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     LakebaseChecksStorageConfig,
+    RunConfig,
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidCheckError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.rule import DQDatasetRule, register_rule
 
 _SIMPLE_CHECK = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
@@ -325,6 +328,142 @@ def _lakebase_config() -> LakebaseChecksStorageConfig:
         instance_name="my-instance",
         run_config_name="default",
     )
+
+
+_LAKEBASE_ENDPOINT = "projects/dqx-studio-db/branches/production/endpoints/primary"
+
+
+def _lakebase_ws() -> MagicMock:
+    return MagicMock(spec=WorkspaceClient)
+
+
+def _lakebase_handler(ws: MagicMock) -> LakebaseChecksStorageHandler:
+    spark = create_autospec(SparkSession)
+    return LakebaseChecksStorageHandler(ws, spark)
+
+
+def test_lakebase_connection_url_resolves_autoscaling_endpoint_host():
+    ws = _lakebase_ws()
+    ws.postgres.get_endpoint.return_value.status.hosts.host = "ep-primary.database.example.com"
+    ws.current_user.me.return_value.user_name = "user@example.com"
+    config = LakebaseChecksStorageConfig(
+        location="databricks_postgres.dqx_studio.dq_rules_core", endpoint=_LAKEBASE_ENDPOINT
+    )
+
+    url = _lakebase_handler(ws)._get_connection_url(config)
+
+    assert url == (
+        "postgresql+psycopg2://user@example.com@ep-primary.database.example.com:5432/databricks_postgres?sslmode=require"
+    )
+    ws.postgres.get_endpoint.assert_called_once_with(name=_LAKEBASE_ENDPOINT)
+    ws.database.get_database_instance.assert_not_called()
+
+
+def test_lakebase_connection_url_uses_client_id_with_autoscaling_endpoint():
+    ws = _lakebase_ws()
+    ws.postgres.get_endpoint.return_value.status.hosts.host = "ep-primary.database.example.com"
+    config = LakebaseChecksStorageConfig(
+        location="databricks_postgres.dqx_studio.dq_rules_core",
+        endpoint=_LAKEBASE_ENDPOINT,
+        client_id="00000000-0000-0000-0000-000000000000",
+    )
+
+    url = _lakebase_handler(ws)._get_connection_url(config)
+
+    assert url.startswith("postgresql+psycopg2://00000000-0000-0000-0000-000000000000@ep-primary.database.example.com:")
+    ws.current_user.me.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [None, MagicMock(hosts=None), MagicMock(hosts=MagicMock(host=None))])
+def test_lakebase_connection_url_raises_when_autoscaling_endpoint_has_no_host(status):
+    ws = _lakebase_ws()
+    ws.postgres.get_endpoint.return_value.status = status
+    config = LakebaseChecksStorageConfig(location="db.schema.table", endpoint=_LAKEBASE_ENDPOINT)
+
+    with pytest.raises(InvalidConfigError, match="has no read/write host"):
+        _lakebase_handler(ws)._get_connection_url(config)
+
+
+def test_lakebase_connection_url_resolves_database_instance_host():
+    ws = _lakebase_ws()
+    ws.database.get_database_instance.return_value.read_write_dns = "instance.database.example.com"
+    ws.current_user.me.return_value.user_name = "user@example.com"
+
+    url = _lakebase_handler(ws)._get_connection_url(_lakebase_config())
+
+    assert url == "postgresql+psycopg2://user@example.com@instance.database.example.com:5432/db?sslmode=require"
+    ws.database.get_database_instance.assert_called_once_with("my-instance")
+    ws.postgres.get_endpoint.assert_not_called()
+
+
+def test_lakebase_before_connect_generates_autoscaling_endpoint_credential():
+    ws = _lakebase_ws()
+    ws.postgres.generate_database_credential.return_value.token = "endpoint-token"
+    config = LakebaseChecksStorageConfig(location="db.schema.table", endpoint=_LAKEBASE_ENDPOINT)
+    cparams = {}
+
+    _lakebase_handler(ws)._prepare_before_connect(config)(None, None, None, cparams)
+
+    assert cparams["password"] == "endpoint-token"
+    ws.postgres.generate_database_credential.assert_called_once_with(endpoint=_LAKEBASE_ENDPOINT)
+    ws.database.generate_database_credential.assert_not_called()
+
+
+def test_lakebase_before_connect_generates_database_instance_credential():
+    ws = _lakebase_ws()
+    ws.database.generate_database_credential.return_value.token = "instance-token"
+    cparams = {}
+
+    _lakebase_handler(ws)._prepare_before_connect(_lakebase_config())(None, None, None, cparams)
+
+    assert cparams["password"] == "instance-token"
+    assert ws.database.generate_database_credential.call_args.kwargs["instance_names"] == ["my-instance"]
+    ws.postgres.generate_database_credential.assert_not_called()
+
+
+def _installation_handler(lakebase_instance_name: str | None = None) -> InstallationChecksStorageHandler:
+    config_serializer = create_autospec(ConfigSerializer)
+    config_serializer.load_run_config.return_value = RunConfig(
+        checks_location="db.schema.table", lakebase_instance_name=lakebase_instance_name
+    )
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    return InstallationChecksStorageHandler(ws, spark, config_serializer)
+
+
+def test_installation_storage_routes_autoscaling_endpoint_to_lakebase_without_run_config_instance():
+    handler = _installation_handler(lakebase_instance_name="run-config-instance")
+    config = InstallationChecksStorageConfig(endpoint=_LAKEBASE_ENDPOINT, install_folder="/Workspace/dqx")
+
+    resolved_handler, resolved_config = handler._get_storage_handler_and_config(config)
+
+    assert resolved_handler is handler.lakebase_handler
+    assert resolved_config.endpoint == _LAKEBASE_ENDPOINT
+    assert resolved_config.instance_name is None  # the explicit endpoint is not combined with the run config's instance
+
+
+def test_installation_storage_rejects_both_instance_name_and_endpoint():
+    handler = _installation_handler()
+    config = InstallationChecksStorageConfig(
+        location="db.schema.table",
+        overwrite_location=True,
+        instance_name="instance",
+        endpoint=_LAKEBASE_ENDPOINT,
+        install_folder="/Workspace/dqx",
+    )
+
+    with pytest.raises(InvalidParameterError, match="Specify either 'instance_name' or 'endpoint', not both."):
+        handler._get_storage_handler_and_config(config)
+
+
+def test_installation_storage_rejects_invalid_endpoint():
+    handler = _installation_handler()
+    config = InstallationChecksStorageConfig(
+        location="db.schema.table", overwrite_location=True, endpoint="primary", install_folder="/Workspace/dqx"
+    )
+
+    with pytest.raises(InvalidConfigError, match="Invalid Lakebase endpoint"):
+        handler._get_storage_handler_and_config(config)
 
 
 def _normalize_lakebase_checks(checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:

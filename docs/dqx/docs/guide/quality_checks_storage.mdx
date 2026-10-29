@@ -71,6 +71,9 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
 
     # save checks as a Lakebase table using a Databricks service principal
     dq_engine.save_checks(checks, config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
+
+    # save checks as a Lakebase table in a Lakebase Autoscaling project (use 'endpoint' instead of 'instance_name')
+    dq_engine.save_checks(checks, config=LakebaseChecksStorageConfig(endpoint="projects/my-project/branches/production/endpoints/primary", location="databricks_postgres.config.checks"))
     
     # save checks as a YAML file or table defined in 'checks_location' of the run config
     # only works if DQX is installed in the workspace
@@ -275,6 +278,9 @@ If you create checks as a list of DQRule objects, you can convert them using the
     # load checks from a Lakebase table using a Databricks service principal
     checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
 
+    # load checks from a Lakebase table in a Lakebase Autoscaling project (use 'endpoint' instead of 'instance_name')
+    checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(endpoint="projects/my-project/branches/production/endpoints/primary", location="databricks_postgres.config.checks"))
+
     # load checks from a Lakebase table using specific rule_set_fingerprint for filtering (it can be any rule_set_fingerprint from checks_table)
     checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", client_id="00000000-0000-0000-0000-000000000000", location="dqx.config.checks", rule_set_fingerprint="9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"))
 
@@ -316,7 +322,8 @@ The following backend configuration are currently supported:
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
 * `LakebaseChecksStorageConfig`: Lakebase table. Uses the same structure and compact format as Delta tables (`for_each_column` preserved). Containing fields:
-    * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
+    * `instance_name`: name of the Lakebase database instance, e.g., "my-instance". Set either `instance_name` or `endpoint`.
+    * `endpoint`: resource name of a Lakebase Autoscaling endpoint, in the format "projects/<project>/branches/<branch>/endpoints/<endpoint>". Set either `instance_name` or `endpoint`.
     * `client_id`: ID of the Databricks service principal to use for the Lakebase connection.
     * `location`: fully-qualified table name in the format "database.schema.table".
     * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
