@@ -19,6 +19,8 @@ build = marketplace_builder.build
 APP_DIR = Path(__file__).resolve().parent.parent
 MANIFEST = APP_DIR / "marketplace_templates" / "manifest.yaml"
 APP_YAML = APP_DIR / "marketplace_templates" / "app.yaml"
+TEMPLATE_LOCK = APP_DIR / "marketplace_templates" / "uv.lock"
+DQX_PACKAGE = "databricks-labs-dqx"
 DQX_VERSION = marketplace_builder.dqx_release_version()
 
 EXPECTED_SCOPES = [
@@ -131,8 +133,8 @@ def test_marketplace_template_lock_pins_the_release_dqx_version() -> None:
     refreshed by hand. A lagging lock makes the app and task runner install different DQX versions,
     so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
     """
-    template = tomllib.loads((APP_DIR / "marketplace_templates" / "uv.lock").read_text(encoding="utf-8"))
-    locked = {package["version"] for package in template["package"] if package["name"] == "databricks-labs-dqx"}
+    template = tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))
+    locked = {package["version"] for package in template["package"] if package["name"] == DQX_PACKAGE}
 
     assert locked == {DQX_VERSION}
 
@@ -143,27 +145,14 @@ def test_marketplace_build_rejects_a_lock_for_another_dqx_version(tmp_path: Path
     assert not (tmp_path / "artifact").exists()
 
 
-def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
-    """Guard the committed Marketplace lock against silently drifting from the app deps.
+def _runtime_closure(lock_path: Path, *, through_dqx: bool) -> set[str]:
+    """Names the app package reaches at runtime in *lock_path*, activating extras.
 
-    The Marketplace lock is a tracked template (``marketplace_templates/uv.lock``), not
-    regenerated at build time, so an app dependency change that isn't mirrored there would
-    ship a stale runtime graph. Its package set must equal the *runtime closure* of
-    ``app/uv.lock`` — the app lock minus its development-only packages. If this fails,
-    refresh the Marketplace lock (see DEPLOYMENT.md).
+    Follows each reached package's dependencies and the optional dependencies of its active
+    extras; dev-dependency groups are never followed, so development-only packages fall out.
+    With *through_dqx* off, DQX itself is reached but its own dependencies are not followed.
     """
-    app_lock = tomllib.loads((APP_DIR / "uv.lock").read_text(encoding="utf-8"))
-    template_names = {
-        package["name"]
-        for package in tomllib.loads((APP_DIR / "marketplace_templates" / "uv.lock").read_text(encoding="utf-8"))[
-            "package"
-        ]
-    }
-    pkgs = {package["name"]: package for package in app_lock["package"]}
-
-    # Fixpoint walk of the app package's runtime dependencies (activating their extras) and
-    # each reached package's dependencies + optional-dependencies. dev-dependencies groups are
-    # never followed, so development-only packages fall out of the closure.
+    packages = {package["name"]: package for package in tomllib.loads(lock_path.read_text(encoding="utf-8"))["package"]}
     reached: set[str] = {"databricks-labs-dqx-app"}
     active_extras: dict[str, set[str]] = {}
     pending: list[str] = []
@@ -176,22 +165,46 @@ def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
         reached.add(name)
         active_extras.setdefault(name, set()).update(extras)
 
-    for dependency in pkgs["databricks-labs-dqx-app"].get("dependencies", []):
+    for dependency in packages["databricks-labs-dqx-app"].get("dependencies", []):
         visit(dependency)
     while pending:
-        package = pkgs.get(pending.pop())
-        if package is None:
+        name = pending.pop()
+        package = packages.get(name)
+        if package is None or (name == DQX_PACKAGE and not through_dqx):
             continue
         for dependency in package.get("dependencies", []):
             visit(dependency)
-        for extra in active_extras.get(package["name"], set()):
+        for extra in active_extras.get(name, set()):
             for dependency in package.get("optional-dependencies", {}).get(extra, []):
                 visit(dependency)
+    return reached
 
-    assert template_names == reached, (
+
+def test_marketplace_template_lock_matches_the_app_dependencies() -> None:
+    """Guard the committed Marketplace lock against silently drifting from the app's own deps.
+
+    The Marketplace lock is a tracked template, not regenerated at build time, so an app
+    dependency change that isn't mirrored there would ship a stale runtime graph. What the
+    app's own dependencies reach must match ``app/uv.lock``. DQX's own dependencies are left
+    out: ``app/uv.lock`` resolves DQX from this checkout, while the template resolves the
+    published *dqx_version*, so they legitimately differ until Studio moves to a newer DQX.
+    If this fails, refresh the Marketplace lock (see DEPLOYMENT.md).
+    """
+    expected = _runtime_closure(APP_DIR / "uv.lock", through_dqx=False)
+    actual = _runtime_closure(TEMPLATE_LOCK, through_dqx=False)
+
+    assert actual == expected, (
         "marketplace_templates/uv.lock is stale vs app/uv.lock — regenerate it (see DEPLOYMENT.md). "
-        f"missing={sorted(reached - template_names)} unexpected={sorted(template_names - reached)}"
+        f"missing={sorted(expected - actual)} unexpected={sorted(actual - expected)}"
     )
+
+
+def test_marketplace_template_lock_holds_exactly_its_runtime_closure() -> None:
+    """The template, published DQX included, must be complete and carry nothing unreachable."""
+    names = {package["name"] for package in tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))["package"]}
+    reached = _runtime_closure(TEMPLATE_LOCK, through_dqx=True)
+
+    assert names == reached, f"missing={sorted(reached - names)} unreachable={sorted(names - reached)}"
 
 
 def test_manifest_has_exact_resource_contract() -> None:
