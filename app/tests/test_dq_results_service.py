@@ -839,15 +839,23 @@ class TestTrends:
         assert day1.failed_test_count == 10
         assert day1.failed_records is None  # no per-run row counts supplied
 
-    def test_trend_failed_tests_count_row_checks_only(self):
+    def test_trend_tests_count_a_dataset_check_as_one_test(self):
+        # Matches the score box: row tests plus one test per dataset check.
         rows = [
             make_row("row", failed=10, total=100, rule_id="rule-1"),
             make_row("table", failed=100, total=100, rule_id="rule-2", check_granularity="dataset"),
+            make_row("passing_table", failed=0, total=100, rule_id="rule-3", check_granularity="dataset"),
         ]
         out = compute_entity_results(rows, ResultFacets())
-        assert out.trend_failures[0].failed_test_count == 10
+        assert out.trend_failures[0].failed_test_count == 11
         assert out.trend_failures[0].failed_check_count == 2
-        assert out.trend_counts[0].test_count == 100
+        assert out.trend_counts[0].test_count == 102
+
+    def test_trend_tests_for_a_table_checks_only_run(self):
+        rows = [make_row("table", failed=0, total=100, rule_id="rule-1", check_granularity="dataset")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend_counts[0].test_count == 1
+        assert out.trend_failures[0].failed_test_count == 0
 
     def test_trend_failures_sums_failed_records_per_run(self):
         out = compute_entity_results(

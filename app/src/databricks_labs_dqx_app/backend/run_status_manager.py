@@ -27,10 +27,14 @@ def update_run_status(
     status: str,
     error_message: str | None,
     canceled_by: str | None = None,
-) -> None:
+) -> bool:
     """Update a RUNNING placeholder row with a terminal status.
 
     Works for any run table (dq_validation_runs, dq_profiling_results).
+    A failed update is logged, not raised.
+
+    Returns:
+        True when the UPDATE ran, False when it failed.
     """
     table = sql.fqn(table_name)
     er = escape_sql_string(run_id)
@@ -50,6 +54,8 @@ def update_run_status(
         logger.info("Updated %s run %s status to %s", table_name, run_id, status)
     except Exception as exc:
         logger.warning("Failed to update %s status for %s: %s", table_name, run_id, exc)
+        return False
+    return True
 
 
 def get_run_owner(

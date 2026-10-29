@@ -219,6 +219,33 @@ class TestPromptCompletionForUnwatchedRuns:
         svc.refresh_scores_for_completed_runs(self.LATER + timedelta(minutes=1))
         assert len(_updates(mocks)) == 1
 
+    def test_failed_status_update_keeps_the_run_tracked_for_a_retry(self, make_scheduler):
+        svc, mocks, score_cache, _monitored = _completion_scheduler(
+            make_scheduler,
+            completed_runs=[_ended_run("r1", "TERMINATED", "FAILED", message="boom")],
+            rows=[("r1", "main.sales.orders", "", "RUNNING")],
+        )
+        attempts: list[str] = []
+
+        def execute(stmt: str, *a: object, **k: object) -> None:
+            if "UPDATE" in stmt:
+                attempts.append(stmt)
+                if len(attempts) == 1:
+                    raise RuntimeError("warehouse unavailable")
+
+        mocks.sql.execute.side_effect = execute
+
+        svc.refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.LATER)
+        assert len(attempts) == 1
+        score_cache.refresh_all_for_tables.assert_not_called()
+
+        # Still tracked: the next tick retries the update and then completes the run.
+        svc.refresh_scores_for_completed_runs(self.LATER + timedelta(minutes=1))
+        assert len(attempts) == 2
+        assert "status = 'FAILED'" in attempts[1]
+        score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
+
     def test_ended_job_without_a_message_gets_a_generic_one(self, make_scheduler):
         svc, mocks, _score_cache, _monitored = _completion_scheduler(
             make_scheduler,

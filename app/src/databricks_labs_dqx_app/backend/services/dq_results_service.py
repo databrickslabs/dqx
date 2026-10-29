@@ -352,6 +352,13 @@ class _GroupAcc:
                 self.breach_criticality = _worse_criticality(self.breach_criticality, crit)
 
     @property
+    def combined_total(self) -> int | None:
+        """Row tests plus table tests (one per dataset check), as the score box counts them; None when untested."""
+        if self.total is None and self.table_total == 0:
+            return None
+        return (self.total or 0) + self.table_total
+
+    @property
     def pass_rate(self) -> float | None:
         # SQL analogue: mean(AVG(check_score) per rule instance).
         # Failed/total remain row-test diagnostics and intentionally no longer
@@ -625,7 +632,7 @@ def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
             run_date=run_date,
             rule_count=len(acc.rule_keys),
             check_count=acc.check_rows,
-            test_count=acc.total,
+            test_count=acc.combined_total,
         )
         for run_date, acc in sorted(groups.items(), key=lambda kv: kv[0] or "")
     ]
@@ -658,8 +665,11 @@ def _trend_failures(
                 run_date=run_date,
                 failed_rule_count=len(failed_rules),
                 failed_check_count=sum(1 for row in rows_here if row.failed > 0),
-                # Row-level failed tests only, like *test_count*.
-                failed_test_count=sum(row.failed for row in rows_here if row.check_granularity != "dataset"),
+                # Row tests plus failed table tests (one per dataset check), like *test_count*.
+                failed_test_count=sum(
+                    (1 if row.failed > 0 else 0) if row.check_granularity == "dataset" else row.failed
+                    for row in rows_here
+                ),
                 failed_records=sum(record_counts) if record_counts else None,
             )
         )

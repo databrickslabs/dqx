@@ -1651,7 +1651,7 @@
     "customSurfaceVisual": "Costruttore visuale",
     "customSurfaceSql": "SQL",
     "granularityRowLevel": "Per riga",
-    "granularityDatasetLevel": "Per tabella",
+    "granularityDatasetLevel": "A livello di tabella",
     "granularityLabel": "Si applica a",
     "granularityRowTooltip": "Ogni riga ottiene il proprio verdetto, quindi gli errori sono attribuiti alle singole righe.",
     "granularityDatasetTooltip": "Un solo verdetto per l'intera tabella, senza attribuzione per riga.",

@@ -1812,8 +1812,12 @@ class SchedulerService:
         return {run.app_run_id: run for run in recent if run.app_run_id in run_ids and run.is_terminal}
 
     def _mark_run_ended(self, table_name: str, run_id: str, status: str, error_message: str) -> None:
-        """Flip *run_id*'s RUNNING placeholder in *table_name* to *status* (FAILED / CANCELED)."""
-        update_run_status(
+        """Flip *run_id*'s RUNNING placeholder in *table_name* to *status* (FAILED / CANCELED).
+
+        Raises:
+            RuntimeError: The UPDATE failed, so the row is still RUNNING.
+        """
+        updated = update_run_status(
             self._sql,
             AppConfig(catalog=self._catalog, schema_name=self._schema),
             table_name,
@@ -1821,6 +1825,8 @@ class SchedulerService:
             status=status,
             error_message=error_message,
         )
+        if not updated:
+            raise RuntimeError(f"Could not update the status of run {run_id} in {table_name}")
 
     def _forget_score_run(self, run_id: str) -> None:
         self._pending_score_runs.pop(run_id, None)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { paginateRows } from "./DimensionBreakdown";
+import { compareRows, paginateRows } from "./DimensionBreakdown";
 import { sumTestCounts } from "./MultiTableResults";
 
 describe("paginateRows (pager math)", () => {
@@ -51,5 +51,29 @@ describe("sumTestCounts (ScoreBox subtitle counts)", () => {
     const zeros = { failedTests: 0, totalTests: 0, tableFailedTests: 0, tableTotalTests: 0 };
     expect(sumTestCounts([{ label: "c.s.a" }])).toEqual(zeros);
     expect(sumTestCounts(undefined)).toEqual(zeros);
+  });
+});
+
+describe("compareRows (Failed / Total sort)", () => {
+  // Only table checks: no row-test counts, one failed table test (shown as 1 / 1).
+  const tableOnly = {
+    label: "t",
+    pass_rate: 0,
+    failed_tests: null,
+    total_tests: null,
+    table_failed_tests: 1,
+    table_total_tests: 1,
+  };
+  const rowOnly = { label: "r", pass_rate: 25, failed_tests: 3, total_tests: 4 };
+  const untested = { label: "u", pass_rate: null, failed_tests: null, total_tests: null };
+
+  it("sorts on the combined row + table counts the cells show", () => {
+    expect(compareRows(tableOnly, rowOnly, "failed_tests")).toBeLessThan(0);
+    expect(compareRows(tableOnly, rowOnly, "total_tests")).toBeLessThan(0);
+  });
+
+  it("still sorts rows with no tests last", () => {
+    expect(compareRows(tableOnly, untested, "failed_tests")).toBeLessThan(0);
+    expect(compareRows(untested, tableOnly, "total_tests")).toBeGreaterThan(0);
   });
 });

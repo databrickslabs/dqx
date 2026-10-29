@@ -2349,8 +2349,8 @@ class TrendPointOut(BaseModel):
 
 class TrendCountPointOut(BaseModel):
     """Per-run count axes: distinct rules, checks (rows), and tests
-    (record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
-    chart."""
+    (record-level evaluations of row checks plus one per dataset check).
+    Feeds the "Number of Rules, Checks & Tests" chart."""
 
     run_date: str | None = None
     rule_count: int | None = None

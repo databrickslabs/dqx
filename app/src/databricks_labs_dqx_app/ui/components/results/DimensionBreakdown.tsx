@@ -78,9 +78,8 @@ export type BreakdownRow = {
   rule_count?: number | null;
   check_count?: number | null;
   total_tests?: number | null;
-  /** Table-level (dataset check) tests, one per check. Kept out of the
-   *  failed/total columns (those count row tests only) and shown as a small
-   *  indicator under the failure count when the row has dataset checks. */
+  /** Table-level (dataset check) tests, one per check. Added to the row
+   *  tests in the Failed / Total columns and their sort (combineTestCounts). */
   table_failed_tests?: number | null;
   table_total_tests?: number | null;
   /** True when any child check in this group has a threshold breach. */
@@ -95,7 +94,7 @@ export type BreakdownRow = {
   pass_threshold?: number | null;
 };
 
-type SortKey =
+export type SortKey =
   | "label"
   | "pass_rate"
   | "failed_tests"
@@ -104,10 +103,23 @@ type SortKey =
   | "total_tests";
 type SortState = { key: SortKey; dir: "asc" | "desc" } | null;
 
+/** The value a row sorts on: the Failed / Total columns sort on the same
+ *  combined row + table test counts the cells show. */
+function sortValue(row: BreakdownRow, key: SortKey): string | number | null | undefined {
+  if (key !== "failed_tests" && key !== "total_tests") return row[key];
+  const tests = combineTestCounts({
+    failedTests: row.failed_tests,
+    totalTests: row.total_tests,
+    tableFailedTests: row.table_failed_tests,
+    tableTotalTests: row.table_total_tests,
+  });
+  return key === "failed_tests" ? tests.failed : tests.total;
+}
+
 /** Compare two rows on a key; nulls always sort last regardless of direction. */
-function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): number {
-  const av = a[key];
-  const bv = b[key];
+export function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): number {
+  const av = sortValue(a, key);
+  const bv = sortValue(b, key);
   const an = av == null;
   const bn = bv == null;
   if (an && bn) return 0;
