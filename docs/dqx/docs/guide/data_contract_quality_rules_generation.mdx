@@ -64,7 +64,7 @@ To use the data contract-based quality rules generation feature, you need to ins
 pip install 'databricks-labs-dqx[datacontract]'
 ```
 
-This will install the required packages including `datacontract-cli` (version 1.2 or later) for ODCS contract parsing and validation.
+This will install the required packages including `datacontract-cli` (version 1.2 or later, below 2.0) for ODCS contract parsing and validation.
 
 <Admonition type="info" title="Optional: LLM Support for Text-Based Rules">
 If your contracts include text-based quality expectations (natural language descriptions), you'll also need to install the LLM dependencies:
@@ -120,6 +120,8 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
     # Load contract using datacontract-cli
     contract = DataContract(data_contract_file="/path/to/contract.yaml")
+    # or from a YAML string: DataContract(data_contract_str=contract_yaml)
+    # or from a parsed ODCS model: DataContract(data_contract=odcs_model)
 
     # Generate rules from contract object
     rules = generator.generate_rules_from_contract(contract=contract)

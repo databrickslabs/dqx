@@ -275,6 +275,7 @@ class DQGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
                 - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                - DataContract(data_contract=odcs_model) - from a parsed ODCS model
                 Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
