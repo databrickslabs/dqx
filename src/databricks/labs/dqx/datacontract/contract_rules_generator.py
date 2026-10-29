@@ -7,11 +7,11 @@ data type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). No ODCS→Unity mapp
 See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
 """
 
-import importlib.metadata
 import json
 import logging
 import re
 from collections.abc import Callable
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -183,7 +183,7 @@ class DataContractRulesGenerator(DQEngineBase):
             # A YAML/JSON string has no public accessor: get_data_contract() lints it against the ODCS JSON
             # schema, which would reject a whole contract that DQX handles entry by entry.
             if not hasattr(contract, "_data_contract_str"):
-                version = importlib.metadata.version("datacontract-cli")
+                version = package_version("datacontract-cli")
                 raise ParameterError(f"datacontract-cli {version} isn't supported. Install a version >=1.2.0,<2.0.")
             contract_str = getattr(contract, "_data_contract_str", None)
             if contract_str:
