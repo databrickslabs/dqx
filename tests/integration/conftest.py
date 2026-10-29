@@ -10,6 +10,16 @@ from pyspark.sql.types import ArrayType, StructType
 from pyspark.testing.utils import assertDataFrameEqual
 
 import pytest
+from databricks.sdk.service.catalog import (
+    ColumnRelationship,
+    CreateRequestExternalLineage,
+    DeleteRequestExternalLineage,
+    ExternalLineageExternalMetadata,
+    ExternalLineageObject,
+    ExternalLineageTable,
+    ExternalMetadata,
+    SystemType,
+)
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
@@ -237,6 +247,75 @@ def spark_keep_alive(spark):
 def webbrowser_open():
     with patch("webbrowser.open") as mock_open:
         yield mock_open
+
+
+@pytest.fixture
+def make_external_metadata(ws, make_random):
+    """Create a UC *ExternalMetadata* object; clean up on teardown."""
+
+    def create(system_type: SystemType = SystemType.SAP, entity_type: str = "TABLE", description: str | None = None):
+        name = f"dqx_test_em_{make_random(6).lower()}"
+        return ws.external_metadata.create_external_metadata(
+            ExternalMetadata(
+                name=name,
+                system_type=system_type,
+                entity_type=entity_type,
+                description=description or "DQX integration test external metadata",
+            )
+        )
+
+    def delete(external_metadata):
+        if external_metadata is None:
+            return
+        try:
+            ws.external_metadata.delete_external_metadata(name=external_metadata.name)
+        except Exception:
+            pass
+
+    yield from factory("external_metadata", create, delete)
+
+
+@pytest.fixture
+def make_external_lineage_relationship(ws):
+    """Create an upstream external-lineage relationship to a UC table; clean up on teardown."""
+
+    def create(
+        external_metadata_name: str,
+        target_table_full_name: str,
+        column_mappings: list[tuple[str, str]] | None = None,
+    ):
+        columns = [ColumnRelationship(source=src, target=tgt) for src, tgt in column_mappings or []]
+        request = CreateRequestExternalLineage(
+            source=ExternalLineageObject(
+                external_metadata=ExternalLineageExternalMetadata(name=external_metadata_name),
+            ),
+            target=ExternalLineageObject(
+                table=ExternalLineageTable(name=target_table_full_name),
+            ),
+            columns=columns,
+        )
+        rel = ws.external_lineage.create_external_lineage_relationship(request)
+        return (rel, external_metadata_name, target_table_full_name)
+
+    def delete(created):
+        if created is None:
+            return
+        _rel, external_metadata_name, target_table_full_name = created
+        try:
+            ws.external_lineage.delete_external_lineage_relationship(
+                DeleteRequestExternalLineage(
+                    source=ExternalLineageObject(
+                        external_metadata=ExternalLineageExternalMetadata(name=external_metadata_name),
+                    ),
+                    target=ExternalLineageObject(
+                        table=ExternalLineageTable(name=target_table_full_name),
+                    ),
+                )
+            )
+        except Exception:
+            pass
+
+    yield from factory("external_lineage_relationship", create, delete)
 
 
 @pytest.fixture
