@@ -5216,8 +5216,8 @@ export type TrendCountPointOutTestCount = number | null;
 
 /**
  * Per-run count axes: distinct rules, checks (rows), and tests
-(record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
-chart.
+(record-level evaluations of row checks plus one per dataset check).
+Feeds the "Number of Rules, Checks & Tests" chart.
  */
 export interface TrendCountPointOut {
   run_date?: TrendCountPointOutRunDate;
