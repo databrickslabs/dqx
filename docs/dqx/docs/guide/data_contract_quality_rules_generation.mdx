@@ -182,7 +182,7 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
-| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp) | Date/timestamp formats such as `yyyy-MM-dd` |
+| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp; `datetime` is also accepted for compatibility) | Date/timestamp formats such as `yyyy-MM-dd` |
 
 **Note**: As defined by ODCS, `format` is a JDK `DateTimeFormatter` pattern (e.g. `yyyy-MM-dd'T'HH:mm:ss`), and it is passed to the check unchanged. It must be one of Spark's [datetime patterns](https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html), which cover most of that syntax. A Python `strftime` pattern (`%Y-%m-%d`) generates no rule and logs a warning. Any other invalid pattern, such as the week-based `YYYY`, fails when the checks run. Use `MM` for the month: `mm` is minutes.
 

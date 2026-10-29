@@ -3185,14 +3185,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             "hh 'o''clock' a",
         ],
     )
-    def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format):
-        """Test that format constraint on timestamp field generates is_valid_timestamp rule with the format unchanged."""
+    @pytest.mark.parametrize("logical_type", ["timestamp", "datetime"])
+    def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format, logical_type):
+        """Test that format on a timestamp (or datetime) field generates is_valid_timestamp with the format unchanged."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "created_at",
                     "physicalType": "TIMESTAMP",
-                    "logicalType": "timestamp",
+                    "logicalType": logical_type,
                     "required": True,
                     "logicalTypeOptions": {"format": timestamp_format},
                 }
@@ -3254,13 +3255,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def test_python_strftime_format_is_skipped_with_warning(
         self, generator, caplog, logical_type, physical_type, format_str
     ):
-        """Test that a Python strftime format generates no rule, because Spark would flag every row, and warns."""
+        """Test that a Python strftime format generates no rule and logs a warning."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "event",
                     "physicalType": physical_type,
                     "logicalType": logical_type,
+                    "required": True,
                     "logicalTypeOptions": {"format": format_str},
                 }
             ]
@@ -3275,6 +3277,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 )
 
             assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert [r["check"]["function"] for r in rules if r["check"]["arguments"].get("column") == "event"] == [
+                "is_not_null"
+            ]
             assert (
                 f"Skipping format on 'event': '{format_str}' is a Python strftime pattern; use a Spark datetime "
                 "pattern such as 'yyyy-MM-dd'." in caplog.messages

@@ -1003,12 +1003,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'), the syntax Spark datetime
         patterns are based on, so it is passed to the check unchanged. A Python strftime pattern (with '%') is
-        skipped with a warning: one without '%Y' doesn't raise, it would just flag every row as invalid.
+        skipped with a warning, since Spark either rejects it or flags every row as invalid.
         """
         format_value = opts['format']
-        if "%" in str(format_value):
+        if isinstance(format_value, str) and "%" in format_value:
             logger.warning(
-                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(str(format_value))}' "
+                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}' "
                 "is a Python strftime pattern; use a Spark datetime pattern such as 'yyyy-MM-dd'."
             )
             return []
