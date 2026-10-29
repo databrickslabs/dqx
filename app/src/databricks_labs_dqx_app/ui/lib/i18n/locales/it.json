@@ -3176,6 +3176,22 @@
       "description": "Studio è pronto per l'uso. Esamina gli avvisi qui sotto, che puoi risolvere ora o in seguito, quindi continua. Usa Verifica di nuovo dopo averli risolti.",
       "acknowledge": "Ho capito, continua su Studio"
     },
+    "complete": {
+      "title": "DQX Studio è pronto",
+      "description": "Puoi eseguire il deployment della demo ora, oppure saltarlo e andare subito a Studio.",
+      "skip": "Salta e apri Studio",
+      "continue": "Apri Studio",
+      "demo": {
+        "title": "Esegui il deployment della demo",
+        "optional": "Facoltativo",
+        "body": "Aggiunge tabelle, regole e una cronologia di esecuzioni di esempio per provare Studio. Viene eseguito in background e richiede circa 30 minuti.",
+        "deploy": "Esegui il deployment della demo",
+        "started": "Deployment della demo avviato. Richiede circa 30 minuti e nel frattempo puoi usare Studio.",
+        "running": "È già in corso un deployment della demo.",
+        "deployed": "La demo è già distribuita.",
+        "failed": "Non è stato possibile avviare il deployment della demo. Puoi eseguirlo più tardi dalla pagina Marketplace di Studio."
+      }
+    },
     "instructions": "Come risolvere",
     "grants": {
       "partial": "Fatto: {{applied}} su {{total}}.",
@@ -3251,13 +3267,13 @@
         "useTyped": "Usa l'ID applicazione {{id}}",
         "noMatches": "Nessuna entità servizio corrisponde. Incolla il suo ID applicazione per usarla.",
         "pastePlaceholder": "ID applicazione, ad esempio 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
-        "listUnavailable": "Studio non è riuscito a caricare l'elenco delle entità servizio. Incolla invece l'ID applicazione dell'entità servizio. La trovi nella sua pagina, sotto Settings → Identity and access.",
+        "listUnavailable": "Studio non è riuscito a caricare l'elenco delle entità servizio. Incolla invece l'Application ID. Lo trovi nella pagina dell'entità servizio.",
         "listTruncated_one": "Viene mostrata solo {{count}} entità servizio. Se la tua non è nell'elenco, incolla il suo ID applicazione.",
         "listTruncated_other": "Vengono mostrate le prime {{count}} entità servizio. Se la tua non è nell'elenco, incolla il suo ID applicazione.",
         "invalidId": "Un ID applicazione ha questo aspetto: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Non ne hai una? Creala",
-        "createStep1": "Apri il menu del profilo (in alto a destra) → Settings → Identity and access → Service principals. Fai clic su Add service principal e creane una nuova chiamata dqx-studio-task-runner.",
-        "createStep2": "Torna qui e sceglila qui sopra. Imposterai le sue autorizzazioni al passaggio 2.",
+        "createStep1": "In Settings → Identity and access → Service principals, fai clic su Add service principal e chiamala dqx-studio-task-runner.",
+        "createStep2": "Torna qui e selezionala sopra.",
         "openServicePrincipals": "Apri le entità servizio"
       },
       "access": {
@@ -3271,31 +3287,31 @@
         "result": {
           "confirmed": "Accesso confermato. Studio può usare questa entità servizio.",
           "permissionConfirmed": "Studio può usare questa entità servizio.",
-          "missing": "L'app DQX Studio non ha ancora CAN USE su questa entità servizio. Aggiungila nella scheda Permissions (passaggio b qui sopra), poi fai di nuovo clic su Conferma accesso. Se sei sicuro che Studio abbia già questa autorizzazione (ad esempio tramite un gruppo di amministratori), puoi passare al passaggio 3.",
-          "unverified": "Studio non può controllare da solo le autorizzazioni di questa entità servizio. Assicurati di aver completato i passaggi a e b, poi continua. Il passaggio 3 lo confermerà.",
-          "grantsPending": "Questa entità servizio ha bisogno anche dell'accesso ai dati di Studio. Esegui i comandi seguenti. Se non hai le autorizzazioni, chiedi al proprietario del catalogo di eseguirli.",
+          "missing": "L'app DQX Studio non ha ancora Service Principal: User su questa entità servizio. Aggiungilo (passaggio b), poi conferma di nuovo. Se ha accesso in un altro modo, ad esempio tramite un gruppo, passa al passaggio 3.",
+          "unverified": "Studio non può leggere i permessi di questa entità servizio. Assicurati di aver completato i passaggi a e b, poi continua. Il passaggio 3 lo confermerà.",
+          "grantsPending": "Questa entità servizio ha bisogno anche di accedere ai dati di Studio. Esegui questi comandi, oppure chiedi al proprietario del catalogo di eseguirli.",
           "automaticGrants": "Studio configurerà automaticamente il resto dell'accesso di questa entità servizio una volta assegnata al job.",
           "grantsUnverified": "Studio non è riuscito a controllare tutto l'accesso di questa entità servizio ai dati di Studio. La configurazione lo controlla di nuovo dopo il passaggio 3."
         },
         "errors": {
           "task_runner_principal_invalid": "Questo non è un ID applicazione. Scegli di nuovo l'entità servizio oppure incolla il suo ID applicazione.",
           "task_runner_principal_is_app": "Questa è l'entità servizio dell'app DQX Studio. Scegline un'altra.",
-          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio di questo job viene scelta all'installazione e non può essere modificata qui. Chiedi a chi ha installato Studio di impostare dqx_service_principal_application_id nelle impostazioni del bundle con l'ID applicazione di un'entità servizio (non quella dell'app) e di eseguire di nuovo il deployment di Studio. Poi fai clic su Verifica di nuovo.",
+          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio del job viene scelta all'installazione. Imposta dqx_service_principal_application_id nel bundle sull'Application ID di un'entità servizio dedicata, esegui di nuovo il deployment, poi fai clic su Verifica di nuovo.",
           "task_runner_job_unavailable": "Il job di esecuzione di Studio non è ancora pronto. Fai clic su Verifica di nuovo, poi riprova.",
           "default": "Studio non è riuscito a controllare questa entità servizio. Riprova tra un minuto."
         }
       },
       "apply": {
-        "help": "Studio imposta il suo job di esecuzione, il job in background che esegue i controlli pianificati, in modo che usi questa entità servizio, poi controlla di nuovo la configurazione.",
+        "help": "Studio imposta il job di esecuzione perché venga eseguito come questa entità servizio, poi controlla di nuovo la configurazione.",
         "button": "Usa questa entità servizio",
         "confirmFirst": "Conferma prima l'accesso.",
-        "grantsStillMissing": "Manca ancora una parte dell'accesso ai dati. Puoi continuare. La configurazione lo elencherà di nuovo dopo questo passaggio.",
+        "grantsStillMissing": "Manca ancora parte dell'accesso ai dati. Puoi continuare comunque, e la configurazione elencherà dopo ciò che resta.",
         "errors": {
-          "task_runner_run_as_forbidden": "Studio non è ancora autorizzato a usare questa entità servizio. Di solito significa che l'app DQX Studio non ha CAN USE su di essa (passaggio 2b). Aggiungila, poi fai di nuovo clic su Usa questa entità servizio. Oppure fai clic su Apri il job di esecuzione qui sotto, trova Run as (l'identità con cui viene eseguito il job) nel pannello Job details, scegli questa entità servizio, poi fai clic su Verifica di nuovo.",
+          "task_runner_run_as_forbidden": "Studio non può ancora usare questa entità servizio, di solito perché l'app non ha Service Principal: User su di essa (passaggio 2b). Aggiungilo e riprova. Oppure apri il job di esecuzione, imposta tu Run as su questa entità servizio, poi fai clic su Verifica di nuovo.",
           "task_runner_principal_not_found": "Studio non ha trovato questa entità servizio. Controlla che sia stata creata in questo workspace, poi sceglila di nuovo.",
           "task_runner_principal_invalid": "Questo non è un ID applicazione. Scegli di nuovo l'entità servizio oppure incolla il suo ID applicazione.",
           "task_runner_principal_is_app": "Questa è l'entità servizio dell'app DQX Studio. Scegline un'altra.",
-          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio di questo job viene scelta all'installazione e non può essere modificata qui. Chiedi a chi ha installato Studio di impostare dqx_service_principal_application_id nelle impostazioni del bundle con l'ID applicazione di un'entità servizio (non quella dell'app) e di eseguire di nuovo il deployment di Studio. Poi fai clic su Verifica di nuovo.",
+          "task_runner_managed_by_deployment": "Studio è stato installato con un bundle di deployment, quindi l'entità servizio del job viene scelta all'installazione. Imposta dqx_service_principal_application_id nel bundle sull'Application ID di un'entità servizio dedicata, esegui di nuovo il deployment, poi fai clic su Verifica di nuovo.",
           "task_runner_job_unavailable": "Il job di esecuzione di Studio non è ancora pronto. Fai clic su Verifica di nuovo, poi riprova.",
           "default": "Studio non è riuscito ad aggiornare il suo job di esecuzione. Riprova, oppure apri il job e imposta tu stesso la sua impostazione Run as su questa entità servizio, poi fai clic su Verifica di nuovo."
         }

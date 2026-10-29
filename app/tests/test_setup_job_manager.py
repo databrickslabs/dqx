@@ -251,19 +251,18 @@ _RUN_AS_CODES = (
         (
             None,
             "task_runner_run_as_missing",
-            "Studio's background job needs its own service principal, separate from the app's. "
-            "Follow the three steps below.",
+            "The task-runner job needs its own service principal, separate from the app's.",
         ),
         (
             JobRunAs(service_principal_name=APP_APPLICATION_ID),
             "task_runner_run_as_matches_app",
-            "Studio's background job is currently using the app's own service principal instead of a dedicated "
-            "task runner service principal. Follow the steps below to create one.",
+            "The task-runner job is currently using the app's own service principal instead of a dedicated service "
+            "principal. Follow the steps below to create one.",
         ),
         (
             JobRunAs(user_name="runner@example.com"),
             "task_runner_run_as_not_service_principal",
-            "Studio's background job runs as a person, so it would stop working if they left. "
+            "The task-runner job runs as a person, so it would stop working if they left. "
             "It needs a service principal. Follow the three steps below.",
         ),
     ],

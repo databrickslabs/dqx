@@ -30,6 +30,7 @@ from databricks_labs_dqx_app.backend.setup.checks import RunnerGrants
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
+    SetupReport,
     SetupState,
     SetupStep,
     SetupStepId,
@@ -374,9 +375,10 @@ def _harness(
     overrides: SetupOverrides | None = None,
     ai: FakeAi | None = None,
     app_sp_id: str = "app-service-principal",
+    runtime: SetupRuntime | None = None,
 ) -> Harness:
     events = [] if events is None else events
-    runtime = SetupRuntime()
+    runtime = runtime or SetupRuntime()
     bound = FakeBound(events, results=dict(bound_results or {}))
 
     async def default_publish() -> list[str]:
@@ -1267,6 +1269,76 @@ async def test_complete_resources_activate_without_wizard() -> None:
     assert report.current_step is None
     assert harness.runtime.report() is report
     assert harness.runtime.require_job_id() == 27
+
+
+class RecordingRuntime(SetupRuntime):
+    """Keeps every published report, so a test can follow setup's progress."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.published: list[SetupReport] = []
+
+    def publish(self, report: SetupReport) -> None:
+        self.published.append(report)
+        super().publish(report)
+
+
+@pytest.mark.asyncio
+async def test_progress_names_the_step_that_runs_next_not_a_finished_one() -> None:
+    """The task runner is checked twice; progress must follow the real run order.
+
+    Before, the next step came from the step enum, so once the runner's access check passed
+    the already finished wheels step was shown in progress again.
+    """
+    runtime = RecordingRuntime()
+    harness = _harness(runtime=runtime)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    in_progress = [
+        published.current_step for published in runtime.published if published.state == SetupState.INITIALIZING
+    ]
+    assert in_progress[:13] == [
+        SetupStepId.LAKEBASE,
+        SetupStepId.LAKEBASE,
+        SetupStepId.LAKEBASE,
+        SetupStepId.CONFIGURATION,
+        SetupStepId.UNITY_CATALOG,
+        SetupStepId.STORAGE,
+        SetupStepId.WAREHOUSE,
+        SetupStepId.TASK_RUNNER,
+        SetupStepId.WHEELS,
+        SetupStepId.MIGRATIONS,
+        SetupStepId.TASK_RUNNER,
+        SetupStepId.ACTIVATION,
+        SetupStepId.ACCESS,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ai_enabled", "expected_tail"),
+    [
+        (False, [SetupStepId.APP_SHARING, None]),
+        (True, [SetupStepId.AI, SetupStepId.APP_SHARING, None]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_progress_skips_the_ai_step_when_ai_is_off(
+    ai_enabled: bool, expected_tail: list[SetupStepId | None]
+) -> None:
+    """With AI off its check never runs, so progress must not name it while app sharing runs."""
+    runtime = RecordingRuntime()
+    events: list[str] = []
+    harness = _harness(events, runtime=runtime, ai=FakeAi(events) if ai_enabled else None)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    in_progress = [
+        published.current_step for published in runtime.published if published.state == SetupState.INITIALIZING
+    ]
+    assert in_progress[13:] == expected_tail
 
 
 @pytest.mark.asyncio

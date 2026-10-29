@@ -356,6 +356,13 @@ describe("SetupGate", () => {
     ).toBe(true);
   });
 
+  test("lets anyone on the setup screens pick the language", () => {
+    const html = renderSetup(<SetupShell>{null}</SetupShell>);
+
+    expect(html).toContain(`aria-label="${en.language.label}"`);
+    expect(html).toContain("English");
+  });
+
   test("provides the configured theme context to the setup shell", () => {
     const writes: [string, string][] = [];
     Object.defineProperty(globalThis, "localStorage", {
