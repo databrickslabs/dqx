@@ -73,7 +73,9 @@ RESET_CONFIRMATION_PHRASE = "reset dqx studio"
 #  - ``dq_role_mappings``: admin role mappings are preserved so the acting
 #    admin is never locked out.
 #  - ``dq_app_settings``: the in-flight reset/demo job-status rows are preserved
-#    so the ``running`` status survives its own wipe (see below).
+#    so the ``running`` status survives its own wipe (see below), and setup's
+#    keys (storage choices and lock, task-runner job, overrides) are preserved so
+#    the next restart doesn't send the administrator back to the setup form.
 _ROLE_MAPPINGS_TABLE = "dq_role_mappings"
 _APP_SETTINGS_TABLE = "dq_app_settings"
 
@@ -87,9 +89,11 @@ _SETTINGS_KEY_COLUMN = "setting_key"
 # the ``running`` status the route wrote just before launching lives there — so
 # an unconditional clear would delete the very row the 409 guard, the UI poll,
 # and the terminal succeeded/failed write all depend on. We preserve only these
-# in-flight status keys (imported from their owning modules, never hardcoded);
-# every other setting is still cleared and re-seeded, so this keeps ZERO
-# long-term reset history — it only keeps the live status alive mid-operation.
+# in-flight status keys (imported from their owning modules, never hardcoded),
+# so this keeps ZERO long-term reset history — it only keeps the live status
+# alive mid-operation. Setup's keys are spared separately by prefix (see
+# ``_clear_app_settings_preserving_status``); every other setting is cleared and
+# re-seeded.
 _PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY)
 
 
@@ -231,8 +235,10 @@ class DatabaseResetService:
                 "Cleared all DQX Studio-managed data, then re-provisioned the fresh-install "
                 "defaults (run review statuses and reserved dimension/severity label "
                 "definitions) so the app is back to a clean first-install state. Preserved: "
-                "the schema itself, the dq_migrations version tracker, and admin role mappings "
-                "(so admins keep access). Customer/monitored data tables are never touched."
+                "the schema itself, the dq_migrations version tracker, admin role mappings "
+                "(so admins keep access), and setup state (storage choices and lock, task-runner "
+                "job and setup overrides, so setup doesn't run again). Customer/monitored data "
+                "tables are never touched."
             ),
         )
 

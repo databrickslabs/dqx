@@ -3296,7 +3296,7 @@
         "errors": {
           "task_runner_principal_invalid": "Eso no es un ID de aplicación. Elige de nuevo la entidad de servicio o pega su ID de aplicación.",
           "task_runner_principal_is_app": "Esa es la entidad de servicio propia de la aplicación DQX Studio. Elige otra.",
-          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Verificar de nuevo.",
+          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Comprobar de nuevo.",
           "task_runner_job_unavailable": "El job de ejecución de Studio aún no está listo. Haz clic en Comprobar de nuevo y vuelve a intentarlo.",
           "default": "Studio no pudo comprobar esta entidad de servicio. Inténtalo de nuevo en un minuto."
         }
@@ -3307,11 +3307,11 @@
         "confirmFirst": "Confirma primero el acceso.",
         "grantsStillMissing": "Todavía falta parte del acceso a los datos. Puedes continuar de todos modos, y la configuración mostrará después lo que falte.",
         "errors": {
-          "task_runner_run_as_forbidden": "Studio todavía no puede usar esta entidad de servicio, normalmente porque la aplicación no tiene Service Principal: User en ella (paso 2b). Añádelo e inténtalo de nuevo. O abre el job de ejecución, cambia tú mismo Run as a esta entidad de servicio y haz clic en Verificar de nuevo.",
+          "task_runner_run_as_forbidden": "Studio todavía no puede usar esta entidad de servicio, normalmente porque la aplicación no tiene Service Principal: User en ella (paso 2b). Añádelo e inténtalo de nuevo. O abre el job de ejecución, cambia tú mismo Run as a esta entidad de servicio y haz clic en Comprobar de nuevo.",
           "task_runner_principal_not_found": "Studio no encontró esa entidad de servicio. Comprueba que se creó en este espacio de trabajo y vuelve a elegirla.",
           "task_runner_principal_invalid": "Eso no es un ID de aplicación. Elige de nuevo la entidad de servicio o pega su ID de aplicación.",
           "task_runner_principal_is_app": "Esa es la entidad de servicio propia de la aplicación DQX Studio. Elige otra.",
-          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Verificar de nuevo.",
+          "task_runner_managed_by_deployment": "Studio se instaló con un bundle de despliegue, así que la entidad de servicio del job se define en la instalación. Configura dqx_service_principal_application_id en el bundle con el Application ID de una entidad de servicio dedicada, vuelve a desplegar y haz clic en Comprobar de nuevo.",
           "task_runner_job_unavailable": "El job de ejecución de Studio aún no está listo. Haz clic en Comprobar de nuevo y vuelve a intentarlo.",
           "default": "Studio no pudo actualizar su job de ejecución. Inténtalo de nuevo, o abre el job y cambia tú mismo su ajuste Run as a esta entidad de servicio; luego haz clic en Comprobar de nuevo."
         }

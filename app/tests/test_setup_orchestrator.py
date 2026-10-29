@@ -1316,6 +1316,31 @@ async def test_progress_names_the_step_that_runs_next_not_a_finished_one() -> No
     ]
 
 
+@pytest.mark.parametrize(
+    ("ai_enabled", "expected_tail"),
+    [
+        (False, [SetupStepId.APP_SHARING, None]),
+        (True, [SetupStepId.AI, SetupStepId.APP_SHARING, None]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_progress_skips_the_ai_step_when_ai_is_off(
+    ai_enabled: bool, expected_tail: list[SetupStepId | None]
+) -> None:
+    """With AI off its check never runs, so progress must not name it while app sharing runs."""
+    runtime = RecordingRuntime()
+    events: list[str] = []
+    harness = _harness(events, runtime=runtime, ai=FakeAi(events) if ai_enabled else None)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    in_progress = [
+        published.current_step for published in runtime.published if published.state == SetupState.INITIALIZING
+    ]
+    assert in_progress[13:] == expected_tail
+
+
 @pytest.mark.asyncio
 async def test_background_services_start_only_after_ready_is_published() -> None:
     harness = _harness()

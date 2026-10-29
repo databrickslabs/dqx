@@ -14,8 +14,18 @@ import { SetupShell } from "@/components/setup/SetupWizard";
 import { useDemoContentStatus, useDeployDemoContent } from "@/lib/api";
 
 /** What the demo step shows, from the seed's status and this screen's deploy request. */
-export type DemoOffer = "available" | "deploying" | "started" | "running" | "deployed";
+export type DemoOffer =
+  | "unknown"
+  | "available"
+  | "deploying"
+  | "started"
+  | "running"
+  | "deployed";
 
+/**
+ * *seedState* is *undefined* until the status has loaded successfully. The backend only
+ * blocks a deploy that's still running, so Deploy is never offered without a known status.
+ */
 export function demoOffer(
   seedState: string | undefined,
   isDeploying: boolean,
@@ -23,6 +33,7 @@ export function demoOffer(
 ): DemoOffer {
   if (started) return "started";
   if (isDeploying) return "deploying";
+  if (seedState === undefined) return "unknown";
   if (seedState === "running") return "running";
   if (seedState === "succeeded") return "deployed";
   return "available";
@@ -119,7 +130,7 @@ export function SetupCompleteView({
 /** Shown once to the administrator who just finished setup. */
 export function SetupComplete({ onContinue }: { onContinue: () => void }) {
   const { t } = useTranslation();
-  // Admin-only; a caller without the Studio admin role just gets the default offer.
+  // Admin-only; a caller without the Studio admin role never sees Deploy.
   const status = useDemoContentStatus({ query: { retry: false } });
   const deploy = useDeployDemoContent();
   const detail = (deploy.error as AxiosError<{ detail?: string }> | null)
@@ -128,7 +139,7 @@ export function SetupComplete({ onContinue }: { onContinue: () => void }) {
   return (
     <SetupCompleteView
       offer={demoOffer(
-        status.data?.data.state,
+        status.isSuccess ? status.data.data.state : undefined,
         deploy.isPending,
         deploy.isSuccess,
       )}

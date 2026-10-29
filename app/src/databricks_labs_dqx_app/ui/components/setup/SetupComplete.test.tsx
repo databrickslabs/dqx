@@ -41,12 +41,16 @@ function render(props: Partial<SetupCompleteViewProps> = {}): string {
 
 describe("demoOffer", () => {
   test("offers the demo unless it is deploying, running or already deployed", () => {
-    expect(demoOffer(undefined, false, false)).toBe("available");
     expect(demoOffer("idle", false, false)).toBe("available");
     expect(demoOffer("failed", false, false)).toBe("available");
     expect(demoOffer("idle", true, false)).toBe("deploying");
     expect(demoOffer("running", false, false)).toBe("running");
     expect(demoOffer("succeeded", false, false)).toBe("deployed");
+  });
+
+  test("does not offer the demo until its status has loaded", () => {
+    // A slow or failed status call must not start a second seed over an existing demo.
+    expect(demoOffer(undefined, false, false)).toBe("unknown");
   });
 
   test("a deploy started from this screen wins over a stale status", () => {
@@ -70,6 +74,14 @@ describe("SetupCompleteView", () => {
     expect(html).toContain(copy.demo.started);
     expect(html).not.toContain(copy.demo.deploy);
     expect(html).toContain(copy.continue);
+  });
+
+  test("does not offer deploying while the demo's status is unknown", () => {
+    const html = render({ offer: "unknown" });
+
+    expect(html).not.toContain(copy.demo.deploy);
+    expect(html).toContain(copy.continue);
+    expect(html).not.toContain(copy.skip);
   });
 
   test("does not offer the demo again when it is already deployed", () => {

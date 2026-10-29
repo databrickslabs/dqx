@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AxiosError, AxiosResponse } from "axios";
 import {
   configureSetup,
@@ -179,18 +179,19 @@ export function SetupGate({ children }: SetupGateProps) {
       staleTime: 5 * 60_000,
     },
   });
+  const view = setupStatus.data
+    ? setupView(setupStatus.data.data, acknowledged, editingConfiguration)
+    : undefined;
+  useEffect(() => {
+    if (view?.kind === "wizard") setWorkedThroughSetup(true);
+  }, [view?.kind]);
+
   // While readiness is being checked, show the same "Loading DQX Studio" spinner
   // AuthGuard uses, so the check reads as one continuous load — no flash of the
   // "Checking Studio readiness" card, and no blank/black screen.
   if (setupStatus.isPending) return <StudioLoadingScreen />;
-  if (!setupStatus.data) return <SetupStatusUnavailable />;
+  if (!view) return <SetupStatusUnavailable />;
 
-  const view = setupView(
-    setupStatus.data.data,
-    acknowledged,
-    editingConfiguration,
-  );
-  if (view.kind === "wizard" && !workedThroughSetup) setWorkedThroughSetup(true);
   if (offersSetupCompletion(view, workedThroughSetup, completionDismissed)) {
     return <SetupComplete onContinue={() => setCompletionDismissed(true)} />;
   }

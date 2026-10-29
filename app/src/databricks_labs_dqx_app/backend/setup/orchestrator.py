@@ -75,6 +75,8 @@ _RUN_SEQUENCE = (
     SetupStepId.AI,
     SetupStepId.APP_SHARING,
 )
+# The AI check only runs when AI is configured, so progress must not name it otherwise.
+_RUN_SEQUENCE_WITHOUT_AI = tuple(step_id for step_id in _RUN_SEQUENCE if step_id != SetupStepId.AI)
 _BLOCKING_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.FAILED})
 _OVERRIDE_STATES = frozenset({StepState.ACTION_REQUIRED, StepState.WARNING})
 _CONFIGURED_SUMMARY = "Studio's catalog, storage prefix and default user group are set."
@@ -687,10 +689,11 @@ class SetupOrchestrator:
     ) -> SetupReport:
         steps: list[SetupStep] = []
         position = 0
+        sequence = _RUN_SEQUENCE
 
         def advance(step: SetupStep) -> SetupReport | None:
             nonlocal position
-            position, upcoming = _upcoming_step(position, step.id)
+            position, upcoming = _upcoming_step(sequence, position, step.id)
             return self._record(steps, step, progress=progress, upcoming=upcoming)
 
         async def advance_bound(step: SetupStep) -> SetupReport | None:
@@ -708,9 +711,12 @@ class SetupOrchestrator:
             return stopped
 
         resolved, step = await self._resolve_configuration()
+        bound = self.bound
+        if bound is not None and bound.ai is None:
+            # AI comes after this point in the sequence, so dropping it keeps *position* valid.
+            sequence = _RUN_SEQUENCE_WITHOUT_AI
         if stopped := advance(step):
             return stopped
-        bound = self.bound
         if resolved is None or bound is None:
             raise RuntimeError("Unreachable setup configuration state")
         if reader_sql is None and reader_sql_factory is not None:
@@ -1059,19 +1065,21 @@ class SetupOrchestrator:
         return None
 
 
-def _upcoming_step(position: int, step_id: SetupStepId) -> tuple[int, SetupStepId | None]:
-    """Advance past *step_id*'s next occurrence in the run sequence, from *position* on.
+def _upcoming_step(
+    sequence: tuple[SetupStepId, ...], position: int, step_id: SetupStepId
+) -> tuple[int, SetupStepId | None]:
+    """Advance past *step_id*'s next occurrence in *sequence*, from *position* on.
 
     Returns:
         The new position and the step that runs next, or *None* after the last step. A
         step missing from the rest of the sequence leaves the position unchanged.
     """
     try:
-        index = _RUN_SEQUENCE.index(step_id, position)
+        index = sequence.index(step_id, position)
     except ValueError:
-        return position, (_RUN_SEQUENCE[position] if position < len(_RUN_SEQUENCE) else None)
+        return position, (sequence[position] if position < len(sequence) else None)
     position = index + 1
-    return position, (_RUN_SEQUENCE[position] if position < len(_RUN_SEQUENCE) else None)
+    return position, (sequence[position] if position < len(sequence) else None)
 
 
 def _diagnostic(error: Exception) -> str:

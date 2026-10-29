@@ -466,6 +466,7 @@ class TestAudit:
         assert result.performed_by == "admin@x.com"
         assert result.performed_at  # ISO-8601 timestamp string
         assert "admin role mappings" in result.preserved_note.lower()
+        assert "setup state" in result.preserved_note.lower()
 
 
 @pytest.mark.parametrize("name", ALL_APP_TABLE_NAMES)
