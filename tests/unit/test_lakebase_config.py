@@ -321,3 +321,40 @@ def test_replace_reruns_validation():
 
     with pytest.raises(InvalidConfigError, match="Invalid mode 'BOGUS'. Must be 'append' or 'overwrite'."):
         config.replace(mode="BOGUS")
+
+
+_ENDPOINT = "projects/dqx-studio-db/branches/production/endpoints/primary"
+
+
+def test_lakebase_config_accepts_autoscaling_endpoint():
+    """A Lakebase Autoscaling endpoint can be used instead of a database instance name."""
+    config = LakebaseChecksStorageConfig(location="databricks_postgres.dqx_studio.dq_rules_core", endpoint=_ENDPOINT)
+
+    assert config.endpoint == _ENDPOINT
+    assert config.instance_name is None
+    assert config.database_name == "databricks_postgres"
+
+
+def test_lakebase_config_rejects_both_instance_name_and_endpoint():
+    with pytest.raises(InvalidParameterError, match="Specify either 'instance_name' or 'endpoint', not both."):
+        LakebaseChecksStorageConfig(location="db.schema.table", instance_name="instance", endpoint=_ENDPOINT)
+
+
+def test_lakebase_config_requires_instance_name_or_endpoint():
+    with pytest.raises(InvalidParameterError, match="Set 'instance_name' for a Lakebase database instance"):
+        LakebaseChecksStorageConfig(location="db.schema.table")
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "primary",
+        "projects/dqx-studio-db",
+        "projects/dqx-studio-db/branches/production",
+        "projects/dqx-studio-db/branches/production/endpoints/",
+        "projects/dqx-studio-db/branches/production/endpoints/primary/extra",
+    ],
+)
+def test_lakebase_config_rejects_invalid_endpoint(endpoint):
+    with pytest.raises(InvalidConfigError, match="Invalid Lakebase endpoint"):
+        LakebaseChecksStorageConfig(location="db.schema.table", endpoint=endpoint)

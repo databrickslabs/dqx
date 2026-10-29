@@ -37,7 +37,7 @@ classifiers = [
 # also update fallback dependencies in workflow installer when changing dependencies!
 dependencies = [
     "databricks-labs-blueprint>=0.9.1,<=0.12",
-    "databricks-sdk~=0.73",
+    "databricks-sdk~=0.89",
     "sqlalchemy>=2.0,<2.1",
     "PyYAML~=6.0.3",
     "pydantic>=2.8.2,<3",
@@ -151,8 +151,8 @@ test = [
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
     "fastapi>=0.119.0,<1.0",
-    "dbt-core~=1.11.6",
-    "dbt-databricks~=1.11.6",
+    "dbt-core~=1.12.0",
+    "dbt-databricks~=1.12.4",
     "pycountry~=26.2.16",
 ]
 docs = [
