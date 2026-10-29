@@ -632,7 +632,8 @@ def _engine_returning_dbr_version(version_str, pipelines_id=None):
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec(SparkSession)
     spark.conf = Mock()
-    spark.conf.get.return_value = pipelines_id  # None => not a pipeline; a value => inside a pipeline
+    spark.conf.get.side_effect = lambda key, *a: pipelines_id if key == "pipelines.id" else None
+    # None => not a pipeline; a value => inside a pipeline
     row = Mock()
     row.__getitem__ = Mock(return_value=version_str)
     spark.sql.return_value.collect.return_value = [row]
@@ -710,6 +711,16 @@ def test_apply_checks_parses_dlt_prefixed_dbr_version_in_pipeline(dbr_version, r
         match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
     ):
         engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
+
+
+@pytest.mark.parametrize(
+    "dbr_version",
+    ["dlt:18.3.8-delta-pipelines-photon-dlt-release-dp-20261015-rc0", "dlt:17.1.0-delta-pipelines-photon"],
+)
+def test_validate_dbr_version_accepts_dlt_prefixed_version_meeting_requirement_in_pipeline(dbr_version):
+    # A "dlt:" prefixed runtime that meets the requirement must pass validation inside a pipeline.
+    engine = _engine_returning_dbr_version(dbr_version, pipelines_id="pipeline-123")
+    engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
 
 
 @pytest.mark.parametrize("dbr_version", ["dlt:18.3.8-delta-pipelines-photon", "other:18.3"])
