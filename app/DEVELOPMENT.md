@@ -30,6 +30,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
 | `make app-regen-api` | Regenerate `ui/lib/api.ts` after backend model changes (no full wheel rebuild) |
 | `make app-test` | Backend pytest suite |
+| `make app-e2e PROFILE=<profile>` | Playwright smoke tests against a running Studio deployment (see [Pre-release smoke tests](#pre-release-smoke-tests)) |
 | `make fmt` | Format Python (run from root before committing) |
 | `make test` | Library unit tests |
 | `make integration` | Integration tests (requires live workspace) |
@@ -47,6 +48,23 @@ git push origin studio-v0.1.0
 ```
 
 The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, then creates and verifies the annotated signed tag on that generated commit. Consequently, the Marketplace source path `app/marketplace/` exists at the tagged revision. The command never pushes. The Studio package/tag version and the published DQX Core pin are separate: the requested tag must match `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the two explicit push commands. Normal DAB builds continue to use `.build/`.
+
+### Pre-release smoke tests
+
+Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the browser smoke suite against it.
+
+> **The suite must point at a real, fully set-up DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A deployment that is still on the setup screen fails every test that needs Studio to be ready, and the failure lists the pending setup steps. Deploy, open the app once, and finish every setup step (catalog, prefix, user group, task runner) before running it.
+
+```bash
+make app-install                      # once, installs @playwright/test
+make app-e2e PROFILE=<profile>        # app name defaults to dqx-studio; override with APP=<name>
+```
+
+The suite lives in `app/e2e/`. It looks up the app URL with `databricks apps get` and authenticates with an OAuth token from `databricks auth token`. The profile must use OAuth (`databricks auth login`), because the Apps proxy does not accept personal access tokens. The token is sent only to the app's own origin. The suite is read-only: it checks backend health, that the deployed version matches `app/pyproject.toml`, that setup is complete, that your identity and role resolve, and that every sidebar page renders without uncaught errors or 5xx API responses.
+
+- `BASE_URL=http://localhost:9001` runs it against `make app-start-dev` instead (no token needed).
+- `ARGS="--headed"` watches the browser; `ARGS="-g sidebar"` runs a subset.
+- Failure screenshots and the HTML report go to `app/e2e/test-results/` and `app/e2e/playwright-report/` (git-ignored). Traces are off by default because they record request headers, including the token. If you enable them with `ARGS="--trace on"`, delete `test-results/` afterwards.
 
 ## 1. Configure Authentication
 
