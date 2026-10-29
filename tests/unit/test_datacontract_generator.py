@@ -3295,7 +3295,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     "name": "event",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": ["%Y"]},
+                    "logicalTypeOptions": {"format": ["%"]},
                 }
             ]
         )
