@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .. import __version__
 from .common.branding import MAX_LOGO_BASE64_LENGTH
 from .config import AI_SAMPLE_ROW_LIMIT
+from .sql_utils import validate_row_scope
 from .registry_models import AuthorKind as RegistryAuthorKind
 from .registry_models import Polarity as RegistryPolarity
 from .registry_models import RegistryRule as RegistryRuleDomain
@@ -1650,6 +1651,55 @@ class BatchProfileRunOut(BaseModel):
 class BatchRunFromCatalogIn(BaseModel):
     table_fqns: list[str] = Field(description="Approved table FQNs whose rules should be executed")
     sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample per table")
+    sample_interval_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Optional lookback window in minutes. When set, each table's sample is restricted to rows "
+            "within the window and ordered by the most recently detected timestamp/date column, most "
+            "recent first (or, with sample_size unset/0, every row within the window — no row limit). "
+            "Mirrors the same setting on a schedule's Row Scope config, forwarded here so 'Run Now' "
+            "behaves the same as the real scheduled trigger would."
+        ),
+    )
+    sample_interval_timezone: str | None = Field(
+        default=None,
+        description=(
+            "IANA timezone name (e.g. 'America/New_York'). When sample_interval_minutes is also set "
+            "and the detected time column has no timezone info (a naive timestamp or a string column), "
+            "its values are interpreted as wall-clock time in this zone before comparing against the "
+            "current UTC instant. Defaults to UTC (no reinterpretation) when unset."
+        ),
+    )
+    sample_interval_columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional candidate time-column names, checked in order, overriding the task runner's "
+            "default priority list. Mirrors the same setting on a schedule's Row Scope config, "
+            "forwarded here so 'Run Now' behaves the same as the real scheduled trigger would."
+        ),
+    )
+    sample_interval_selected_column: str | None = Field(
+        default=None,
+        description=(
+            "Optional explicit column pin. When set and present on a table, this column is used "
+            "directly instead of walking sample_interval_columns. Mirrors the same setting on a "
+            "schedule's Row Scope config."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _valid_row_scope(self) -> "BatchRunFromCatalogIn":
+        # The same rules a schedule's Row Scope is saved with.
+        validate_row_scope(
+            {
+                "sample_interval_minutes": self.sample_interval_minutes,
+                "sample_interval_timezone": self.sample_interval_timezone,
+                "sample_interval_columns": self.sample_interval_columns,
+                "sample_interval_selected_column": self.sample_interval_selected_column,
+            }
+        )
+        return self
 
 
 class BatchRunFromCatalogOut(BaseModel):
@@ -2665,6 +2715,12 @@ class ScheduleConfigIn(BaseModel):
         pattern=r"^[a-zA-Z0-9_\-]{1,64}$",
     )
     config: dict[str, Any] = Field(description="Schedule configuration (frequency, scope, sample_size, etc.)")
+
+    @field_validator("config")
+    @classmethod
+    def _valid_row_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
+        validate_row_scope(value)
+        return value
 
 
 class ScheduleConfigHistoryOut(BaseModel):
