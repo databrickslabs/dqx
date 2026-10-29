@@ -165,8 +165,17 @@ def _validate_run_id(run_id: str) -> str:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _is_geospatial_value(o: Any) -> bool:
+    """Whether *o* is a Spark GEOMETRY / GEOGRAPHY value (*pyspark.sql.types.Geometry* / *Geography*).
+
+    Matched by shape (WKB bytes plus SRID) rather than by class, because not every PySpark build used by
+    the runner exposes those classes.
+    """
+    return callable(getattr(o, "getBytes", None)) and callable(getattr(o, "getSrid", None))
+
+
 class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles datetime objects."""
+    """Custom JSON encoder that handles datetime, decimal and geospatial values."""
 
     def default(self, o: Any) -> Any:
         if isinstance(o, datetime):
@@ -175,6 +184,10 @@ class DateTimeEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, Decimal):
             return float(o)
+        if _is_geospatial_value(o):
+            # Native GEOMETRY / GEOGRAPHY values collected from Spark. Serialise as hex-encoded WKB,
+            # the same text form Postgres/PostGIS uses, so sample rows of geospatial tables stay readable.
+            return o.getBytes().hex().upper()
         return super().default(o)
 
 
