@@ -3287,6 +3287,32 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_non_string_format_is_not_treated_as_strftime(self, generator, caplog):
+        """Test that a non-string format is not treated as strftime."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "event",
+                    "physicalType": "DATE",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"format": ["%Y"]},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger=contract_rules_generator_module.__name__):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
+
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert not [message for message in caplog.messages if "is a Python strftime pattern" in message]
+        finally:
+            os.unlink(temp_path)
+
     def test_contract_with_empty_schema_list(self, generator):
         """Test handling of contract with empty schema list."""
         contract_dict = {
