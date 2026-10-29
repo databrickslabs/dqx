@@ -235,6 +235,14 @@ def _validate_artifact(root: Path, dqx_version: str) -> None:
         registry = source.get("registry")
         if isinstance(registry, str) and registry not in ALLOWED_PACKAGE_REGISTRIES:
             raise RuntimeError("Marketplace lock contains a non-public package registry")
+    locked_dqx = {
+        package.get("version")
+        for package in lock.get("package", [])
+        if isinstance(package, dict) and package.get("name") == "databricks-labs-dqx"
+    }
+    if locked_dqx != {dqx_version}:
+        # The app installs the lock while the task runner installs the pin, so they must agree.
+        raise RuntimeError("Marketplace lock does not resolve the release DQX version")
     locked_names = {package.get("name") for package in lock.get("package", []) if isinstance(package, dict)}
     if not DEVELOPMENT_PACKAGES.isdisjoint(locked_names):
         raise RuntimeError("Marketplace lock contains development dependencies")

@@ -124,6 +124,25 @@ def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifa
     assert registry_sources == {"https://pypi.org/simple"}
 
 
+def test_marketplace_template_lock_pins_the_release_dqx_version() -> None:
+    """The release pins *dqx_version* from the bundle; the copied lock must resolve that same DQX.
+
+    *dqx_version* follows DQX Core releases (docs/dqx/sync_versions.py), but the template lock is
+    refreshed by hand. A lagging lock makes the app and task runner install different DQX versions,
+    so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
+    """
+    template = tomllib.loads((APP_DIR / "marketplace_templates" / "uv.lock").read_text(encoding="utf-8"))
+    locked = {package["version"] for package in template["package"] if package["name"] == "databricks-labs-dqx"}
+
+    assert locked == {DQX_VERSION}
+
+
+def test_marketplace_build_rejects_a_lock_for_another_dqx_version(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="DQX version"):
+        build(output_dir=tmp_path / "artifact", dqx_version="0.15.0")
+    assert not (tmp_path / "artifact").exists()
+
+
 def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
     """Guard the committed Marketplace lock against silently drifting from the app deps.
 
@@ -197,6 +216,8 @@ def test_app_yaml_has_single_worker_and_resource_bindings() -> None:
     assert len(app_yaml["env"]) == len(env)
     assert not {"DQX_WHEELS_VOLUME", "DQX_CATALOG", "DQX_PREFIX", "DQX_USER_GROUPS"} & env.keys()
     assert app_yaml["command"][-2:] == ["--workers", "1"]
+    # Install exactly the committed lock; never re-resolve at container start.
+    assert app_yaml["command"][:3] == ["uv", "run", "--frozen"]
 
 
 def test_marketplace_build_is_repeatable_and_removes_stale_files(marketplace_artifact: Path) -> None:
@@ -223,7 +244,7 @@ def test_marketplace_build_ignores_parent_uv_configuration(
     monkeypatch.setattr(marketplace_builder, "APP_DIR", app_dir)
     monkeypatch.setattr(marketplace_builder, "MARKETPLACE_DIR", output_dir)
 
-    build(output_dir=output_dir, dqx_version="0.15.0")
+    build(output_dir=output_dir, dqx_version=DQX_VERSION)
 
     lock = tomllib.loads((output_dir / "uv.lock").read_text(encoding="utf-8"))
     assert "options" not in lock

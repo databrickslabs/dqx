@@ -108,16 +108,12 @@ class TestUpdateDqxPins:
         assert "0.16.0-py3-none-any.whl" not in bundle
         assert "databricks-labs-dqx[datacontract]==0.16.0" not in bundle
 
-    def test_bumps_the_dqx_version_default_in_the_app_bundle(self, repo):
-        """The Studio app's dqx_version is the single value the production pin + dev wheel derive from."""
+    def test_leaves_the_app_bundle_dqx_version_untouched(self, repo):
+        """Studio pins its published DQX deliberately, in a Studio release, together with the
+        Marketplace lock, so a DQX Core version bump must not move it."""
+        before = (repo / "app" / "databricks.yml").read_text()
         sync_versions.update_dqx_pins("0.16.0")
-        bundle = (repo / "app" / "databricks.yml").read_text()
-        assert 'default: "0.16.0"' in bundle
-        # Derived forms keep the ${var.dqx_version} placeholder — no literal version leaks in.
-        assert "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl" in bundle
-        assert "databricks-labs-dqx==${var.dqx_version}" in bundle
-        assert bundle.count("0.16.0") == 1
-        assert "0.15.0" not in bundle
+        assert (repo / "app" / "databricks.yml").read_text() == before
 
     def test_leaves_the_unpinned_app_pyproject_untouched(self, repo):
         """The app + task-runner deps are unpinned (resolved from the checkout / job env spec), so

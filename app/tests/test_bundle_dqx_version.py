@@ -4,8 +4,10 @@ The task-runner job installs ``databricks-labs-dqx`` via a single ``dqx_version`
 the production pin and the development wheel filename both DERIVE from it. Two invariants must hold or
 a deploy silently ships the wrong DQX:
 
-* ``dqx_version`` must equal ``src/databricks/labs/dqx/__version__.py`` — docs/dqx/sync_versions.py keeps
-  them in lockstep on ``make fmt``; this test fails if someone bumps ``__version__.py`` without it.
+* ``dqx_version`` is a published DQX release that Studio moves to deliberately, in a Studio release and
+  together with its Marketplace lock (``make fmt`` does not bump it). It can never be ahead of
+  ``src/databricks/labs/dqx/__version__.py``; the Marketplace lock is checked against it in
+  ``test_build_marketplace.py``.
 * production (the default ``dqx_task_dependency``) must stay PINNED to the published registry release
   ``databricks-labs-dqx==${var.dqx_version}`` — only a dev target overrides it to a local wheel.
 
@@ -37,9 +39,13 @@ def _library_version() -> str:
     return match.group("v")
 
 
-def test_dqx_version_tracks_the_library_version() -> None:
-    """dqx_version must match __version__.py — run ``make fmt`` (sync_versions.py) if this fails."""
-    assert _dqx_version_default() == _library_version()
+def _release(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def test_dqx_version_is_not_ahead_of_the_library_version() -> None:
+    """Studio can only pin a DQX release that exists, never one newer than this checkout's DQX."""
+    assert _release(_dqx_version_default()) <= _release(_library_version())
 
 
 def test_production_dqx_dependency_is_pinned_to_the_registry() -> None:

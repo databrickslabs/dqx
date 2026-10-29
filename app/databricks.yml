@@ -50,10 +50,11 @@ variables:
   task_runner_wheel_path:
     description: "Task-runner wheel in the selected app build"
     default: "./.build/tasks/databricks_labs_dqx_task_runner-*.whl"
-  # DQX (databricks-labs-dqx) version — single source of truth for the task-runner
-  # job's dqx dependency, kept in lockstep with src/databricks/labs/dqx/__about__.py
-  # by docs/dqx/sync_versions.py (make fmt). The pin and the wheel filename below
-  # both derive from it, so a bump only edits this one value.
+  # Published DQX (databricks-labs-dqx) version Studio releases against — single source
+  # of truth for the task-runner job's dqx dependency and the Marketplace release pin.
+  # Not synced by make fmt: bump it in a Studio release, together with
+  # marketplace_templates/uv.lock (see DEPLOYMENT.md). The pin and the wheel filename
+  # below both derive from it, so a bump only edits this one value.
   dqx_version:
     default: "0.17.0"
   # Filename uv build produces for databricks-labs-dqx at ${var.dqx_version}. Used by
