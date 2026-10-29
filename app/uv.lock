@@ -3,7 +3,7 @@ revision = 3
 requires-python = "==3.12.*"
 
 [options]
-exclude-newer = "2026-10-21T12:40:45.512313Z"
+exclude-newer = "2026-10-19T09:47:31.17337986Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -503,7 +503,7 @@ requires-dist = [
     { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<=0.12" },
     { name = "databricks-langchain", marker = "extra == 'llm'", specifier = ">=0.1.0,<1.0" },
     { name = "databricks-sdk", specifier = "~=0.73" },
-    { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=1.2.0,<2.0" },
+    { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=0.11.1,<1.0" },
     { name = "dspy", marker = "extra == 'llm'", specifier = "~=3.1.3" },
     { name = "langchain-core", marker = "extra == 'llm'", specifier = ">=0.1.0,<1.0" },
     { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.64.0,<1.97" },
@@ -727,11 +727,10 @@ wheels = [
 
 [[package]]
 name = "datacontract-cli"
-version = "1.2.7"
+version = "0.12.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
-    { name = "click" },
     { name = "datacontract-specification" },
     { name = "deepdiff" },
     { name = "fastjsonschema" },
@@ -740,21 +739,19 @@ dependencies = [
     { name = "jsonschema" },
     { name = "open-data-contract-standard" },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "pytz" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
-    { name = "ruamel-yaml" },
+    { name = "setuptools" },
     { name = "sqlglot" },
-    { name = "truststore" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/46/00fde1c457b8a8557fc8d9b232167e5c1e1d0fd3de59164c2ae7718132d9/datacontract_cli-1.2.7.tar.gz", hash = "sha256:3cc3bab2a5e661656fa8e8b395318b9388ac1b4b569e922eccf3683e36706f79", upload-time = "2026-10-16T19:19:26.787Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/3f/20b452334caaa2a115fe3fcf397176040ec47692b16f2bc5744f207446ca/datacontract_cli-0.12.5.tar.gz", hash = "sha256:d4052cb97f0fde513610a3f3e409521f21c568a313c137a2c630a020e217bf56", upload-time = "2026-05-30T11:34:56.576Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/b5/d391364affeb8d7b2e507dcaf136c2fa88909f83a4650d02a5cec8c16b9f/datacontract_cli-1.2.7-py3-none-any.whl", hash = "sha256:675f4203a21640eb860cf1a9d9f31476497b4bc537685bf0b4ab723d43ba9459", upload-time = "2026-10-16T19:19:24.37Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/24/7db45d483f28beb7c14bad04bc08a0edc1bb50d04d4e27fcc1f8b50bbba1/datacontract_cli-0.12.5-py3-none-any.whl", hash = "sha256:fc6efeead304c358c201a1430c2c4eba4fa7ae75859a193743375daad0411a9a", upload-time = "2026-05-30T11:34:54.869Z" },
 ]
 
 [[package]]
@@ -1849,15 +1846,15 @@ wheels = [
 
 [[package]]
 name = "open-data-contract-standard"
-version = "3.2.0"
+version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/01/5d/11fcaf438c29e66d3f3eb40fa8e10fb53930f6346bce323624e139e0e301/open_data_contract_standard-3.2.0.tar.gz", hash = "sha256:37589b1e98ea519de51366e0efc2e02dbc87e1da68f07fd9385e49ab5df76763", upload-time = "2026-09-02T14:16:17.219Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/8a/81076b5398c08444f50f749a363f43f0f063b05f7de232da7437129ef458/open_data_contract_standard-3.1.2.tar.gz", hash = "sha256:9da18e1e961388bca6110e5a394c85bdf69de3e9966b2acf3f81f0092694d714", upload-time = "2025-12-17T12:43:56.88Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/3a/8b7eacd298d76cc4777c9195f43d744a55bfda84060fd1c33fe8431fe6ea/open_data_contract_standard-3.2.0-py3-none-any.whl", hash = "sha256:a7e05dfc52b94a77b54f81a9033dd7a718133cf37bf66f3eb7d0eefd2fd33d4f", upload-time = "2026-09-02T14:16:15.799Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/9c/ed60cc0d1fcbfe9605abf7449f0301d215d15db8a000f3b2402c04407789/open_data_contract_standard-3.1.2-py3-none-any.whl", hash = "sha256:da801b93af6f18704100387a830388c7d78f8811ce834d84505241f22b882213", upload-time = "2025-12-17T12:43:55.533Z" },
 ]
 
 [[package]]
@@ -2525,15 +2522,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ruamel-yaml"
-version = "0.19.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c7/3b/ebda527b56beb90cb7652cb1c7e4f91f48649fbcd8d2eb2fb6e77cd3329b/ruamel_yaml-0.19.1.tar.gz", hash = "sha256:53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993", upload-time = "2026-01-02T16:50:31.84Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/0c/51f6841f1d84f404f92463fc2b1ba0da357ca1e3db6b7fbda26956c3b82a/ruamel_yaml-0.19.1-py3-none-any.whl", hash = "sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93", upload-time = "2026-01-02T16:50:29.201Z" },
-]
-
-[[package]]
 name = "ruff"
 version = "0.15.15"
 source = { registry = "https://pypi.org/simple" }
@@ -2816,15 +2804,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", upload-time = "2026-02-03T17:35:50.982Z" },
-]
-
-[[package]]
-name = "truststore"
-version = "0.10.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", upload-time = "2026-10-12T22:27:31.808Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", upload-time = "2026-10-12T22:27:30.377Z" },
 ]
 
 [[package]]
