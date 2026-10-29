@@ -58,10 +58,7 @@ import {
   useCurrentUser,
   type RegistryRuleOut,
 } from "@/lib/api";
-import {
-  RegistryRuleDiffDialog,
-  type RegistryDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
+import { RuleChangesDialog, type RuleChangesTarget } from "@/components/changes/RuleChangesDialog";
 import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
 import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
@@ -390,7 +387,7 @@ function RegistryRulesPage() {
 
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RegistryRuleOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<RuleChangesTarget | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
@@ -1275,7 +1272,7 @@ function RegistryRulesPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <RuleChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
     </FadeIn>
   );
 }
