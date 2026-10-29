@@ -755,6 +755,12 @@
     lodash.uniq "^4.5.0"
     openapi3-ts "4.5.0"
 
+"@playwright/test@^1.64.1":
+  version "1.64.1"
+  integrity sha512-IaYGml/nSOiZWROfPtuIL7neuu9qDOZ3TNvNljUIrhDMxiGTgPjzj/g9p9RxpS2tSepPDRY+UwAaEeiKtUvIAg==
+  dependencies:
+    playwright "1.64.1"
+
 "@radix-ui/number@1.1.3":
   version "1.1.3"
   integrity sha512-Road2bidD0uu/1BGDOWNdPI06g0lIRy6IF9GZcIrDK2KGItfor8IQwQa+yM2ERgHM1MmHxaxpTzk0/Jp42lNfA==
@@ -3446,6 +3452,16 @@ picomatch@^2.3.1:
 picomatch@^4.0.3, picomatch@^4.0.4, picomatch@^4.0.7:
   version "4.0.7"
   integrity sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==
+
+playwright-core@1.64.1:
+  version "1.64.1"
+  integrity sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==
+
+playwright@1.64.1:
+  version "1.64.1"
+  integrity sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==
+  dependencies:
+    playwright-core "1.64.1"
 
 pony-cause@^1.1.1:
   version "1.1.1"
