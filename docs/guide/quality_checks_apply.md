@@ -1107,7 +1107,7 @@ def dq_summary_metrics():
 
 ```
 
-This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Summary Metrics: Snapshot vs. history
 
@@ -1160,7 +1160,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
 
 ### Enabling summary metrics in DQX workflows[​](#enabling-summary-metrics-in-dqx-workflows "Direct link to Enabling summary metrics in DQX workflows")
 
@@ -1197,7 +1197,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 
 ```
 
-The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.17.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.17.1/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 
 * `name`: name of the check (string type).
 * `message`: message describing the quality issue (string type).

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.2">
 <title data-rh="true">Actions and Alerting | DQX</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Actions and Alerting | DQX"><meta data-rh="true" name="description" content="DQX actions let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected."><meta data-rh="true" property="og:description" content="DQX actions let you react automatically when observed summary metrics cross a threshold. Actions can be used to notify stakeholders or fail a pipeline when data quality issues are detected."><link data-rh="true" rel="icon" href="/dqx/img/logo.svg"><link data-rh="true" rel="canonical" href="https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts/"><link data-rh="true" rel="alternate" href="https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts/" hreflang="en"><link data-rh="true" rel="alternate" href="https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"DQX Core","item":"https://databrickslabs.github.io/dqx/docs/guide/"},{"@type":"ListItem","position":2,"name":"Actions and Alerting","item":"https://databrickslabs.github.io/dqx/docs/guide/actions_and_alerts"}]}</script><link rel="stylesheet" href="/dqx/assets/css/styles.f1613816.css">
-<script src="/dqx/assets/js/runtime~main.48e51b7f.js" defer="defer"></script>
-<script src="/dqx/assets/js/main.c19102ba.js" defer="defer"></script>
+<script src="/dqx/assets/js/runtime~main.5fe4a50b.js" defer="defer"></script>
+<script src="/dqx/assets/js/main.c98f5508.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -102,7 +102,7 @@ for the run&#x27;s <em>input_location</em> and persists it into a Delta table. I
 alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can
 answer <em>&quot;what feeds this table?&quot;</em> directly from a DQ alert.</p>
 <p>See the end-to-end walkthrough in
-<a href="https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_lineage_action.py" target="_blank" rel="noopener noreferrer" class="">demos/dqx_demo_lineage_action.py</a>
+<a href="https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_lineage_action.py" target="_blank" rel="noopener noreferrer" class="">demos/dqx_demo_lineage_action.py</a>
 for a pipeline that exercises lineage collection with an alert on top.</p>
 <p>The action never fails the pipeline: collection errors are logged and returned as <code>CONFIG_ERROR</code>
 so a stale system-table read never neglects check results.</p>

@@ -452,7 +452,7 @@ audit = DQAction(
 
 `CollectLineageAction` collects the upstream, downstream, and per-failed-column lineage for the run's *input_location* and persists it into a Delta table. It is intended to be paired with alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can answer *"what feeds this table?"* directly from a DQ alert.
 
-See the end-to-end walkthrough in [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_lineage_action.py) for a pipeline that exercises lineage collection with an alert on top.
+See the end-to-end walkthrough in [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_lineage_action.py) for a pipeline that exercises lineage collection with an alert on top.
 
 The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR` so a stale system-table read never neglects check results.
 

@@ -614,7 +614,7 @@ audit = DQAction(
 
 `CollectLineageAction` collects the upstream, downstream, and per-failed-column lineage for the run's *input_location* and persists it into a Delta table. It is intended to be paired with alerting or investigative actions (e.g. an alert that links to the lineage table) so operators can answer *"what feeds this table?"* directly from a DQ alert.
 
-See the end-to-end walkthrough in [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_lineage_action.py) for a pipeline that exercises lineage collection with an alert on top.
+See the end-to-end walkthrough in [demos/dqx_demo_lineage_action.py](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_lineage_action.py) for a pipeline that exercises lineage collection with an alert on top.
 
 The action never fails the pipeline: collection errors are logged and returned as `CONFIG_ERROR` so a stale system-table read never neglects check results.
 
@@ -2463,7 +2463,7 @@ The skill fires when its description matches your request. Use `@` to manually i
 
 See the [Databricks Genie Code Documentation](https://docs.databricks.com/aws/en/genie-code/skills) for more details.
 
-The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.17.0/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
+The DQX repo is a Claude Code plugin marketplace ([`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.17.1/.claude-plugin/marketplace.json) at the repo root) containing the `dqx` plugin under [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills). Add the marketplace once, then install:
 
 ```bash
 # Inside Claude Code
@@ -2541,8 +2541,8 @@ DQX's agent skills are scoped to DQX's public APIs. Follow these guidelines when
 #### Source[​](#source "Direct link to Source")
 
 * Skills: [`skills/`](https://github.com/databrickslabs/dqx/tree/main/skills)
-* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.17.0/skills/.claude-plugin/plugin.json)
-* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.17.0/.claude-plugin/marketplace.json)
+* Plugin manifest (Claude Code / generic): [`skills/.claude-plugin/plugin.json`](https://github.com/databrickslabs/dqx/blob/v0.17.1/skills/.claude-plugin/plugin.json)
+* Marketplace manifest (Claude Code): [`.claude-plugin/marketplace.json`](https://github.com/databrickslabs/dqx/blob/v0.17.1/.claude-plugin/marketplace.json)
 
 
 ---
@@ -6288,7 +6288,7 @@ def dq_summary_metrics():
 
 ```
 
-This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+This works for both batch and streaming pipelines. See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Summary Metrics: Snapshot vs. history
 
@@ -6341,7 +6341,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch_quarantine.py) that splits valid and invalid records into separate tables in the same batch.
 
 ##### Enabling summary metrics in DQX workflows[​](#enabling-summary-metrics-in-dqx-workflows "Direct link to Enabling summary metrics in DQX workflows")
 
@@ -6378,7 +6378,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 
 ```
 
-The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.17.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+The structure of the result columns is an array of struct containing the following fields (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.17.1/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 
 * `name`: name of the check (string type).
 * `message`: message describing the quality issue (string type).
@@ -9314,7 +9314,7 @@ def dq_summary_metrics():
 
 ```
 
-See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Incremental materialized views
 
@@ -9353,7 +9353,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
 
 ###### Using a windowed streaming table (per-window history)[​](#using-a-windowed-streaming-table-per-window-history "Direct link to Using a windowed streaming table (per-window history)")
 
@@ -11158,40 +11158,40 @@ Import the following notebooks in the Databricks workspace to try DQX Core out:
 
 ##### Use as Library[​](#use-as-library "Direct link to Use as Library")
 
-* [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
-* [DQX Intermediate Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_intermediate_demo_library.py) - intermediate-level DQX usage as a library.
-* [DQX Comprehensive Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_library.py) - comprehensive DQX usage as a library.
-* [DQX Demo Notebook for Data Quality Summary Metrics](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_summary_metrics.py) - demonstrates how to generate summary-level data quality metrics when validating data with DQX.
-* [DQX Demo Notebook for Actions and Alerting](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_alerting.py) - demonstrates how to react to data quality problems by firing alerts (driver log, with optional Slack) when summary metrics cross a threshold.
-* [DQX Demo Notebook for Lineage Collection](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_lineage_action.py) - demonstrates how `CollectLineageAction` captures upstream and downstream table lineage across a bronze → silver → gold star schema, alongside a driver-log alert on the injected data-quality failures.
-* [DQX Demo Notebook for Profiling and Applying Checks at Scale on Multiple Tables](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_multi_table_demo.py) - demonstrates how to use DQX as a library at scale to apply checks on multiple tables.
-* [DQX Demo Notebook for Row Anomaly Detection](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_row_anomaly_detection_demo.py) - comprehensive demo showing how to use DQX Row Anomaly Detection to detect unusual patterns in your data.
-* [DQX Demo Notebook for AI-assisted checks generation](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_ai_assisted_checks_generation.py) - demonstrates how to generate DQX rules/checks with LLM using natural language.
-* [DQX Demo Notebook for Data Contract Integration (ODCS)](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_datacontract_odcs.py) - demonstrates how to generate DQX quality rules from ODCS (Open Data Contract Standard) data contracts, including predefined rules from schema constraints, explicit custom rules, and contract metadata tracking.
-* [DQX Demo Notebook for Spark Structured Streaming (Native End-to-End Approach)](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_streaming_demo_native.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, using the built-in end-to-end method to handle both reading and writing.
-* [DQX Demo Notebook for Spark Structured Streaming (DIY Approach)](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_streaming_demo_diy.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, while handling reading and writing on your own outside DQX using Spark API.
-* [DQX Demo Notebook for Lakeflow Pipelines (formerly DLT)](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_ldp_demo.py) - demonstrates how to use DQX in a Lakeflow Pipeline, reporting issues as additional columns and computing data quality summary metrics.
-* [DQX Demo Notebook for Lakeflow Pipelines with Quarantine](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_ldp_demo_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline to split valid and invalid records into valid and quarantine tables and compute summary metrics.
-* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_ldp_demo_foreach_batch.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink, reporting issues as additional columns and computing summary metrics incrementally.
-* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink and Quarantine](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_ldp_demo_foreach_batch_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink to split valid and invalid records into separate tables in the same batch and compute summary metrics incrementally.
-* [DQX usage with Declarative Automation Bundles](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_asset_bundle/README.md) - demonstrates how to use DQX as a library with Declarative Automation Bundles (formerly Databricks Asset Bundles).
-* [DQX usage with dbt](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_dbt/README.md) - demonstrates how to use DQX as a library with dbt projects.
-* [DQX Demo on Primary-Key detection](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_llm_pk_detection.py) - demonstrates how to detect primary keys and generate uniqueness rules.
+* [DQX Quick Start Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_quick_start_demo_library.py) - quickstart DQX usage as a library.
+* [DQX Intermediate Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_intermediate_demo_library.py) - intermediate-level DQX usage as a library.
+* [DQX Comprehensive Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_library.py) - comprehensive DQX usage as a library.
+* [DQX Demo Notebook for Data Quality Summary Metrics](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_summary_metrics.py) - demonstrates how to generate summary-level data quality metrics when validating data with DQX.
+* [DQX Demo Notebook for Actions and Alerting](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_alerting.py) - demonstrates how to react to data quality problems by firing alerts (driver log, with optional Slack) when summary metrics cross a threshold.
+* [DQX Demo Notebook for Lineage Collection](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_lineage_action.py) - demonstrates how `CollectLineageAction` captures upstream and downstream table lineage across a bronze → silver → gold star schema, alongside a driver-log alert on the injected data-quality failures.
+* [DQX Demo Notebook for Profiling and Applying Checks at Scale on Multiple Tables](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_multi_table_demo.py) - demonstrates how to use DQX as a library at scale to apply checks on multiple tables.
+* [DQX Demo Notebook for Row Anomaly Detection](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_row_anomaly_detection_demo.py) - comprehensive demo showing how to use DQX Row Anomaly Detection to detect unusual patterns in your data.
+* [DQX Demo Notebook for AI-assisted checks generation](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_ai_assisted_checks_generation.py) - demonstrates how to generate DQX rules/checks with LLM using natural language.
+* [DQX Demo Notebook for Data Contract Integration (ODCS)](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_datacontract_odcs.py) - demonstrates how to generate DQX quality rules from ODCS (Open Data Contract Standard) data contracts, including predefined rules from schema constraints, explicit custom rules, and contract metadata tracking.
+* [DQX Demo Notebook for Spark Structured Streaming (Native End-to-End Approach)](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_streaming_demo_native.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, using the built-in end-to-end method to handle both reading and writing.
+* [DQX Demo Notebook for Spark Structured Streaming (DIY Approach)](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_streaming_demo_diy.py) - demonstrates how to use DQX as a library with Spark Structured Streaming, while handling reading and writing on your own outside DQX using Spark API.
+* [DQX Demo Notebook for Lakeflow Pipelines (formerly DLT)](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_ldp_demo.py) - demonstrates how to use DQX in a Lakeflow Pipeline, reporting issues as additional columns and computing data quality summary metrics.
+* [DQX Demo Notebook for Lakeflow Pipelines with Quarantine](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_ldp_demo_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline to split valid and invalid records into valid and quarantine tables and compute summary metrics.
+* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_ldp_demo_foreach_batch.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink, reporting issues as additional columns and computing summary metrics incrementally.
+* [DQX Demo Notebook for Lakeflow Pipelines with a foreachBatch sink and Quarantine](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_ldp_demo_foreach_batch_quarantine.py) - demonstrates how to use DQX in a Lakeflow Pipeline foreachBatch sink to split valid and invalid records into separate tables in the same batch and compute summary metrics incrementally.
+* [DQX usage with Declarative Automation Bundles](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_asset_bundle/README.md) - demonstrates how to use DQX as a library with Declarative Automation Bundles (formerly Databricks Asset Bundles).
+* [DQX usage with dbt](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_dbt/README.md) - demonstrates how to use DQX as a library with dbt projects.
+* [DQX Demo on Primary-Key detection](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_llm_pk_detection.py) - demonstrates how to detect primary keys and generate uniqueness rules.
 
 ##### Use as Workspace Tool[​](#use-as-workspace-tool "Direct link to Use as Workspace Tool")
 
-* [DQX Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
+* [DQX Demo Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
 
 ##### Industry Accelerators[​](#industry-accelerators "Direct link to Industry Accelerators")
 
-* [DQX for Banking / FSI Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_industry/dqx_banking_demo.py) - showcases DQX data quality rules tailored for the Banking and Financial Services industry, focusing on fraud detection, transaction structuring, and regulatory compliance.
-* [DQX for Fashion & Retail Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_industry/dqx_fashion_demo.py) - demonstrates DQX rules tailored for the Fashion and Retail industry, including SKU validation, hex color formats, and pricing compliance.
-* [DQX for Manufacturing Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_industry/dqx_manufacturing_demo.py) - demonstrates how to use DQX to check data quality for Manufacturing Industry datasets, specifically for machine maintenance and sensor data.
-* [DQX for Customer 360 Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_industry/dqx_customer_360_demo.py) - demonstrates DQX data quality rules for Customer 360 datasets, including customer identity, email format, revenue, ticket counts, purchase dates, and active customer flag consistency.
+* [DQX for Banking / FSI Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_industry/dqx_banking_demo.py) - showcases DQX data quality rules tailored for the Banking and Financial Services industry, focusing on fraud detection, transaction structuring, and regulatory compliance.
+* [DQX for Fashion & Retail Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_industry/dqx_fashion_demo.py) - demonstrates DQX rules tailored for the Fashion and Retail industry, including SKU validation, hex color formats, and pricing compliance.
+* [DQX for Manufacturing Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_industry/dqx_manufacturing_demo.py) - demonstrates how to use DQX to check data quality for Manufacturing Industry datasets, specifically for machine maintenance and sensor data.
+* [DQX for Customer 360 Industry Accelerator Demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_industry/dqx_customer_360_demo.py) - demonstrates DQX data quality rules for Customer 360 datasets, including customer identity, email format, revenue, ticket counts, purchase dates, and active customer flag consistency.
 
 ##### Use Cases[​](#use-cases "Direct link to Use Cases")
 
-* [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_pii_detection.py) - demonstrates how to use DQX to check data for Personally Identifiable Information (PII).
+* [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_pii_detection.py) - demonstrates how to use DQX to check data for Personally Identifiable Information (PII).
 
 <br />
 
@@ -18066,6 +18066,8 @@ def has_json_keys(column: str | Column,
 ```
 
 Checks whether the values in the input column contain specific keys in the outermost JSON object.
+
+JSON values that are not objects (e.g. arrays, scalars, or JSON nulls) fail with an *"is not a JSON object"* message. Malformed JSON values fail with an *"is not a valid JSON string"* message. SQL NULL values pass; use *is_not_null* separately when the input is required.
 
 **Arguments**:
 
@@ -30174,7 +30176,7 @@ The feature is available for evaluation and early feedback. Its API, behavior, a
 
 #### Beta[​](#beta "Direct link to Beta")
 
-The feature is feature-complete and usable, and is released for broader adoption and feedback ahead of general availability. The API may still change in backward-incompatible ways between releases, and some rough edges may remain. It is suitable for non-critical workloads; if you depend on the current behavior, pin your DQX version and review the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.0/CHANGELOG.md) when upgrading.
+The feature is feature-complete and usable, and is released for broader adoption and feedback ahead of general availability. The API may still change in backward-incompatible ways between releases, and some rough edges may remain. It is suitable for non-critical workloads; if you depend on the current behavior, pin your DQX version and review the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.1/CHANGELOG.md) when upgrading.
 
 #### Generally available (GA)[​](#ga "Direct link to Generally available (GA)")
 
@@ -30182,7 +30184,7 @@ The feature is stable and production-ready, and is covered by DQX's normal [sema
 
 #### Deprecated[​](#deprecated "Direct link to Deprecated")
 
-The feature still works but is slated for removal in a future release. Its documentation points to the recommended replacement — migrate at your earliest convenience. Deprecations and their removal timelines are called out in the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.0/CHANGELOG.md).
+The feature still works but is slated for removal in a future release. Its documentation points to the recommended replacement — migrate at your earliest convenience. Deprecations and their removal timelines are called out in the [changelog](https://github.com/databrickslabs/dqx/blob/v0.17.1/CHANGELOG.md).
 
 
 ---
@@ -30644,7 +30646,7 @@ All DQX rules are evaluated independently and in parallel. If one rule fails, th
 
 When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/dqx/docs/guide/quality_checks_definition.md) for the declarative format and validation section.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.17.0/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.17.1/src/databricks/labs/dqx/check_funcs.py).
 
 Variable Substitution
 
@@ -30678,7 +30680,7 @@ Row-level checks are applied to each row in a PySpark DataFrame. The quality che
 | `is_valid_date`                   | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `is_valid_timestamp`              | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm<!-- -->:ss<!-- -->')                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_json`                   | Checks whether the values in the input column are valid JSON strings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `has_json_keys`                   | Checks whether the values in the input column contain specific keys in the outermost JSON object.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `keys`: A list of JSON keys to verify within the outermost JSON object; `require_all`: optional boolean flag to require all keys to be present                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `has_json_keys`                   | Checks whether the input contains specific keys in the outermost JSON object. JSON values that are not objects (e.g. arrays, scalars, or JSON nulls) fail with an *"is not a JSON object"* message. Malformed JSON values fail with an *"is not a valid JSON string"* message. SQL `NULL` passes. Use `is_not_null` separately when the input is required.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `keys`: A list of JSON keys to verify within the outermost JSON object; `require_all`: optional boolean flag to require all keys to be present                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `has_valid_json_schema`           | Checks whether the values in the specified column, which contain JSON strings, conform to the expected schema. This check allows extra fields and type coercion. Missing keys are treated as null; to fail validation on missing keys, you must explicitly use NOT NULL in the schema definition.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); schema: the schema as a DDL string (e.g., "id INT NOT NULL, name STRING") or `StructType`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `is_not_in_future`                | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `is_not_in_near_future`           | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -35666,7 +35668,7 @@ The built-in check supports several configurable parameters:
 
 Model Installation
 
-DQX automatically installs the built-in entity recognition models at runtime if they are not already available. However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install. Any additional models used in a custom configuration must also be installed on your Databricks cluster. See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+DQX automatically installs the built-in entity recognition models at runtime if they are not already available. However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install. Any additional models used in a custom configuration must also be installed on your Databricks cluster. See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 
 ###### Using Built-in NLP Engine Configurations[​](#using-built-in-nlp-engine-configurations "Direct link to Using Built-in NLP Engine Configurations")
 
@@ -37120,7 +37122,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.17.0/pyproject.toml)). On MacOSX, run:
+To start with, install the required python version on your computer (see `requires-python` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.17.1/pyproject.toml)). On MacOSX, run:
 
 ```text
 # double check the required version in pyproject.toml
@@ -37647,7 +37649,7 @@ The following skills are provided to cover the main capabilities of DQX:
 * Keep each `SKILL.md` file short. The full file is loaded into context when a skill fires.
 * Link to existing documentation instead of duplicating content. The skill's job is to tell the assistant when and how to use an API.
 * Limit skills to use only public methods and APIs of DQX.
-* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.17.0/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
+* Update the [documentation](https://github.com/databrickslabs/dqx/blob/v0.17.1/docs/dqx/docs/guide/ai_tools_skills.mdx) if you change install paths, the marketplace manifest, or the public list of skills.
 
 
 ---
@@ -38017,7 +38019,7 @@ See the [Data Contract Quality Rules Generation Guide](/dqx/docs/guide/data_cont
 
 ##### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.17.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.17.1/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -38327,7 +38329,7 @@ resources:
 
 ##### Installing DQX with company-hosted PyPI mirror[​](#installing-dqx-with-company-hosted-pypi-mirror-1 "Direct link to Installing DQX with company-hosted PyPI mirror")
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.17.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.17.1/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
@@ -38770,7 +38772,7 @@ The catalog is injected into the app as a plain `DQX_CATALOG` config value (no s
 
 ###### DQX version[​](#mcp-dqx-version "Direct link to DQX version")
 
-The runner job installs a **pinned, published `databricks-labs-dqx` release** from the package registry — set in the runner job's environment dependencies in [`mcp-server/databricks.yml`](https://github.com/databrickslabs/dqx/blob/v0.17.0/mcp-server/databricks.yml). This mirrors DQX Studio, which also pins a released version rather than building from source, so the DQX version the tools run is deterministic and independent of your local working tree.
+The runner job installs a **pinned, published `databricks-labs-dqx` release** from the package registry — set in the runner job's environment dependencies in [`mcp-server/databricks.yml`](https://github.com/databrickslabs/dqx/blob/v0.17.1/mcp-server/databricks.yml). This mirrors DQX Studio, which also pins a released version rather than building from source, so the DQX version the tools run is deterministic and independent of your local working tree.
 
 * **To upgrade DQX,** bump the pinned version in `mcp-server/databricks.yml` and redeploy.
 * **Redeploy to pick up changes:** the runner is *not* auto-updated — it keeps using the version from the last deploy until you redeploy (see [Upgrade and uninstall](#mcp-upgrade-uninstall)).
@@ -38862,7 +38864,7 @@ You have two options to set up the dashboard:
 
 ##### Option 1: Import directly in the workspace[​](#option-1-import-directly-in-the-workspace "Direct link to Option 1: Import directly in the workspace")
 
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.17.0/src/databricks/labs/dqx/dashboards/). To import it:
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.17.1/src/databricks/labs/dqx/dashboards/). To import it:
 
 1. Navigate to **Dashboards** in the Databricks UI
 2. Click **Import dashboard from file**

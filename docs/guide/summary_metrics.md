@@ -446,7 +446,7 @@ def dq_summary_metrics():
 
 ```
 
-See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
+See the [Lakeflow pipeline demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo.py) for a complete example, or the [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_quarantine.py) that splits valid and invalid records into separate tables.
 
 Incremental materialized views
 
@@ -485,7 +485,7 @@ def silver_flow():
 
 ```
 
-See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.0/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
+See the [Lakeflow foreachBatch sink demo](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch.py) and its [quarantine variant](https://github.com/databrickslabs/dqx/blob/v0.17.1/demos/dqx_dlt_demo_foreach_batch_quarantine.py) for complete examples.
 
 ##### Using a windowed streaming table (per-window history)[​](#using-a-windowed-streaming-table-per-window-history "Direct link to Using a windowed streaming table (per-window history)")
 
