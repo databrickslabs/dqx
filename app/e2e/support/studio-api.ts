@@ -1,4 +1,4 @@
-import type { APIRequestContext, APIResponse } from "@playwright/test";
+import { expect, type APIRequestContext, type APIResponse } from "@playwright/test";
 
 import { E2E_PREFIX, E2E_TAG, runTag } from "./names";
 
@@ -8,6 +8,8 @@ import { E2E_PREFIX, E2E_TAG, runTag } from "./names";
 
 export interface RegistryRule {
   rule_id: string;
+  mode: string;
+  definition: { body: Record<string, unknown>; slots: { name: string }[] };
   status: string;
   version: number;
   display_status?: string;
@@ -42,6 +44,24 @@ export interface ScheduleOverviewRow {
   cron: string | null;
   enabled: boolean;
   paused: boolean;
+  schedule_kind?: string | null;
+  sample_size?: number | null;
+}
+
+export interface ReviewStatus {
+  value: string;
+  description: string;
+  color: string;
+  is_default: boolean;
+}
+
+export type GrantObjectType = "registry_rule" | "monitored_table" | "data_product";
+
+export interface Grant {
+  principal_id: string;
+  principal_type: string;
+  principal_name: string;
+  privileges: string[];
 }
 
 export interface RunSummary {
@@ -77,8 +97,11 @@ async function json<T>(res: APIResponse, what: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** The request methods StudioApi uses; the *api* fixture adds auth to each call. */
+export type StudioHttp = Pick<APIRequestContext, "get" | "post" | "put" | "patch" | "delete">;
+
 export class StudioApi {
-  constructor(private readonly http: APIRequestContext) {}
+  constructor(private readonly http: StudioHttp) {}
 
   // ---- identity / config -------------------------------------------------
 
@@ -135,6 +158,39 @@ export class StudioApi {
     return body.rule;
   }
 
+  /**
+   * Creates, submits and approves a SQL-mode rule whose *predicate* uses
+   * {{slot}} placeholders, e.g. "{{amount}} >= 0" with slots ["amount"].
+   */
+  async createPublishedSqlRule(spec: {
+    name: string;
+    predicate: string;
+    slots: { name: string; family?: string }[];
+    polarity?: "pass" | "fail";
+  }): Promise<RegistryRule> {
+    const body = await json<{ rule: RegistryRule }>(
+      await this.http.post("/api/v1/registry-rules", {
+        data: {
+          mode: "sql",
+          polarity: spec.polarity ?? "pass",
+          definition: {
+            body: { predicate: spec.predicate },
+            slots: spec.slots.map((s, i) => ({ name: s.name, family: s.family ?? "any", position: i, cardinality: "one" })),
+            parameters: [],
+          },
+          user_metadata: { name: spec.name, severity: "High", dimension: "Validity", [E2E_TAG]: runTag() },
+          allow_duplicate: true,
+        },
+      }),
+      `create SQL rule ${spec.name}`,
+    );
+    await this.submitRule(body.rule.rule_id);
+    if ((await this.getRule(body.rule.rule_id)).status !== "approved") {
+      await json(await this.http.post(`/api/v1/registry-rules/${body.rule.rule_id}/approve`, { data: {} }), "approve rule");
+    }
+    return this.getRule(body.rule.rule_id);
+  }
+
   /** Creates, submits and approves a rule so it can be applied to tables. */
   async createPublishedRule(spec: NativeRuleSpec): Promise<RegistryRule> {
     const rule = await this.createNativeRule(spec);
@@ -143,6 +199,11 @@ export class StudioApi {
       await json(await this.http.post(`/api/v1/registry-rules/${rule.rule_id}/approve`, { data: {} }), "approve rule");
     }
     return this.getRule(rule.rule_id);
+  }
+
+  async approveRule(ruleId: string): Promise<void> {
+    if ((await this.getRule(ruleId)).status === "approved") return;
+    await json(await this.http.post(`/api/v1/registry-rules/${ruleId}/approve`, { data: {} }), "approve rule");
   }
 
   async submitRule(ruleId: string): Promise<void> {
@@ -308,7 +369,85 @@ export class StudioApi {
   }
 
 
+  // ---- settings ----------------------------------------------------------
+
+  async requireDraftRun(): Promise<boolean> {
+    const body = await json<{ require_draft_run_before_submit: boolean }>(
+      await this.http.get("/api/v1/config/require-draft-run"),
+      "draft-run setting",
+    );
+    return body.require_draft_run_before_submit;
+  }
+
+  async setRequireDraftRun(value: boolean): Promise<void> {
+    await json(
+      await this.http.put("/api/v1/config/require-draft-run", { data: { require_draft_run_before_submit: value } }),
+      "set draft-run setting",
+    );
+  }
+
+  async reviewStatuses(): Promise<ReviewStatus[]> {
+    return (await json<{ statuses: ReviewStatus[] }>(await this.http.get("/api/v1/config/run-review-statuses"), "review statuses"))
+      .statuses;
+  }
+
+  /** PUT replaces the whole list; used to restore a snapshot taken with *reviewStatuses*. */
+  async setReviewStatuses(statuses: ReviewStatus[]): Promise<void> {
+    await json(await this.http.put("/api/v1/config/run-review-statuses", { data: { statuses } }), "set review statuses");
+  }
+
+  async roleMappings(): Promise<{ role: string; group_name: string }[]> {
+    return json(await this.http.get("/api/v1/roles"), "role mappings");
+  }
+
+  async deleteRoleMapping(role: string, group: string): Promise<void> {
+    const res = await this.http.delete(`/api/v1/roles/${encodeURIComponent(role)}/${encodeURIComponent(group)}`);
+    if (res.status() !== 404) await json(res, `delete role mapping ${role} → ${group}`);
+  }
+
+  // ---- permissions -------------------------------------------------------
+
+  async grants(objectType: GrantObjectType, objectId: string): Promise<Grant[]> {
+    return (await json<{ grants: Grant[] }>(await this.http.get(`/api/v1/permissions/${objectType}/${objectId}/grants`), "grants"))
+      .grants;
+  }
+
+  async revokeGrant(objectType: GrantObjectType, objectId: string, principalId: string): Promise<void> {
+    const res = await this.http.delete(`/api/v1/permissions/${objectType}/${objectId}/grants/${principalId}`);
+    if (res.status() !== 404) await json(res, `revoke grant for ${principalId}`);
+  }
+
   // ---- runs --------------------------------------------------------------
+
+  /** Starts a run of the table's approved version; returns its run id. */
+  async runTable(bindingId: string): Promise<string> {
+    const body = await json<{ run_id: string }>(
+      await this.http.post(`/api/v1/monitored-tables/${bindingId}/run`, { data: { source: "approved" } }),
+      "run table",
+    );
+    return body.run_id;
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    const res = await this.http.post(`/api/v1/dryrun/runs/${runId}/cancel`);
+    // Already finished is fine for cleanup.
+    if (![200, 400, 404, 409].includes(res.status())) await json(res, `cancel run ${runId}`);
+  }
+
+  /** Polls Runs History data until *runId* is no longer RUNNING/PENDING; returns its final status. */
+  async waitForRunStatus(runId: string, timeout = 10 * 60_000): Promise<string> {
+    let status = "";
+    await expect
+      .poll(
+        async () => {
+          status = (await this.listRuns()).find((r) => r.run_id === runId)?.status ?? "";
+          return status;
+        },
+        { message: `run ${runId} did not finish`, intervals: [10_000], timeout },
+      )
+      .toMatch(/^(SUCCESS|FAILED|CANCELED)$/);
+    return status;
+  }
 
   /** Recent validation runs (newest first), as listed in Runs History. */
   async listRuns(): Promise<RunSummary[]> {

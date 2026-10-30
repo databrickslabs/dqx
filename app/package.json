@@ -54,6 +54,7 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.1.16",
     "@tanstack/react-router-devtools": "^1.133.36",

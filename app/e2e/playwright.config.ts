@@ -30,6 +30,8 @@ export default defineConfig({
   projects: [
     // Read-only checks; safe against any deployment.
     { name: "smoke", testDir: "./tests/smoke", fullyParallel: true, use: browser },
+    // Read-only; nothing depends on it, so an accessibility finding never blocks the journeys.
+    { name: "accessibility", testDir: "./tests/accessibility", use: browser },
     // Journeys create, change and delete real objects. The setup project sweeps
     // leftovers from aborted runs first; each spec file owns its sample table and
     // runs its tests in order, while different files run in parallel.

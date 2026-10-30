@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../fixtures";
 import { e2eName } from "../../support/names";
 import { SAMPLE_TABLES } from "../../support/sample-tables";
+import { knownBug } from "../../support/known-bugs";
 import { dialogWithHeading, expectNewSuccessfulRun, expectToast, openStudio } from "../../support/ui";
 
 // Journeys: a data product owner builds a collection from two approved tables,
@@ -102,12 +103,6 @@ test.describe("Collection lifecycle", () => {
   });
 
   test("revise an approved collection: remove a table and publish version 2", async ({ page, studio, cleanup }, testInfo) => {
-    // Known Studio bug (reproduced 3/3 on 0.1.2): for a collection whose members
-    // were added in the UI, removing one, saving the draft and then submitting
-    // fails with "Data product member not found: <id>" — submit replays the
-    // removal the draft save already persisted. Members added via the API don't
-    // trigger it. Remove test.fail() once that's fixed.
-    test.fail();
     test.setTimeout(240_000);
     const rule = await studio.createPublishedRule({
       name: e2eName("surrogate-key-present-v2", testInfo.workerIndex),
@@ -130,13 +125,21 @@ test.describe("Collection lifecycle", () => {
     await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
     await page.getByRole("button", { name: "Save as draft" }).click();
     await expectToast(page, "Saved as draft.");
-    await page.getByRole("button", { name: "Submit for review" }).click();
-    await expectToast(page, "Submitted for review.");
-    await studio.approveCollection(productId);
-    await expect.poll(async () => (await studio.getCollection(productId))?.members.map((m) => m.binding_id)).toEqual([
-      warehouse.binding_id,
-    ]);
-    await openStudio(page, `/collections/${productId}?tab=history`);
-    await expect(page.getByRole("tabpanel", { name: "History" })).toContainText(/v2|Version 2/);
+
+    // Known Studio bug (4/4 on 0.1.2): for a collection whose members were added
+    // in the UI, removing one, saving the draft and then submitting fails with
+    // "Data product member not found: <id>" — submit replays the removal the
+    // draft save already persisted. Members added via the API don't trigger it.
+    // When fixed, remove the wrapper and keep these steps as the journey.
+    await knownBug('submitting a revised UI-built collection fails with "Data product member not found"', async () => {
+      await page.getByRole("button", { name: "Submit for review" }).click();
+      await expectToast(page, "Submitted for review.");
+      await studio.approveCollection(productId);
+      await expect.poll(async () => (await studio.getCollection(productId))?.members.map((m) => m.binding_id)).toEqual([
+        warehouse.binding_id,
+      ]);
+      await openStudio(page, `/collections/${productId}?tab=history`);
+      await expect(page.getByRole("tabpanel", { name: "History" })).toContainText(/v2|Version 2/);
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "../../../fixtures";
-import { runTag } from "../../../support/names";
+import { E2E_LABEL_KEY_PREFIX, E2E_REVIEW_STATUS_PREFIX, runTag } from "../../../support/names";
 import { expectToast, openStudio } from "../../../support/ui";
 
 // Journeys that change app-wide settings. They run in their own project after
@@ -48,7 +48,7 @@ test.describe("Admin settings", () => {
     const original = await studio.labelDefinitions();
     cleanup.defer("restore label definitions", () => studio.setLabelDefinitions(original));
     // Keys must match ^[A-Za-z][A-Za-z0-9_]*$.
-    const key = `e2e_${runTag()}`;
+    const key = `${E2E_LABEL_KEY_PREFIX}${runTag()}`;
     const tab = page.getByRole("tabpanel", { name: "Tags" });
 
     await test.step("add the key", async () => {
@@ -76,6 +76,34 @@ test.describe("Admin settings", () => {
       await removeButtons.nth(index).click();
       await expectToast(page, /^Saved \d+ rule labels?\./);
       await expect.poll(async () => (await studio.labelDefinitions()).map((d) => d.key)).not.toContain(key);
+    });
+  });
+
+  test("add a run review status, then remove it", async ({ page, studio, cleanup }) => {
+    const original = await studio.reviewStatuses();
+    cleanup.defer("restore review statuses", () => studio.setReviewStatuses(original));
+    // Values allow letters, digits, spaces and _-/. — no leading punctuation.
+    const value = `${E2E_REVIEW_STATUS_PREFIX}${runTag()}`;
+    const values = async () => (await studio.reviewStatuses()).map((s) => s.value);
+    const tab = page.getByRole("tabpanel", { name: "Governance" });
+
+    await test.step("add the status", async () => {
+      await openStudio(page, "/settings");
+      await page.getByRole("tab", { name: "Governance" }).click();
+      await tab.getByRole("button", { name: "Add status" }).click();
+      await tab.getByPlaceholder("e.g. Confirmed").last().fill(value);
+      await tab.getByPlaceholder("Shown as a tooltip on the dropdown").last().fill("Added by the Studio Playwright suite.");
+      await expectToast(page, "Review statuses saved.");
+      await expect.poll(values).toContain(value);
+    });
+
+    await test.step("remove it", async () => {
+      await page.reload();
+      await page.getByRole("tab", { name: "Governance" }).click();
+      await tab.getByRole("button", { name: `Remove ${value}` }).click();
+      await expectToast(page, "Review statuses saved.");
+      await expect.poll(values).not.toContain(value);
+      await expect.poll(async () => (await studio.reviewStatuses()).length).toBe(original.length);
     });
   });
 });
