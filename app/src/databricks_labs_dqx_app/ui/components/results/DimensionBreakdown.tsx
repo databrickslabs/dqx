@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CollapseRegion } from "./CollapseRegion";
 import { BreachIcon } from "./BreachIcon";
+import { combineTestCounts } from "./testCounts";
 
 /**
  * Client-side page slice for the breakdown table. Without *pageSize* the
@@ -77,6 +78,10 @@ export type BreakdownRow = {
   rule_count?: number | null;
   check_count?: number | null;
   total_tests?: number | null;
+  /** Table-level (dataset check) tests, one per check. Added to the row
+   *  tests in the Failed / Total columns and their sort (combineTestCounts). */
+  table_failed_tests?: number | null;
+  table_total_tests?: number | null;
   /** True when any child check in this group has a threshold breach. */
   breached?: boolean;
   /** Criticality of the breach (worst child): "error" | "warn" | null.
@@ -89,7 +94,7 @@ export type BreakdownRow = {
   pass_threshold?: number | null;
 };
 
-type SortKey =
+export type SortKey =
   | "label"
   | "pass_rate"
   | "failed_tests"
@@ -98,19 +103,30 @@ type SortKey =
   | "total_tests";
 type SortState = { key: SortKey; dir: "asc" | "desc" } | null;
 
-/** Compare two rows on a key; nulls always sort last regardless of direction. */
-function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey): number {
-  const av = a[key];
-  const bv = b[key];
+/** The value a row sorts on: the Failed / Total columns sort on the same
+ *  combined row + table test counts the cells show. */
+function sortValue(row: BreakdownRow, key: SortKey): string | number | null | undefined {
+  if (key !== "failed_tests" && key !== "total_tests") return row[key];
+  const tests = combineTestCounts({
+    failedTests: row.failed_tests,
+    totalTests: row.total_tests,
+    tableFailedTests: row.table_failed_tests,
+    tableTotalTests: row.table_total_tests,
+  });
+  return key === "failed_tests" ? tests.failed : tests.total;
+}
+
+/** Compare two rows on a key in *dir* order; nulls always sort last regardless of direction. */
+export function compareRows(a: BreakdownRow, b: BreakdownRow, key: SortKey, dir: "asc" | "desc" = "asc"): number {
+  const av = sortValue(a, key);
+  const bv = sortValue(b, key);
   const an = av == null;
   const bn = bv == null;
   if (an && bn) return 0;
   if (an) return 1;
   if (bn) return -1;
-  if (typeof av === "string" && typeof bv === "string") {
-    return av.localeCompare(bv);
-  }
-  return (av as number) - (bv as number);
+  const c = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv) : (av as number) - (bv as number);
+  return dir === "asc" ? c : -c;
 }
 
 /**
@@ -218,10 +234,7 @@ export function DimensionBreakdown({
   // defaultSort; otherwise incoming (API) order.
   const effectiveSort = sort ?? defaultSort ?? null;
   const sortedRows = effectiveSort
-    ? [...displayRows].sort((a, b) => {
-        const c = compareRows(a, b, effectiveSort.key);
-        return effectiveSort.dir === "asc" ? c : -c;
-      })
+    ? [...displayRows].sort((a, b) => compareRows(a, b, effectiveSort.key, effectiveSort.dir))
     : displayRows;
 
   // Slice the current page out of the full sorted set; the clamp keeps the
@@ -327,6 +340,12 @@ export function DimensionBreakdown({
                 // facet filter): render it dimmed + thinner so it reads as
                 // out-of-scope, not a live result.
                 const isMuted = r.label != null && mutedSet.has(r.label);
+                const tests = combineTestCounts({
+                  failedTests: r.failed_tests,
+                  totalTests: r.total_tests,
+                  tableFailedTests: r.table_failed_tests,
+                  tableTotalTests: r.table_total_tests,
+                });
                 return (
                   <tr
                     key={i}
@@ -375,12 +394,10 @@ export function DimensionBreakdown({
                         : (r.rule_count == null ? "—" : r.rule_count)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {r.pass_rate == null && r.failed_tests == null
-                        ? "—"
-                        : (r.failed_tests ?? 0)}
+                      {tests.failed ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {r.total_tests == null ? "—" : r.total_tests}
+                      {tests.total ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {r.pass_rate == null

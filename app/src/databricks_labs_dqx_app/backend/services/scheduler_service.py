@@ -45,9 +45,14 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+from databricks_labs_dqx_app.backend.run_status_manager import ended_job_run_status, update_run_status
+from databricks_labs_dqx_app.backend.config import AppConfig
+from databricks_labs_dqx_app.backend.services.scheduler_wake import MarkerVersion, SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.task_runner_runs import (
+    RECENT_RUNS_LIMIT,
     TaskRunnerRun,
     list_active_task_runner_runs,
+    list_recent_completed_runs,
 )
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
@@ -108,7 +113,7 @@ _DQ_OVERLAP_TASK_TYPES = frozenset({"dryrun", "scheduled"})
 _FOREIGN_OVERLAP_GRACE = timedelta(minutes=2)
 
 # How long a scheduler-launched run stays tracked for the completion
-# score-cache refresh (:meth:`SchedulerService._refresh_scores_for_completed_runs`)
+# score-cache refresh (:meth:`SchedulerService.refresh_scores_for_completed_runs`)
 # while waiting for its ``dq_validation_runs`` terminal row. A run whose
 # job dies before the runner writes any terminal result would otherwise
 # be re-checked on every tick forever; 24h comfortably outlives any real
@@ -258,6 +263,17 @@ _TAG_RECONCILE_INTERVAL_HOURS = 6
 _ACTIVE_POLL_SECONDS = 60
 _IDLE_POLL_SECONDS = 3600
 
+# Wake signal (see :mod:`.scheduler_wake`). Run-start routes and the Tables,
+# Collections and Results list endpoints signal the wake marker; while idle the
+# loop checks it every ``_WAKE_CHECK_SECONDS`` (one ``stat`` call) and ticks
+# early when it changed, so a run started with no schedules — and no browser
+# watching — is tracked within seconds instead of after the hour-long idle
+# sleep. A wake never shortens the ``_ACTIVE_POLL_SECONDS`` cadence, and ticks
+# triggered by wakes are at least ``_WAKE_MIN_TICK_GAP_SECONDS`` apart so
+# repeated page loads can't turn into per-second OLTP work.
+_WAKE_CHECK_SECONDS = 5.0
+_WAKE_MIN_TICK_GAP_SECONDS = 15.0
+
 # System attribution for scheduler-initiated writes (mirrors the
 # ``user_email="scheduler"`` the product/table run ticks already use).
 _SCHEDULER_SYSTEM_USER = "scheduler"
@@ -299,6 +315,9 @@ class SchedulerService:
         monitored_table_service: MonitoredTableService | None = None,
         tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
+        wake_marker: SchedulerWakeMarker | None = None,
+        wake_check_seconds: float = _WAKE_CHECK_SECONDS,
+        wake_min_tick_gap_seconds: float = _WAKE_MIN_TICK_GAP_SECONDS,
     ) -> None:
         """Construct the scheduler.
 
@@ -333,7 +352,7 @@ class SchedulerService:
             launches is tracked in memory and, once its
             ``dq_validation_runs`` terminal row lands, the affected
             tables' scores are refreshed best-effort on the next tick
-            (:meth:`_refresh_scores_for_completed_runs`) — closing the
+            (:meth:`refresh_scores_for_completed_runs`) — closing the
             gap where the browser-side refresh-scores POST never fires
             because no browser observed the scheduled run complete.
             When ``None`` the refresh step is a no-op.
@@ -364,6 +383,12 @@ class SchedulerService:
             per boot (the "reconciled this boot" flag), best-effort
             with a small retry budget. Default False keeps legacy /
             unit-test constructions on the pure per-run refresh.
+        wake_marker:
+            Cross-process wake signal (:class:`.SchedulerWakeMarker`). While
+            idle, the loop checks it every *wake_check_seconds* and ticks
+            early when it changed — ticks triggered this way are at least
+            *wake_min_tick_gap_seconds* apart. ``None`` (legacy / unit tests)
+            leaves the idle sleep interruptible only by :meth:`reload`.
         """
         self._ws = ws
         self._job_id = job_id
@@ -385,6 +410,10 @@ class SchedulerService:
         self._task: asyncio.Task[None] | None = None
         self._reload_event = asyncio.Event()
         self._force_recalc = False
+        self._wake_marker = wake_marker
+        self._wake_check_seconds = wake_check_seconds
+        self._wake_min_tick_gap_seconds = wake_min_tick_gap_seconds
+        self._wake_marker_seen: MarkerVersion = wake_marker.version() if wake_marker is not None else None
         # Both backend layouts qualify the table differently — let the
         # OLTP executor's catalog/schema decide.
         self._table = self._oltp_sql.fqn("dq_schedule_runs")
@@ -508,6 +537,7 @@ class SchedulerService:
             # report, keep polling tightly rather than risk backing off while
             # real work is pending.
             has_active_work = True
+            self._consume_wake_signal()
             try:
                 recalc = self._force_recalc
                 self._force_recalc = False
@@ -521,12 +551,46 @@ class SchedulerService:
             except Exception:
                 logger.exception("Scheduler tick failed")
 
+            await self.wait_for_next_tick(has_active_work)
+
+    async def wait_for_next_tick(self, has_active_work: bool) -> None:
+        """Sleep until the next tick is due, :meth:`reload` is called, or (when idle) a wake arrives.
+
+        With active work the sleep is the fixed ``_ACTIVE_POLL_SECONDS``
+        cadence. When idle it lasts up to ``_IDLE_POLL_SECONDS``, but the wake
+        marker is checked between short waits and a signal from any worker
+        ends the sleep early (no sooner than the minimum gap since the
+        previous tick). Returns without consuming the wake signal; the loop
+        records it when the next tick starts.
+        """
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + self._poll_interval_seconds(has_active_work)
+        wakeable = not has_active_work and self._wake_marker is not None
+        slice_seconds = self._wake_check_seconds if wakeable else float("inf")
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
             try:
-                timeout = self._poll_interval_seconds(has_active_work)
-                await asyncio.wait_for(self._reload_event.wait(), timeout=timeout)
+                await asyncio.wait_for(self._reload_event.wait(), timeout=min(remaining, slice_seconds))
                 self._reload_event.clear()
+                return
             except asyncio.TimeoutError:
                 pass
+            if wakeable and self._wake_signalled():
+                gap_left = started + self._wake_min_tick_gap_seconds - loop.time()
+                if gap_left > 0:
+                    await asyncio.sleep(gap_left)
+                return
+
+    def _wake_signalled(self) -> bool:
+        return self._wake_marker is not None and self._wake_marker.version() != self._wake_marker_seen
+
+    def _consume_wake_signal(self) -> None:
+        """Record the wake marker as seen; the tick about to run handles whatever it was for."""
+        if self._wake_marker is not None:
+            self._wake_marker_seen = self._wake_marker.compact()
 
     def _poll_interval_seconds(self, has_active_work: bool) -> int:
         """Seconds to sleep before the next tick.
@@ -710,7 +774,7 @@ class SchedulerService:
         # extra loop) and is fully best-effort — a failure here never
         # affects the due-ness sources above.
         try:
-            await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
+            await asyncio.to_thread(self.refresh_scores_for_completed_runs, now)
         except Exception:
             logger.exception("Scheduler failed refreshing the score cache for completed runs")
 
@@ -1521,7 +1585,7 @@ class SchedulerService:
         # (scheduler-launched product/table runs also mint run sets).
         self._seen_score_runs.add(run_id)
 
-    def _refresh_scores_for_completed_runs(self, now: datetime) -> None:
+    def refresh_scores_for_completed_runs(self, now: datetime) -> None:
         """Refresh the score cache for tracked runs that reached a terminal state.
 
         One batched ``dq_validation_runs`` lookup over the pending run ids:
@@ -1630,7 +1694,7 @@ class SchedulerService:
         """Pop every tracked run with a terminal row; return their table FQNs.
 
         The expiry + batched terminal lookup extracted from
-        :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
+        :meth:`refresh_scores_for_completed_runs` so the reconcile pass
         can fold the completed runs' tables into its own recompute. Only
         runs whose job the Jobs API reports finished are looked up, so a
         run still executing (or one that never writes a row) does not cost
@@ -1674,6 +1738,32 @@ class SchedulerService:
             if isinstance(view_fqn, str) and view_fqn:
                 self._completed_view_fqns_buffer.append(view_fqn)
 
+        missing = finished & set(self._pending_score_runs)
+        ended_jobs = self._ended_job_runs(missing)
+        for run_id in sorted(missing):
+            # The job ended without the runner writing its result (cancelled,
+            # crashed, timed out): record FAILED / CANCELED now rather than
+            # leaving the run RUNNING until the daily tmp-view sweep, and
+            # refresh its table like any other completion.
+            job_run = ended_jobs.get(run_id)
+            outcome = (
+                ended_job_run_status(job_run.life_cycle_state, job_run.result_state, job_run.state_message)
+                if job_run is not None
+                else None
+            )
+            if job_run is None or outcome is None:
+                continue
+            try:
+                self._mark_run_ended("dq_validation_runs", run_id, *outcome)
+            except Exception:
+                logger.exception(f"Could not record the ended job for run {run_id}; retrying next tick")
+                continue
+            self._forget_score_run(run_id)
+            logger.info(f"Run {run_id} ended as {outcome[0]} before writing a result; recorded it in run history")
+            fqn = job_run.source_table_fqn
+            if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
+                fqns.add(fqn)
+
         # A finished job with no terminal row will never get one: drop it after
         # a second empty lookup instead of re-querying until the 24h TTL.
         for run_id in finished & set(self._pending_score_runs):
@@ -1703,6 +1793,40 @@ class SchedulerService:
             for run_id in pending - active
             if run_id in self._score_runs_seen_active or now - self._pending_score_runs[run_id] >= _JOB_STATE_GRACE
         }
+
+    def _ended_job_runs(self, run_ids: set[str]) -> dict[str, TaskRunnerRun]:
+        """Return the ended task-runner job run of each of *run_ids* the Jobs API still lists.
+
+        Only consulted for finished runs with no terminal result row (rare),
+        so the bounded completed-runs listing costs nothing on a normal tick.
+        Empty when the job id is unset or the Jobs API call fails — those
+        runs then fall back to the drop-after-a-second-lookup path.
+        """
+        if not run_ids or not self._job_id:
+            return {}
+        try:
+            recent = list_recent_completed_runs(self._ws, int(self._job_id), RECENT_RUNS_LIMIT)
+        except Exception:
+            logger.warning("Could not list completed task-runner runs; ended runs are reconciled later")
+            return {}
+        return {run.app_run_id: run for run in recent if run.app_run_id in run_ids and run.is_terminal}
+
+    def _mark_run_ended(self, table_name: str, run_id: str, status: str, error_message: str) -> None:
+        """Flip *run_id*'s RUNNING placeholder in *table_name* to *status* (FAILED / CANCELED).
+
+        Raises:
+            RuntimeError: The UPDATE failed, so the row is still RUNNING.
+        """
+        updated = update_run_status(
+            self._sql,
+            AppConfig(catalog=self._catalog, schema_name=self._schema),
+            table_name,
+            run_id,
+            status=status,
+            error_message=error_message,
+        )
+        if not updated:
+            raise RuntimeError(f"Could not update the status of run {run_id} in {table_name}")
 
     def _forget_score_run(self, run_id: str) -> None:
         self._pending_score_runs.pop(run_id, None)
@@ -2442,7 +2566,6 @@ class SchedulerService:
         3. Age-based orphans (delegates to :meth:`_gc_orphan_views` logic
            with a shorter threshold) — catches views with no metadata row.
         """
-        from databricks_labs_dqx_app.backend.run_status_manager import update_run_status
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         views_to_drop: set[str] = set()
@@ -2493,20 +2616,10 @@ class SchedulerService:
                         continue
                     views_to_drop.add(view_fqn.strip())
                     result_state = state.result_state.value if state and state.result_state else None
-                    if result_state != "SUCCESS" and isinstance(run_id, str) and run_id:
-                        new_status = "CANCELED" if result_state == "CANCELED" else "FAILED"
-                        message = (state.state_message if state else None) or f"Run finished with state: {lifecycle}"
+                    outcome = ended_job_run_status(lifecycle, result_state, state.state_message if state else None)
+                    if outcome is not None and isinstance(run_id, str) and run_id:
                         try:
-                            from databricks_labs_dqx_app.backend.config import AppConfig
-
-                            update_run_status(
-                                self._sql,
-                                AppConfig(catalog=self._catalog, schema_name=self._schema),
-                                table_name,
-                                run_id,
-                                status=new_status,
-                                error_message=message,
-                            )
+                            self._mark_run_ended(table_name, run_id, *outcome)
                         except Exception as exc:
                             logger.warning(
                                 "Tmp-view sweep: failed to reconcile RUNNING row %s in %s: %s",
