@@ -189,6 +189,8 @@ class TestCategoryFor:
             ("is_in_list", "Allowed Values"),
             ("is_in_range", "Numeric & Comparable"),
             ("is_not_less_than", "Numeric & Comparable"),
+            ("is_greater_than", "Numeric & Comparable"),
+            ("is_less_than", "Numeric & Comparable"),
             ("regex_match", "Patterns & Regex"),
             ("is_valid_ipv4_address", "IP Addresses"),
             ("is_valid_json", "JSON"),
