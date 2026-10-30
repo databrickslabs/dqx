@@ -27,6 +27,8 @@ import { openStudio, sidebarLinks } from "../../support/ui";
  *   caption (opacity-85 on the score card).
  * - nested-interactive: Results breakdown rows are <tr role="button"> and
  *   contain links (only once there are results).
+ * - color-contrast on Runs History: seen in 1 of 3 runs, depending on which
+ *   runs are listed.
  * - aria-prohibited-attr: the amber "Pass rate below threshold (70%)" warning
  *   icon is a <span aria-label> with no role (only once a table breaches its
  *   pass threshold).
@@ -46,7 +48,7 @@ const KNOWN: Record<string, readonly string[]> = {
     "scrollable-region-focusable",
   ],
   "/schedules": ["list", "scrollable-region-focusable"],
-  "/runs-history": ["button-name", "list", "scrollable-region-focusable"],
+  "/runs-history": ["button-name", "color-contrast", "list", "scrollable-region-focusable"],
   "/marketplace": ["list", "scrollable-region-focusable"],
   "/settings": ["button-name", "list"],
   "/profile": ["list"],

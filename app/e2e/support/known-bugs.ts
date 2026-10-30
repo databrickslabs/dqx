@@ -21,5 +21,5 @@ export async function knownBug(description: string, assertion: () => Promise<unk
   }
   const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
   test.info().annotations.push({ type: "known-bug", description: `${description} (${detail})` });
-  console.log(`KNOWN BUG: ${description}`);
+  console.log(`KNOWN BUG: ${description}\n  observed: ${detail}`);
 }

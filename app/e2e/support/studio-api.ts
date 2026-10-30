@@ -64,6 +64,12 @@ export interface Grant {
   privileges: string[];
 }
 
+export interface RunResults {
+  total_rows: number;
+  invalid_rows: number;
+  error_summary: { error: string; count: number }[];
+}
+
 export interface RunSummary {
   run_id: string;
   source_table_fqn: string;
@@ -159,13 +165,15 @@ export class StudioApi {
   }
 
   /**
-   * Creates, submits and approves a SQL-mode rule whose *predicate* uses
-   * {{slot}} placeholders, e.g. "{{amount}} >= 0" with slots ["amount"].
+   * Creates, submits and approves a SQL-mode rule: either a row-level
+   * *predicate* with {{slot}} placeholders (e.g. "{{amount}} >= 0", slots
+   * ["amount"]), or a full *sqlQuery* with no slots (a cross-table check).
    */
   async createPublishedSqlRule(spec: {
     name: string;
-    predicate: string;
-    slots: { name: string; family?: string }[];
+    predicate?: string;
+    sqlQuery?: string;
+    slots?: { name: string; family?: string }[];
     polarity?: "pass" | "fail";
   }): Promise<RegistryRule> {
     const body = await json<{ rule: RegistryRule }>(
@@ -174,8 +182,8 @@ export class StudioApi {
           mode: "sql",
           polarity: spec.polarity ?? "pass",
           definition: {
-            body: { predicate: spec.predicate },
-            slots: spec.slots.map((s, i) => ({ name: s.name, family: s.family ?? "any", position: i, cardinality: "one" })),
+            body: spec.sqlQuery ? { sql_query: spec.sqlQuery } : { predicate: spec.predicate },
+            slots: (spec.slots ?? []).map((s, i) => ({ name: s.name, family: s.family ?? "any", position: i, cardinality: "one" })),
             parameters: [],
           },
           user_metadata: { name: spec.name, severity: "High", dimension: "Validity", [E2E_TAG]: runTag() },
@@ -271,6 +279,17 @@ export class StudioApi {
     const body = await json<{ id: string }>(
       await this.http.post(`/api/v1/monitored-tables/${bindingId}/applied-rules`, {
         data: { rule_id: ruleId, column_mapping: [{ [slot]: column }] },
+      }),
+      "apply rule",
+    );
+    return body.id;
+  }
+
+  /** Applies a rule with an explicit slot → column mapping ({} for a rule with no slots). */
+  async applyRuleWithMapping(bindingId: string, ruleId: string, mapping: Record<string, string>): Promise<string> {
+    const body = await json<{ id: string }>(
+      await this.http.post(`/api/v1/monitored-tables/${bindingId}/applied-rules`, {
+        data: { rule_id: ruleId, column_mapping: [mapping] },
       }),
       "apply rule",
     );
@@ -426,6 +445,10 @@ export class StudioApi {
       "run table",
     );
     return body.run_id;
+  }
+
+  async runResults(runId: string): Promise<RunResults> {
+    return json<RunResults>(await this.http.get(`/api/v1/dryrun/runs/${runId}/results`), `run results ${runId}`);
   }
 
   async cancelRun(runId: string): Promise<void> {

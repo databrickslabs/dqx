@@ -35,6 +35,10 @@ export const SAMPLE_TABLES = {
   permissions: "samples.tpcds_sf1.household_demographics",
   /** 11,718 rows: cp_catalog_page_sk, cp_department; scheduled with non-default run types, never fires. */
   scheduleOptions: "samples.tpcds_sf1.catalog_page",
+  /** 18,000 rows (i_item_sk): hosts a cross-table SQL check over samples.tpch.nation/region. */
+  crossTableHost: "samples.tpcds_sf1.item",
+  /** 73,049 rows (d_date_sk); its checks are exported as DQX YAML and ODCS, never run. */
+  export: "samples.tpcds_sf1.date_dim",
 } as const;
 
 /**
