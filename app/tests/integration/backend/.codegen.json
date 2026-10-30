@@ -1,0 +1,11 @@
+{
+  "version": {
+    "src/databricks/labs/dqx/__version__.py": "__version__ = \"$VERSION\""
+  },
+  "toolchain": {
+    "required": ["make", "uv"],
+    "pre_setup": ["make app-integration-env"],
+    "prepend_path": "app/.venv/bin",
+    "acceptance_path": "app/tests/integration/backend"
+  }
+}

@@ -201,6 +201,17 @@ make app-test-ui
 make app-integration PROFILE=<setup-admin-profile>
 ```
 
+The backend integration suite (`tests/integration/backend/`) is separate: CI runs it through the
+acceptance action (`app_integration` in `.github/workflows/acceptance.yml`) whenever `app/` or the
+DQX library changes. It authenticates from the environment like the library's integration tests
+(`DATABRICKS_HOST`, `DATABRICKS_WAREHOUSE_ID`, `DQX_LAKEBASE_ENDPOINT`), not from a profile. To run
+it locally, export those variables, then:
+
+```bash
+make app-integration-env
+cd app && .venv/bin/pytest tests/integration/backend --studio-integration
+```
+
 The opt-in Studio integration suite creates factory-managed workspace and
 Lakebase resources. Use a dedicated development workspace and checkout. Prepare
 the generated Marketplace runner wheel under `app/marketplace/tasks/` first;

@@ -89,6 +89,20 @@ mcp-integration: export UV_BUILD_CONSTRAINT := $(CURDIR)/.build-constraints.txt
 mcp-integration: ## Run MCP server integration tests (deploys an isolated app; requires workspace auth + Databricks CLI)
 	$(UV_RUN) pytest tests/integration_mcp/ -v --timeout 2700 --durations 10
 
+test-skills: ## Validate the agent skills manifest (skills/.claude-plugin/plugin.json)
+	$(UV_RUN) pytest tests/unit/test_skills_manifest.py
+
+# The local tests behind each CI boundary of .github/scripts/changed-boundaries.sh.
+BOUNDARY_TESTS_core := test
+BOUNDARY_TESTS_studio := app-test app-test-ui
+BOUNDARY_TESTS_anomaly := anomaly
+BOUNDARY_TESTS_mcp := mcp-test
+BOUNDARY_TESTS_docs := test-skills
+
+test-boundary: ## Run one CI boundary's tests (BOUNDARY=core|studio|anomaly|mcp|docs; anomaly needs workspace auth)
+	@test -n "$(BOUNDARY_TESTS_$(BOUNDARY))" || (echo "Usage: make test-boundary BOUNDARY=core|studio|anomaly|mcp|docs"; exit 1)
+	$(MAKE) $(BOUNDARY_TESTS_$(BOUNDARY))
+
 coverage: ## Run all tests (excl. e2e/perf) and open HTML coverage report
 	$(UV_TEST) --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html tests/
 	open htmlcov/index.html
@@ -148,9 +162,18 @@ app-release-marketplace: ## Create and verify a local signed Marketplace release
 	@test -n "$(TAG)" || (echo "Usage: make app-release-marketplace TAG=studio-vX.Y.Z"; exit 1)
 	app/scripts/release_marketplace.sh $(TAG)
 
+# tests/integration/backend authenticates from the environment like the library's integration
+# tests (DATABRICKS_HOST, DATABRICKS_WAREHOUSE_ID, ...), not from PROFILE. CI runs it through the
+# acceptance action (app_integration in acceptance.yml), which prepares its env with app-integration-env.
 app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=<databricks-profile>)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
-	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ --studio-integration -v
+	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ --ignore=tests/integration/backend --studio-integration -v
+
+# pytester and pytest-xdist (the acceptance runner passes ``-n 10``) are not in app/uv.lock, so they
+# are installed on top of the locked test env, as app-integration does with ``--with``.
+app-integration-env: ## Prepare app/.venv for the backend integration suite run by the acceptance action
+	cd app && uv sync --group test
+	cd app && uv pip install "databricks-labs-pytester~=0.7.4" "pytest-xdist~=3.5.0"
 
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
@@ -493,4 +516,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly test-skills test-boundary coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-integration-env app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

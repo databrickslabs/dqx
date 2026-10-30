@@ -150,7 +150,6 @@ test = [
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
-    "fastapi>=0.119.0,<1.0",
     "dbt-core~=1.11.6",
     "dbt-databricks~=1.11.6",
     "pycountry~=26.2.16",
@@ -166,6 +165,12 @@ yq = [
 required-version = "~=0.11.0"
 # TODO: drop the certifi exemption once certifi>=2026.10.19 is older than the 7-day exclude-newer window.
 exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false, "certifi" = false }
+constraint-dependencies = [
+    "langchain-core==0.4.0.dev0",
+]
+override-dependencies = [
+    "litellm==1.98.0",
+]
 
 [tool.pydoc-markdown]
 loaders = [
@@ -234,7 +239,7 @@ markers = [
     "anomaly: marks tests as anomaly detection tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
-pythonpath = ["src", "app/src", "mcp-server"]
+pythonpath = ["src", "mcp-server"]
 
 
 [tool.black]
@@ -273,8 +278,8 @@ exclude_lines = [
 # Sources https://google.github.io/styleguide/pylintrc
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
 
-# Add app/src to sys.path for pylint to find databricks_labs_dqx_app
-init-hook = "import sys; sys.path.insert(0, 'app/src'); sys.path.insert(0, 'mcp-server')"
+# Add mcp-server to sys.path for pylint to find the MCP server modules
+init-hook = "import sys; sys.path.insert(0, 'mcp-server')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
@@ -898,7 +903,6 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
 
 [tool.pylint-per-file-ignores]
-"tests/integration/test_app_backend.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
 "tests/unit/test_engine.py" = "protected-access"
