@@ -178,12 +178,11 @@ artifacts:
     # uv.lock + src + requirements.txt=``uv``) — no app wheel. The deploy pyproject
     # pins the published DQX ${var.dqx_version} and ships the committed Marketplace
     # lock, so a DAB deploy installs the same DQX and dependencies as Marketplace.
-    # We build the task-runner wheel for the job (it's not published); the job installs
-    # the same published DQX (dqx_task_dependency).
+    # build_app.py also builds the task-runner wheel (it's not published) into
+    # .build/tasks, pinned to the same DQX: the app republishes it as the job's only
+    # dependency at startup.
     build: >
-      uv run --frozen python scripts/build_app.py &&
-      rm -rf .build/tasks &&
-      uv build tasks/ --wheel --out-dir .build/tasks/
+      uv run --frozen python scripts/build_app.py
 
 resources:
   apps:

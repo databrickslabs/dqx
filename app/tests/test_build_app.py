@@ -63,9 +63,9 @@ def test_deploy_tree_installs_the_published_dqx_from_the_committed_lock(monkeypa
     monkeypatch.setattr(build_app, "BUILD_DIR", tmp_path)
     (tmp_path / "_vendor" / "dqx").mkdir(parents=True)  # left by an older vendoring build
 
-    build_app.assemble_deploy_tree()
-
     dqx_version = build_app.dqx_release_version()
+    build_app.assemble_deploy_tree(dqx_version)
+
     pyproject = tomllib.loads((tmp_path / "pyproject.toml").read_text(encoding="utf-8"))
     assert f"databricks-labs-dqx[llm,datacontract]=={dqx_version}" in pyproject["project"]["dependencies"]
     assert "sources" not in pyproject.get("tool", {}).get("uv", {})

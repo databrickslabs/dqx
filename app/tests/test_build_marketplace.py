@@ -133,10 +133,7 @@ def test_marketplace_template_lock_pins_the_release_dqx_version() -> None:
     with the template lock. A lagging lock makes the app and task runner install different DQX
     versions, so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
     """
-    template = tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))
-    locked = {package["version"] for package in template["package"] if package["name"] == DQX_PACKAGE}
-
-    assert locked == {DQX_VERSION}
+    marketplace_builder.require_lock_resolves_dqx(TEMPLATE_LOCK.read_text(encoding="utf-8"), DQX_VERSION)
 
 
 def test_marketplace_build_rejects_a_lock_for_another_dqx_version(tmp_path: Path) -> None:

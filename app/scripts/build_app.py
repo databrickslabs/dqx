@@ -60,9 +60,6 @@ DAB_CONFIG = APP_DIR / "databricks.yml"
 TEMPLATE_LOCK = APP_DIR / "marketplace_templates" / "uv.lock"
 DQX_PACKAGE = "databricks-labs-dqx"
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)")
-# Mirrors ``[tool.hatch.build.targets.sdist].only-include`` in the DQX
-# pyproject: the minimum hatchling needs to build the library from source.
-
 PKG_DIR = APP_DIR / "src" / "databricks_labs_dqx_app"
 METADATA_PY = PKG_DIR / "_metadata.py"
 VERSION_PY = PKG_DIR / "_version.py"
@@ -163,7 +160,7 @@ def _write_app_yml(meta: dict[str, str]) -> None:
     go through DABs (e.g. direct ``databricks apps`` CLI deploys).
     """
     (BUILD_DIR / "app.yml").write_text(
-        f'command: ["uv", "run", "--no-dev", "uvicorn", "{meta["app-module"]}", "--workers", "1"]\n',
+        f'command: ["uv", "run", "--frozen", "--no-dev", "uvicorn", "{meta["app-module"]}", "--workers", "1"]\n',
         encoding="utf-8",
     )
 
@@ -214,7 +211,7 @@ def _run_vite_build() -> None:
     _run([_node_bin("vite"), "build"])
 
 
-def assemble_deploy_tree() -> None:
+def assemble_deploy_tree(dqx_version: str) -> None:
     """Assemble the source tree the Apps runtime runs via ``uv run``.
 
     Writes the release ``pyproject.toml`` (pinned to the published DQX) and the
@@ -232,7 +229,6 @@ def assemble_deploy_tree() -> None:
     # Deploys no longer vendor the checkout's DQX; drop a copy left by an older build.
     shutil.rmtree(BUILD_DIR / "_vendor", ignore_errors=True)
 
-    dqx_version = dqx_release_version()
     lock_text = release_lock_text(dqx_version)
     (BUILD_DIR / "pyproject.toml").write_text(
         release_pyproject(PYPROJECT.read_text(encoding="utf-8"), dqx_version), encoding="utf-8", newline="\n"
@@ -371,9 +367,9 @@ def normalize_newlines(value: str) -> str:
 def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
     """Build a reproducible task-runner wheel pinned to the released DQX version.
 
-    The regular bundle build keeps resolving the runner's DQX dependency through
-    the bundle environment. Marketplace has no sibling checkout or bundle
-    variable, so its wheel metadata must carry the same exact release pin as the
+    Used by both the DAB build (into *.build/tasks*) and the Marketplace build. At
+    startup the app republishes this wheel as the job's only dependency, so the
+    wheel metadata itself must carry the same exact release pin as the
     application. The tracked task-runner project is never modified.
 
     Args:
@@ -383,7 +379,7 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
     Returns:
         Path to the built task-runner wheel.
     """
-    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)", dqx_version) is None:
+    if RELEASE_VERSION.fullmatch(dqx_version) is None:
         raise ValueError("dqx_version must be a release version")
 
     shutil.rmtree(output_dir, ignore_errors=True)
@@ -454,8 +450,14 @@ def main() -> int:
     _step("Building UI bundle (vite build → src/databricks_labs_dqx_app/__dist__/)")
     _run_vite_build()
 
-    _step(f"Assembling .build/ source tree pinned to databricks-labs-dqx=={dqx_release_version()}")
-    assemble_deploy_tree()
+    dqx_version = dqx_release_version()
+    _step(f"Assembling .build/ source tree pinned to databricks-labs-dqx=={dqx_version}")
+    assemble_deploy_tree(dqx_version)
+
+    # The app republishes this wheel as the job's only dependency at startup, so it must
+    # carry the DQX pin itself; a plain ``uv build tasks/`` would leave DQX unpinned.
+    _step(f"Building the task-runner wheel pinned to databricks-labs-dqx=={dqx_version}")
+    build_task_runner_wheel(BUILD_DIR / "tasks", dqx_version)
 
     _step("Build complete:")
     print(f"  → {(BUILD_DIR / 'src' / 'databricks_labs_dqx_app').relative_to(APP_DIR)} (source), requirements.txt=uv")

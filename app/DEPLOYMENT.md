@@ -551,10 +551,10 @@ This happens on a fresh workspace right after the Lakebase project is created (e
 The runner reads the row from `<catalog>.<schema>.dq_run_configs`. Confirm the Delta migrations have run (the table exists) and that the actual Jobs `run_as` principal has schema-level `SELECT` / `MODIFY` on the main schema.
 
 **Job fails with "file not found" on wheel:**
-The task-runner job installs wheels from the UC volume. If the volume is empty the job fails. Start the app and wait for the wheel upload to complete:
+The task-runner job installs the task-runner wheel from the UC volume; that wheel pins the published DQX, which the job then installs from PyPI. If the volume is empty the job fails. Start the app (it publishes the wheel at startup), then check the volume:
 ```bash
-databricks apps logs <app-name> -p <your-profile>
-# Look for: "Uploaded databricks_labs_dqx-<version>-py3-none-any.whl"
+databricks fs ls dbfs:/Volumes/<catalog>/<schema>/wheels -p <your-profile>
+# Expect: databricks_labs_dqx_task_runner-<studio-version>-py3-none-any.whl and .wheels_hash
 ```
 
 **App says a Studio schema does not exist on first start (`storage_missing`):**

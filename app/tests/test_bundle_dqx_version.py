@@ -46,8 +46,11 @@ def test_dqx_version_is_not_ahead_of_the_library_version() -> None:
 
 
 def test_task_runner_dqx_dependency_is_pinned_to_the_registry() -> None:
-    """The task runner's dqx dependency must be the published registry pin derived from the var,
-    never a wheel path, so it installs the same DQX as the app."""
+    """The job's initial dqx dependency must be the published registry pin derived from the var.
+
+    It only applies until the app's first start: from then on the app republishes the task-runner
+    wheel as the job's only dependency, and that wheel carries the same pin (see the next test).
+    """
     text = _BUNDLE.read_text(encoding="utf-8")
     match = re.search(r"dqx_task_dependency:\s*\n\s*default:\s*\"(?P<dep>[^\"]+)\"", text)
     assert match, "dqx_task_dependency default not found in app/databricks.yml"
@@ -66,6 +69,13 @@ def test_bundle_managed_warehouse_stops_after_ten_idle_minutes() -> None:
 
     warehouse = bundle["resources"]["sql_warehouses"]["dqx_sql_warehouse"]
     assert warehouse["auto_stop_mins"] == 10
+
+
+def test_bundle_builds_the_task_runner_wheel_only_through_the_pinned_builder() -> None:
+    """build_app.py builds the runner wheel with the DQX pin baked in; a separate plain
+    ``uv build tasks/`` would publish a runner wheel with DQX unpinned."""
+    bundle = yaml.safe_load(_BUNDLE.read_text(encoding="utf-8"))
+    assert bundle["artifacts"]["default"]["build"].strip() == "uv run --frozen python scripts/build_app.py"
 
 
 def test_bundle_app_installs_exactly_the_committed_lock() -> None:
