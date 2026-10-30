@@ -165,12 +165,6 @@ yq = [
 required-version = "~=0.11.0"
 # TODO: drop the certifi exemption once certifi>=2026.10.19 is older than the 7-day exclude-newer window.
 exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false, "certifi" = false }
-constraint-dependencies = [
-    "langchain-core==0.4.0.dev0",
-]
-override-dependencies = [
-    "litellm==1.98.0",
-]
 
 [tool.pydoc-markdown]
 loaders = [
