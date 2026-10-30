@@ -4,6 +4,7 @@ import { expect, test } from "../../fixtures";
 import { e2eName } from "../../support/names";
 import { BAKEHOUSE } from "../../support/sample-tables";
 import type { StudioApi } from "../../support/studio-api";
+import { knownBug } from "../../support/known-bugs";
 import {
   dialogWithHeading,
   expectNewSuccessfulRun,
@@ -155,18 +156,18 @@ test.describe("Multi-table", () => {
   });
 
   test("apply a rule to tables that aren't monitored yet", async ({ page, studio, cleanup }, testInfo) => {
+    const rule = await franchiseRule(studio, "franchise-id-new-tables", testInfo.workerIndex);
+    cleanup.rule(rule.rule_id);
+
+    await applyToFranchiseTables(page, rule.rule_id);
     // Known Studio bug: the picker only offers unmonitored tables. "Apply to
     // tables" registers them, then looks up their binding ids in the
     // monitored-tables list it already had cached from the picker
     // (ApplyRuleModal runApply -> queryClient.fetchQuery returns the
     // 5-minute-fresh cache), so none are found and every table is reported as
-    // "needs column mapping": the rule is never applied. Remove test.fail()
-    // once that's fixed.
-    test.fail();
-    const rule = await franchiseRule(studio, "franchise-id-new-tables", testInfo.workerIndex);
-    cleanup.rule(rule.rule_id);
-
-    await applyToFranchiseTables(page, rule.rule_id);
-    await expectToast(page, "Applied to 4 table(s); 0 need column mapping");
+    // "needs column mapping": the rule is never applied.
+    await knownBug('"Apply to tables" never applies the rule to newly registered tables', async () => {
+      await expectToast(page, "Applied to 4 table(s); 0 need column mapping");
+    });
   });
 });

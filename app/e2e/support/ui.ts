@@ -87,6 +87,59 @@ export async function expectNewSuccessfulRun(
   if (type === "scheduled") await expect(row).toContainText("Scheduled");
 }
 
+/**
+ * Picks an option from a Radix select showing *current* (its placeholder or
+ * value). Options may carry a description after the label, e.g.
+ * "Completeness Whether all …", so the label is matched as a prefix.
+ */
+export async function chooseSelect(scope: Page | Locator, current: string, option: string): Promise<void> {
+  const page = "page" in scope ? scope.page() : scope;
+  await scope.getByRole("combobox").filter({ hasText: current }).first().click();
+  await page.getByRole("option", { name: new RegExp(`^${escapeRegExp(option)}\\b`) }).click();
+}
+
+/**
+ * Starts a new registry rule on /registry-rules/new: fills the About tab and
+ * picks the check type on the Implementation tab (a function name, or
+ * "__custom_condition__" / "__sql_condition__"). Returns the Implementation panel.
+ */
+export async function startNewRule(
+  page: Page,
+  rule: { name: string; description: string; dimension: string; severity: string; check: string },
+): Promise<Locator> {
+  if (!page.url().endsWith("/registry-rules/new")) await openStudio(page, "/registry-rules/new");
+  await expect(page.getByRole("heading", { name: "New registry rule" })).toBeVisible();
+  await page.getByPlaceholder("e.g. Order amount is positive").fill(rule.name);
+  await page.getByPlaceholder("What this rule checks and why.").fill(rule.description);
+  await chooseSelect(page, "Select a dimension…", rule.dimension);
+  await chooseSelect(page, "Select a severity…", rule.severity);
+  await page.getByRole("tab", { name: "Implementation" }).click();
+  const panel = page.getByRole("tabpanel", { name: "Implementation" });
+  // The check picker is the last select-style trigger in the Condition row.
+  await panel.locator("button[data-slot=select-trigger]").last().click();
+  if (!rule.check.startsWith("__")) await page.keyboard.type(rule.check);
+  await page.locator(`[cmdk-item][data-value="${rule.check}"]`).click();
+  return panel;
+}
+
+/**
+ * Clicks "Save & submit" on a new rule and returns the new rule's id. Other
+ * journeys publish identical rules concurrently; Studio then asks before
+ * creating a duplicate, and we confirm as any author would.
+ */
+export async function saveAndSubmitNewRule(page: Page): Promise<string> {
+  await page.getByRole("button", { name: "Save & submit" }).click();
+  const duplicate = page.getByRole("button", { name: "Yes, create duplicate" });
+  const saved = page.waitForURL(/\/registry-rules\/(?!new)[^/?]+/);
+  const confirmDuplicate = duplicate
+    .waitFor()
+    .then(() => duplicate.click())
+    .catch(() => undefined); // no prompt: the save navigated first
+  await Promise.race([saved, confirmDuplicate]);
+  await saved;
+  return new URL(page.url()).pathname.split("/").pop()!;
+}
+
 /** A dialog identified by its heading (Studio dialogs don't all expose an accessible name). */
 export function dialogWithHeading(page: Page, heading: string): Locator {
   return page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: heading }) });

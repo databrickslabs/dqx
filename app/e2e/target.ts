@@ -11,7 +11,10 @@ import { execFileSync } from "node:child_process";
 
 export interface E2ETarget {
   baseURL: string;
-  /** OAuth bearer token for the Databricks Apps proxy; undefined for local dev servers. */
+  /**
+   * OAuth bearer token at resolution time; undefined for local dev servers.
+   * Use *bearerToken()* for requests — it refreshes the token before it expires.
+   */
   token: string | undefined;
 }
 
@@ -50,16 +53,38 @@ function resolveAppUrl(appName: string, profile: string): string {
   return app.url;
 }
 
-function resolveToken(profile: string): string {
+/** Refresh when less than this is left, so no request goes out with a token about to expire. */
+const TOKEN_REFRESH_MARGIN_MS = 10 * 60_000;
+
+function fetchToken(profile: string, forceRefresh: boolean): { token: string; expiresAt: number } {
   // The Apps proxy accepts workspace OAuth tokens (U2M or M2M), not PATs.
-  const token = databricksJson(["auth", "token"], profile).access_token;
+  const body = databricksJson(["auth", "token", ...(forceRefresh ? ["--force-refresh"] : [])], profile);
+  const token = body.access_token;
   if (typeof token !== "string" || !token) {
     throw new Error(
       `Profile '${profile}' did not return an OAuth access token. ` +
         `Databricks Apps require OAuth; run 'databricks auth login -p ${profile}'.`,
     );
   }
-  return token;
+  const expiry = typeof body.expiry === "string" ? Date.parse(body.expiry) : NaN;
+  return { token, expiresAt: Number.isNaN(expiry) ? Date.now() + 30 * 60_000 : expiry };
+}
+
+/**
+ * Current bearer token for the Apps proxy, or undefined for a local dev server.
+ * Re-fetched from the Databricks CLI when it's close to expiry, so suites longer
+ * than the token's lifetime keep working. Call it per request; don't cache it.
+ */
+export function bearerToken(): string | undefined {
+  const env = process.env;
+  resolveTarget();
+  if (!env.DQX_E2E_RESOLVED_TOKEN) return undefined;
+  if (Date.now() > Number(env.DQX_E2E_RESOLVED_TOKEN_EXPIRES_AT) - TOKEN_REFRESH_MARGIN_MS) {
+    const fresh = fetchToken(env.DQX_E2E_PROFILE!, true);
+    env.DQX_E2E_RESOLVED_TOKEN = fresh.token;
+    env.DQX_E2E_RESOLVED_TOKEN_EXPIRES_AT = String(fresh.expiresAt);
+  }
+  return env.DQX_E2E_RESOLVED_TOKEN;
 }
 
 export function resolveTarget(): E2ETarget {
@@ -80,7 +105,10 @@ export function resolveTarget(): E2ETarget {
       throw new Error("Set DQX_E2E_PROFILE (make app-e2e PROFILE=<databricks-profile>).");
     }
     const baseURL = explicitUrl ?? resolveAppUrl(env.DQX_E2E_APP || DEFAULT_APP_NAME, profile);
-    target = { baseURL, token: resolveToken(profile) };
+    // Start from a fresh token: a cached one may be most of the way through its hour.
+    const { token, expiresAt } = fetchToken(profile, true);
+    env.DQX_E2E_RESOLVED_TOKEN_EXPIRES_AT = String(expiresAt);
+    target = { baseURL, token };
   }
 
   env.DQX_E2E_RESOLVED_BASE_URL = target.baseURL;

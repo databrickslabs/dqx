@@ -2,17 +2,10 @@ import type { Page } from "@playwright/test";
 
 import { expect, test } from "../../fixtures";
 import { e2eName, E2E_TAG, runTag } from "../../support/names";
-import { expectToast, openStudio } from "../../support/ui";
+import { expectToast, openStudio, saveAndSubmitNewRule, startNewRule } from "../../support/ui";
 
 // Journey: a rule author builds a reusable rule in the Rules Registry, an
 // approver reviews it, and it is retired. Also covers bulk import from YAML.
-
-/** Picks an option from a Radix select identified by its placeholder/current text. */
-async function chooseSelect(page: Page, current: string, option: string): Promise<void> {
-  await page.getByRole("combobox").filter({ hasText: current }).click();
-  // Options carry a description after the label, e.g. "Completeness Whether all …".
-  await page.getByRole("option", { name: new RegExp(`^${option}\\b`) }).click();
-}
 
 /** Finds a registry rule's row on the Rules list by searching for its name. */
 async function ruleRow(page: Page, name: string) {
@@ -35,31 +28,15 @@ test.describe("Rules Registry", () => {
     await test.step("author the rule", async () => {
       await openStudio(page, "/registry-rules");
       await page.getByRole("button", { name: "New rule" }).click();
-      await expect(page.getByRole("heading", { name: "New registry rule" })).toBeVisible();
-
-      await page.getByPlaceholder("e.g. Order amount is positive").fill(name);
-      await page.getByPlaceholder("What this rule checks and why.").fill("Order identifiers must be present.");
-      await chooseSelect(page, "Select a dimension…", "Completeness");
-      await chooseSelect(page, "Select a severity…", "High");
-
-      await page.getByRole("tab", { name: "Implementation" }).click();
-      // The check picker is the last select-style trigger in the Condition row.
-      await page.getByRole("tabpanel").locator("button[data-slot=select-trigger]").last().click();
-      await page.keyboard.type("is_not_null");
-      await page.locator('[cmdk-item][data-value="is_not_null"]').click();
-
-      await page.getByRole("button", { name: "Save & submit" }).click();
-      // Other journeys publish identical is_not_null rules concurrently; Studio
-      // then asks before creating a duplicate, as it would for any author.
-      const duplicate = page.getByRole("button", { name: "Yes, create duplicate" });
-      const saved = page.waitForURL(/\/registry-rules\/(?!new)[^/?]+/);
-      const confirmDuplicate = duplicate
-        .waitFor()
-        .then(() => duplicate.click())
-        .catch(() => undefined); // no prompt: the save navigated first
-      await Promise.race([saved, confirmDuplicate]);
-      await saved;
-      ruleId = new URL(page.url()).pathname.split("/").pop()!;
+      await page.waitForURL(/\/registry-rules\/new/);
+      await startNewRule(page, {
+        name,
+        description: "Order identifiers must be present.",
+        dimension: "Completeness",
+        severity: "High",
+        check: "is_not_null",
+      });
+      ruleId = await saveAndSubmitNewRule(page);
       cleanup.rule(ruleId);
     });
 

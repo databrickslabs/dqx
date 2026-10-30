@@ -1,5 +1,5 @@
 import { test } from "../../fixtures";
-import { E2E_PREFIX } from "../../support/names";
+import { E2E_LABEL_KEY_PREFIX, E2E_PREFIX, E2E_REVIEW_STATUS_PREFIX } from "../../support/names";
 import { ALL_SAMPLE_TABLES } from "../../support/sample-tables";
 
 // Setup project for the journeys: removes what an aborted earlier run left
@@ -11,6 +11,15 @@ test("sweep leftovers from earlier e2e runs", async ({ studio }) => {
   const me = await studio.currentUserEmail();
   const leftoverRules = await studio.leftoverRules();
   const leftoverRuleIds = new Set(leftoverRules.map((r) => r.rule_id));
+
+  // Settings entries the isolated journeys add (they restore them on teardown,
+  // but an interrupted run or an expired token can skip that).
+  const statuses = await studio.reviewStatuses();
+  const keptStatuses = statuses.filter((s) => !s.value.startsWith(E2E_REVIEW_STATUS_PREFIX));
+  if (keptStatuses.length !== statuses.length) await studio.setReviewStatuses(keptStatuses);
+  const labels = await studio.labelDefinitions();
+  const keptLabels = labels.filter((d) => !d.key.startsWith(E2E_LABEL_KEY_PREFIX));
+  if (keptLabels.length !== labels.length) await studio.setLabelDefinitions(keptLabels);
 
   // Collections reference tables, so they go first.
   for (const collection of await studio.listCollections()) {

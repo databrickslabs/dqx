@@ -21,6 +21,20 @@ export const SAMPLE_TABLES = {
   collectionSchedule: "samples.tpcds_sf1.reason",
   /** 20 rows: sm_ship_mode_sk, sm_type; a real scheduled run fires on it. */
   scheduledRun: "samples.tpcds_sf1.ship_mode",
+  /** 20 rows: ib_income_band_sk, ib_lower_bound, ib_upper_bound; runs that fail or are cancelled. */
+  runFailures: "samples.tpcds_sf1.income_band",
+  /** 30 rows (web_site_sk) and 60 rows (wp_web_page_sk); one follows a rule's latest version, one is pinned. */
+  ruleVersions: ["samples.tpcds_sf1.web_site", "samples.tpcds_sf1.web_page"],
+  /** 12 rows: s_store_sk, s_store_name, s_number_employees, s_floor_space; lowcode and SQL rules. */
+  customRules: "samples.tpcds_sf1.store",
+  /** 10k rows: s_suppkey, s_name, s_acctbal (~9% negative); its failed records are browsed and exported. */
+  failedRecords: "samples.tpch_sf1.supplier",
+  /** 300 rows: p_promo_sk, p_promo_name, p_cost; draft-run and self-approval settings. */
+  approvalSettings: "samples.tpcds_sf1.promotion",
+  /** 7,200 rows: hd_demo_sk, hd_income_band_sk; shared from its Permissions tab. */
+  permissions: "samples.tpcds_sf1.household_demographics",
+  /** 11,718 rows: cp_catalog_page_sk, cp_department; scheduled with non-default run types, never fires. */
+  scheduleOptions: "samples.tpcds_sf1.catalog_page",
 } as const;
 
 /**

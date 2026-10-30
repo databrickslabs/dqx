@@ -1,7 +1,7 @@
 import { test as base, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
 
-import { StudioApi } from "./support/studio-api";
-import { resolveTarget } from "./target";
+import { StudioApi, type StudioHttp } from "./support/studio-api";
+import { bearerToken, resolveTarget } from "./target";
 
 /** Collects browser-side failures so specs can assert a page rendered cleanly. */
 export interface PageProblems {
@@ -25,15 +25,27 @@ interface TestFixtures {
 }
 
 interface WorkerFixtures {
-  /** Authenticated client for the backend REST API; worker-scoped so beforeAll hooks can use it. */
-  api: APIRequestContext;
+  /**
+   * Authenticated client for the backend REST API (adds a fresh bearer token to
+   * every call); worker-scoped so beforeAll hooks can use it.
+   */
+  api: StudioHttp;
   /** Typed Studio API helpers over *api*. */
   studio: StudioApi;
 }
 
 function authHeaders(): Record<string, string> {
-  const { token } = resolveTarget();
+  const token = bearerToken();
   return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/** Wraps *http* so each call carries the current (refreshed when needed) bearer token. */
+function withAuth(http: APIRequestContext): StudioHttp {
+  const wrap =
+    <M extends keyof StudioHttp>(method: M): StudioHttp[M] =>
+    ((url: string, options: { headers?: Record<string, string> } = {}) =>
+      http[method](url, { ...options, headers: { ...authHeaders(), ...options.headers } })) as StudioHttp[M];
+  return { get: wrap("get"), post: wrap("post"), put: wrap("put"), patch: wrap("patch"), delete: wrap("delete") };
 }
 
 function watchPage(page: Page): PageProblems {
@@ -84,25 +96,22 @@ function watchPage(page: Page): PageProblems {
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   context: async ({ context, baseURL }, use) => {
-    const headers = authHeaders();
-    if (baseURL && headers.authorization) {
+    if (baseURL && bearerToken()) {
       // Scope the token to the app origin so it is never sent to third-party hosts
-      // (extraHTTPHeaders would attach it to every request the page makes).
+      // (extraHTTPHeaders would attach it to every request the page makes). Built
+      // per request so long journeys pick up refreshed tokens.
       const origin = new URL(baseURL).origin;
       await context.route(`${origin}/**`, (route) =>
-        route.continue({ headers: { ...route.request().headers(), ...headers } }),
+        route.continue({ headers: { ...route.request().headers(), ...authHeaders() } }),
       );
     }
     await use(context);
   },
   api: [
     async ({ playwright }, use) => {
-      const api = await playwright.request.newContext({
-        baseURL: resolveTarget().baseURL,
-        extraHTTPHeaders: authHeaders(),
-      });
-      await use(api);
-      await api.dispose();
+      const http = await playwright.request.newContext({ baseURL: resolveTarget().baseURL });
+      await use(withAuth(http));
+      await http.dispose();
     },
     { scope: "worker" },
   ],
