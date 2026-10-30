@@ -4,9 +4,7 @@ version = "0.1.2"
 description = "Serverless task runner for DQX Studio — executes profiler and dry-run jobs on Databricks compute"
 requires-python = ">=3.12"
 dependencies = [
-    # databricks-labs-dqx is provided by the sibling entry in the runner job's
-    # environment spec (app/databricks.yml, ${var.dqx_task_dependency}); it is
-    # declared here (unpinned) so the entry point resolves at build/lint time.
+    # Unpinned here for lint/dev; build_app.py pins it to dqx_version in the release wheel.
     "databricks-labs-dqx",
     "databricks-sdk~=0.120",
 ]

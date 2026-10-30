@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts import build_app as build_app_module
 from scripts import build_marketplace as marketplace_builder
 from scripts.build_app import build_task_runner_wheel
 
@@ -112,6 +113,17 @@ def test_main_ignores_generated_marketplace_artifact() -> None:
     )
 
     assert completed.returncode == 0
+
+
+def test_dab_and_marketplace_ship_the_same_pyproject_and_lock(
+    marketplace_artifact: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both deploy paths must install the same published DQX and dependency versions."""
+    monkeypatch.setattr(build_app_module, "BUILD_DIR", tmp_path)
+    build_app_module.assemble_deploy_tree(DQX_VERSION)
+
+    for name in ("pyproject.toml", "uv.lock"):
+        assert (tmp_path / name).read_bytes() == (marketplace_artifact / name).read_bytes(), name
 
 
 def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifact: Path) -> None:

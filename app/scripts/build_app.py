@@ -33,7 +33,10 @@ Side effects on the source tree:
 
 The script is invoked from the ``app-build`` Makefile target (and
 transitively from the ``databricks.yml`` ``artifacts.default.build``
-pipeline, which additionally builds the task-runner wheel for the job).
+pipeline). It also builds the task-runner wheel into ``.build/tasks``,
+pinned to ``dqx_version``: the app republishes that wheel as the job's only
+dependency at startup, so a plain ``uv build tasks/`` would leave the
+runner's DQX unpinned.
 Designed to be cwd-independent — paths resolve relative to this file.
 """
 
@@ -217,9 +220,9 @@ def assemble_deploy_tree(dqx_version: str) -> None:
     Writes the release ``pyproject.toml`` (pinned to the published DQX) and the
     committed Marketplace lock, copies ``README.md`` and the package ``src/``
     (minus the ``ui/`` TS source and caches) into ``.build/``, and writes
-    ``requirements.txt`` = ``uv``. ``.build/tasks``
-    (the task-runner wheel, built by the ``databricks.yml`` pipeline after
-    this script) is left untouched.
+    ``requirements.txt`` = ``uv``. ``.build/tasks`` is left untouched;
+    ``main`` builds the pinned task-runner wheel there afterwards (see
+    *build_task_runner_wheel*).
     """
     # Sweep stale wheels from the previous (wheel-based) layout so they
     # don't linger in the synced source tree.
@@ -281,7 +284,11 @@ def release_pyproject(source: str, dqx_version: str) -> str:
     """
     lines = normalize_newlines(source).splitlines()
     dependency_index = next(
-        (index for index, line in enumerate(lines) if '"databricks-labs-dqx[llm,datacontract]' in line),
+        (
+            index
+            for index, line in enumerate(lines)
+            if '"databricks-labs-dqx[llm,datacontract]' in line and not line.lstrip().startswith("#")
+        ),
         None,
     )
     if dependency_index is None:

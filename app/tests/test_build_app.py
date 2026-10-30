@@ -2,6 +2,7 @@
 
 import importlib.util
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,20 @@ def test_release_pyproject_pins_the_published_dqx_and_drops_local_settings():
     assert "uv" not in parsed.get("tool", {})
 
 
+def test_release_pyproject_pins_the_real_dependency_not_a_commented_copy():
+    build_app = _load_build_app()
+    source = (
+        '[project]\nname = "app"\nversion = "0"\ndependencies = [\n'
+        '    # "databricks-labs-dqx[llm,datacontract]>=0.16",\n'
+        '    "databricks-labs-dqx[llm,datacontract]",\n'
+        '    "fastapi~=0.119",\n]\n'
+    )
+
+    release = tomllib.loads(build_app.release_pyproject(source, "0.17.0"))
+
+    assert release["project"]["dependencies"] == ["databricks-labs-dqx[llm,datacontract]==0.17.0", "fastapi~=0.119"]
+
+
 def test_deploy_tree_installs_the_published_dqx_from_the_committed_lock(monkeypatch, tmp_path):
     """A DAB deploy must install the same pinned DQX and lock as Marketplace, never the checkout."""
     build_app = _load_build_app()
@@ -71,6 +86,18 @@ def test_deploy_tree_installs_the_published_dqx_from_the_committed_lock(monkeypa
     assert "sources" not in pyproject.get("tool", {}).get("uv", {})
     assert (tmp_path / "uv.lock").read_text(encoding="utf-8") == build_app.release_lock_text(dqx_version)
     assert not (tmp_path / "_vendor").exists()
+
+
+def test_deploy_task_runner_wheel_requires_the_pinned_dqx(tmp_path):
+    """The app republishes this wheel as the job's only dependency, so it must carry the pin."""
+    build_app = _load_build_app()
+    dqx_version = build_app.dqx_release_version()
+
+    wheel = build_app.build_task_runner_wheel(tmp_path / "tasks", dqx_version)
+
+    with zipfile.ZipFile(wheel) as archive:
+        metadata = archive.read(next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+    assert f"Requires-Dist: databricks-labs-dqx=={dqx_version}" in metadata
 
 
 def test_release_lock_drops_resolver_options():
