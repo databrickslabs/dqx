@@ -55,7 +55,7 @@ variables:
   # deploys alike. Not synced by make fmt: bump it in a Studio release, together with
   # marketplace_templates/uv.lock (see DEPLOYMENT.md).
   dqx_version:
-    default: "0.17.1"
+    default: "0.17.0"
   # The databricks-labs-dqx dependency the task-runner job installs: the pinned,
   # published release, matching the app's locked DQX.
   dqx_task_dependency:
