@@ -133,6 +133,8 @@ This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist
 
 Local development and app tests resolve `databricks-labs-dqx` from the parent checkout, but deploys never do. The `.build/` tree gets a release `pyproject.toml` pinned to the published `dqx_version` from `databricks.yml`, and the committed Marketplace lock (`marketplace_templates/uv.lock`). A DAB deploy therefore installs the same published DQX and dependency versions as Marketplace, and the task runner installs the same pin. Unreleased DQX Core changes reach a workspace only after a DQX release and a Studio bump of `dqx_version` with the lock (see `DEPLOYMENT.md`). The build fails if the lock resolves a different DQX than `dqx_version`.
 
+This means Studio code (`app/src` and `app/tasks`) can only use DQX features that exist in the pinned `dqx_version`. Tests run against the checkout, so they won't catch an import of a helper that's on `main` but not yet released: it fails with an `ImportError` when the deployed app starts. If a Studio change needs something new in Core, land the Core change, release DQX, and then bump `dqx_version` and the lock in the Studio release that uses it.
+
 ## 4. Start Dev Servers
 
 From the **project root**:
