@@ -44,12 +44,25 @@ export interface ScheduleOverviewRow {
   paused: boolean;
 }
 
+export interface RunSummary {
+  run_id: string;
+  source_table_fqn: string;
+  /** RUNNING | SUCCESS | FAILED | CANCELED | PENDING */
+  status: string;
+  /** e.g. "manual" | "scheduled" */
+  run_type: string | null;
+  created_at: string;
+}
+
 export interface NativeRuleSpec {
   name: string;
   /** DQX check function, e.g. "is_not_null". */
   fn: string;
   /** Extra literal arguments besides the column slot, e.g. { limit: 0 }. */
   args?: Record<string, unknown>;
+  /** Name of the rule's column variable (default "column"). "Apply to tables"
+   *  auto-maps it to a same-named column, e.g. "franchiseID". */
+  slot?: string;
   severity?: string;
   dimension?: string;
   description?: string;
@@ -103,8 +116,8 @@ export class StudioApi {
         data: {
           mode: "dqx_native",
           definition: {
-            body: { function: spec.fn, arguments: { column: "{{column}}", ...spec.args } },
-            slots: [{ name: "column", family: "any", position: 0, cardinality: "one" }],
+            body: { function: spec.fn, arguments: { column: `{{${spec.slot ?? "column"}}}`, ...spec.args } },
+            slots: [{ name: spec.slot ?? "column", family: "any", position: 0, cardinality: "one" }],
             parameters: [],
           },
           user_metadata: {
@@ -172,6 +185,16 @@ export class StudioApi {
     return rows.map((r) => r.table).find((t) => t.table_fqn === tableFqn);
   }
 
+  /** Monitored tables whose FQN is in *schemaFqn* ("catalog.schema"). */
+  async listMonitoredTablesIn(schemaFqn: string): Promise<MonitoredTable[]> {
+    const [catalog, schema] = schemaFqn.split(".");
+    const rows = await json<{ table: MonitoredTable }[]>(
+      await this.http.get("/api/v1/monitored-tables", { params: { catalog, schema } }),
+      `list monitored tables in ${schemaFqn}`,
+    );
+    return rows.map((r) => r.table).filter((t) => t.table_fqn.startsWith(`${schemaFqn}.`));
+  }
+
   async getMonitoredTableDetail(bindingId: string): Promise<MonitoredTableDetail> {
     return json<MonitoredTableDetail>(
       await this.http.get(`/api/v1/monitored-tables/${bindingId}`),
@@ -183,10 +206,10 @@ export class StudioApi {
     return (await this.getMonitoredTableDetail(bindingId)).table;
   }
 
-  async applyRule(bindingId: string, ruleId: string, column: string): Promise<string> {
+  async applyRule(bindingId: string, ruleId: string, column: string, slot = "column"): Promise<string> {
     const body = await json<{ id: string }>(
       await this.http.post(`/api/v1/monitored-tables/${bindingId}/applied-rules`, {
-        data: { rule_id: ruleId, column_mapping: [{ column }] },
+        data: { rule_id: ruleId, column_mapping: [{ [slot]: column }] },
       }),
       "apply rule",
     );
@@ -228,11 +251,35 @@ export class StudioApi {
     return json<Collection>(res, `get collection ${productId}`);
   }
 
+  async createCollection(name: string): Promise<Collection> {
+    return json<Collection>(
+      await this.http.post("/api/v1/data-products", {
+        data: { name, description: "Created by the Studio Playwright suite." },
+      }),
+      `create collection ${name}`,
+    );
+  }
+
+  async addCollectionMember(productId: string, bindingId: string): Promise<void> {
+    await json(
+      await this.http.post(`/api/v1/data-products/${productId}/members`, { data: { binding_id: bindingId } }),
+      "add collection member",
+    );
+  }
+
+  async submitCollection(productId: string): Promise<void> {
+    await json(await this.http.post(`/api/v1/data-products/${productId}/submit`, { data: {} }), "submit collection");
+  }
+
+  async approveCollection(productId: string): Promise<void> {
+    if ((await this.getCollection(productId))?.status === "approved") return;
+    await json(await this.http.post(`/api/v1/data-products/${productId}/approve`, { data: {} }), "approve collection");
+  }
+
   async deleteCollection(productId: string): Promise<void> {
     const res = await this.http.delete(`/api/v1/data-products/${productId}`);
     if (res.status() !== 404) await json(res, `delete collection ${productId}`);
   }
-
 
   // ---- schedules ---------------------------------------------------------
 
@@ -244,6 +291,15 @@ export class StudioApi {
     return (await this.scheduleOverview()).find((s) => s.source_type === "table" && s.source_id === bindingId);
   }
 
+  async collectionSchedule(productId: string): Promise<ScheduleOverviewRow | undefined> {
+    return (await this.scheduleOverview()).find((s) => s.source_type === "collection" && s.source_id === productId);
+  }
+
+  async clearCollectionSchedule(productId: string): Promise<void> {
+    const res = await this.http.patch(`/api/v1/data-products/${productId}`, { data: { schedule_cron: null } });
+    if (res.status() !== 404) await json(res, `clear schedule on collection ${productId}`);
+  }
+
   async clearTableSchedule(bindingId: string): Promise<void> {
     await json(
       await this.http.patch(`/api/v1/monitored-tables/${bindingId}/schedule`, { data: { schedule_cron: null } }),
@@ -251,6 +307,17 @@ export class StudioApi {
     );
   }
 
+
+  // ---- runs --------------------------------------------------------------
+
+  /** Recent validation runs (newest first), as listed in Runs History. */
+  async listRuns(): Promise<RunSummary[]> {
+    return json<RunSummary[]>(await this.http.get("/api/v1/dryrun/runs", { params: { summary: "true" } }), "list runs");
+  }
+
+  async runIdsFor(tableFqn: string): Promise<Set<string>> {
+    return new Set((await this.listRuns()).filter((r) => r.source_table_fqn === tableFqn).map((r) => r.run_id));
+  }
 
   // ---- sweeping ----------------------------------------------------------
 
