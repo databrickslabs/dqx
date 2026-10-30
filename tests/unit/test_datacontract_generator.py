@@ -3281,8 +3281,8 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 "is_not_null"
             ]
             assert (
-                f"Skipping format on 'event': '{format_str}' is a Python strftime pattern; use a Spark datetime "
-                "pattern such as 'yyyy-MM-dd'." in caplog.messages
+                f"Skipping format on 'event': '{format_str}'; use a Spark datetime pattern such as 'yyyy-MM-dd'."
+                in caplog.messages
             )
         finally:
             os.unlink(temp_path)

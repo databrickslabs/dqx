@@ -1001,15 +1001,15 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
 
-        ODCS defines the format as a JDK DateTimeFormatter pattern (e.g. 'yyyy-MM-dd'), the syntax Spark datetime
-        patterns are based on, so it is passed to the check unchanged. A Python strftime pattern (with '%') is
-        skipped with a warning, since Spark either rejects it or flags every row as invalid.
+        ODCS defines the format as a Java DateTimeFormatter pattern (e.g. *'yyyy-MM-dd'*), the syntax Spark datetime
+        patterns are based on. The contract format is passed to the check unchanged. Any pattern containing '%' is
+        skipped with a warning.
         """
         format_value = opts['format']
         if isinstance(format_value, str) and "%" in format_value:
             logger.warning(
-                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}' "
-                "is a Python strftime pattern; use a Spark datetime pattern such as 'yyyy-MM-dd'."
+                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}'; "
+                "use a Spark datetime pattern such as 'yyyy-MM-dd'."
             )
             return []
 
