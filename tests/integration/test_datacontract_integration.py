@@ -580,7 +580,7 @@ class TestDataContractIntegrationErrors:
         """Error path: DataContract() with no file path, data_contract, or data_contract_str; ParameterError."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
         empty_contract = DataContract()
-        with pytest.raises(ParameterError, match="DataContract object must have either"):
+        with pytest.raises(ParameterError, match="DataContract has no contract"):
             generator.generate_rules_from_contract(contract=empty_contract)
 
     def test_error_both_contract_and_file(self, ws, spark, sample_contract_path):
