@@ -131,7 +131,7 @@ uv run python scripts/build_app.py
 
 This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and assembles `.build/` — the source tree Databricks Apps runs via `uv run` (no application wheel). The tree carries `pyproject.toml`, `uv.lock`, the package `src/`, and `requirements.txt` = `uv`, so the container resolves the locked environment (and its own Python) at launch.
 
-While `pyproject.toml` resolves `databricks-labs-dqx` from the parent checkout, the build also copies that library into `.build/_vendor/dqx` and retargets the *copied* `pyproject.toml` / `uv.lock` at it. The container only ever receives the `app/` directory, so a path source pointing outside it cannot resolve there — `uv run` fails at launch with `does not appear to be a Python project`. The tracked lock is never rewritten, so the deployed resolution is the one that was tested. Once a DQX release carries the symbols the backend imports, drop `[tool.uv.sources]` and the vendoring step becomes a no-op automatically.
+Local development and app tests resolve `databricks-labs-dqx` from the parent checkout, but deploys never do. The `.build/` tree gets a release `pyproject.toml` pinned to the published `dqx_version` from `databricks.yml`, and the committed Marketplace lock (`marketplace_templates/uv.lock`). A DAB deploy therefore installs the same published DQX and dependency versions as Marketplace, and the task runner installs the same pin. Unreleased DQX Core changes reach a workspace only after a DQX release and a Studio bump of `dqx_version` with the lock (see `DEPLOYMENT.md`). The build fails if the lock resolves a different DQX than `dqx_version`.
 
 ## 4. Start Dev Servers
 

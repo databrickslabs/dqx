@@ -3,9 +3,13 @@
 Produces, under ``app/.build/`` — a self-contained source tree the
 Databricks Apps runtime runs via ``uv run`` (no application wheel):
 
-* ``pyproject.toml`` / ``uv.lock`` — copied from the app root so ``uv run``
-  resolves the exact locked environment (and fetches the required Python)
-  inside the Apps container, regardless of the container's system Python.
+* ``pyproject.toml`` / ``uv.lock`` — the release form of the app's
+  ``pyproject.toml``, pinned to the published DQX ``dqx_version`` from
+  ``databricks.yml``, and the committed Marketplace lock resolved for it
+  (``marketplace_templates/uv.lock``). DAB and Marketplace deploys therefore
+  install the same published DQX and the same dependency versions, and
+  ``uv run --frozen`` installs that lock inside the Apps container,
+  regardless of the container's system Python.
 * ``README.md`` — copied because ``[project].readme`` references it (hatch
   needs it when ``uv run`` installs the app package).
 * ``src/databricks_labs_dqx_app/`` — the package source, including the built
@@ -16,10 +20,6 @@ Databricks Apps runtime runs via ``uv run`` (no application wheel):
   ``pip install``s this into the platform venv; ``uv`` then builds the real
   environment from ``pyproject.toml`` + ``uv.lock`` at launch — which is what
   lets the app target a newer Python than the container's system Python.
-* ``_vendor/dqx/`` — the co-developed ``databricks-labs-dqx`` library source,
-  vendored only while the app resolves it from a local path (see
-  ``_vendor_dqx_library``). The container never sees the parent checkout, so
-  the path source has to be retargeted inside the deploy tree.
 * ``app.yml`` — Databricks Apps launch manifest (``uv run uvicorn`` …), a
   fallback for non-DABs deploys; DABs overrides the command via
   ``var.app_config.command`` in ``databricks.yml``.
@@ -46,18 +46,22 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+import yaml
+from packaging.version import Version
+
 APP_DIR = Path(__file__).resolve().parent.parent  # scripts/build_app.py → app/
 PYPROJECT = APP_DIR / "pyproject.toml"
-UV_LOCK = APP_DIR / "uv.lock"
 README = APP_DIR / "README.md"
 BUILD_DIR = APP_DIR / ".build"
 NODE_BIN = APP_DIR / "node_modules" / ".bin"
 
 DQX_DIR = APP_DIR.parent
+DAB_CONFIG = APP_DIR / "databricks.yml"
+TEMPLATE_LOCK = APP_DIR / "marketplace_templates" / "uv.lock"
+DQX_PACKAGE = "databricks-labs-dqx"
+RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)")
 # Mirrors ``[tool.hatch.build.targets.sdist].only-include`` in the DQX
 # pyproject: the minimum hatchling needs to build the library from source.
-DQX_VENDOR_FILES = ("pyproject.toml", "README.md", "LICENSE", "NOTICE")
-DQX_VENDOR_REL = "_vendor/dqx"
 
 PKG_DIR = APP_DIR / "src" / "databricks_labs_dqx_app"
 METADATA_PY = PKG_DIR / "_metadata.py"
@@ -210,12 +214,13 @@ def _run_vite_build() -> None:
     _run([_node_bin("vite"), "build"])
 
 
-def _assemble_deploy_tree() -> None:
+def assemble_deploy_tree() -> None:
     """Assemble the source tree the Apps runtime runs via ``uv run``.
 
-    Copies the app root's ``pyproject.toml`` / ``uv.lock`` / ``README.md``
-    and the package ``src/`` (minus the ``ui/`` TS source and caches) into
-    ``.build/``, and writes ``requirements.txt`` = ``uv``. ``.build/tasks``
+    Writes the release ``pyproject.toml`` (pinned to the published DQX) and the
+    committed Marketplace lock, copies ``README.md`` and the package ``src/``
+    (minus the ``ui/`` TS source and caches) into ``.build/``, and writes
+    ``requirements.txt`` = ``uv``. ``.build/tasks``
     (the task-runner wheel, built by the ``databricks.yml`` pipeline after
     this script) is left untouched.
     """
@@ -224,9 +229,15 @@ def _assemble_deploy_tree() -> None:
     for stale in list(BUILD_DIR.glob("*.whl")):
         stale.unlink()
     shutil.rmtree(BUILD_DIR / "wheels", ignore_errors=True)
+    # Deploys no longer vendor the checkout's DQX; drop a copy left by an older build.
+    shutil.rmtree(BUILD_DIR / "_vendor", ignore_errors=True)
 
-    shutil.copy2(PYPROJECT, BUILD_DIR / "pyproject.toml")
-    shutil.copy2(UV_LOCK, BUILD_DIR / "uv.lock")
+    dqx_version = dqx_release_version()
+    lock_text = release_lock_text(dqx_version)
+    (BUILD_DIR / "pyproject.toml").write_text(
+        release_pyproject(PYPROJECT.read_text(encoding="utf-8"), dqx_version), encoding="utf-8", newline="\n"
+    )
+    (BUILD_DIR / "uv.lock").write_text(lock_text, encoding="utf-8", newline="\n")
     shutil.copy2(README, BUILD_DIR / "README.md")
 
     dest_pkg = BUILD_DIR / "src" / "databricks_labs_dqx_app"
@@ -240,56 +251,121 @@ def _assemble_deploy_tree() -> None:
     (BUILD_DIR / "requirements.txt").write_text("uv\n", encoding="utf-8")
 
 
-def _local_dqx_path(pyproject: dict) -> str | None:
-    """Return the local path ``databricks-labs-dqx`` resolves from, if any.
+def dqx_release_version(bundle_path: Path = DAB_CONFIG) -> str:
+    """Return the published DQX version Studio deploys against.
 
-    Returns ``None`` once the app pins the published wheel instead — at which
-    point nothing needs vendoring and the deploy tree is used verbatim.
+    Args:
+        bundle_path: Bundle configuration holding the *dqx_version* variable.
+
+    Returns:
+        The *dqx_version* default from *databricks.yml*.
     """
-    sources = pyproject.get("tool", {}).get("uv", {}).get("sources", {})
-    path = sources.get("databricks-labs-dqx", {}).get("path")
-    return path if isinstance(path, str) else None
+    bundle = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
+    try:
+        version = bundle["variables"]["dqx_version"]["default"]
+    except (KeyError, TypeError) as error:
+        raise RuntimeError("Bundle DQX version is missing") from error
+    if not isinstance(version, str) or RELEASE_VERSION.fullmatch(version) is None:
+        raise RuntimeError("Bundle DQX version is invalid")
+    return version
 
 
-def _vendor_dqx_library() -> None:
-    """Copy the co-developed DQX library into ``.build/_vendor/dqx/``.
+def release_pyproject(source: str, dqx_version: str) -> str:
+    """Return the app *pyproject.toml* pinned to the published DQX.
 
-    The Apps container only ever receives the app directory, so a path source
-    pointing outside it (``../``) cannot resolve there — ``uv run`` fails at
-    launch trying to read metadata from a directory that was never uploaded.
-    Copying ``src/`` plus the metadata files hatchling reads makes the library
-    resolvable in-tree. The library's version comes from
-    ``src/databricks/labs/dqx/__about__.py``, so the build needs no git.
+    Pins *databricks-labs-dqx* to *dqx_version* and drops the local path source,
+    dependency groups and tool settings, so it matches the committed lock.
+
+    Args:
+        source: The app's *pyproject.toml* text.
+        dqx_version: Published DQX version to pin.
+
+    Returns:
+        The release *pyproject.toml* text.
     """
-    dest = BUILD_DIR / DQX_VENDOR_REL
-    shutil.rmtree(dest, ignore_errors=True)
-    dest.mkdir(parents=True)
-
-    for name in DQX_VENDOR_FILES:
-        shutil.copy2(DQX_DIR / name, dest / name)
-
-    shutil.copytree(
-        DQX_DIR / "src",
-        dest / "src",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    lines = normalize_newlines(source).splitlines()
+    dependency_index = next(
+        (index for index, line in enumerate(lines) if '"databricks-labs-dqx[llm,datacontract]' in line),
+        None,
     )
+    if dependency_index is None:
+        raise RuntimeError("Application DQX dependency declaration changed")
+
+    comment_start = dependency_index
+    while comment_start > 0 and lines[comment_start - 1].lstrip().startswith("#"):
+        comment_start -= 1
+    lines[comment_start : dependency_index + 1] = [f'    "databricks-labs-dqx[llm,datacontract]=={dqx_version}",']
+    text = "\n".join(lines) + "\n"
+    text = remove_toml_table(text, "dependency-groups")
+    text = remove_toml_table(text, "tool.uv.sources", remove_leading_comments=True)
+    text = remove_toml_table(text, "tool.uv")
+    for table in ("tool.pytest.ini_options", "tool.ruff.lint", "tool.ruff", "tool.basedpyright"):
+        text = remove_toml_table(text, table, remove_leading_comments=True)
+    return normalize_newlines(text)
 
 
-def _retarget_dqx_source(local_path: str) -> None:
-    """Point the deploy tree's path source at the vendored copy.
+def release_lock_text(dqx_version: str) -> str:
+    """Return the committed Marketplace lock, after checking it resolves *dqx_version*.
 
-    Rewrites the *copied* ``pyproject.toml`` and ``uv.lock``, never the
-    tracked originals. A plain string swap keeps the deployed lock otherwise
-    byte-identical to the committed one, so the container installs exactly the
-    resolution that was tested — re-locking here would instead risk dependency
-    drift and bake the build machine's registry URLs into the deploy.
+    The lock is a tracked template, not regenerated at build time: the build resolves
+    and downloads nothing, so it cannot drift with the package index or a *uv* version.
+    The *options* tables are dropped because the release *pyproject.toml* has no
+    *tool.uv* settings. To refresh the lock, see *DEPLOYMENT.md*.
+
+    Args:
+        dqx_version: Published DQX version the lock must resolve.
+
+    Returns:
+        The lock text to deploy.
     """
-    for target, key in ((BUILD_DIR / "pyproject.toml", "path"), (BUILD_DIR / "uv.lock", "directory")):
-        text = target.read_text(encoding="utf-8")
-        needle = f'{key} = "{local_path}"'
-        if needle not in text:
-            raise SystemExit(f"error: expected {needle!r} in {target} — cannot retarget the local dqx source")
-        target.write_text(text.replace(needle, f'{key} = "{DQX_VENDOR_REL}"'), encoding="utf-8")
+    if not TEMPLATE_LOCK.is_file():
+        raise RuntimeError("Committed Marketplace lock is missing")
+    lock_text = normalize_newlines(TEMPLATE_LOCK.read_text(encoding="utf-8"))
+    require_lock_resolves_dqx(lock_text, dqx_version)
+    lock_text = remove_toml_table(lock_text, "options.exclude-newer-package")
+    return remove_toml_table(lock_text, "options")
+
+
+def require_lock_resolves_dqx(lock_text: str, dqx_version: str) -> None:
+    """Fail unless *lock_text* resolves exactly the published *dqx_version*.
+
+    The app installs the lock while the task runner installs the *dqx_version* pin,
+    so the two must agree.
+
+    Args:
+        lock_text: *uv.lock* text.
+        dqx_version: Published DQX version the release pins.
+    """
+    locked = {
+        Version(package["version"])
+        for package in tomllib.loads(lock_text).get("package", [])
+        if isinstance(package, dict) and package.get("name") == DQX_PACKAGE and "version" in package
+    }
+    if locked != {Version(dqx_version)}:
+        raise RuntimeError("Marketplace lock does not resolve the release DQX version")
+
+
+def remove_toml_table(source: str, table: str, *, remove_leading_comments: bool = False) -> str:
+    """Remove the *table* section (header through the next header) from TOML *source*."""
+    lines = source.splitlines()
+    header = f"[{table}]"
+    try:
+        start = lines.index(header)
+    except ValueError:
+        return source
+    end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("[")), len(lines))
+    if remove_leading_comments:
+        while start > 0 and lines[start - 1].lstrip().startswith("#"):
+            start -= 1
+    del lines[start:end]
+    while start < len(lines) - 1 and lines[start] == "" and lines[start + 1] == "":
+        del lines[start]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def normalize_newlines(value: str) -> str:
+    """Return *value* with LF line endings."""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
@@ -378,14 +454,8 @@ def main() -> int:
     _step("Building UI bundle (vite build → src/databricks_labs_dqx_app/__dist__/)")
     _run_vite_build()
 
-    _step("Assembling .build/ source tree (pyproject + uv.lock + src + requirements.txt=uv)")
-    _assemble_deploy_tree()
-
-    local_dqx = _local_dqx_path(pyproject)
-    if local_dqx:
-        _step(f"Vendoring local databricks-labs-dqx ({local_dqx} → {DQX_VENDOR_REL})")
-        _vendor_dqx_library()
-        _retarget_dqx_source(local_dqx)
+    _step(f"Assembling .build/ source tree pinned to databricks-labs-dqx=={dqx_release_version()}")
+    assemble_deploy_tree()
 
     _step("Build complete:")
     print(f"  → {(BUILD_DIR / 'src' / 'databricks_labs_dqx_app').relative_to(APP_DIR)} (source), requirements.txt=uv")

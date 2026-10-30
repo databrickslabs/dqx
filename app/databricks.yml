@@ -50,24 +50,14 @@ variables:
   task_runner_wheel_path:
     description: "Task-runner wheel in the selected app build"
     default: "./.build/tasks/databricks_labs_dqx_task_runner-*.whl"
-  # Published DQX (databricks-labs-dqx) version Studio releases against — single source
-  # of truth for the task-runner job's dqx dependency and the Marketplace release pin.
-  # Not synced by make fmt: bump it in a Studio release, together with
-  # marketplace_templates/uv.lock (see DEPLOYMENT.md). The pin and the wheel filename
-  # below both derive from it, so a bump only edits this one value.
+  # Published DQX (databricks-labs-dqx) version Studio deploys against — the single
+  # source of truth for both the app and the task runner, in DAB and Marketplace
+  # deploys alike. Not synced by make fmt: bump it in a Studio release, together with
+  # marketplace_templates/uv.lock (see DEPLOYMENT.md).
   dqx_version:
     default: "0.17.0"
-  # Filename uv build produces for databricks-labs-dqx at ${var.dqx_version}. Used by
-  # the development dqx_task_dependency override (see target.dev.yml.example): the app
-  # publishes this wheel to the wheels volume at startup and the runner installs it.
-  dqx_wheel_filename:
-    default: "databricks_labs_dqx-${var.dqx_version}-py3-none-any.whl"
-  # The databricks-labs-dqx dependency the task-runner job installs.
-  # PRODUCTION (default): the pinned, published release from the registry — this is
-  #   what users get, reproducible and auditable.
-  # DEVELOPMENT: override in target.*.yml to the locally-built wheel on the wheels
-  #   volume so the runner exercises YOUR checkout's DQX, matching the app backend
-  #   (which runs the vendored source). See target.dev.yml.example.
+  # The databricks-labs-dqx dependency the task-runner job installs: the pinned,
+  # published release, matching the app's locked DQX.
   dqx_task_dependency:
     default: "databricks-labs-dqx==${var.dqx_version}"
   dqx_service_principal_application_id:
@@ -131,10 +121,11 @@ variables:
       # Single worker so the in-process SchedulerService (gated by a file lock)
       # doesn't fight itself across workers. The in-memory CacheFactory is per
       # worker (TTL, non-authoritative) so adding workers is otherwise safe.
-      # ``uv run`` resolves the app's locked environment at container start.
+      # ``uv run --frozen`` installs exactly the committed lock at container start.
       command:
         - "uv"
         - "run"
+        - "--frozen"
         - "--no-dev"
         - "uvicorn"
         - "databricks_labs_dqx_app.backend.app:app"
@@ -184,22 +175,15 @@ sync:
 artifacts:
   default:
     # build_app.py assembles the app as a SOURCE tree under .build/ (pyproject +
-    # uv.lock + src + requirements.txt=``uv``) — no app wheel. While the app
-    # resolves databricks-labs-dqx from the parent checkout, build_app.py also
-    # vendors that library into .build/_vendor/dqx and retargets the copied
-    # pyproject/lock at it: the container never receives the parent directory.
-    # We build the task-runner wheel for the job (it's not published). We ALSO build the
-    # databricks-labs-dqx wheel from this checkout into .build/: production installs the
-    # pinned published release from the registry and ignores this wheel, but a dev deploy
-    # (dqx_task_dependency overridden in target.*.yml) installs it — the app publishes it
-    # to the wheels volume at startup — so the runner runs your checkout's DQX, matching
-    # the app backend (which runs the vendored source). Built last so build_app.py's stale
-    # .build/*.whl sweep doesn't remove it.
+    # uv.lock + src + requirements.txt=``uv``) — no app wheel. The deploy pyproject
+    # pins the published DQX ${var.dqx_version} and ships the committed Marketplace
+    # lock, so a DAB deploy installs the same DQX and dependencies as Marketplace.
+    # We build the task-runner wheel for the job (it's not published); the job installs
+    # the same published DQX (dqx_task_dependency).
     build: >
       uv run --frozen python scripts/build_app.py &&
       rm -rf .build/tasks &&
-      uv build tasks/ --wheel --out-dir .build/tasks/ &&
-      uv build .. --wheel --out-dir .build/
+      uv build tasks/ --wheel --out-dir .build/tasks/
 
 resources:
   apps:
@@ -536,8 +520,7 @@ resources:
             dependencies:
               # Local task-runner wheel (not published) + databricks-labs-dqx. The dqx
               # entry is ${var.dqx_task_dependency}: the pinned published release from the
-              # registry in production, or the locally-built wheel on the wheels volume for
-              # a dev deploy (overridden in target.*.yml). See the variable definition.
+              # registry, the same DQX the app installs. See the variable definition.
               - ${var.task_runner_wheel_path}
               - ${var.dqx_task_dependency}
       parameters:

@@ -8,9 +8,9 @@ dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    # Resolved from the parent checkout via [tool.uv.sources] below (the app runs the
-    # vendored source, not a published release), so it is intentionally unpinned — the
-    # co-developed version comes from the checkout, not a version specifier here.
+    # Local development and tests resolve this from the parent checkout via
+    # [tool.uv.sources] below, so it is unpinned here. Deploys (DAB and Marketplace)
+    # pin the published dqx_version from databricks.yml instead (build_app.py).
     "databricks-labs-dqx[llm,datacontract]",
     "databricks-sdk~=0.120",
     "databricks-sql-connector[pyarrow]==4.2.5",
@@ -59,13 +59,12 @@ app-module = "databricks_labs_dqx_app.backend.app:app"
 # TODO: drop the certifi exemption once certifi>=2026.10.19 is older than the 7-day exclude-newer window.
 exclude-newer-package = { "databricks-sdk" = false, "certifi" = false }
 
-# Rules Registry co-develops the DQX library with this app: local symbols
-# (e.g. llm helpers) are not yet in the published 0.15.0 wheel. Non-editable
-# path dep avoids namespace-package shadowing with databricks-sdk (see prior
-# Studio notes). Deploys under the #1300 uv-run source model cannot follow this
-# path out of the app directory, so build_app.py vendors the library into
-# .build/_vendor/dqx and retargets the copied pyproject/lock. Drop this source
-# (and the vendoring becomes a no-op) once a dqx release carries the additions.
+# Local development and app tests run against this checkout's DQX, so changes to
+# both are tested together. Non-editable path dep avoids namespace-package
+# shadowing with databricks-sdk (see prior Studio notes). Deploys never use it:
+# build_app.py writes a release pyproject pinned to the published dqx_version and
+# ships the committed Marketplace lock, so the app only uses DQX symbols that
+# exist in that release.
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../" }
 

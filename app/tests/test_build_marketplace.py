@@ -129,9 +129,9 @@ def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifa
 def test_marketplace_template_lock_pins_the_release_dqx_version() -> None:
     """The release pins *dqx_version* from the bundle; the copied lock must resolve that same DQX.
 
-    *dqx_version* follows DQX Core releases (docs/dqx/sync_versions.py), but the template lock is
-    refreshed by hand. A lagging lock makes the app and task runner install different DQX versions,
-    so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
+    *dqx_version* is bumped by hand in a Studio release (make fmt does not change it), together
+    with the template lock. A lagging lock makes the app and task runner install different DQX
+    versions, so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
     """
     template = tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))
     locked = {package["version"] for package in template["package"] if package["name"] == DQX_PACKAGE}
@@ -197,6 +197,38 @@ def test_marketplace_template_lock_matches_the_app_dependencies() -> None:
         "marketplace_templates/uv.lock is stale vs app/uv.lock — regenerate it (see DEPLOYMENT.md). "
         f"missing={sorted(expected - actual)} unexpected={sorted(actual - expected)}"
     )
+
+
+def _app_package(lock_path: Path) -> dict:
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    return next(package for package in lock["package"] if package["name"] == "databricks-labs-dqx-app")
+
+
+def test_marketplace_template_lock_matches_the_app_dependency_specifiers() -> None:
+    """The template must lock the app's own requirements and their versions, as app/uv.lock does.
+
+    The deploy installs the template with *uv run --frozen*, which never checks it against the
+    pyproject, so a changed or bumped app dependency must fail here rather than ship stale.
+    DQX is pinned to *dqx_version* in the template and resolved from the checkout in app/uv.lock,
+    so it is left out.
+    """
+    app_lock, template = _app_package(APP_DIR / "uv.lock"), _app_package(TEMPLATE_LOCK)
+
+    def requirements(package: dict) -> list[dict]:
+        return sorted(
+            (entry for entry in package["metadata"]["requires-dist"] if entry["name"] != DQX_PACKAGE),
+            key=lambda entry: entry["name"],
+        )
+
+    assert requirements(template) == requirements(app_lock)
+
+    def direct_versions(lock_path: Path, package: dict) -> dict[str, str]:
+        versions = {
+            p["name"]: p.get("version") for p in tomllib.loads(lock_path.read_text(encoding="utf-8"))["package"]
+        }
+        return {d["name"]: versions[d["name"]] for d in package["dependencies"] if d["name"] != DQX_PACKAGE}
+
+    assert direct_versions(TEMPLATE_LOCK, template) == direct_versions(APP_DIR / "uv.lock", app_lock)
 
 
 def test_marketplace_template_lock_holds_exactly_its_runtime_closure() -> None:
