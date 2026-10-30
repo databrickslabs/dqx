@@ -50,21 +50,19 @@ test.describe("Profiler", () => {
       await profileTab.getByRole("button", { name: /^Add [1-9]\d* checks?$/ }).click();
       // Suggestions are staged into the table's unsaved selection, not saved yet.
       await expectToast(page, /^Added \d+ checks? to your selection — Save to apply\./);
-      // Each suggestion becomes a published registry rule named after its check and column.
-      await expect
-        .poll(async () => (await studio.listRules()).filter((r) => !before.has(r.rule_id)).map((r) => r.user_metadata?.name))
-        .toContain("Is not null: r_regionkey");
     });
 
-    await test.step("the suggested rules are staged on the table and saved as a draft", async () => {
+    await test.step("the suggested checks are staged on the table and saved as a draft", async () => {
       await page.getByRole("tab", { name: "Apply Rules" }).click();
       const applyTab = page.getByRole("tabpanel", { name: "Apply Rules" });
-      await expect(applyTab).toContainText("Is not null: r_regionkey");
-      await expect(applyTab).toContainText("Is in range: r_regionkey");
+      // Each suggestion is backed by a published rule — an existing one with the
+      // same definition when there is one, otherwise a new one named after its
+      // check and column — so assert on what lands on the table, not on names.
+      await expect(applyTab).toContainText(/^4 checks via 3 rules/);
       await page.getByRole("button", { name: "Save as draft" }).click();
       await expect
         .poll(async () => (await studio.getMonitoredTableDetail(table.binding_id)).applied_rules.length)
-        .toBeGreaterThanOrEqual(3);
+        .toBe(3);
     });
   });
 });
