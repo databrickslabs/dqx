@@ -429,9 +429,10 @@ wheels = [
 
 [[package]]
 name = "databricks-labs-dqx"
-version = "0.17.0"
+version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "certifi" },
     { name = "databricks-labs-blueprint" },
     { name = "databricks-sdk" },
     { name = "protobuf" },
@@ -439,9 +440,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/a0/8ac712dae215ad74454d325da79cc08e66f503d2d74a3872ef5dfc61e8a4/databricks_labs_dqx-0.17.0.tar.gz", hash = "sha256:cb69a869bc04b0845bf94513082eb185f3a2da6423bd30db3b6ae7d342f541d5", upload-time = "2026-10-23T17:50:21.27Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/bb/1476b3f5dd08e3a4fcda20c0c5adaed07ab6969e6dcc18381e369e447184/databricks_labs_dqx-0.17.1.tar.gz", hash = "sha256:6ac15e9c2c0c928ce0cc5c88085050cbca51a4a47335e3e8bd141eb903b80623" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/82/c94b1b0412dc5903f894cc0698641cfb345b92494d3b7495543917d15d1f/databricks_labs_dqx-0.17.0-py3-none-any.whl", hash = "sha256:ac416a91ea37f11f8f61c611274899b4b8ea39b5a99b7dba2d2c0ef9a816f679", upload-time = "2026-10-23T17:50:19.874Z" },
+    { url = "https://files.pythonhosted.org/packages/af/55/24c9eb84c26679133cc33862cee612b96c3274b020be2d0cb985825d1d28/databricks_labs_dqx-0.17.1-py3-none-any.whl", hash = "sha256:0e21b235189bc1a63f38ba78b1fc4cdf696a23ba065bdeece540bb34d9c14b85" },
 ]
 
 [package.optional-dependencies]
@@ -472,7 +473,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "databricks-labs-dqx", extras = ["llm", "datacontract"], specifier = "==0.17.0" },
+    { name = "databricks-labs-dqx", extras = ["llm", "datacontract"], specifier = "==0.17.1" },
     { name = "databricks-sdk", specifier = "~=0.120" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], specifier = "==4.2.5" },
     { name = "fastapi", specifier = "~=0.119" },
