@@ -81,7 +81,7 @@ def test_release_lock_drops_resolver_options():
     assert "options" not in lock
 
 
-@pytest.mark.parametrize("dqx_version", ["0.15.0", "0.17.1"])
+@pytest.mark.parametrize("dqx_version", ["0.15.0", "99.0.0"])  # never the pinned release
 def test_release_lock_rejects_another_dqx_version(dqx_version):
     build_app = _load_build_app()
 
