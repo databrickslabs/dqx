@@ -85,6 +85,7 @@ def test_apply_checks_with_mixed_type_user_metadata(ws, spark):
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
+    assert checked.schema["_errors"].dataType == dq_result_schema
     # Materializing the result must not raise; the numeric value is stored as its string form.
     row = checked.collect()[0]
     metadata = row["_errors"][0]["user_metadata"]
