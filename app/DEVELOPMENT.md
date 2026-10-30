@@ -30,7 +30,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
 | `make app-regen-api` | Regenerate `ui/lib/api.ts` after backend model changes (no full wheel rebuild) |
 | `make app-test` | Backend pytest suite |
-| `make app-e2e PROFILE=<profile>` | Playwright smoke tests against a running Studio deployment (see [Pre-release smoke tests](#pre-release-smoke-tests)) |
+| `make app-e2e PROFILE=<profile>` | Playwright smoke tests and customer journeys against a running Studio deployment (see [Pre-release browser tests](#pre-release-browser-tests)) |
 | `make fmt` | Format Python (run from root before committing) |
 | `make test` | Library unit tests |
 | `make integration` | Integration tests (requires live workspace) |
@@ -49,21 +49,35 @@ git push origin studio-v0.1.0
 
 The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, then creates and verifies the annotated signed tag on that generated commit. Consequently, the Marketplace source path `app/marketplace/` exists at the tagged revision. The command never pushes. The Studio package/tag version and the published DQX Core pin are separate: the requested tag must match `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the two explicit push commands. Normal DAB builds continue to use `.build/`.
 
-### Pre-release smoke tests
+### Pre-release browser tests
 
-Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the browser smoke suite against it.
+Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the Playwright suite against it.
 
 > **The suite must point at a real, fully set-up DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A deployment that is still on the setup screen fails every test that needs Studio to be ready, and the failure lists the pending setup steps. Deploy, open the app once, and finish every setup step (catalog, prefix, user group, task runner) before running it.
 
 ```bash
-make app-install                      # once, installs @playwright/test
-make app-e2e PROFILE=<profile>        # app name defaults to dqx-studio; override with APP=<name>
+make app-install                          # once, installs @playwright/test
+make app-e2e PROFILE=<profile>            # smoke + journeys; app name defaults to dqx-studio (APP=<name>)
+make app-e2e PROFILE=<profile> SUITE=smoke   # read-only checks only
 ```
 
-The suite lives in `app/e2e/`. It looks up the app URL with `databricks apps get` and authenticates with an OAuth token from `databricks auth token`. The profile must use OAuth (`databricks auth login`), because the Apps proxy does not accept personal access tokens. The token is sent only to the app's own origin. The suite is read-only: it checks backend health, that the deployed version matches `app/pyproject.toml`, that setup is complete, that your identity and role resolve, and that every sidebar page renders without uncaught errors or 5xx API responses.
+The suite lives in `app/e2e/`. It looks up the app URL with `databricks apps get` and authenticates with an OAuth token from `databricks auth token`. The profile must use OAuth (`databricks auth login`), because the Apps proxy does not accept personal access tokens. The token is sent only to the app's own origin. Run it as a Studio admin with approvals mode set to **Require approval**.
+
+The suite runs as Playwright projects, in order:
+
+| Project | What it does |
+|---|---|
+| `smoke` | Read-only: backend health, deployed version matches `app/pyproject.toml`, setup is complete, identity and role resolve, every sidebar page renders without uncaught errors or 5xx API responses. |
+| `journeys-setup` | Sweeps leftovers from an aborted earlier run (see below). |
+| `journeys` | Real customer journeys, one spec per area, run in parallel: author, approve, reject and delete registry rules; YAML rule import; monitor a table from the catalog browser, apply and map a rule, submit, approve in Review & Approve, stop monitoring; run an approved table and triage the run (Runs History, results, review status, comments); profile a table and use the suggestions; collections; schedules (create, pause, resume, remove); UI language switch. |
+| `isolated` | Journeys that touch shared state, one at a time: approvals mode and rule labels in Admin Settings, marketplace import, ODCS data-contract import. |
+
+Journeys create, change and delete real objects, so point them at a release-candidate deployment, not one people are using. Everything they create is named `e2e-<run tag>-…` and removed when the test ends, pass or fail; settings are restored. They monitor tables from the read-only `samples` catalog every workspace has (`samples.tpch.nation`, `region`, `supplier`, `part`, `customer`, `orders`), one table per spec. Runs and profiling start real Databricks jobs (about a minute each), so the full suite takes roughly 5–10 minutes.
+
+If a run is interrupted before cleanup, the next run's `journeys-setup` deletes `e2e-` rules and collections and un-monitors those sample tables. It only removes a sample table if you created it and all its rules came from the suite. If someone else monitors one of those tables, the journeys stop and list it rather than touching it. Rules created by an interrupted marketplace or contract import keep Studio's own names and aren't swept; delete them from **Rules** if that happens.
 
 - `BASE_URL=http://localhost:9001` runs it against `make app-start-dev` instead (no token needed).
-- `ARGS="--headed"` watches the browser; `ARGS="-g sidebar"` runs a subset.
+- `ARGS="--headed"` watches the browser; `ARGS="-g schedules"` runs a subset.
 - Failure screenshots and the HTML report go to `app/e2e/test-results/` and `app/e2e/playwright-report/` (git-ignored). Traces are off by default because they record request headers, including the token. If you enable them with `ARGS="--trace on"`, delete `test-results/` afterwards.
 
 ## 1. Configure Authentication

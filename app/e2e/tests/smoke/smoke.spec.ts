@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test } from "../fixtures";
+import { expect, test } from "../../fixtures";
+import { openStudio, sidebarLinks } from "../../support/ui";
 
 // Read-only smoke checks for a deployed Studio. Safe to run against any
 // deployment: nothing here creates, edits, or runs anything.
@@ -11,7 +12,7 @@ import { expect, test } from "../fixtures";
 // complete the "ready deployment" tests fail and list the pending steps.
 
 function expectedStudioVersion(): string {
-  const pyproject = readFileSync(join(__dirname, "..", "..", "pyproject.toml"), "utf8");
+  const pyproject = readFileSync(join(__dirname, "..", "..", "..", "pyproject.toml"), "utf8");
   const match = /^version = "([^"]+)"$/m.exec(pyproject);
   if (!match) throw new Error("Could not read version from app/pyproject.toml");
   return match[1];
@@ -62,16 +63,8 @@ test.describe("ready deployment", () => {
   test.setTimeout(180_000);
 
   test("every sidebar page renders without errors", async ({ page, problems }) => {
-    await page.goto("/home");
-    const navLinks = page.locator('a[data-sidebar="menu-button"]');
-    // Setup that finished with warnings shows a review page once per browser
-    // (acknowledgement lives in localStorage). Acknowledge it like an admin would.
-    const acknowledge = page.getByRole("button", { name: "I understand, continue to Studio" });
-    await expect(navLinks.first().or(acknowledge)).toBeVisible();
-    if (await acknowledge.isVisible()) await acknowledge.click();
-    await expect(navLinks.first()).toBeVisible();
-
-    const hrefs = await navLinks.evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
+    await openStudio(page);
+    const hrefs = await sidebarLinks(page).evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
     const pages = [...new Set(["/home", ...hrefs.filter((h) => h.startsWith("/")), "/settings", "/profile"])];
     // The visible set depends on role and approvals mode; a handful is always present.
     expect(pages.length).toBeGreaterThan(4);
