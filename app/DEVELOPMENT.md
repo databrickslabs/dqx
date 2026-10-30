@@ -30,6 +30,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
 | `make app-regen-api` | Regenerate `ui/lib/api.ts` after backend model changes (no full wheel rebuild) |
 | `make app-test` | Backend pytest suite |
+| `make app-e2e PROFILE=<profile>` | Playwright smoke tests and customer journeys against a running Studio deployment (see [Pre-release browser tests](#pre-release-browser-tests)) |
 | `make fmt` | Format Python (run from root before committing) |
 | `make test` | Library unit tests |
 | `make integration` | Integration tests (requires live workspace) |
@@ -47,6 +48,40 @@ git push origin studio-v0.1.0
 ```
 
 The first command creates the release branch in a temporary worktree, builds and validates its complete self-contained Marketplace source, signs and verifies the local commit, then creates and verifies the annotated signed tag on that generated commit. Consequently, the Marketplace source path `app/marketplace/` exists at the tagged revision. The command never pushes. The Studio package/tag version and the published DQX Core pin are separate: the requested tag must match `app/pyproject.toml`, while the artifact reads its DQX pin from `app/databricks.yml`. Inspect the branch before running the two explicit push commands. Normal DAB builds continue to use `.build/`.
+
+### Pre-release browser tests
+
+Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the Playwright suite against it.
+
+> **The suite must point at a real, fully set-up DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A deployment that is still on the setup screen fails every test that needs Studio to be ready, and the failure lists the pending setup steps. Deploy, open the app once, and finish every setup step (catalog, prefix, user group, task runner) before running it.
+
+```bash
+make app-install                          # once, installs @playwright/test
+make app-e2e PROFILE=<profile>            # smoke + journeys; app name defaults to dqx-studio (APP=<name>)
+make app-e2e PROFILE=<profile> SUITE=smoke   # read-only checks only
+```
+
+The suite lives in `app/e2e/`. It looks up the app URL with `databricks apps get` and authenticates with an OAuth token from `databricks auth token`. The profile must use OAuth (`databricks auth login`), because the Apps proxy does not accept personal access tokens. The token is sent only to the app's own origin. Run it as a Studio admin with approvals mode set to **Require approval**.
+
+The suite runs as Playwright projects, in order:
+
+| Project | What it does |
+|---|---|
+| `smoke` | Read-only: backend health, deployed version matches `app/pyproject.toml`, setup is complete, identity and role resolve, every sidebar page renders without uncaught errors or 5xx API responses. |
+| `accessibility` | Read-only axe-core WCAG 2 A/AA scan of every sidebar page: no serious or critical violations beyond a documented known list. Runs alongside the others; nothing depends on it. |
+| `journeys-setup` | Sweeps leftovers from an aborted earlier run (see below). |
+| `journeys` | Real customer journeys, one spec per area, run in parallel: author, approve, reject and delete registry rules; write custom-condition (visual builder) and SQL rules and run them; write a cross-table SQL check and run it with a table; export a table's checks (DQX YAML, ODCS) and a rule, and import the export back; publish v2 of a rule used by a table following latest and one pinned to v1; YAML rule import; monitor a table from the catalog browser, apply and map a rule, submit, approve in Review & Approve, stop monitoring; run an approved table and triage the run (Runs History, results, review status, comments); browse, explain and download (CSV, Excel) a run's failed records; runs that go wrong (a check that can't be evaluated, cancelling); collections (build from approved tables, approve, run as one unit, rolled-up results); multi-table (monitor a whole schema with Select all, bulk approve, bulk run, compare on Results, bulk delete); schedules (create, pause, resume, remove, for a table and a collection; profiling + data quality on a sample); a real scheduled run (a 5-minute cron fires, the run succeeds, the schedule is turned off); sharing a table from its Permissions tab; UI language switch. |
+| `isolated` | Journeys that touch shared state, one at a time: approvals mode (including Skip when self-approvable), the draft-run requirement, rule labels and run review statuses in Admin Settings, marketplace import, ODCS data-contract import, profiling and its suggested checks. |
+
+Journeys create, change and delete real objects, so point them at a release-candidate deployment, not one people are using. Everything they create is named `e2e-<run tag>-…` and removed when the test ends, pass or fail; settings are restored. They monitor tables from the read-only `samples` catalog every workspace has (from `samples.tpch`, `samples.tpcds_sf1` and all of `samples.bakehouse`), one set of tables per spec; see `app/e2e/support/sample-tables.ts`. Runs and profiling start real Databricks jobs (about a minute each), and the scheduled-run journey waits for the next 5-minute scheduler slot, so the full suite takes roughly 10–15 minutes.
+
+Known Studio bugs are captured with `knownBug()` (`app/e2e/support/known-bugs.ts`), which wraps only the assertion the bug breaks: setup failures still fail the test, the test passes while the bug exists and prints `KNOWN BUG: …`, and it fails with "Known bug appears fixed — remove the knownBug() wrapper" once Studio is fixed. The comment above each call says what's broken.
+
+If a run is interrupted before cleanup, the next run's `journeys-setup` deletes `e2e-` rules, collections, review statuses and label keys, and un-monitors those sample tables. It only removes a sample table if you created it and all its rules came from the suite. If someone else monitors one of those tables, the journeys stop and list it rather than touching it. Rules created by an interrupted marketplace or contract import keep Studio's own names and aren't swept; delete them from **Rules** if that happens.
+
+- `BASE_URL=http://localhost:9001` runs it against `make app-start-dev` instead (no token needed).
+- `ARGS="--headed"` watches the browser; `ARGS="-g schedules"` runs a subset.
+- Failure screenshots and the HTML report go to `app/e2e/test-results/` and `app/e2e/playwright-report/` (git-ignored). Traces are off by default because they record request headers, including the token. If you enable them with `ARGS="--trace on"`, delete `test-results/` afterwards.
 
 ## 1. Configure Authentication
 
@@ -131,7 +166,9 @@ uv run python scripts/build_app.py
 
 This generates the OpenAPI schema, compiles the React/TypeScript UI into `__dist__/`, and assembles `.build/` — the source tree Databricks Apps runs via `uv run` (no application wheel). The tree carries `pyproject.toml`, `uv.lock`, the package `src/`, and `requirements.txt` = `uv`, so the container resolves the locked environment (and its own Python) at launch.
 
-While `pyproject.toml` resolves `databricks-labs-dqx` from the parent checkout, the build also copies that library into `.build/_vendor/dqx` and retargets the *copied* `pyproject.toml` / `uv.lock` at it. The container only ever receives the `app/` directory, so a path source pointing outside it cannot resolve there — `uv run` fails at launch with `does not appear to be a Python project`. The tracked lock is never rewritten, so the deployed resolution is the one that was tested. Once a DQX release carries the symbols the backend imports, drop `[tool.uv.sources]` and the vendoring step becomes a no-op automatically.
+Local development and app tests resolve `databricks-labs-dqx` from the parent checkout, but deploys never do. The `.build/` tree gets a release `pyproject.toml` pinned to the published `dqx_version` from `databricks.yml`, and the committed Marketplace lock (`marketplace_templates/uv.lock`). A DAB deploy therefore installs the same published DQX and dependency versions as Marketplace, and the task runner installs the same pin. Unreleased DQX Core changes reach a workspace only after a DQX release and a Studio bump of `dqx_version` with the lock (see `DEPLOYMENT.md`). The build fails if the lock resolves a different DQX than `dqx_version`.
+
+This means Studio code (`app/src` and `app/tasks`) can only use DQX features that exist in the pinned `dqx_version`. Tests run against the checkout, so they won't catch an import of a helper that's on `main` but not yet released: it fails with an `ImportError` when the deployed app starts. If a Studio change needs something new in Core, land the Core change, release DQX, and then bump `dqx_version` and the lock in the Studio release that uses it.
 
 ## 4. Start Dev Servers
 

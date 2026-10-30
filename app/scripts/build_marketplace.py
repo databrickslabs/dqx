@@ -12,16 +12,29 @@ from urllib.parse import urlsplit
 import yaml
 
 if __package__:
-    from scripts.build_app import build_task_runner_wheel
+    from scripts.build_app import (
+        RELEASE_VERSION,
+        build_task_runner_wheel,
+        dqx_release_version,
+        release_lock_text,
+        release_pyproject,
+        require_lock_resolves_dqx,
+    )
 else:
-    from build_app import build_task_runner_wheel
+    from build_app import (
+        RELEASE_VERSION,
+        build_task_runner_wheel,
+        dqx_release_version,
+        release_lock_text,
+        release_pyproject,
+        require_lock_resolves_dqx,
+    )
 
 APP_DIR = Path(__file__).resolve().parent.parent
 BUILD_DIR = APP_DIR / ".build"
 TEMPLATE_DIR = APP_DIR / "marketplace_templates"
 MARKETPLACE_DIR = APP_DIR / "marketplace"
 PYPROJECT = APP_DIR / "pyproject.toml"
-DAB_CONFIG = APP_DIR / "databricks.yml"
 
 RUNTIME_FILES = ("README.md", "requirements.txt")
 TEXT_SUFFIXES = {
@@ -43,7 +56,6 @@ ALLOWED_LOCK_HOSTS = {"files.pythonhosted.org", "pypi.org"}
 PUBLIC_PACKAGE_REGISTRY = "https://pypi.org/simple"
 ALLOWED_PACKAGE_REGISTRIES = {PUBLIC_PACKAGE_REGISTRY}
 DEVELOPMENT_PACKAGES = {"basedpyright", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff"}
-RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[A-Za-z0-9.-]*)")
 
 
 def build(output_dir: Path, dqx_version: str) -> None:
@@ -105,6 +117,8 @@ def _require_build_inputs() -> None:
 
 
 def _assemble_runtime_tree(staging: Path, dqx_version: str) -> None:
+    # Checked first: a lock for another DQX fails before the task-runner wheel build.
+    (staging / "uv.lock").write_text(release_lock_text(dqx_version), encoding="utf-8", newline="\n")
     for name in RUNTIME_FILES:
         _copy_file(BUILD_DIR / name, staging / name)
     _copy_tree(BUILD_DIR / "src", staging / "src")
@@ -113,75 +127,12 @@ def _assemble_runtime_tree(staging: Path, dqx_version: str) -> None:
 
     pyproject_text = (BUILD_DIR / "pyproject.toml").read_text(encoding="utf-8")
     (staging / "pyproject.toml").write_text(
-        _release_pyproject(pyproject_text, dqx_version),
+        release_pyproject(pyproject_text, dqx_version),
         encoding="utf-8",
         newline="\n",
     )
 
-    _copy_committed_lock(staging / "uv.lock")
     build_task_runner_wheel(staging / "tasks", dqx_version)
-
-
-def _release_pyproject(source: str, dqx_version: str) -> str:
-    lines = source.replace("\r\n", "\n").replace("\r", "\n").splitlines()
-    dependency_index = next(
-        (index for index, line in enumerate(lines) if '"databricks-labs-dqx[llm,datacontract]' in line),
-        None,
-    )
-    if dependency_index is None:
-        raise RuntimeError("Application DQX dependency declaration changed")
-
-    comment_start = dependency_index
-    while comment_start > 0 and lines[comment_start - 1].lstrip().startswith("#"):
-        comment_start -= 1
-    lines[comment_start : dependency_index + 1] = [f'    "databricks-labs-dqx[llm,datacontract]=={dqx_version}",']
-    text = "\n".join(lines) + "\n"
-    text = _remove_toml_table(text, "dependency-groups")
-    text = _remove_toml_table(text, "tool.uv.sources", remove_leading_comments=True)
-    text = _remove_toml_table(text, "tool.uv")
-    for table in ("tool.pytest.ini_options", "tool.ruff.lint", "tool.ruff", "tool.basedpyright"):
-        text = _remove_toml_table(text, table, remove_leading_comments=True)
-    return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _remove_toml_table(source: str, table: str, *, remove_leading_comments: bool = False) -> str:
-    lines = source.splitlines()
-    header = f"[{table}]"
-    try:
-        start = lines.index(header)
-    except ValueError:
-        return source
-    end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("[")), len(lines))
-    if remove_leading_comments:
-        while start > 0 and lines[start - 1].lstrip().startswith("#"):
-            start -= 1
-    del lines[start:end]
-    while start < len(lines) - 1 and lines[start] == "" and lines[start + 1] == "":
-        del lines[start]
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _copy_committed_lock(destination: Path) -> None:
-    """Copy the committed, self-contained Marketplace lock into the artifact.
-
-    The Marketplace lock is maintained as a tracked template
-    (*marketplace_templates/uv.lock*), not regenerated at build time: the build
-    resolves nothing and downloads nothing, so it cannot drift with the package
-    index or a *uv* version, and needs no network. *_validate_artifact* still
-    asserts the copied lock is self-contained (public registries only, no path
-    or development dependencies). To refresh it after a dependency or DQX
-    version change, see the regeneration recipe in *DEPLOYMENT.md*.
-
-    Args:
-        destination: Artifact *uv.lock* path to write.
-    """
-    source = TEMPLATE_DIR / "uv.lock"
-    if not source.is_file():
-        raise RuntimeError("Committed Marketplace lock is missing")
-    lock_text = _normalize_newlines(source.read_text(encoding="utf-8"))
-    lock_text = _remove_toml_table(lock_text, "options.exclude-newer-package")
-    lock_text = _remove_toml_table(lock_text, "options")
-    destination.write_text(lock_text, encoding="utf-8", newline="\n")
 
 
 def _copy_tree(source: Path, destination: Path) -> None:
@@ -235,6 +186,7 @@ def _validate_artifact(root: Path, dqx_version: str) -> None:
         registry = source.get("registry")
         if isinstance(registry, str) and registry not in ALLOWED_PACKAGE_REGISTRIES:
             raise RuntimeError("Marketplace lock contains a non-public package registry")
+    require_lock_resolves_dqx(lock_text, dqx_version)
     locked_names = {package.get("name") for package in lock.get("package", []) if isinstance(package, dict)}
     if not DEVELOPMENT_PACKAGES.isdisjoint(locked_names):
         raise RuntimeError("Marketplace lock contains development dependencies")
@@ -270,24 +222,8 @@ def _replace_directory(staging: Path, output_dir: Path) -> None:
     shutil.rmtree(backup)
 
 
-def _normalize_newlines(value: str) -> str:
-    return value.replace("\r\n", "\n").replace("\r", "\n")
-
-
 def _file_contents(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
-
-
-def dqx_release_version(bundle_path: Path = DAB_CONFIG) -> str:
-    """Return the published DQX version configured for Studio releases."""
-    bundle = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
-    try:
-        version = bundle["variables"]["dqx_version"]["default"]
-    except (KeyError, TypeError) as error:
-        raise RuntimeError("Bundle DQX version is missing") from error
-    if not isinstance(version, str) or RELEASE_VERSION.fullmatch(version) is None:
-        raise RuntimeError("Bundle DQX version is invalid")
-    return version
 
 
 def _check() -> bool:

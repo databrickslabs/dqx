@@ -1,0 +1,18 @@
+{
+  // Playwright transpiles these files itself; this config exists so `tsc -p e2e`
+  // (run by `make app-check`) type-checks the suite. Kept separate from the UI
+  // tsconfig because the e2e code runs under Node, not the browser bundle.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts"]
+}
