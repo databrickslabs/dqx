@@ -269,6 +269,28 @@ Deploying DQX Studio to a workspace is required when you want to:
 
 For the full step-by-step (service principal creation, choosing a SQL warehouse mode, adopting existing resources into the bundle, asset-bundle deploy, Lakebase opt-out, post-deploy grants, app start, troubleshooting) follow [app/DEPLOYMENT.md](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md).
 
+### Which tests run on a pull request
+
+CI groups the repository into boundaries and a pull request only runs the suites of the boundaries it changes:
+
+| Boundary | Paths | Suites |
+|---|---|---|
+| `core` | `src/`, `tests/` | unit tests (`make test`), integration tests |
+| `studio` | `app/` | app checks and tests, Studio backend integration tests |
+| `anomaly` | `src/databricks/labs/dqx/anomaly/`, `tests/integration_anomaly/` | unit, integration, end-to-end and anomaly integration tests |
+| `mcp` | `mcp-server/`, `tests/integration_mcp/` | MCP server checks, tests and integration tests |
+| `docs` | `docs/`, `demos/`, `skills/` | docs build, end-to-end tests (they run the demos), skills manifest test |
+
+A `core` change runs every boundary, because the others build on the library, and so do changes to shared files (`pyproject.toml`, `uv.lock`, `Makefile`, `.github/`, `tests/conftest.py`). A file that moves between boundaries runs both. Formatting and linting run for every change. Each workflow ends with a `summary` job that passes when its jobs passed or were skipped because their boundary did not change.
+
+Pushes to `main` and the merge queue run the `build` workflow (unit tests, formatting, docs, app and MCP checks) in full. The workspace suites (integration, end-to-end, anomaly, MCP and Studio integration tests) run on pull requests only, and in full in the nightly run.
+
+To see which boundaries your branch affects, and to run one boundary's tests locally:
+```shell
+.github/scripts/changed-boundaries.sh origin/main   # e.g. ["studio","docs"]
+make test-boundary BOUNDARY=studio
+```
+
 ### Running integration tests and code coverage
 
 Integration tests and code coverage are run automatically when you create a Pull Request in Github (except forks).

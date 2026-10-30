@@ -14,6 +14,12 @@ coverage:
         target: auto
         threshold: 0.5% # The minimum coverage threshold for the patch
 
+# PRs only run the test suites of the boundaries they change (see .github/scripts/changed-boundaries.sh),
+# so a flag that was not uploaded keeps its last known coverage instead of dropping out of the report.
+flag_management:
+  default_rules:
+    carryforward: true
+
 component_management:
   default_rules:
     statuses:

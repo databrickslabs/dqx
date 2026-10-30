@@ -72,7 +72,7 @@ pii = [
 ]
 llm = [
     "dspy~=3.1.3",
-    "litellm>=1.64.0,<1.97",  # pin dspy transitive dep; <1.97: 1.97 ships an unresolved Message model (breaks response construction), 1.98 imports typing.NotRequired (drops Python 3.10)
+    "litellm<1.105,>=1.104",  # pin dspy transitive dep; <1.97: 1.97 ships an unresolved Message model (breaks response construction), 1.98 imports typing.NotRequired (drops Python 3.10)
     "databricks-langchain>=0.1.0,<1.0",
     "langchain-core>=0.1.0,<1.0",
 ]
@@ -150,7 +150,6 @@ test = [
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
-    "fastapi>=0.119.0,<1.0",
     "dbt-core~=1.11.6",
     "dbt-databricks~=1.11.6",
     "pycountry~=26.2.16",
@@ -234,7 +233,7 @@ markers = [
     "anomaly: marks tests as anomaly detection tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
-pythonpath = ["src", "app/src", "mcp-server"]
+pythonpath = ["src", "mcp-server"]
 
 
 [tool.black]
@@ -273,8 +272,8 @@ exclude_lines = [
 # Sources https://google.github.io/styleguide/pylintrc
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
 
-# Add app/src to sys.path for pylint to find databricks_labs_dqx_app
-init-hook = "import sys; sys.path.insert(0, 'app/src'); sys.path.insert(0, 'mcp-server')"
+# Add mcp-server to sys.path for pylint to find the MCP server modules
+init-hook = "import sys; sys.path.insert(0, 'mcp-server')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
@@ -898,7 +897,6 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
 
 [tool.pylint-per-file-ignores]
-"tests/integration/test_app_backend.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/anomaly/anomaly_workflow.py" = "import-outside-toplevel"
 "src/databricks/labs/dqx/check_funcs.py" = "protected-access"
 "tests/unit/test_engine.py" = "protected-access"

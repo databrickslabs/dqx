@@ -10,6 +10,8 @@ make test           # Unit tests
 make integration    # Integration tests (needs Databricks workspace)
 make e2e            # End-to-end tests
 make coverage       # Coverage report
+make test-boundary BOUNDARY=studio          # one CI boundary's tests (core|studio|anomaly|mcp|docs)
+.github/scripts/changed-boundaries.sh origin/main   # boundaries CI will run for this branch
 make docs-install   # Install docs dependencies (yarn)
 make docs-build     # Build docs (pydoc-markdown + Docusaurus)
 make help           # All available targets

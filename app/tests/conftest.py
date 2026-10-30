@@ -7,7 +7,7 @@ suite runs offline in <1s.
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableMapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, create_autospec
@@ -45,6 +45,12 @@ os.environ.setdefault("DQX_DEMO_SCHEMA", "dqx_app_test_demo")
 os.environ.setdefault("DQX_ADMIN_GROUP", "test-admins")
 os.environ.setdefault("DQX_JOB_ID", "")
 os.environ.setdefault("DATABRICKS_WAREHOUSE_ID", "test-warehouse")
+
+
+@pytest.fixture
+def debug_env() -> MutableMapping[str, str]:
+    """Stand in for pytester's *debug_env*: the offline suite reads the process environment as-is."""
+    return os.environ
 
 
 @pytest.fixture(autouse=True)

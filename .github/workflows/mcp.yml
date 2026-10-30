@@ -7,10 +7,9 @@
 # acceptance action exactly like the other integration workflows.
 name: mcp
 
-# Runs on every PR (no `paths:` filter), like the anomaly and acceptance suites: the MCP server
-# exercises the DQX library end-to-end, so a change anywhere in the library, its packaging, or the
-# shared test/CI plumbing can break it. Running always also means the `mcp` Codecov flag is uploaded
-# for every commit, so those files never drop out of a report for want of a carryforward rule.
+# Runs on PRs that touch the mcp boundary (see .github/scripts/changed-boundaries.sh). The MCP server
+# exercises the DQX library end-to-end, so core library, packaging and shared test/CI changes also
+# run it. On PRs that skip it, Codecov carries the `mcp` flag forward (see .github/codecov.yml).
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
@@ -25,6 +24,9 @@ concurrency:
   cancel-in-progress: false # let teardown finish so the isolated app/bundle is removed
 
 jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   # Gate downstream work: fork PRs (no access to the tool environment) and drafts do not run.
   not-a-fork:
     runs-on:
@@ -35,7 +37,8 @@ jobs:
       - run: echo "Not a fork PR, proceeding"
 
   mcp-tests:
-    needs: not-a-fork
+    needs: [not-a-fork, changes]
+    if: needs.changes.outputs.mcp == 'true'
     environment: tool
     runs-on:
       group: larger-runners
@@ -102,3 +105,21 @@ jobs:
           use_oidc: true
           files: coverage-combined.xml
           flags: mcp
+
+  # Single stable check for branch protection: passes when every job above passed or was
+  # skipped because its boundary did not change. Skipped with the test jobs whenever not-a-fork
+  # skips them (merge queue, draft and fork PRs), so it never reports success for suites that
+  # were not run.
+  summary:
+    needs: [changes, not-a-fork, mcp-tests]
+    if: always() && needs.not-a-fork.result == 'success'
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in *" failure "* | *" cancelled "*) exit 1 ;; esac
