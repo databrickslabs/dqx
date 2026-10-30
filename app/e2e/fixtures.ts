@@ -1,5 +1,6 @@
 import { test as base, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
 
+import { StudioApi } from "./support/studio-api";
 import { resolveTarget } from "./target";
 
 /** Collects browser-side failures so specs can assert a page rendered cleanly. */
@@ -10,13 +11,24 @@ export interface PageProblems {
   drain(): string[];
 }
 
+/** Records what a test created so it is deleted afterwards, even when the test fails. */
+export interface Cleanup {
+  rule(ruleId: string): void;
+  table(bindingId: string): void;
+  /** Any other teardown step, run before tables and rules are deleted. */
+  defer(label: string, fn: () => Promise<unknown>): void;
+}
+
 interface TestFixtures {
   problems: PageProblems;
+  cleanup: Cleanup;
 }
 
 interface WorkerFixtures {
   /** Authenticated client for the backend REST API; worker-scoped so beforeAll hooks can use it. */
   api: APIRequestContext;
+  /** Typed Studio API helpers over *api*. */
+  studio: StudioApi;
 }
 
 function authHeaders(): Record<string, string> {
@@ -94,8 +106,30 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     },
     { scope: "worker" },
   ],
+  studio: [async ({ api }, use) => use(new StudioApi(api)), { scope: "worker" }],
   problems: async ({ page }, use) => {
     await use(watchPage(page));
+  },
+  cleanup: async ({ studio }, use) => {
+    const deferred: { label: string; fn: () => Promise<unknown> }[] = [];
+    const tables: string[] = [];
+    const rules: string[] = [];
+    await use({
+      rule: (id) => rules.push(id),
+      table: (id) => tables.push(id),
+      defer: (label, fn) => deferred.push({ label, fn }),
+    });
+    // Reverse order; tables before rules because a rule applied to a table can't be deleted.
+    const steps = [
+      ...deferred.reverse(),
+      ...tables.reverse().map((id) => ({ label: `delete table ${id}`, fn: () => studio.deleteMonitoredTable(id) })),
+      ...rules.reverse().map((id) => ({ label: `delete rule ${id}`, fn: () => studio.deleteRule(id) })),
+    ];
+    const failures: string[] = [];
+    for (const step of steps) {
+      await step.fn().catch((err: Error) => failures.push(`${step.label}: ${err.message}`));
+    }
+    if (failures.length) throw new Error(`cleanup failed (global setup sweeps leftovers next run):\n${failures.join("\n")}`);
   },
 });
 
