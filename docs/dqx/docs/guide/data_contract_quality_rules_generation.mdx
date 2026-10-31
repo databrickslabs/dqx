@@ -21,7 +21,7 @@ DQX enables the generation of data quality rules directly from data contracts th
 The data contract-based quality rules generation is available via the `DQGenerator` class and supports generation of the following rule types:
 
 - **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema when `generate_schema_validation=True` (default), derived from the contract's schema definition. Use `strict_schema_validation=True` (default) for exact column set, order, and types; set to `False` for permissive validation (expected columns with compatible types, extra columns allowed).
-- **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
+- **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, length, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
 
@@ -50,9 +50,9 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
 - **Schema Validation**: Generates one `has_valid_schema` rule per schema when enabled (default strict; optional permissive)
-- **Full Support**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength)
+- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength, format); other options such as `exclusiveMinimum` or `exclusiveMaximum` are ignored
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
-- **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
+- **Version Compatibility**: Loads ODCS v3.x contracts (v3.0.x and later); versions before v3.0 are not supported
 
 DQX leverages the `datacontract-cli` library to parse and validate contracts, ensuring full compatibility with the ODCS ecosystem.
 
@@ -530,7 +530,7 @@ If you don't have LLM dependencies installed or want to skip text processing:
         process_text_rules=False  # Skip LLM processing
     )
 
-    # Text expectations will be logged as warnings and skipped
+    # Text expectations are skipped
     ```
   </TabItem>
 </Tabs>
@@ -1207,7 +1207,7 @@ pip install 'databricks-labs-dqx[datacontract]'
   ```bash
   datacontract lint /path/to/contract.yaml
   ```
-- Ensure your contract follows ODCS v3.x specification (`kind: DataContract`, `apiVersion: v3.0.x`)
+- Ensure your contract follows ODCS v3.x specification (`kind: DataContract`, `apiVersion: v3.x`)
 - Check that constraints are in `logicalTypeOptions` for ODCS v3.x
 - Review the [ODCS specification](https://bitol-io.github.io/open-data-contract-standard/)
 
@@ -1254,7 +1254,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 
 - The data contract feature requires the `datacontract-cli` library which increases package size.
 - Text-based rule generation requires LLM dependencies and network access to the model endpoint.
-- Only ODCS v3.0.x format is currently supported (earlier versions are not supported).
+- `type: sql` quality entries are not supported yet. They are skipped with a warning, as is any other quality entry that does not become a rule (e.g. `type: custom` with an engine other than `dqx`, or `type: text` without the LLM dependencies).
 - Dataset-level checks beyond the `rowCount` and `duplicateValues` library metrics must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
