@@ -7,6 +7,7 @@ data type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). No ODCS→Unity mapp
 See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
 """
 
+import datetime
 import json
 import logging
 import re
@@ -34,7 +35,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr
+from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -44,6 +45,44 @@ if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
+
+_NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
+# Type a range check casts a column stored as text to, by ODCS logical type.
+_TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {"date": "DATE", "timestamp": "TIMESTAMP", "integer": "DOUBLE", "number": "DOUBLE"}
+
+
+def _is_range_bound(value: object) -> bool:
+    """Whether a logicalTypeOptions bound can be passed to a range check as a value.
+
+    Range checks treat any other string limit as a column name or SQL expression, which a contract value must not
+    become. Numbers, dates and timestamps (or ISO strings of them) are passed to the check as written.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float, datetime.date)):  # datetime.date also covers datetime.datetime
+        return True
+    if not isinstance(value, str):
+        return False
+    if _NUMBER_TEXT.match(value):
+        return True
+    try:
+        datetime.datetime.fromisoformat(value)  # how get_limit_expr reads a date or timestamp string
+    except ValueError:
+        return False
+    return True
+
+
+def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str | None:
+    """Return the type to *try_cast* a column stored as text to before a range check, or None.
+
+    Under ANSI mode, comparing a text column with a number or date casts every value, so one malformed value would
+    fail the whole run. *try_cast* turns it into NULL instead, which passes the range check (a format or pattern
+    rule is the one that flags it).
+    """
+    if not physical_type or not _TEXT_PHYSICAL_TYPE.match(physical_type):
+        return None
+    return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type or "")
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -673,7 +712,9 @@ class DataContractRulesGenerator(DQEngineBase):
         # Handle range constraints from minimum and maximum
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
             rules.extend(
-                self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
+                self._generate_range_rules_from_options(
+                    column_path, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
+                )
             )
 
         # Handle string length constraints
@@ -748,143 +789,58 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_range_rules_from_options(
-        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
+        self,
+        column_path: str,
+        logical_type: str | None,
+        physical_type: str | None,
+        contract_metadata: dict,
+        criticality: str,
+        opts: dict,
     ) -> list[dict]:
-        """Generate range rules from logicalTypeOptions minimum/maximum."""
-        minimum = opts.get('minimum')
-        maximum = opts.get('maximum')
+        """
+        Generate a range rule from logicalTypeOptions minimum/maximum.
 
-        if minimum is None and maximum is None:
+        ODCS defines both bounds per value, so the rule is a row-level check that flags only the rows out of range.
+        The bounds are passed to the check as written. A string bound that is not a number, date or timestamp is
+        skipped with a warning, and a column stored as text is compared through *try_cast*.
+        """
+        bounds = {}
+        for option in ("minimum", "maximum"):
+            value = opts.get(option)
+            if value is None:
+                continue
+            if _is_range_bound(value):
+                bounds[option] = value
+            else:
+                logger.warning(
+                    f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
+                    f"'{sanitize_for_logging(str(value))}' is not a number, date or timestamp."
+                )
+
+        if "minimum" in bounds and "maximum" in bounds:
+            function, name_suffix = "is_in_range", "out_of_range"
+            limits = {"min_limit": bounds["minimum"], "max_limit": bounds["maximum"]}
+        elif "minimum" in bounds:
+            function, name_suffix, limits = "is_not_less_than", "below_minimum", {"limit": bounds["minimum"]}
+        elif "maximum" in bounds:
+            function, name_suffix, limits = "is_not_greater_than", "above_maximum", {"limit": bounds["maximum"]}
+        else:
             return []
 
-        # Check if limits are floats - use sql_expression for float constraints
-        has_float_limits = (minimum is not None and isinstance(minimum, float)) or (
-            maximum is not None and isinstance(maximum, float)
-        )
-        normalized_column = normalize_column_expr(column_path)
-
-        if minimum is not None and maximum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{normalized_column} >= {minimum} AND {normalized_column} <= {maximum}",
-                                "columns": [column_path],
-                            },
-                        },
-                        "name": f"{column_path}_out_of_range",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            # Use is_in_range for non-float constraints
-            return [
-                {
-                    "check": {
-                        "function": "is_in_range",
-                        "arguments": {
-                            "column": column_path,
-                            "min_limit": minimum,
-                            "max_limit": maximum,
-                        },
-                    },
-                    "name": f"{column_path}_out_of_range",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-
-        if minimum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{normalized_column} >= {minimum}",
-                                "columns": [column_path],
-                            },
-                        },
-                        "name": f"{column_path}_below_minimum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            return [
-                {
-                    "check": {
-                        "function": "is_aggr_not_less_than",
-                        "arguments": {
-                            "column": column_path,
-                            "limit": minimum,
-                            "aggr_type": "min",
-                        },
-                    },
-                    "name": f"{column_path}_below_minimum",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-
-        if maximum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{normalized_column} <= {maximum}",
-                                "columns": [column_path],
-                            },
-                        },
-                        "name": f"{column_path}_above_maximum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            return [
-                {
-                    "check": {
-                        "function": "is_aggr_not_greater_than",
-                        "arguments": {
-                            "column": column_path,
-                            "limit": maximum,
-                            "aggr_type": "max",
-                        },
-                    },
-                    "name": f"{column_path}_above_maximum",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-
-        return []
+        cast_type = _text_cast_type(logical_type, physical_type)
+        column = f"try_cast({normalize_column_expr(column_path)} AS {cast_type})" if cast_type else column_path
+        return [
+            {
+                "check": {"function": function, "arguments": {"column": column, **limits}},
+                "name": f"{column_path}_{name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
 
     def _generate_string_length_rules_from_options(
         self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
