@@ -9,6 +9,7 @@ import pyspark.sql.functions as F
 import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
@@ -867,10 +868,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_requires_either_valid_contract_object(self, generator):
         """Test that either contract or contract_file must be provided."""
-        with pytest.raises(
-            ParameterError,
-            match="DataContract object must have either a file path, data_contract dict, or data_contract_str attribute",
-        ):
+        with pytest.raises(ParameterError, match="DataContract has no contract"):
             generator.generate_rules_from_contract(DataContract())
 
     def test_cannot_provide_both_contract_and_file(self, generator, sample_contract_path):
@@ -1330,6 +1328,35 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 None,
             )
             assert match is not None, f"No matching rule for expected {exp} in {explicit_rules}"
+
+
+class TestDataContractGeneratorContractLoading(DataContractGeneratorTestBase):
+    """Tests for loading contracts from datacontract-cli DataContract objects."""
+
+    @pytest.mark.parametrize("source", ["data_contract_str", "data_contract"])
+    def test_generate_rules_from_datacontract_object_without_path(self, generator, sample_contract_path, source):
+        """Test generating rules from a DataContract built from a YAML string or a parsed ODCS model."""
+        with open(sample_contract_path, encoding="utf-8") as f:
+            contract_str = f.read()
+        if source == "data_contract_str":
+            contract = DataContract(data_contract_str=contract_str)
+        else:
+            contract = DataContract(data_contract=OpenDataContractStandard.model_validate(yaml.safe_load(contract_str)))
+        rules = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
+        assert rules == self.get_expected_contract_rules()
+
+    def test_unsupported_datacontract_cli_version_raises_clear_error(self, generator):
+        """Test that a DataContract without the string attribute DQX reads gives a version error."""
+        contract = DataContract()
+        delattr(contract, "_data_contract_str")
+        with pytest.raises(
+            ParameterError, match=r"datacontract-cli .* isn't supported. Install a version >=1\.2\.0,<2\.0"
+        ):
+            generator.generate_rules_from_contract(contract)
+
+    def test_datacontract_still_stores_the_string_input(self):
+        """Fails when a datacontract-cli upgrade renames the attribute DQX reads for string contracts."""
+        assert "_data_contract_str" in vars(DataContract(data_contract_str="kind: DataContract"))
 
 
 class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):

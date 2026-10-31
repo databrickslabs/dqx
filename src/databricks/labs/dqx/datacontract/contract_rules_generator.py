@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ import yaml
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
+from datacontract.model.exceptions import DataContractException  # type: ignore
 from open_data_contract_standard.model import (  # type: ignore
     DataQuality,
     OpenDataContractStandard,
@@ -117,6 +119,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
                 - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                - DataContract(data_contract=odcs_model) - from a parsed ODCS model
                 Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
@@ -173,28 +176,27 @@ class DataContractRulesGenerator(DQEngineBase):
             return self._load_contract_from_file(contract_file)
 
         if contract is not None:
-            # Try to load from file path if available
-            contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
-                contract, 'data_contract_file', None
-            )
-
+            contract_file_path = contract.get_data_contract_file()
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
-            # Try to load from data_contract attribute (pre-parsed dict)
-            contract_data = getattr(contract, 'data_contract', None)
-            if contract_data:
-                return OpenDataContractStandard.model_validate(contract_data)
-
-            # Try to load from data_contract_str attribute (YAML/JSON string)
-            contract_str = getattr(contract, '_data_contract_str', None) or getattr(contract, 'data_contract_str', None)
+            # A YAML/JSON string has no public accessor: get_data_contract() lints it against the ODCS JSON
+            # schema, which would reject a whole contract that DQX handles entry by entry.
+            if not hasattr(contract, "_data_contract_str"):
+                version = package_version("datacontract-cli")
+                raise ParameterError(f"datacontract-cli {version} isn't supported. Install a version >=1.2.0,<2.0.")
+            contract_str = getattr(contract, "_data_contract_str", None)
             if contract_str:
-                contract_dict = yaml.safe_load(contract_str)
-                return OpenDataContractStandard.model_validate(contract_dict)
+                return OpenDataContractStandard.model_validate(yaml.safe_load(contract_str))
 
-            raise ParameterError(
-                "DataContract object must have either a file path, data_contract dict, or data_contract_str attribute"
-            )
+            # A parsed ODCS model (DataContract(data_contract=...)) is returned as is, without linting
+            try:
+                return contract.get_data_contract()
+            except DataContractException as e:
+                raise ParameterError(
+                    "DataContract has no contract: pass data_contract_file, data_contract_str or "
+                    "data_contract (a parsed ODCS model)"
+                ) from e
 
         raise ParameterError("Either contract or contract_file must be provided")
 
