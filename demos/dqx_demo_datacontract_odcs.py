@@ -209,6 +209,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC - `unique: true` → `is_unique`
 # MAGIC - `pattern: regex` → `regex_match`
 # MAGIC - `minimum`/`maximum` → `is_in_range`, or `is_not_less_than` / `is_not_greater_than` for a single bound (row-level: only out-of-range rows are flagged)
+# MAGIC - `exclusiveMinimum`/`exclusiveMaximum` → `sql_expression` (strict bound: value > bound / value < bound)
 # MAGIC - `minLength`/`maxLength` → `sql_expression` for LENGTH checks
 # MAGIC - `format` → `is_valid_date` or `is_valid_timestamp` for date/timestamp fields
 # MAGIC
@@ -431,6 +432,7 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC | `unique: true` | Direct property attribute | `is_unique` | Primary keys |
 # MAGIC | `pattern` | `logicalTypeOptions` | `regex_match` | Email, phone formats |
 # MAGIC | `minimum`/`maximum` | `logicalTypeOptions` | `is_in_range`, `is_not_less_than`, `is_not_greater_than` | Age, amount limits |
+# MAGIC | `exclusiveMinimum`/`exclusiveMaximum` | `logicalTypeOptions` | `sql_expression` (strict bound) | Strictly positive amounts |
 # MAGIC | `minLength`/`maxLength` | `logicalTypeOptions` | `sql_expression` | String length validation |
 # MAGIC | `format` | `logicalTypeOptions` | `is_valid_date`, `is_valid_timestamp` | Date/timestamp formats |
 # MAGIC
