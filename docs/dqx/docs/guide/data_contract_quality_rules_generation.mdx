@@ -182,9 +182,15 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
-| `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
+| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp; `datetime` is also accepted for compatibility) | Date/timestamp formats such as `yyyy-MM-dd` |
+| `enum` | Not supported directly | None; use `pattern` or a `type: library` quality rule | Status codes, categories |
 
-**Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
+<Admonition type="info" title="Formatting date and time values">
+`format` is defined by ODCS as a Java `DateTimeFormatter` pattern (e.g. `"yyyy-MM-dd'T'HH:mm:ss"`) and is passed to the generated 
+check unchanged. It must be one of Spark's [datetime patterns](https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html).
+A Python `strftime` pattern (e.g. `"%Y-%m-%d"`) generates no rule and logs a warning. Any other invalid pattern (e.g. `"YYYY"`)
+will fail when checks run.
+</Admonition>
 
 ### Example Contract with Predefined Rules
 
@@ -1229,7 +1235,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 - Verify field constraints are properly defined in the contract
 - Check that `generate_predefined_rules=True` (default)
 - Review supported constraint types in the [Predefined Rule Generation](#predefined-rule-generation) section
-- Some constraints may require specific formats (e.g., `format: '%Y-%m-%d'` for dates)
+- `format` must be a Spark datetime pattern (e.g., `format: 'yyyy-MM-dd'`). A Python `strftime` pattern such as `'%Y-%m-%d'` generates no rule and logs a warning
 
 ### Explicit Rules Not Recognized
 
