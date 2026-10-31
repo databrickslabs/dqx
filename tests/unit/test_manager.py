@@ -70,6 +70,129 @@ def test_rule_manager_suppress_skipped_false_returns_struct_for_invalid_column()
     assert result.check_df is df_mock
 
 
+def test_rule_manager_validates_columns_against_original_input_schema():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(input_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_col' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="derived_col"),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+
+    result = manager.process()
+
+    assert "skipped" in str(result.condition).lower()
+    input_df.select.assert_called()
+    current_df.select.assert_called_once()
+
+
+def test_rule_manager_validates_filter_against_current_dataframe():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(current_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_col' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="base_col", filter="derived_col > 0"),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+    assert manager.has_invalid_filter is True
+    current_df.select.assert_called()
+    input_df.select.assert_not_called()
+
+
+def test_rule_manager_is_skipped_for_invalid_column():
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(df_mock.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'missing_col' not found")
+    )
+
+    manager = _make_manager_with_missing_column(df_mock, spark_mock, suppress_skipped=False)
+
+    assert manager.is_skipped is True
+
+
+def test_rule_manager_is_not_skipped_for_valid_check():
+    df_mock = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    manager = DQRuleManager(
+        check=DQRowRule(check_func=check_funcs.is_not_null, column="col1"),
+        df=df_mock,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+    assert manager.is_skipped is False
+
+
+def test_rule_manager_validates_message_expression_against_current_dataframe():
+    current_df = create_autospec(DataFrame)
+    input_df = create_autospec(DataFrame)
+    spark_mock = create_autospec(SparkSession)
+    type(current_df.select.return_value).schema = PropertyMock(
+        side_effect=AnalysisException("Column 'derived_message' not found")
+    )
+    manager = DQRuleManager(
+        check=DQRowRule(
+            check_func=check_funcs.is_not_null,
+            column="base_col",
+            message_expr="derived_message",
+        ),
+        df=current_df,
+        input_df=input_df,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+    assert manager.has_invalid_custom_message is True
+    current_df.select.assert_called()
+    input_df.select.assert_not_called()
+
+
+def test_rule_manager_is_skipped_for_unresolvable_row_filter_kwarg(caplog):
+    df_mock = create_autospec(DataFrame)
+
+    def _select(column):
+        if "missing_col" in str(column):
+            raise AnalysisException("Column 'missing_col' not found")
+        return df_mock
+
+    df_mock.select.side_effect = _select
+    spark_mock = create_autospec(SparkSession)
+    manager = DQRuleManager(
+        check=DQDatasetRule(
+            check_func=check_funcs.is_unique, columns=["col1"], check_func_kwargs={"row_filter": "missing_col > 1"}
+        ),
+        df=df_mock,
+        spark=spark_mock,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+    assert manager.has_invalid_columns is False
+    assert manager.has_invalid_filter is True
+    assert manager.is_skipped is True
+    manager.process()
+    assert "due to invalid check filter: 'missing_col > 1'" in caplog.text
+
+
 def _make_manager_with_filter(df: DataFrame, spark: SparkSession, check: DQRowRule | DQDatasetRule) -> DQRuleManager:
     return DQRuleManager(
         check=check,

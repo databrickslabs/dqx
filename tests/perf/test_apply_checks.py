@@ -744,6 +744,21 @@ def test_benchmark_foreach_is_not_greater_than(benchmark, ws, generated_integer_
     assert result == EXPECTED_ROWS
 
 
+def test_benchmark_has_num_decimal_places(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_num_decimal_places,
+            column="col2",
+            check_func_kwargs={"limit": 2},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_is_in_range(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -2191,6 +2206,31 @@ def test_benchmark_is_geo_covers_precise(benchmark, ws, generated_df):
             check_func_kwargs={
                 "reference_geometry": "POLYGON((4.73 52.28, 5.05 52.28, 5.05 52.43, 4.73 52.43, 4.73 52.28))",
                 "precise": True,
+                "convert_column": True,
+                "convert_reference_geometry": True,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geo_within_distance(benchmark, ws, generated_df):
+    """Benchmark `is_geo_within_distance`.
+
+    Uses col_geo_point against a reference point with a 1 km radius to benchmark the geodesic
+    `st_distancespheroid` path.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=geo_check_funcs.is_geo_within_distance,
+            column="col_geo_point",
+            check_func_kwargs={
+                "reference_geometry": "POINT(4.90 52.37)",
+                "distance": 1000,
                 "convert_column": True,
                 "convert_reference_geometry": True,
             },

@@ -576,3 +576,146 @@ class TestIsPermissionDenied:
 
     def test_unrelated_error_is_not_permission_denied(self, runner_module):
         assert runner_module._is_permission_denied(RuntimeError("connection reset by peer")) is False
+
+
+# ---------------------------------------------------------------------------
+# Run-config resolution — inline / Delta-manifest / legacy-volume branches
+# ---------------------------------------------------------------------------
+
+_TABLE = "`cat`.`sch`.`dq_run_configs`"
+
+
+class _FakeDataFrame:
+    """Stand-in for the DataFrame returned by ``spark.sql``."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def collect(self):
+        return self._rows
+
+
+class _FakeSpark:
+    """Minimal SparkSession stand-in that records ``spark.sql`` calls.
+
+    *rows* is returned for every ``SELECT``; *error* is raised by every call.
+    """
+
+    def __init__(self, rows=None, error=None):
+        self._rows = rows or []
+        self._error = error
+        self.calls: list[tuple[str, dict]] = []
+
+    def sql(self, query, args=None):
+        self.calls.append((query, args or {}))
+        if self._error:
+            raise self._error
+        return _FakeDataFrame(self._rows)
+
+
+class TestResolveRunConfig:
+    """The runner loads its config three ways: inlined in ``config_json``, from
+    the ``dq_run_configs`` Delta table (oversized configs), or (for backwards
+    compatibility) from a legacy volume file stub.
+    """
+
+    def test_inline_config_passes_through_untouched(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = _FakeSpark()
+        raw = {"checks": [{"name": "c1"}], "sample_size": 100}
+        config, cleanup = runner_module._resolve_run_config(spark, ws, raw, _TABLE, "run1")
+        assert config == raw
+        assert cleanup is None
+        assert spark.calls == []
+        ws.files.download.assert_not_called()
+
+    def test_manifest_stub_reads_from_the_table(self, runner_module):
+        ws = MagicMock(name="ws")
+        full = {"checks": [{"name": "c1"}], "sample_size": 50}
+        spark = _FakeSpark(rows=[{"config": json.dumps(full)}])
+        config, cleanup = runner_module._resolve_run_config(spark, ws, {"__manifest__": True}, _TABLE, "run1")
+        assert config == full
+        assert cleanup == ("table", _TABLE)
+        query, args = spark.calls[0]
+        assert query == f"SELECT config FROM {_TABLE} WHERE run_id = :run_id"
+        assert args == {"run_id": "run1"}
+
+    def test_missing_manifest_row_raises(self, runner_module):
+        spark = _FakeSpark(rows=[])
+        with pytest.raises(RuntimeError, match="No manifest run config row"):
+            runner_module._resolve_run_config(spark, MagicMock(), {"__manifest__": True}, _TABLE, "run1")
+
+    def test_legacy_volume_stub_reads_from_file(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = _FakeSpark()
+        full = {"checks": [], "sample_size": 5}
+        ws.files.download.return_value.contents.read.return_value = json.dumps(full).encode()
+        path = "/Volumes/c/s/w/run-configs/run1.json"
+        config, cleanup = runner_module._resolve_run_config(spark, ws, {"__staged__": path}, _TABLE, "run1")
+        assert config == full
+        assert cleanup == ("volume", path)
+        assert spark.calls == []
+
+    def test_run_configs_table_is_quoted(self, runner_module):
+        assert runner_module._run_configs_table("cat", "sch") == _TABLE
+
+    def test_run_configs_table_rejects_bad_schema(self, runner_module):
+        with pytest.raises(ValueError):
+            runner_module._run_configs_table("cat", "sch`; DROP")
+
+
+class TestCleanupRunConfig:
+    def test_table_cleanup_deletes_the_row(self, runner_module):
+        spark = _FakeSpark()
+        runner_module._cleanup_run_config(spark, MagicMock(), ("table", _TABLE), "run1")
+        assert spark.calls == [(f"DELETE FROM {_TABLE} WHERE run_id = :run_id", {"run_id": "run1"})]
+
+    def test_table_delete_failure_is_swallowed(self, runner_module):
+        # Cleanup is best-effort; the retention sweep removes a row left behind.
+        spark = _FakeSpark(error=RuntimeError("permission denied"))
+        runner_module._cleanup_run_config(spark, MagicMock(), ("table", _TABLE), "run1")
+
+    def test_volume_cleanup_deletes_the_file(self, runner_module):
+        ws = MagicMock(name="ws")
+        path = "/Volumes/c/s/w/run-configs/run1.json"
+        runner_module._cleanup_run_config(_FakeSpark(), ws, ("volume", path), "run1")
+        ws.files.delete.assert_called_once_with(path)
+
+    def test_none_cleanup_is_a_noop(self, runner_module):
+        ws = MagicMock(name="ws")
+        spark = _FakeSpark()
+        runner_module._cleanup_run_config(spark, ws, None, "run1")
+        ws.files.delete.assert_not_called()
+        assert spark.calls == []
+
+    def test_volume_delete_failure_is_swallowed(self, runner_module):
+        # Cleanup is best-effort; a delete failure must not propagate out of the
+        # runner's finally block.
+        ws = MagicMock(name="ws")
+        ws.files.delete.side_effect = RuntimeError("permission denied")
+        runner_module._cleanup_run_config(_FakeSpark(), ws, ("volume", "/Volumes/c/s/w/run-configs/run1.json"), "run1")
+
+
+# ---------------------------------------------------------------------------
+# Manifest config parsing
+# ---------------------------------------------------------------------------
+
+
+class TestParseManifestConfig:
+    def test_parses_valid_json_object(self, runner_module):
+        cfg = {"checks": [{"name": "c1"}]}
+        assert runner_module._parse_manifest_config(json.dumps(cfg), "run1") == cfg
+
+    def test_empty_value_raises(self, runner_module):
+        with pytest.raises(RuntimeError, match="empty"):
+            runner_module._parse_manifest_config("", "run1")
+        with pytest.raises(RuntimeError, match="empty"):
+            runner_module._parse_manifest_config(None, "run1")
+
+    def test_non_string_value_raises(self, runner_module):
+        with pytest.raises(RuntimeError, match="non-string"):
+            runner_module._parse_manifest_config(123, "run1")
+
+    def test_non_object_json_raises(self, runner_module):
+        with pytest.raises(RuntimeError, match="not a JSON object"):
+            runner_module._parse_manifest_config("[1, 2, 3]", "run1")

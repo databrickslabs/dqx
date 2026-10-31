@@ -13,7 +13,21 @@ if TYPE_CHECKING:
 
 
 def catalog_of(fqn: str) -> str:
-    """Extract the catalog part from a fully qualified table name."""
+    """Extract the catalog part from a fully qualified table name.
+
+    A backtick-quoted catalog (```my.catalog`.schema.table``) is returned
+    unquoted, with doubled backticks collapsed, so it matches the plain
+    catalog name.
+    """
+    if fqn.startswith("`"):
+        i = 1
+        while i < len(fqn):
+            if fqn[i] == "`":
+                if fqn[i + 1 : i + 2] == "`":
+                    i += 2
+                    continue
+                return fqn[1:i].replace("``", "`")
+            i += 1
     parts = fqn.split(".", 1)
     return parts[0] if parts else ""
 

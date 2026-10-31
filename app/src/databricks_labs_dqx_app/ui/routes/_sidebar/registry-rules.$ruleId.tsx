@@ -72,6 +72,7 @@ import {
   invalidateAfterRegistryRuleEdit,
 } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
+import { resolvePageTab } from "@/lib/registry-rule-page-tab";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -129,6 +130,10 @@ function RegistryRuleDetailPage() {
   const queryClient = useQueryClient();
   const { ruleId } = useParams({ from: "/_sidebar/registry-rules/$ruleId" });
   const { tab } = useSearch({ from: "/_sidebar/registry-rules/$ruleId" });
+  // Absent ?tab= means About — derived, never redirected, so opening a rule
+  // adds a single history entry (same as the Tables / Collections pages).
+  // Tab switches push an entry so back/forward moves between tabs.
+  const activeTab = resolvePageTab(tab);
 
   const { data } = useGetRegistryRuleSuspense(ruleId);
   const rule = data.data.rule;
@@ -486,7 +491,7 @@ function RegistryRuleDetailPage() {
             // instead of serving the pre-edit 5-minute cache (L3).
             invalidateAfterRegistryRuleEdit(queryClient, savedRuleId ?? ruleId);
           }}
-          activeTab={tab as PageTab | undefined}
+          activeTab={activeTab}
           onActiveTabChange={handleActiveTabChange}
           onDirtyChange={setIsDirty}
           jsonDialogOpen={formJsonDialogOpen}
@@ -519,7 +524,6 @@ function RegistryRuleDetailPage() {
             navigate({
               to: "/registry-rules/$ruleId",
               params: { ruleId: newRuleId },
-              search: { tab: "about" },
             });
           } else {
             invalidateAfterRegistryRuleEdit(queryClient, rule.rule_id);

@@ -2,7 +2,7 @@
 
 Runs the **real** suggester pipeline (retriever, embeddings service, AI gateway,
 post-process) over a labelled golden set, replaying only the outbound
-``serving_endpoints.query`` call. See ``suggester_eval_support`` for the design
+model-service HTTP call. See ``suggester_eval_support`` for the design
 and, importantly, for what this tier does and does not hold fixed: it measures
 **retrieval + post-process** against a recorded judge oracle, so a change to the
 judge's prompt is invisible here and has to be measured live in

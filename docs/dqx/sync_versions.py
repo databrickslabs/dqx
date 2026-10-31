@@ -20,24 +20,27 @@ def get_dqx_version(version_path: Path) -> str:
     return match.group("version")
 
 
-def update_mdx_files(mdx_dir: Path, version: str):
-    """Update all .mdx files in the directory and subdirectories by replacing
-    GitHub URLs pointing to source code in main branch to the versioned one."""
+def update_mdx_files(mdx_dir: Path, version: str) -> None:
+    """Pin Core source URLs to its version and keep Studio app URLs on main."""
     mdx_files = list(mdx_dir.rglob("*.mdx"))  # Recursive search
 
     if not mdx_files:
         return
 
-    pattern = re.compile(r"https://github.com/databrickslabs/dqx/blob/(main|v\d+\.\d+\.\d+)/")
-    replacement = f"https://github.com/databrickslabs/dqx/blob/v{version}/"
+    pattern = re.compile(r"(https://github.com/databrickslabs/dqx/blob/)(?:main|v\d+\.\d+\.\d+)/(?P<app_path>app/)?")
+
+    def replace_source_ref(match: re.Match[str]) -> str:
+        app_path = match.group("app_path") or ""
+        ref = "main" if app_path else f"v{version}"
+        return f"{match.group(1)}{ref}/{app_path}"
 
     for mdx_file in mdx_files:
         content = mdx_file.read_text(encoding="utf-8")
-        updated_content = pattern.sub(replacement, content)
+        updated_content = pattern.sub(replace_source_ref, content)
 
         if updated_content != content:
             mdx_file.write_text(updated_content, encoding="utf-8")
-            print(f"Updated GitHub URLs in {mdx_file} to point to the latest DQX released version")
+            print(f"Updated GitHub source URLs in {mdx_file}")
 
 
 def update_dqx_pins(version: str):

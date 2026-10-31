@@ -158,11 +158,14 @@ from tests.suggester_eval_support import (
 # a table *must* have while the judge is instructed to apply universal checks
 # broadly, so defensible suggestions count against it. Gating on it would buy a
 # flaky nightly and no signal. Recall held at 1.000 on six of eight tables.
+#
+# Keyed by Unity Gateway model service names. The numbers were measured on the
+# legacy ``databricks-*`` serving endpoints, which serve the same models.
 LIVE_BASELINE_RECALL: dict[tuple[str, str], float] = {
-    ("databricks-gte-large-en", "databricks-gpt-5-4-nano"): 0.854,
-    ("databricks-gte-large-en", "databricks-claude-haiku-4-5"): 0.875,
-    ("databricks-gte-large-en", "databricks-claude-sonnet-4-5"): 0.917,
-    ("databricks-gte-large-en", "databricks-claude-opus-4-7"): 0.938,
+    ("system.ai.gte-large-en", "system.ai.gpt-5-4-nano"): 0.854,
+    ("system.ai.gte-large-en", "system.ai.claude-haiku-4-5"): 0.875,
+    ("system.ai.gte-large-en", "system.ai.claude-sonnet-4-5"): 0.917,
+    ("system.ai.gte-large-en", "system.ai.claude-opus-4-7"): 0.938,
 }
 
 # How far quality may fall below the recorded baseline before the run fails.

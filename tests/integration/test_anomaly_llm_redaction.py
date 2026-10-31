@@ -1,6 +1,6 @@
-"""Live-Spark round-trip for anomaly redaction escaping (_sql_string_literal / pattern_spark_expr).
+"""Live-Spark round-trip for anomaly redaction escaping (escape_sql_string_literal / pattern_spark_expr).
 
-The unit tests only pin the Python string that _sql_string_literal emits; they cannot confirm that
+The unit tests only pin the Python string that escape_sql_string_literal emits; they cannot confirm that
 Spark's parser actually matches the escaped literal. This test closes that gap for the redaction
 path: a redact_columns entry whose name contains a single quote or backslash must be filtered out of
 the SHAP-contribution pattern by ``not array_contains(array('<escaped>'), e.key)``.
