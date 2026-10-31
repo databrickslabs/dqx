@@ -4048,6 +4048,27 @@ You should make sure to handle edge cases as part of your custom check (e.g. pro
   </TabItem>
 </Tabs>
 
+<Admonition type="tip" title="Column names with spaces or special characters in custom checks">
+Custom check functions receive the `column` and `columns` arguments exactly as defined in the check.
+If your check function parses string columns as Spark SQL expressions (e.g. using `F.expr` or `get_normalized_column_and_expr`) and accepts both string and `Column` values,
+register it with `register_for_column_name_resolution` so that DQX passes column names requiring escaping (e.g. `Long Name`) as column references:
+
+```python
+import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
+from databricks.labs.dqx.rule import register_rule, register_for_column_name_resolution
+
+@register_rule("row")
+@register_for_column_name_resolution()
+def not_ends_with(column: str | Column, suffix: str) -> Column:
+  col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+  return make_condition(
+    col_expr.endswith(suffix), f"Column {col_expr_str} ends with {suffix}", f"{col_str_norm}_ends_with_{suffix}"
+  )
+```
+</Admonition>
+
 #### Execution of the custom python check programmatically using DQX classes
 
 <Tabs>

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from dataclasses import dataclass
 from functools import cached_property
@@ -26,6 +27,8 @@ from databricks.labs.dqx.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_UNQUOTED_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,22 @@ class DQRuleManager:
         Column names that contain characters requiring SQL identifier escaping (e.g. spaces, such as
         "Customer Name") are back-quoted so they are unambiguous in the skip / error messages.
         """
-        invalid_cols = []
+        return [
+            self._display_column_name(column)
+            for column, resolved_column in zip(self.check_columns, self.resolved_check_columns)
+            if resolved_column is None
+        ]
+
+    @cached_property
+    def check_columns(self) -> list[str | Column]:
+        """
+        Returns the check columns as a list, whether the check provides a single *column* or a list of *columns*.
+        """
+        if self.check.column is not None:
+            return [self.check.column]
+        if self.check.columns is not None:  # either column or columns can be provided, but not both
+            return list(self.check.columns)
+        return []
 
         if self.check.column is not None and self._is_invalid_check_column(self.check.column):
             invalid_cols.append(self._display_column_name(self.check.column))
@@ -116,7 +134,31 @@ class DQRuleManager:
                 if self._is_invalid_check_column(column):
                     invalid_cols.append(self._display_column_name(column))
 
-        return invalid_cols
+    @cached_property
+    def resolved_check(self) -> DQRule:
+        """
+        Returns the check to execute.
+
+        Check functions registered with *register_for_column_name_resolution* parse string columns as Spark SQL
+        expressions, so a check column that only resolves as a literal column name (e.g. "Long Name", which Spark SQL
+        reads as column "Long" aliased to "Name") is passed to them as a column reference instead. All other check
+        functions, including custom checks, receive the columns exactly as defined in the check.
+
+        The resolved check is only used for execution. Reported check details and fingerprints come from *check*.
+        """
+        if not getattr(self.check.check_func, CHECK_FUNC_COLUMN_NAME_RESOLUTION_ATTRIBUTE, False):
+            return self.check
+
+        if all(resolved is column for column, resolved in zip(self.check_columns, self.resolved_check_columns)):
+            return self.check
+
+        resolved_columns = [
+            column if resolved is None else resolved
+            for column, resolved in zip(self.check_columns, self.resolved_check_columns)
+        ]
+        if self.check.column is not None:
+            return self.check.replace(column=resolved_columns[0])
+        return self.check.replace(columns=resolved_columns)
 
     @staticmethod
     def _display_column_name(column: str | Column) -> str:

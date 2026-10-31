@@ -61,6 +61,7 @@ _APPROXIMATE_MESSAGE_SUFFIX = {
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_latitude(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid latitudes.
 
@@ -84,6 +85,7 @@ def is_latitude(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_longitude(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid longitudes.
 
@@ -108,6 +110,7 @@ def is_longitude(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geometries.
 
@@ -136,6 +139,7 @@ def is_geometry(column: str | Column) -> Column:
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geography(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geographies.
 
@@ -557,6 +561,7 @@ def has_y_coordinate_between(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_equal_to(
     column: str | Column,
     value: int | float | str | Column,
@@ -603,6 +608,7 @@ def is_area_equal_to(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_equal_to(
     column: str | Column,
     value: int | float | str | Column,
@@ -649,6 +655,7 @@ def is_area_not_equal_to(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_greater_than(
     column: str | Column,
     value: int | float | str | Column,
@@ -695,6 +702,7 @@ def is_area_not_greater_than(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_area_not_less_than(
     column: str | Column,
     value: int | float | str | Column,
@@ -959,6 +967,7 @@ def _compare_spatial_sql_function_result(
 @requires_dbr_version("17.1")
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def are_polygons_mutually_disjoint(
     column: str | Column,
     row_filter: str | None = None,
@@ -1343,6 +1352,7 @@ def _has_topological_relationship_approximate(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_contains(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1387,6 +1397,7 @@ def is_geo_contains(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_covers(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1455,6 +1466,7 @@ def is_geo_covers(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_intersects(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1521,6 +1533,7 @@ def is_geo_intersects(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_touches(
     column: str | Column,
     reference_geometry: str | bytes | Column,
@@ -1563,6 +1576,7 @@ def is_geo_touches(
 
 @requires_dbr_version("17.1")
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_geo_within(
     column: str | Column,
     reference_geometry: str | bytes | Column,

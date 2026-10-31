@@ -328,6 +328,7 @@ def _matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
@@ -348,6 +349,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
@@ -366,6 +368,7 @@ def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Col
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_null(column: str | Column) -> Column:
     """Checks whether the values in the input column are not null.
 
@@ -380,6 +383,7 @@ def is_not_null(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_null(column: str | Column) -> Column:
     """Checks whether the values in the input column are null.
 
@@ -396,6 +400,7 @@ def is_null(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are empty (but may be null).
 
@@ -414,6 +419,7 @@ def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are either null or empty.
 
@@ -436,6 +442,7 @@ def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) ->
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_valid_string_case(column: str | Column, case: str) -> Column:
     """Checks whether string values match the requested letter case:
 
@@ -522,6 +529,7 @@ def _get_limit_exprs(values: list[Any]) -> list[Column]:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
     Can optionally perform a case-insensitive comparison.
@@ -579,6 +587,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
@@ -641,6 +650,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_in_distribution(
     column: str | Column,
     distribution: _VALUES_DISTRIBUTION,
@@ -981,6 +991,7 @@ def _is_in_distribution_value_is_numeric(value: object) -> bool:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are NOT present in the list of forbidden values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
@@ -1137,6 +1148,7 @@ def is_older_than_col2_for_n_days(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_older_than_n_days(
     column: str | Column, days: int, curr_date: Column | None = None, negate: bool = False
 ) -> Column:
@@ -1188,6 +1200,7 @@ def is_older_than_n_days(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
@@ -1222,6 +1235,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the near future,
     where 'near future' is defined as greater than the current timestamp
@@ -1259,6 +1273,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_equal_to(
     column: str | Column,
     value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
@@ -1321,6 +1336,7 @@ def is_equal_to(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_equal_to(
     column: str | Column,
     value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
@@ -1384,6 +1400,7 @@ def is_not_equal_to(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_less_than(
     column: str | Column,
     limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
@@ -1422,6 +1439,7 @@ def is_not_less_than(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_greater_than(
     column: str | Column,
     limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
@@ -1460,6 +1478,7 @@ def is_not_greater_than(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
@@ -1505,6 +1524,7 @@ def is_in_range(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
@@ -1653,6 +1673,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     """Checks whether the values in the array input column are not null and not empty.
 
@@ -1670,6 +1691,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_date(column: str | Column, date_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid date formats.
 
@@ -1694,6 +1716,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid timestamp formats.
 
@@ -1722,6 +1745,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_ipv4_address(column: str | Column) -> Column:
     """Checks whether the values in the input column have valid IPv4 address formats.
 
@@ -1735,6 +1759,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_email(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid email addresses.
 
@@ -1768,6 +1793,7 @@ def is_valid_email(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_url(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid URLs.
 
@@ -1802,6 +1828,7 @@ def is_valid_url(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
     """Checks whether the values in the input column are valid national identification
     numbers (for example, US Social Security Numbers) for the given country.
@@ -1851,6 +1878,7 @@ def is_valid_national_id(column: str | Column, country: str = "US") -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_uuid(column: str | Column, strict: bool = False) -> Column:
     """Checks whether the values in the input column are valid UUIDs (RFC 9562, obsoletes RFC 4122).
 
@@ -2029,6 +2057,7 @@ def _is_valid_iso_code(column: str | Column, code_format: str, case_sensitive: b
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are valid ISO 3166-1 country codes.
 
@@ -2073,6 +2102,7 @@ def is_valid_country_code(column: str | Column, code_format: str = "alpha-2", ca
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_currency_code(
     column: str | Column, code_format: str = "alphabetic", case_sensitive: bool = True
 ) -> Column:
@@ -2143,6 +2173,7 @@ def _iso_3166_2_literals(lower: bool) -> list[Column]:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_subdivision_code(
     column: str | Column, case_sensitive: bool = True, country_column: str | Column | None = None
 ) -> Column:
@@ -2222,6 +2253,7 @@ def is_valid_subdivision_code(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_language_code(column: str | Column, code_format: str = "alpha-2", case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are valid ISO 639 language codes.
 
@@ -2265,6 +2297,7 @@ def is_valid_language_code(column: str | Column, code_format: str = "alpha-2", c
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
     Checks if an IPv4 column value falls within the given CIDR block.
@@ -2316,6 +2349,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_ipv6_address(column: str | Column) -> Column:
     """
     Validate if the column contains properly formatted IPv6 addresses.
@@ -2347,6 +2381,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
     Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
@@ -2407,6 +2442,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_data_fresh(
     column: str | Column,
     max_age_minutes: int,
@@ -2639,6 +2675,7 @@ def is_unique(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def foreign_key(
     columns: list[str | Column],
     ref_columns: list[str | Column],
@@ -2895,6 +2932,7 @@ def sql_query(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | Decimal | str | Column,
@@ -2945,6 +2983,7 @@ def is_aggr_not_greater_than(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | Decimal | str | Column,
@@ -2995,6 +3034,7 @@ def is_aggr_not_less_than(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_aggr_equal(
     column: str | Column,
     limit: int | float | Decimal | str | Column,
@@ -3051,6 +3091,7 @@ def is_aggr_equal(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_aggr_not_equal(
     column: str | Column,
     limit: int | float | Decimal | str | Column,
@@ -3110,6 +3151,7 @@ _VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "w
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def has_no_aggr_outliers(
     column: str | Column,
     time_column: str,
@@ -3352,6 +3394,7 @@ def has_no_aggr_outliers(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def aggr_matches_dataset(
     column: str | Column,
     ref_table: str | None = None,
@@ -3819,6 +3862,7 @@ def compare_datasets(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def is_data_fresh_per_time_window(
     column: str | Column,
     window_minutes: int,
@@ -3934,6 +3978,7 @@ def is_data_fresh_per_time_window(
 
 @row_preserving
 @register_rule("dataset")
+@register_for_column_name_resolution()
 def has_no_gaps_per_time_window(
     column: str | Column,
     window_minutes: int,
@@ -4221,6 +4266,7 @@ def has_valid_schema(
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def is_valid_json(column: str | Column) -> Column:
     """
     Checks whether the values in the input column are valid JSON strings.
@@ -4245,6 +4291,7 @@ def is_valid_json(column: str | Column) -> Column:
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
     """
     Checks whether the values in the input column contain specific keys in the outermost JSON object.
@@ -4311,6 +4358,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
 
 
 @register_rule("row")
+@register_for_column_name_resolution()
 def has_valid_json_schema(column: str | Column, schema: str | types.StructType) -> Column:
     """
     Validates that JSON strings in the specified column conform to an expected schema.
