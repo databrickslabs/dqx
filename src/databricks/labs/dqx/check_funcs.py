@@ -1460,6 +1460,82 @@ def is_not_greater_than(
 
 
 @register_rule("row")
+def is_greater_than(
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether the values in the input column are strictly greater than the provided limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+        allow_nulls: If True (default), null values pass the check, following Spark's null comparison
+            semantics. If False, null values fail the check.
+
+    Returns:
+        new Column
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    condition = col_expr <= limit_expr
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not greater than limit: "),
+            limit_expr.cast("string"),
+        ),
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "not_greater_than_limit",
+    )
+
+
+@register_rule("row")
+def is_less_than(
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether the values in the input column are strictly less than the provided limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+        allow_nulls: If True (default), null values pass the check, following Spark's null comparison
+            semantics. If False, null values fail the check.
+
+    Returns:
+        new Column
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    condition = col_expr >= limit_expr
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not less than limit: "),
+            limit_expr.cast("string"),
+        ),
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "not_less_than_limit",
+    )
+
+
+@register_rule("row")
 def is_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,

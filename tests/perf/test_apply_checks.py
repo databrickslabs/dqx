@@ -744,6 +744,36 @@ def test_benchmark_foreach_is_not_greater_than(benchmark, ws, generated_integer_
     assert result == EXPECTED_ROWS
 
 
+def test_benchmark_is_greater_than(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_greater_than,
+            column="col6",
+            check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_less_than(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_less_than,
+            column="col5",
+            check_func_kwargs={"limit": datetime(2025, 8, 19).date()},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_has_num_decimal_places(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
