@@ -1017,7 +1017,22 @@
     "dryRunTooltip": "La ejecución de prueba valida solo las primeras 1–10,000 filas de la tabla destino — es una vista previa rápida, no una validación completa. Para ejecutar reglas importadas en cada fila después de la aprobación, ve a Ejecutar Reglas y selecciona \"Todas las filas\".",
     "exampleFile": "Archivo de ejemplo",
     "downloadExample": "Descargar ejemplo",
-    "functionsNotLoaded": "Las funciones de reglas aún se están cargando. Inténtalo de nuevo en un momento."
+    "functionsNotLoaded": "Las funciones de reglas aún se están cargando. Inténtalo de nuevo en un momento.",
+    "unnamedRule": "Regla sin nombre",
+    "missingRequiredFields": "{{name}} no tiene los campos obligatorios: {{fields}}"
+  },
+  "similarRules": {
+    "title_one": "{{count}} regla importada coincide con una regla existente",
+    "title_other": "{{count}} reglas importadas coinciden con reglas existentes",
+    "description": "Estas reglas ejecutan la misma comprobación con ajustes distintos. Reutiliza la regla existente o crea una nueva.",
+    "reuse": "Reutilizar {{name}}",
+    "ruleState": "(v{{version}}, {{status}})",
+    "settings": "Existente: {{existing}}. Importada: {{imported}}.",
+    "defaultSettings": "ajustes predeterminados",
+    "willReuse_one": "Reutilizará esta regla para {{count}} comprobación importada.",
+    "willReuse_other": "Reutilizará esta regla para {{count}} comprobaciones importadas.",
+    "willCreate_one": "Creará una regla nueva para {{count}} comprobación importada.",
+    "willCreate_other": "Creará reglas nuevas para {{count}} comprobaciones importadas."
   },
   "rulesCreateSql": {
     "breadcrumb": "Reglas entre tablas",
@@ -2240,6 +2255,9 @@
     "appliedRuleCount_other": "{{count}} reglas aplicadas",
     "emptyAppliedRules": "Ninguna regla aplicada a esta tabla todavía.",
     "emptyAppliedRulesCta": "Todavía no hay reglas aplicadas",
+    "applyRowFilterLabel": "Filtro de población (esta tabla)",
+    "applyRowFilterPlaceholder": "Heredar el filtro predeterminado, o p. ej. region = 'EU'",
+    "applyRowFilterHint": "Cláusula SQL WHERE opcional. Déjela en blanco para heredar el filtro predeterminado de la regla.",
     "pendingApplications": {
       "title_one": "{{count}} regla pendiente de aprobación",
       "title_other": "{{count}} reglas pendientes de aprobación",

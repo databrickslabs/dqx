@@ -2567,6 +2567,11 @@ function ApplyRulesTab({
     setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, pass_threshold: value } : r)));
   };
 
+  const handleRowFilterChange = (rule: AppliedRuleOut, value: string) => {
+    const row_filter = value.trim() === "" ? null : value;
+    setStagedRows((prev) => prev.map((r) => (r.rule_id === rule.rule_id ? { ...r, row_filter } : r)));
+  };
+
   // Per-column threshold override — update every staged row for the given
   // rule_id, merging the new column value into each row's column_pass_thresholds
   // map. `value === null` deletes the key (revert to rule default); `value === 0`
@@ -2805,6 +2810,7 @@ function ApplyRulesTab({
                 onPinChange={(v) => handlePinChange(rule, v)}
                 onSeverityChange={(v) => handleSeverityChange(rule, v)}
                 onPassThresholdChange={(v) => handlePassThresholdChange(rule, v)}
+                onRowFilterChange={(v) => handleRowFilterChange(rule, v)}
                 onColumnThresholdChange={(column, value) => handleColumnThresholdChange(rule.rule_id, column, value)}
                 resolvedDefaultThreshold={rule.rule_pass_threshold ?? adminDefaultThreshold}
                 thresholdEnabled={thresholdEnabled}

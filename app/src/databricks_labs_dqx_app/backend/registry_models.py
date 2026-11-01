@@ -122,12 +122,12 @@ class RuleDefinition(BaseModel):
     filter: str | None = Field(
         default=None,
         description=(
-            "Optional rule-level row filter (a SQL WHERE predicate), mirroring "
-            "DQRule.filter. Supports {{slot}} placeholders substituted at materialize "
-            "time. Validated for SQL safety on create/update. Threaded through create/"
-            "update and frozen into each dq_rule_versions snapshot as part of the "
-            "definition. Materialized as a top-level 'filter' key on the rendered "
-            "dq_resolved_rules check when set; omitted entirely when None or empty."
+            "Default row filter (a SQL WHERE predicate) for tables this rule is "
+            "applied to. Applied rules may override it with ``row_filter``; an empty "
+            "applied filter inherits this default. Supports {{slot}} placeholders "
+            "substituted at materialize time. Validated for SQL safety on create/update. "
+            "Not part of the rule fingerprint — two rules that differ only by filter "
+            "are the same check."
         ),
     )
 
@@ -837,6 +837,41 @@ def _canonical_label_value(value: str, allowed: list[str], aliases: dict[str, st
     by_lower = {v.lower(): v for v in allowed}
     lowered = value.strip().lower()
     return by_lower.get(lowered) or by_lower.get(aliases.get(lowered, ""))
+
+
+def generic_rule_metadata(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return only the reserved keys a generic (registry) rule may carry.
+
+    Custom tags (contract provenance, ownership, pass rates, ...) describe a
+    rule's use on a specific table, so they live on the applied rule
+    (``dq_applied_rules.user_metadata``), never on the reusable registry rule.
+    """
+    return {k: v for k, v in (user_metadata or {}).items() if k in RESERVED_RULE_METADATA_KEYS}
+
+
+def application_tags(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the custom tags in *user_metadata* that belong on an applied rule."""
+    return {k: v for k, v in (user_metadata or {}).items() if k not in RESERVED_RULE_METADATA_KEYS}
+
+
+def imported_severity_error(user_metadata: dict[str, Any] | None, label_definitions: list[dict]) -> str | None:
+    """Why an imported rule's ``severity`` tag can't be accepted, or ``None`` if it can.
+
+    Severity is required on every rule and must be one of the configured values
+    (case-insensitive, as :func:`canonicalize_reserved_label_values` folds case).
+    Not enforced when no severity vocabulary is configured.
+    """
+    allowed = _configured_label_values(label_definitions, _SEVERITY_LABEL_KEY)
+    if not allowed:
+        return None
+    raw = (user_metadata or {}).get(RESERVED_SEVERITY_KEY)
+    value = raw.strip() if isinstance(raw, str) else ""
+    choices = ", ".join(allowed)
+    if not value:
+        return f"Severity is required. Use one of: {choices}."
+    if value.lower() not in {v.lower() for v in allowed}:
+        return f"Invalid severity '{value}'. Use one of: {choices}."
+    return None
 
 
 def canonicalize_reserved_label_values(
