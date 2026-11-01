@@ -8,6 +8,7 @@ import {
   getRuleIdsForColumn,
   isRuleCompatibleWithColumn,
   mergeColumnThresholds,
+  mergeParameterValues,
   newStagedRow,
   pickSlotForColumn,
 } from "./shared";
@@ -124,6 +125,36 @@ describe("buildDesiredApplications row_filter", () => {
       } as unknown as AppliedRuleOut,
     ];
     expect(buildDesiredApplications(rows)[0]?.row_filter).toBeNull();
+  });
+
+  test("carries per-mapping-group parameter_values", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        column_mapping: [{ column: "email" }],
+        parameter_values: { '{"column":"email"}': { limit: 40 } },
+      } as unknown as AppliedRuleOut,
+    ];
+    expect(buildDesiredApplications(rows)[0]?.parameter_values).toEqual({
+      '{"column":"email"}': { limit: 40 },
+    });
+  });
+});
+
+describe("mergeParameterValues", () => {
+  test("merges keys across split staged rows", () => {
+    const a = {
+      parameter_values: { '{"column":"a"}': { limit: 1 } },
+    } as unknown as AppliedRuleOut;
+    const b = {
+      parameter_values: { '{"column":"b"}': { limit: 2 } },
+    } as unknown as AppliedRuleOut;
+    expect(mergeParameterValues([a, b])).toEqual({
+      '{"column":"a"}': { limit: 1 },
+      '{"column":"b"}': { limit: 2 },
+    });
   });
 });
 
