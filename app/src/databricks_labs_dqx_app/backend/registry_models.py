@@ -17,10 +17,11 @@ hand-roll ``user_metadata["dimension"]`` lookups.
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
     from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -41,11 +42,46 @@ AuthorKind = Literal["human", "ai_generated", "ai_assisted"]
 SlotFamily = Literal["numeric", "text", "temporal", "boolean", "any"]
 SlotCardinality = Literal["one", "many"]
 
-ParamType = Literal["number", "string", "list", "boolean", "regex", "ref_table", "ref_column"]
+ParamType = Literal[
+    "number", "integer", "decimal", "date", "string", "list", "boolean", "regex", "ref_table", "ref_column"
+]
 # JSON-compatible parameter value. ``Any`` is deliberately avoided per
 # AGENTS.md — a registry-rule parameter can only ever be one of these
 # primitive/JSON shapes once it round-trips through ``dq_rules.definition``.
 RuleParamValue = str | float | int | bool | list[str] | None
+
+# SQL ``{{token}}`` names that are apply-time scalars, not column slots.
+_SQL_PARAM_NAME_RE = re.compile(
+    r"(max_length|min_length|min_limit|max_limit|min_value|max_value|"
+    r"regex|pattern|decimal_scale|\bscale\b|\blimit\b|\bthreshold\b|allowed|launch_date|_rate)",
+    re.IGNORECASE,
+)
+
+
+def is_sql_param_placeholder_name(name: str) -> bool:
+    """True when a SQL ``{{token}}`` should be collected as a parameter, not a column slot."""
+    return _SQL_PARAM_NAME_RE.search(name) is not None and not re.fullmatch(r"columns?_?\d*", name, flags=re.IGNORECASE)
+
+
+def infer_sql_param_type(name: str) -> "ParamType":
+    """Value type for a SQL ``{{token}}`` parameter, mirroring the UI's ``inferSqlParamType``."""
+    lowered = name.lower()
+    if (
+        lowered in {"limit", "scale"}
+        or "max_length" in lowered
+        or "min_length" in lowered
+        or lowered.endswith("_scale")
+    ):
+        return "integer"
+    if "rate" in lowered or any(part in lowered for part in ("min_limit", "max_limit", "min_value", "max_value")):
+        return "decimal"
+    if "date" in lowered:
+        return "date"
+    if "allowed" in lowered:
+        return "list"
+    if "regex" in lowered or "pattern" in lowered:
+        return "regex"
+    return "string"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +166,35 @@ class RuleDefinition(BaseModel):
             "are the same check."
         ),
     )
+
+    @model_validator(mode="after")
+    def _promote_sql_parameter_slots(self) -> "RuleDefinition":
+        """Treat value-named SQL tokens (e.g. ``{{allowed_scale}}``) as parameters, not columns.
+
+        Rules imported before apply-time parameters existed stored such tokens
+        as column slots; normalizing on parse fixes them everywhere at once.
+        A definition that already declares parameters was authored with both
+        buckets, so its slots are taken as written.
+        """
+        if self.parameters or "function" in self.body or "lowcode_ast" in self.body:
+            return self
+        if "predicate" not in self.body and "sql_query" not in self.body:
+            return self
+        promoted = [s for s in self.slots if s.arg_key is None and is_sql_param_placeholder_name(s.name)]
+        if not promoted:
+            return self
+        promoted_names = {s.name for s in promoted}
+        existing = {p.name for p in self.parameters}
+        self.slots = [s for s in self.slots if s.name not in promoted_names]
+        self.parameters = [
+            *self.parameters,
+            *(
+                RuleParameter(name=s.name, type=infer_sql_param_type(s.name))
+                for s in promoted
+                if s.name not in existing
+            ),
+        ]
+        return self
 
 
 # ---------------------------------------------------------------------------

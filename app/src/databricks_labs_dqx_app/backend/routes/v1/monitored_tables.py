@@ -88,6 +88,7 @@ from databricks_labs_dqx_app.backend.models import (
     SuggestRulesOut,
     TagSuggestionsOut,
 )
+from databricks_labs_dqx_app.backend.apply_time_params import RESERVED_PARAMETER_VALUES_KEY
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
     get_rule_dimension,
@@ -99,6 +100,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     ApplyRulesService,
     DesiredAppliedRule,
+    InvalidAppliedParameterError,
     MappingIncompleteError,
     RuleNotPublishedError,
     UnsafeRowFilterError,
@@ -1069,8 +1071,11 @@ def save_applied_rules(
             # non-empty override — otherwise clearing every per-column override
             # ("Use rule default") would silently leave the old map persisted.
             tags.pop(RESERVED_COLUMN_PASS_THRESHOLDS_KEY, None)
+            tags.pop(RESERVED_PARAMETER_VALUES_KEY, None)
             if entry.column_pass_thresholds:
                 tags[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] = entry.column_pass_thresholds
+            if entry.parameter_values:
+                tags[RESERVED_PARAMETER_VALUES_KEY] = entry.parameter_values
             desired.append(
                 DesiredAppliedRule(
                     rule_id=entry.rule_id,
@@ -1104,6 +1109,8 @@ def save_applied_rules(
             )
         return out
     except UnsafeRowFilterError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except InvalidAppliedParameterError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except MappingIncompleteError as e:
         raise HTTPException(status_code=422, detail=str(e))

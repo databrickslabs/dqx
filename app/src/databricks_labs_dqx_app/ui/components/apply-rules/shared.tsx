@@ -6,6 +6,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { AppliedRuleOut, AppliedRuleOutColumnMappingItem, DesiredAppliedRuleIn, RegistryRuleOut, RuleSlot } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
+import { mappingGroupKey } from "@/lib/apply-time-params";
 import type { ColumnFamily } from "./ColumnPicker";
 
 export { extractApiError } from "@/lib/api-error";
@@ -78,6 +79,7 @@ export function mergeRuleRowGroup(group: RuleRowGroup): AppliedRuleOut {
   return {
     ...first,
     column_mapping: group.rows.flatMap((row) => row.column_mapping ?? []),
+    parameter_values: mergeParameterValues(group.rows),
   };
 }
 
@@ -148,11 +150,16 @@ export function normalizeStagedRows(rows: AppliedRuleOut[]): AppliedRuleOut[] {
   return rows.flatMap((row) => {
     const groups = row.column_mapping ?? [];
     if (groups.length <= 1) return [row];
-    return groups.map((group, idx) => ({
-      ...row,
-      id: idx === 0 ? row.id : nextLocalRowId(),
-      column_mapping: [group],
-    }));
+    const keyed = row.parameter_values ?? {};
+    return groups.map((group, idx) => {
+      const key = mappingGroupKey(group);
+      return {
+        ...row,
+        id: idx === 0 ? row.id : nextLocalRowId(),
+        column_mapping: [group],
+        parameter_values: key in keyed ? { [key]: keyed[key] ?? {} } : {},
+      };
+    });
   });
 }
 
@@ -246,9 +253,25 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       // rule_id; returns undefined when there are no overrides so the field
       // is absent in the payload rather than an empty object.
       column_pass_thresholds: mergeColumnThresholds(rows) ?? null,
+      parameter_values: mergeParameterValues(rows) ?? null,
       tags: (first?.user_metadata ?? {}) as Record<string, unknown>,
     };
   });
+}
+
+/** Merge per-mapping-group apply-time parameter values across split staged rows. */
+export function mergeParameterValues(
+  rows: AppliedRuleOut[],
+): Record<string, Record<string, unknown>> | undefined {
+  const merged: Record<string, Record<string, unknown>> = {};
+  let hasAny = false;
+  for (const row of rows) {
+    for (const [key, values] of Object.entries(row.parameter_values ?? {})) {
+      merged[key] = { ...(merged[key] ?? {}), ...(values ?? {}) };
+      if (Object.keys(merged[key] ?? {}).length > 0) hasAny = true;
+    }
+  }
+  return hasAny ? merged : undefined;
 }
 
 /** Stable, order-independent serialization of a `saveAppliedRules` payload —
@@ -310,6 +333,11 @@ export function desiredApplicationsKey(stagedRows: AppliedRuleOut[], adminDefaul
         pass_threshold: normPass,
         row_filter: application.row_filter ?? null,
         column_pass_thresholds: colThresholdsStr,
+        parameter_values: application.parameter_values
+          ? JSON.stringify(
+              Object.fromEntries(Object.entries(application.parameter_values).sort(([a], [b]) => a.localeCompare(b))),
+            )
+          : null,
         tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
       };
     })

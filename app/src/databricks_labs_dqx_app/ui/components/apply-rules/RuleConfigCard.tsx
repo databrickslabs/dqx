@@ -43,6 +43,11 @@ import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getT
 import type { ColumnRef } from "./RulesByColumn";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import { computeRuleSchemaDrift, type RuleSchemaDrift } from "./schemaDrift";
+import {
+  bindsEveryParameter,
+  mappingGroupKey,
+  validateGroupParameterValues,
+} from "@/lib/apply-time-params";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -63,10 +68,12 @@ export function computeStatus(
   rule: AppliedRuleOut,
   slots: RuleSlot[],
   columns: ColumnOut[] = [],
+  parameters: RuleParameter[] = [],
+  bindAll = false,
 ): RuleStatus {
   const drift = computeRuleSchemaDrift(rule, slots, columns);
   const slotNames = slots.map((s) => s.name);
-  if (slotNames.length === 0) {
+  if (slotNames.length === 0 && parameters.length === 0) {
     return { kind: "no-mapping-needed", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   const groups = rule.column_mapping ?? [];
@@ -76,7 +83,18 @@ export function computeStatus(
   let incomplete = 0;
   for (const g of groups) {
     const filled = slotNames.filter((s) => Boolean(g[s])).length;
-    if (filled > 0 && filled < slotNames.length) incomplete++;
+    if (slotNames.length > 0 && filled > 0 && filled < slotNames.length) {
+      incomplete++;
+      continue;
+    }
+    if (parameters.length > 0 && (slotNames.length === 0 || filled === slotNames.length)) {
+      const { error } = validateGroupParameterValues(
+        parameters,
+        rule.parameter_values?.[mappingGroupKey(g)],
+        bindAll,
+      );
+      if (error) incomplete++;
+    }
   }
   return {
     kind: incomplete === 0 ? "complete" : "incomplete",
@@ -627,6 +645,8 @@ interface RuleConfigCardProps {
   thresholdEnabled?: boolean;
   /** Per-table population override. Empty inherits the rule's default filter. */
   onRowFilterChange?: (value: string) => void;
+  /** Per-mapping-group apply-time parameter values. */
+  onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
 }
 
 export function RuleConfigCard({
@@ -654,6 +674,7 @@ export function RuleConfigCard({
   columnTags,
   thresholdEnabled = true,
   onRowFilterChange,
+  onParameterValuesChange,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [logicOpen, setLogicOpen] = useState(false);
@@ -670,9 +691,11 @@ export function RuleConfigCard({
   const slotTags = slotTagsFromUserMetadata(registryRule?.user_metadata as Record<string, unknown> | undefined);
   const effectiveSeverity = rule.severity_override ?? ruleSeverity;
   const slots = registryRule?.definition.slots ?? [];
+  const parameters = registryRule?.definition.parameters ?? [];
+  const bindAllParameters = bindsEveryParameter(registryRule?.mode);
   // Pass live columns so missing / type-mismatched mappings count as
   // needs-attention alongside incomplete slot fills (schema-drift P0).
-  const status = computeStatus(rule, slots, columns ?? []);
+  const status = computeStatus(rule, slots, columns ?? [], parameters, bindAllParameters);
   const incomplete = status.kind === "incomplete";
   const hasDrift =
     status.drift.missingCount > 0 || status.drift.typeMismatchCount > 0;
@@ -947,6 +970,11 @@ export function RuleConfigCard({
               onCancelAdd={() => setPendingGroup(null)}
               slotTags={Object.keys(slotTags).length > 0 ? slotTags : undefined}
               columnTags={columnTags}
+              parameters={parameters}
+              storedParameterValues={rule.parameter_values}
+              canEditParameters={canEdit && Boolean(onParameterValuesChange)}
+              bindAllParameters={bindAllParameters}
+              onParameterValuesChange={onParameterValuesChange}
             />
           </div>
         </div>
