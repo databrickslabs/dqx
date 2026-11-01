@@ -1211,12 +1211,23 @@ class MonitoredTableDetailOut(BaseModel):
 
     table: MonitoredTableOut
     applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+    unapproved_rule_changes: bool = Field(
+        default=False,
+        description=(
+            "The table's applied rules differ from its approved version (a rule added or removed, or a mapping, "
+            "severity override, pass threshold, tag or version pin changed). Runs keep using the approved "
+            "version until the table is submitted and approved."
+        ),
+    )
 
     @classmethod
-    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+    def from_domain(
+        cls, detail: MonitoredTableDetail, *, unapproved_rule_changes: bool = False
+    ) -> "MonitoredTableDetailOut":
         return cls(
             table=MonitoredTableOut.from_domain(detail.table),
             applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+            unapproved_rule_changes=unapproved_rule_changes,
         )
 
 
