@@ -195,6 +195,8 @@ export function newStagedRow(
     rule_pass_threshold: getRulePassThreshold(rule),
     // Fresh staged rows start with no per-column threshold overrides.
     column_pass_thresholds: {},
+    row_filter: null,
+    pass_threshold: null,
   };
 }
 
@@ -239,6 +241,7 @@ export function buildDesiredApplications(stagedRows: AppliedRuleOut[]): DesiredA
       // Per-rule overrides live on the rule (all of a rule_id's rows share one
       // value), so read them off the first row like pin/severity above.
       pass_threshold: first?.pass_threshold ?? null,
+      row_filter: (first?.row_filter ?? "").trim() || null,
       // Per-column threshold overrides — merge across all rows for this
       // rule_id; returns undefined when there are no overrides so the field
       // is absent in the payload rather than an empty object.
@@ -305,6 +308,7 @@ export function desiredApplicationsKey(stagedRows: AppliedRuleOut[], adminDefaul
         pinned_version: application.pinned_version ?? null,
         severity_override: application.severity_override ?? null,
         pass_threshold: normPass,
+        row_filter: application.row_filter ?? null,
         column_pass_thresholds: colThresholdsStr,
         tags: JSON.stringify(Object.fromEntries(Object.entries(application.tags ?? {}).sort())),
       };

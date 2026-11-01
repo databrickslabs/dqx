@@ -1017,7 +1017,22 @@
     "dryRunTooltip": "A execução de teste valida apenas as primeiras 1–10.000 linhas da tabela de destino — é uma pré-visualização rápida, não uma validação completa. Para executar regras importadas em todas as linhas após a aprovação, vá em Executar Regras e selecione \"Todas as linhas\".",
     "exampleFile": "Arquivo de exemplo",
     "downloadExample": "Baixar exemplo",
-    "functionsNotLoaded": "As funções de regra ainda estão carregando. Tente novamente em instantes."
+    "functionsNotLoaded": "As funções de regra ainda estão carregando. Tente novamente em instantes.",
+    "unnamedRule": "Regra sem nome",
+    "missingRequiredFields": "{{name}} está sem os campos obrigatórios: {{fields}}"
+  },
+  "similarRules": {
+    "title_one": "{{count}} regra importada corresponde a uma regra existente",
+    "title_other": "{{count}} regras importadas correspondem a regras existentes",
+    "description": "Essas regras executam a mesma verificação com configurações diferentes. Reutilize a regra existente ou crie uma nova.",
+    "reuse": "Reutilizar {{name}}",
+    "ruleState": "(v{{version}}, {{status}})",
+    "settings": "Existente: {{existing}}. Importada: {{imported}}.",
+    "defaultSettings": "configurações padrão",
+    "willReuse_one": "Reutilizará esta regra para {{count}} verificação importada.",
+    "willReuse_other": "Reutilizará esta regra para {{count}} verificações importadas.",
+    "willCreate_one": "Criará uma nova regra para {{count}} verificação importada.",
+    "willCreate_other": "Criará novas regras para {{count}} verificações importadas."
   },
   "rulesCreateSql": {
     "breadcrumb": "Regras entre tabelas",
@@ -2240,6 +2255,9 @@
     "appliedRuleCount_other": "{{count}} regras aplicadas",
     "emptyAppliedRules": "Nenhuma regra aplicada a esta tabela ainda.",
     "emptyAppliedRulesCta": "Ainda não há regras aplicadas",
+    "applyRowFilterLabel": "Filtro de população (esta tabela)",
+    "applyRowFilterPlaceholder": "Herdar o filtro padrão, ou ex. region = 'EU'",
+    "applyRowFilterHint": "Cláusula SQL WHERE opcional. Deixe em branco para herdar o filtro padrão da regra.",
     "pendingApplications": {
       "title_one": "{{count}} regra aguardando aprovação",
       "title_other": "{{count}} regras aguardando aprovação",

@@ -1017,7 +1017,22 @@
     "dryRunTooltip": "Dry-run validates only the first 1–10,000 rows of the target table — it's a fast preview, not a full validation. To run imported rules against every row after approval, go to Run Rules and pick \"All rows\".",
     "exampleFile": "Example file",
     "downloadExample": "Download example",
-    "functionsNotLoaded": "Rule functions are still loading. Try again in a moment."
+    "functionsNotLoaded": "Rule functions are still loading. Try again in a moment.",
+    "unnamedRule": "Unnamed rule",
+    "missingRequiredFields": "{{name}} is missing required fields: {{fields}}"
+  },
+  "similarRules": {
+    "title_one": "{{count}} imported rule matches an existing rule",
+    "title_other": "{{count}} imported rules match existing rules",
+    "description": "These rules run the same check with different settings. Reuse the existing rule, or create a new one.",
+    "reuse": "Reuse {{name}}",
+    "ruleState": "(v{{version}}, {{status}})",
+    "settings": "Existing: {{existing}}. Imported: {{imported}}.",
+    "defaultSettings": "default settings",
+    "willReuse_one": "Will reuse this rule for {{count}} imported check.",
+    "willReuse_other": "Will reuse this rule for {{count}} imported checks.",
+    "willCreate_one": "Will create a new rule for {{count}} imported check.",
+    "willCreate_other": "Will create new rules for {{count}} imported checks."
   },
   "rulesCreateSql": {
     "breadcrumb": "Cross-table rules",
@@ -2240,6 +2255,9 @@
     "appliedRuleCount_other": "{{count}} applied rules",
     "emptyAppliedRules": "No rules applied to this table yet.",
     "emptyAppliedRulesCta": "No rules applied yet",
+    "applyRowFilterLabel": "Population filter (this table)",
+    "applyRowFilterPlaceholder": "Inherit the rule default, or e.g. region = 'EU'",
+    "applyRowFilterHint": "Optional SQL WHERE clause. Leave blank to inherit the rule's default filter.",
     "pendingApplications": {
       "title_one": "{{count}} rule awaiting approval",
       "title_other": "{{count}} rules awaiting approval",

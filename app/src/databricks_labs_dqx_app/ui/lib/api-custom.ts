@@ -10,6 +10,7 @@ import type {
   BatchImportRegistryRulesIn,
   BatchImportRegistryRulesOut,
   CreateRegistryRuleOut,
+  RegistryRuleOut,
   RuleCatalogEntryOut,
   RunStatusOut,
 } from "./api";
@@ -1397,6 +1398,8 @@ export const getListPendingApplicationsQueryKey = (bindingId: string) =>
 export interface BatchImportRegistryRulesDedupIn extends BatchImportRegistryRulesIn {
   /** Reuse an existing active rule by fingerprint instead of creating a copy. */
   skip_duplicates?: boolean;
+  generalize_slots?: boolean;
+  reuse_rule_ids?: string[];
 }
 
 export interface BatchImportRegistryRulesDedupOut extends BatchImportRegistryRulesOut {
@@ -1409,6 +1412,28 @@ export const batchImportRegistryRulesWithDedup = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<BatchImportRegistryRulesDedupOut>> => {
   return axios.default.post(`/api/v1/registry-rules/batch-import`, body, options);
+};
+
+export interface PreviewBatchImportRegistryRulesIn {
+  rules: BatchImportRegistryRulesIn["rules"];
+  generalize_slots?: boolean;
+}
+
+export interface BatchImportRuleMatch {
+  index: number;
+  exact?: RegistryRuleOut | null;
+  similar?: RegistryRuleOut[];
+}
+
+export interface PreviewBatchImportRegistryRulesOut {
+  matches?: BatchImportRuleMatch[];
+}
+
+export const previewBatchImportRegistryRules = (
+  body: PreviewBatchImportRegistryRulesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<PreviewBatchImportRegistryRulesOut>> => {
+  return axios.default.post(`/api/v1/registry-rules/batch-import/preview`, body, options);
 };
 
 export const useListPendingApplications = <

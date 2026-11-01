@@ -576,6 +576,11 @@ async def _run_post_migration_startup(
     except Exception:
         logger.warning("Could not seed reserved label definitions")
 
+    try:
+        await asyncio.to_thread(RegistryService(sql=oltp).refresh_fingerprints)
+    except Exception:
+        logger.warning("Could not refresh registry rule fingerprints", exc_info=True)
+
     mark_tmp_schema_ready()
 
 

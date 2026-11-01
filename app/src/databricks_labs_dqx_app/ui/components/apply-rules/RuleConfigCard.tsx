@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -623,6 +625,8 @@ interface RuleConfigCardProps {
   columnTags?: Record<string, string[]>;
   /** When false, the ThresholdPill is hidden (feature disabled by admin). */
   thresholdEnabled?: boolean;
+  /** Per-table population override. Empty inherits the rule's default filter. */
+  onRowFilterChange?: (value: string) => void;
 }
 
 export function RuleConfigCard({
@@ -649,6 +653,7 @@ export function RuleConfigCard({
   mappingPrefillColumn = null,
   columnTags,
   thresholdEnabled = true,
+  onRowFilterChange,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [logicOpen, setLogicOpen] = useState(false);
@@ -911,6 +916,24 @@ export function RuleConfigCard({
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
             <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
+            {onRowFilterChange && (
+              <div className="space-y-1">
+                <Label htmlFor={`row-filter-${rule.rule_id}`} className="text-xs text-muted-foreground">
+                  {t("monitoredTables.applyRowFilterLabel")}
+                </Label>
+                <Input
+                  id={`row-filter-${rule.rule_id}`}
+                  value={rule.row_filter ?? ""}
+                  placeholder={
+                    registryRule?.definition?.filter?.trim() || t("monitoredTables.applyRowFilterPlaceholder")
+                  }
+                  disabled={!canEdit}
+                  className="font-mono text-xs"
+                  onChange={(e) => onRowFilterChange(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground">{t("monitoredTables.applyRowFilterHint")}</p>
+              </div>
+            )}
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}

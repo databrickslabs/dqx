@@ -153,10 +153,11 @@ class TestIgnoresDescriptiveMetadataAndLifecycle:
 
 
 class TestFilterInFingerprint:
-    """Task 5: filter field must be included in the fingerprint so a
-    filter-only edit registers as a content change (modified-since-publish)."""
+    """``definition.filter`` is a default population, not identity — two
+    rules that differ only by filter fingerprint identically so applied-rule
+    overrides can reuse the same registry rule."""
 
-    def test_filter_none_vs_set_different_fingerprints(self):
+    def test_filter_none_vs_set_same_fingerprints(self):
         rule_no_filter = _native_rule(
             definition=RuleDefinition(
                 body={"function": "is_not_null", "arguments": {"column": "{{column}}"}},
@@ -171,9 +172,9 @@ class TestFilterInFingerprint:
                 filter="amount > 0",
             )
         )
-        assert compute_registry_rule_fingerprint(rule_no_filter) != compute_registry_rule_fingerprint(rule_with_filter)
+        assert compute_registry_rule_fingerprint(rule_no_filter) == compute_registry_rule_fingerprint(rule_with_filter)
 
-    def test_different_filters_different_fingerprints(self):
+    def test_different_filters_same_fingerprints(self):
         rule_a = _native_rule(
             definition=RuleDefinition(
                 body={"function": "is_not_null", "arguments": {}},
@@ -186,7 +187,7 @@ class TestFilterInFingerprint:
                 filter="status = 'active'",
             )
         )
-        assert compute_registry_rule_fingerprint(rule_a) != compute_registry_rule_fingerprint(rule_b)
+        assert compute_registry_rule_fingerprint(rule_a) == compute_registry_rule_fingerprint(rule_b)
 
     def test_same_filter_same_fingerprint(self):
         rule_a = _native_rule(
