@@ -628,9 +628,12 @@ def _engine_with_sql_side_effect(side_effect):
     return DQEngineCore(workspace_client=ws, spark=spark)
 
 
-def _engine_returning_dbr_version(version_str):
+def _engine_returning_dbr_version(version_str, pipelines_id=None):
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec(SparkSession)
+    spark.conf = Mock()
+    spark.conf.get.side_effect = lambda key, *a: pipelines_id if key == "pipelines.id" else None
+    # None => not a pipeline; a value => inside a pipeline
     row = Mock()
     row.__getitem__ = Mock(return_value=version_str)
     spark.sql.return_value.collect.return_value = [row]
@@ -686,6 +689,48 @@ def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check
         match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
     ):
         engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
+
+
+@pytest.mark.parametrize(
+    "dbr_version, required_check",
+    [
+        # Lakeflow Spark Declarative Pipelines prefix the version with "dlt:"; it must parse to (18, 3).
+        ("dlt:18.3.8-delta-pipelines-photon-dlt-release-dp-20261015-rc0", _check_requires_dbr_max),
+        # A pipeline runtime below the required version must still fail the comparison, not the parse.
+        ("dlt:16.4.2-delta-pipelines-photon-dlt-release", _check_requires_dbr_17_1),
+        # Unprefixed versions keep parsing inside a pipeline.
+        ("16.4", _check_requires_dbr_17_1),
+    ],
+)
+def test_apply_checks_parses_dlt_prefixed_dbr_version_in_pipeline(dbr_version, required_check):
+    engine = _engine_returning_dbr_version(dbr_version, pipelines_id="pipeline-123")
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(
+        InvalidCheckError,
+        match=rf"require Databricks Runtime >= .*but the current version is {re.escape(dbr_version)}",
+    ):
+        engine.apply_checks(df, [DQRowRule(check_func=required_check, column="a")])
+
+
+@pytest.mark.parametrize(
+    "dbr_version",
+    ["dlt:18.3.8-delta-pipelines-photon-dlt-release-dp-20261015-rc0", "dlt:17.1.0-delta-pipelines-photon"],
+)
+def test_validate_dbr_version_accepts_dlt_prefixed_version_meeting_requirement_in_pipeline(dbr_version):
+    # A "dlt:" prefixed runtime that meets the requirement must pass validation inside a pipeline.
+    engine = _engine_returning_dbr_version(dbr_version, pipelines_id="pipeline-123")
+    engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
+
+
+@pytest.mark.parametrize("dbr_version", ["dlt:18.3.8-delta-pipelines-photon", "other:18.3"])
+def test_apply_checks_does_not_strip_runtime_prefix_outside_pipeline(dbr_version):
+    # The "dlt:" prefix is only expected inside a pipeline; elsewhere a prefixed version stays unparseable.
+    engine = _engine_returning_dbr_version(dbr_version)
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match="Cannot parse Databricks Runtime version"):
+        engine.apply_checks(df, [DQRowRule(check_func=_check_requires_dbr_15, column="a")])
 
 
 def _observer_core_with_pipeline_conf(pipelines_id: str | None) -> DQEngineCore:
