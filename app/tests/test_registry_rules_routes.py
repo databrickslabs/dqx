@@ -628,7 +628,9 @@ class TestBatchImport:
         body = BatchImportRegistryRulesIn(
             rules=[
                 CreateRegistryRuleIn(
-                    mode="dqx_native", definition=_definition(), user_metadata={"dimension": "Punctuality"}
+                    mode="dqx_native",
+                    definition=_definition(),
+                    user_metadata={"dimension": "Punctuality", "severity": "high"},
                 )
             ],
         )
@@ -640,7 +642,10 @@ class TestBatchImport:
             user_email="alice@x",
             role=UserRole.RULE_AUTHOR,
         )
-        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "Punctuality"}
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {
+            "dimension": "Punctuality",
+            "severity": "High",
+        }
 
     def test_unreadable_label_definitions_do_not_fail_the_import(self):
         # Canonicalization is a nicety: a settings read failure imports the
