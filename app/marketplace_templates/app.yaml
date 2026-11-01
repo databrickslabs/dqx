@@ -1,6 +1,7 @@
 command:
   - uv
   - run
+  - --frozen
   - --no-dev
   - uvicorn
   - databricks_labs_dqx_app.backend.app:app

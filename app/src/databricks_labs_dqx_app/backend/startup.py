@@ -481,11 +481,10 @@ def _find_wheels() -> list[Path]:
     seen: set[Path] = set()
     wheels: list[Path] = []
     for root in search_roots:
-        for pattern in ("databricks_labs_dqx-*.whl", "tasks/databricks_labs_dqx_task_runner-*.whl"):
-            for wheel in sorted(root.glob(pattern)):
-                if wheel not in seen:
-                    seen.add(wheel)
-                    wheels.append(wheel)
+        for wheel in sorted(root.glob("tasks/databricks_labs_dqx_task_runner-*.whl")):
+            if wheel not in seen:
+                seen.add(wheel)
+                wheels.append(wheel)
     return wheels
 
 

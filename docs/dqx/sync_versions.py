@@ -1,7 +1,8 @@
 """Propagate the DQX version (source of truth: ``src/databricks/labs/dqx/__version__.py``) to the
 places that must track it: versioned GitHub source URLs in the docs, and the ``dqx_version`` bundle
-variable in the DQX Studio app's and the MCP server's ``databricks.yml`` (the derived
-``databricks-labs-dqx==${{var.dqx_version}}`` pin and in-repo wheel filename follow from it).
+variable in the MCP server's ``databricks.yml`` (the derived ``databricks-labs-dqx==${{var.dqx_version}}``
+pin and in-repo wheel filename follow from it). The DQX Studio app's ``dqx_version`` is deliberately
+not synced: Studio moves to a published DQX in its own release, together with its Marketplace lock.
 
 Runs as part of ``make fmt`` — bump ``__version__.py``, run ``make fmt``, and the new version
 propagates everywhere. Idempotent: re-running with an unchanged version rewrites nothing.
@@ -50,16 +51,16 @@ def update_dqx_pins(version: str):
     __version__.py, run ``make fmt``, and the new version propagates. Any extras (e.g.
     ``[llm,datacontract]``) are preserved.
 
-    The MCP server's and the DQX Studio app's ``databricks.yml`` both express the version through a
-    single ``dqx_version`` bundle variable: the ``==`` production pin and the in-repo wheel filename
-    both derive from it via ``${var.dqx_version}``. So the literal ``==<version>`` pin regex below
-    intentionally does NOT match there (it has no digits to rewrite); the ``dqx_version`` default is
-    bumped instead, and DAB propagates it to the derived pin and wheel name.
+    The MCP server's ``databricks.yml`` expresses the version through a single ``dqx_version`` bundle
+    variable: the ``==`` production pin and the in-repo wheel filename both derive from it via
+    ``${var.dqx_version}``. So the literal ``==<version>`` pin regex below intentionally does NOT match
+    there (it has no digits to rewrite); the ``dqx_version`` default is bumped instead, and DAB
+    propagates it to the derived pin and wheel name.
 
-    The Studio app is safe to bump on ``make fmt`` even though the production pin resolves from the
-    registry: production deploys happen at/after release when the version is published, and a
-    development deploy overrides ``dqx_task_dependency`` to a locally-built wheel (see
-    ``app/target.dev.yml.example``), so neither CI nor a dev deploy resolves the not-yet-published pin.
+    The DQX Studio app's ``databricks.yml`` uses the same variable but is NOT bumped here. Its Marketplace
+    release pins that published DQX and ships a committed lock resolved for it
+    (``app/marketplace_templates/uv.lock``), so the two must move together in a Studio release;
+    bumping only the variable on ``make fmt`` left the lock behind.
     """
     # Match ``databricks-labs-dqx`` with optional extras, pinned with a LITERAL ``==<version>``. Only
     # the version digits are rewritten; the package name and any extras are kept verbatim. A pin that
@@ -78,7 +79,6 @@ def update_dqx_pins(version: str):
     # checkout via [tool.uv.sources] (also unpinned) — so neither carries a version to rewrite.
     pin_files = [
         Path("mcp-server/databricks.yml"),
-        Path("app/databricks.yml"),
     ]
 
     for pin_file in pin_files:
