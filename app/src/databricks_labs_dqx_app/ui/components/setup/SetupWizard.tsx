@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
+import { LanguageSelect } from "@/components/layout/LanguageSelect";
 import Logo from "@/components/layout/Logo";
 import { ModeToggle } from "@/components/layout/mode-toggle";
 import { ThemeProvider } from "@/components/layout/theme-provider";
@@ -78,7 +79,10 @@ export function SetupShell({ children }: { children: React.ReactNode }) {
         <header className="border-b bg-background/95">
           <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4 sm:px-6">
             <Logo to="" branded={false} />
-            <ModeToggle />
+            <div className="flex items-center gap-1">
+              <LanguageSelect />
+              <ModeToggle />
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
@@ -337,11 +341,6 @@ function StepCard({
           showSummary ||
           showJobsLink) && (
           <CardContent className="space-y-3 px-4 sm:px-5">
-            {step.code && (
-              <p className="font-mono text-xs text-muted-foreground break-all">
-                {t("setup.diagnosticCode", { code: step.code })}
-              </p>
-            )}
             {step.instructions?.length || grantStatements.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-sm font-medium">{t("setup.instructions")}</p>
@@ -445,6 +444,12 @@ function StepCard({
                   onOverride={onOverride}
                 />
               </div>
+            )}
+            {/* Last, so the guidance above reads first; kept to pass on to support. */}
+            {step.code && (
+              <p className="font-mono text-xs text-muted-foreground/70 break-all">
+                {t("setup.diagnosticCode", { code: step.code })}
+              </p>
             )}
           </CardContent>
         )}

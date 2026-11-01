@@ -3176,6 +3176,22 @@
       "description": "O Studio está pronto para uso. Revise os avisos abaixo, que você pode corrigir agora ou depois, e continue. Use Verificar novamente depois de corrigi-los.",
       "acknowledge": "Entendi, continuar para o Studio"
     },
+    "complete": {
+      "title": "O DQX Studio está pronto",
+      "description": "Você pode implantar a demonstração agora, ou pular e ir direto para o Studio.",
+      "skip": "Pular e abrir o Studio",
+      "continue": "Abrir o Studio",
+      "demo": {
+        "title": "Implantar a demonstração",
+        "optional": "Opcional",
+        "body": "Adiciona tabelas, regras e histórico de execuções de exemplo para você testar o Studio. É executado em segundo plano e leva cerca de 30 minutos.",
+        "deploy": "Implantar demonstração",
+        "started": "Implantação da demonstração iniciada. Leva cerca de 30 minutos, e você pode usar o Studio enquanto isso.",
+        "running": "Já existe uma implantação da demonstração em andamento.",
+        "deployed": "A demonstração já está implantada.",
+        "failed": "Não foi possível iniciar a implantação da demonstração. Você pode implantá-la depois pela página Marketplace do Studio."
+      }
+    },
     "instructions": "Como resolver",
     "grants": {
       "partial": "Concluído: {{applied}} de {{total}}.",
@@ -3251,13 +3267,13 @@
         "useTyped": "Usar o ID do aplicativo {{id}}",
         "noMatches": "Nenhuma entidade de serviço corresponde. Cole o ID do aplicativo dela para usá-la.",
         "pastePlaceholder": "ID do aplicativo, por exemplo 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
-        "listUnavailable": "O Studio não conseguiu carregar a lista de entidades de serviço. Cole o ID do aplicativo da entidade de serviço. Você a encontra na página dela, em Settings → Identity and access.",
+        "listUnavailable": "O Studio não conseguiu carregar a lista de entidades de serviço. Cole o Application ID. Você o encontra na página da entidade de serviço.",
         "listTruncated_one": "Mostrando apenas {{count}} entidade de serviço. Se a sua não estiver na lista, cole o ID do aplicativo dela.",
         "listTruncated_other": "Mostrando as primeiras {{count}} entidades de serviço. Se a sua não estiver na lista, cole o ID do aplicativo dela.",
         "invalidId": "Um ID do aplicativo tem este formato: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Não tem uma? Crie uma",
-        "createStep1": "Abra o menu do seu perfil (canto superior direito) → Settings → Identity and access → Service principals. Clique em Add service principal e crie uma nova chamada dqx-studio-task-runner.",
-        "createStep2": "Volte aqui e escolha-a acima. Você vai definir as permissões dela no passo 2.",
+        "createStep1": "Em Settings → Identity and access → Service principals, clique em Add service principal e dê a ela o nome dqx-studio-task-runner.",
+        "createStep2": "Volte aqui e selecione-a acima.",
         "openServicePrincipals": "Abrir entidades de serviço"
       },
       "access": {
@@ -3271,31 +3287,31 @@
         "result": {
           "confirmed": "Acesso confirmado. O Studio pode usar esta entidade de serviço.",
           "permissionConfirmed": "O Studio pode usar esta entidade de serviço.",
-          "missing": "O app DQX Studio ainda não tem CAN USE nesta entidade de serviço. Adicione-o na guia Permissions (passo b acima) e clique em Confirmar acesso novamente. Se você tem certeza de que o Studio já tem essa permissão (por exemplo, por meio de um grupo de administradores), pode seguir para o passo 3.",
-          "unverified": "O Studio não consegue verificar sozinho as permissões desta entidade de serviço. Confirme que você concluiu os passos a e b e continue. O passo 3 vai confirmar.",
-          "grantsPending": "Esta entidade de serviço também precisa de acesso aos dados do Studio. Execute os comandos a seguir. Se você não tiver permissões, peça ao proprietário do catálogo que os execute.",
+          "missing": "O app DQX Studio ainda não tem Service Principal: User nesta entidade de serviço. Adicione (etapa b) e confirme de novo. Se ele tiver acesso de outra forma, por exemplo por um grupo, continue para a etapa 3.",
+          "unverified": "O Studio não consegue ler as permissões desta entidade de serviço. Confirme que as etapas a e b foram feitas e continue. A etapa 3 vai confirmar.",
+          "grantsPending": "Esta entidade de serviço também precisa de acesso aos dados do Studio. Execute estes comandos ou peça ao proprietário do catálogo para executá-los.",
           "automaticGrants": "O Studio vai configurar automaticamente o restante do acesso desta entidade de serviço quando ela for atribuída ao job.",
           "grantsUnverified": "O Studio não conseguiu verificar todo o acesso desta entidade de serviço aos dados do Studio. A configuração verifica de novo depois do passo 3."
         },
         "errors": {
           "task_runner_principal_invalid": "Isso não é um ID do aplicativo. Escolha a entidade de serviço de novo ou cole o ID do aplicativo dela.",
           "task_runner_principal_is_app": "Essa é a entidade de serviço do próprio app DQX Studio. Escolha outra.",
-          "task_runner_managed_by_deployment": "O Studio foi instalado com um bundle de implantação, então a entidade de serviço deste job é escolhida na instalação e não pode ser alterada aqui. Peça a quem instalou o Studio que defina dqx_service_principal_application_id nas configurações do bundle com o ID do aplicativo de uma entidade de serviço (não o do próprio app) e implante o Studio novamente. Depois, clique em Verificar novamente.",
+          "task_runner_managed_by_deployment": "O Studio foi instalado com um bundle de implantação, então a entidade de serviço do job é definida na instalação. Defina dqx_service_principal_application_id no bundle com o Application ID de uma entidade de serviço dedicada, implante de novo e clique em Verificar novamente.",
           "task_runner_job_unavailable": "O job de execução do Studio ainda não está pronto. Clique em Verificar novamente e tente de novo.",
           "default": "O Studio não conseguiu verificar esta entidade de serviço. Tente novamente em um minuto."
         }
       },
       "apply": {
-        "help": "O Studio configura o job de execução dele, o job em segundo plano que executa as verificações agendadas, para usar esta entidade de serviço e depois verifica a configuração de novo.",
+        "help": "O Studio configura o job de execução para rodar como esta entidade de serviço e depois verifica a configuração de novo.",
         "button": "Usar esta entidade de serviço",
         "confirmFirst": "Confirme o acesso primeiro.",
-        "grantsStillMissing": "Ainda falta parte do acesso aos dados. Você pode continuar. A configuração vai listá-lo de novo depois desta etapa.",
+        "grantsStillMissing": "Ainda falta parte do acesso aos dados. Você pode continuar mesmo assim, e a configuração lista o que faltar depois.",
         "errors": {
-          "task_runner_run_as_forbidden": "O Studio ainda não tem permissão para usar esta entidade de serviço. Isso geralmente significa que o app DQX Studio não tem CAN USE nela (passo 2b). Adicione-o e clique em Usar esta entidade de serviço novamente. Ou clique em Abrir o job de execução abaixo, encontre Run as (a identidade com que o job é executado) no painel Job details, escolha esta entidade de serviço e clique em Verificar novamente.",
+          "task_runner_run_as_forbidden": "O Studio ainda não pode usar esta entidade de serviço, geralmente porque o app não tem Service Principal: User nela (etapa 2b). Adicione e tente de novo. Ou abra o job de execução, defina você mesmo o Run as como esta entidade de serviço e clique em Verificar novamente.",
           "task_runner_principal_not_found": "O Studio não encontrou essa entidade de serviço. Confira se ela foi criada neste workspace e escolha-a novamente.",
           "task_runner_principal_invalid": "Isso não é um ID do aplicativo. Escolha a entidade de serviço de novo ou cole o ID do aplicativo dela.",
           "task_runner_principal_is_app": "Essa é a entidade de serviço do próprio app DQX Studio. Escolha outra.",
-          "task_runner_managed_by_deployment": "O Studio foi instalado com um bundle de implantação, então a entidade de serviço deste job é escolhida na instalação e não pode ser alterada aqui. Peça a quem instalou o Studio que defina dqx_service_principal_application_id nas configurações do bundle com o ID do aplicativo de uma entidade de serviço (não o do próprio app) e implante o Studio novamente. Depois, clique em Verificar novamente.",
+          "task_runner_managed_by_deployment": "O Studio foi instalado com um bundle de implantação, então a entidade de serviço do job é definida na instalação. Defina dqx_service_principal_application_id no bundle com o Application ID de uma entidade de serviço dedicada, implante de novo e clique em Verificar novamente.",
           "task_runner_job_unavailable": "O job de execução do Studio ainda não está pronto. Clique em Verificar novamente e tente de novo.",
           "default": "O Studio não conseguiu atualizar o job de execução dele. Tente novamente, ou abra o job e altere você mesmo a configuração Run as dele para esta entidade de serviço; depois clique em Verificar novamente."
         }
