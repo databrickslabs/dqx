@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_preview_sql_executor,
     get_registry_service,
     get_run_set_service,
+    get_scheduler_wake_marker,
     get_score_cache_service,
     get_sp_sql_executor,
     get_user_catalog_names,
@@ -49,6 +50,7 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
@@ -151,6 +153,11 @@ def entitlement_mock() -> MagicMock:
 
 
 @pytest.fixture
+def wake_mock() -> MagicMock:
+    return create_autospec(SchedulerWakeMarker, instance=True)
+
+
+@pytest.fixture
 def run_sets_mock() -> MagicMock:
     """Run-set service — no run-set membership by default (runs stay
     unconsolidated: each its own batch via COALESCE)."""
@@ -175,6 +182,7 @@ def client(
     score_cache_mock,
     entitlement_mock,
     run_sets_mock,
+    wake_mock,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -196,6 +204,7 @@ def client(
     app.dependency_overrides[get_score_cache_service] = lambda: score_cache_mock
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     app.dependency_overrides[get_run_set_service] = lambda: run_sets_mock
+    app.dependency_overrides[get_scheduler_wake_marker] = lambda: wake_mock
     return TestClient(app)
 
 
@@ -217,8 +226,13 @@ def check_row(
     rule_id: str | None = None,
     columns: list[str] | None = None,
     pass_threshold: int | None = None,
+    evaluated: int | None = None,
+    granularity: str | None = None,
 ) -> dict[str, str | None]:
     """One v_dq_check_results row, Statement-Execution shaped (all strings).
+
+    *evaluated* is the check's ``evaluated_row_count`` (the rows its filter
+    selected); None leaves it out, the legacy shape.
 
     The attribution columns (severity/dimension/registry_rule_id/columns)
     are the AS-OF-RUN values the view parsed out of the run's frozen
@@ -238,6 +252,8 @@ def check_row(
         "registry_rule_id": rule_id,
         "columns_json": None if columns is None else json.dumps(columns),
         "pass_threshold": None if pass_threshold is None else str(pass_threshold),
+        "check_granularity": granularity,
+        **({} if evaluated is None else {"evaluated_row_count": str(evaluated)}),
     }
 
 
@@ -257,6 +273,8 @@ def runs_row(
     failed: int | None = 10,
     total: int | None = 100,
     run_mode: str | None = "published",
+    table_failed: int | None = None,
+    table_total: int | None = None,
 ) -> dict[str, str | None]:
     return {
         "run_id": run_id,
@@ -264,6 +282,8 @@ def runs_row(
         "pass_rate": None if pass_rate is None else str(pass_rate),
         "failed_tests": None if failed is None else str(failed),
         "total_tests": None if total is None else str(total),
+        "table_failed_tests": None if table_failed is None else str(table_failed),
+        "table_total_tests": None if table_total is None else str(table_total),
         "run_mode": run_mode,
     }
 
@@ -403,6 +423,26 @@ class TestTableResults:
         resp = client.get("/api/v1/dq-results/table/secret.hr.salaries")
         assert resp.status_code == 403
         sql_mock.query_dicts.assert_not_called()
+
+    def test_breakdowns_report_row_and_table_tests_over_evaluated_rows(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("filtered", errors=10, total=1000, evaluated=100, dimension="Validity"),
+                check_row("table_gate", errors=1000, total=1000, dimension="Validity", granularity="dataset"),
+            ],
+        )
+        body = client.get(f"/api/v1/dq-results/table/{FQN}").json()
+        group = body["by_dimension"][0]
+        assert group["failed_tests"] == 10
+        assert group["total_tests"] == 100
+        assert group["table_failed_tests"] == 1
+        assert group["table_total_tests"] == 1
+        # Rule scores: 1 - 10/100 = 0.9 and a failed table gate = 0.0.
+        assert group["pass_rate"] == pytest.approx(0.45)
+        shaping = [c[0][0] for c in sql_mock.query_dicts.call_args_list if SHAPING_VIEW_NAME in c[0][0]]
+        assert shaping
+        assert all("evaluated_row_count" in stmt for stmt in shaping)
 
     def test_breakdowns_use_as_of_run_attribution_from_the_view_rows(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
@@ -564,7 +604,13 @@ class TestTableResults:
 
 class TestRuns:
     def test_runs_measure_the_metric_view_grouped_by_run(self, client, sql_mock, app_config):
-        sql_dispatch(sql_mock, runs_rows=[runs_row("r2", "2026-07-02 00:00:00", 0.8, 20, 100), runs_row()])
+        sql_dispatch(
+            sql_mock,
+            runs_rows=[
+                runs_row("r2", "2026-07-02 00:00:00", 0.8, 20, 100, table_failed=1, table_total=3),
+                runs_row(),
+            ],
+        )
         resp = client.get(f"/api/v1/dq-results/runs/{FQN}")
         assert resp.status_code == 200
         rows = resp.json()["rows"]
@@ -574,6 +620,8 @@ class TestRuns:
             "pass_rate": pytest.approx(0.8),
             "failed_tests": 20,
             "total_tests": 100,
+            "table_failed_tests": 1,
+            "table_total_tests": 3,
             "run_mode": "published",
             "breached": False,
             "breach_criticality": None,
@@ -581,6 +629,8 @@ class TestRuns:
         stmt = sql_mock.query_dicts.call_args[0][0]
         assert f"`{app_config.catalog}`.`{app_config.genie_schema_name}`.{METRIC_VIEW_NAME}" in stmt
         assert "MEASURE(score) AS pass_rate" in stmt
+        assert "MEASURE(table_failed_tests) AS table_failed_tests" in stmt
+        assert "MEASURE(table_total_tests) AS table_total_tests" in stmt
         # run_mode rides along per run (lossless: a run has exactly one mode).
         assert "GROUP BY run_id, run_time, run_mode" in stmt
         assert "ORDER BY run_time DESC" in stmt
@@ -721,8 +771,24 @@ class TestProductResults:
         sql_dispatch(
             sql_mock,
             runs_rows=[
-                runs_row(run_id="r2", run_ts="2026-07-01 10:05:00", pass_rate=0.8, failed=20, total=100),
-                runs_row(run_id="r1", run_ts="2026-07-01 10:00:00", pass_rate=1.0, failed=0, total=100),
+                runs_row(
+                    run_id="r2",
+                    run_ts="2026-07-01 10:05:00",
+                    pass_rate=0.8,
+                    failed=20,
+                    total=100,
+                    table_failed=1,
+                    table_total=2,
+                ),
+                runs_row(
+                    run_id="r1",
+                    run_ts="2026-07-01 10:00:00",
+                    pass_rate=1.0,
+                    failed=0,
+                    total=100,
+                    table_failed=0,
+                    table_total=1,
+                ),
             ],
         )
         run_sets_mock.run_set_ids_by_run_id.return_value = {"r1": "s1", "r2": "s1"}
@@ -734,6 +800,8 @@ class TestProductResults:
         assert row["pass_rate"] == pytest.approx(0.9)  # equal-weight mean
         assert row["failed_tests"] == 20
         assert row["total_tests"] == 200
+        assert row["table_failed_tests"] == 1
+        assert row["table_total_tests"] == 3
 
     def test_product_runs_without_run_sets_stay_one_per_run(self, client, sql_mock, data_products_mock, run_sets_mock):
         # No run-set membership -> each run is its own batch (COALESCE), so
@@ -794,6 +862,13 @@ class TestProductResults:
 
 
 class TestGlobalResults:
+    def test_page_load_wakes_the_scheduler(self, client, sql_mock, wake_mock):
+        # The Results page load signals the scheduler so a run started with no
+        # page watching is picked up promptly — even when the query then fails.
+        sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
+        client.get("/api/v1/dq-results/global")
+        wake_mock.signal.assert_called_once_with()
+
     def test_filters_rows_to_accessible_catalogs(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
             sql_mock,
@@ -1584,6 +1659,7 @@ class TestIncludeDrafts:
         sql_dispatch(sql_mock)
         assert client.get(url).status_code == 200
         stmts = self._asof_stmts(sql_mock)
+        assert all("evaluated_row_count" in stmt for stmt in stmts)
         if "/table/" not in url:
             # Multi-table scopes fetch the expansion; the table endpoint
             # never does (its per-run rows are the degenerate expansion).

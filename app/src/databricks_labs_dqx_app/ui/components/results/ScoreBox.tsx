@@ -10,6 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { countUpValue } from "@/components/home/statFormat";
+import { combineTestCounts, formatTestCounts, type CheckRuleCounts } from "./testCounts";
 
 /**
  * Compact overall-score badge. Background colour interpolates red→green by
@@ -55,14 +56,28 @@ export function ScoreBox({
   passRate,
   failedTests,
   totalTests,
+  tableFailedTests,
+  tableTotalTests,
+  scopeCounts,
   trend,
   info,
   label,
   breachCriticality,
 }: {
   passRate: number | null;
+  /** Row-level tests (row checks over the rows each check evaluated). */
   failedTests: number;
   totalTests: number;
+  /** Table-level tests (dataset checks, one test each); the subtitle adds
+   *  them to the row-level counts. */
+  tableFailedTests?: number | null;
+  tableTotalTests?: number | null;
+  /** Checks and distinct rules in the same scope as the tests. When set the
+   *  subtitle reads "X / Y tests passed across N checks and M rules"; null
+   *  (counts unavailable) falls back to "X / Y tests passed"; undefined means
+   *  they are still loading, so the line keeps its space but stays hidden
+   *  until it can render complete. */
+  scopeCounts?: CheckRuleCounts | null;
   /** Heading above the percentage. Defaults to "Overall score"; the data-product
    *  view passes "Average score" (its score is the mean of member tables). */
   label?: string;
@@ -70,7 +85,7 @@ export function ScoreBox({
    *  (fell), or null/undefined (equal, or no previous run). Renders a small
    *  green up- / red down-arrow beside the percentage. */
   trend?: "up" | "down" | null;
-  /** When set, a muted help "?" icon follows the "X failed of Y tests"
+  /** When set, a muted help "?" icon follows the "X / Y tests passed"
    *  subtitle; hovering it shows this content in a tooltip. */
   info?: React.ReactNode;
   /** When "error"/"warn", a ⚠ icon renders before the percentage to flag that
@@ -90,6 +105,11 @@ export function ScoreBox({
   );
   const pct = passRate == null ? "—" : `${animatedPct.toFixed(1)}%`;
   const bg = scoreColor(passRate);
+  const counts = { failedTests, totalTests, tableFailedTests, tableTotalTests };
+  // Render the subtitle once, complete: while the check / rule counts load the
+  // line keeps its height but stays invisible (no "X / Y tests passed" flash).
+  const countsPending = scopeCounts === undefined && combineTestCounts(counts).total != null;
+  const testCounts = countsPending ? "" : formatTestCounts(t, counts, scopeCounts);
   return (
     <div
       className="rounded-lg p-4 text-center text-white"
@@ -145,14 +165,9 @@ export function ScoreBox({
           />
         )}
       </div>
-      {totalTests > 0 && (
+      {(testCounts || countsPending) && (
         <div className="mt-1.5 flex items-center justify-center gap-1 text-xs opacity-90">
-          <span>
-            {t("resultsUi.failedOfTests", {
-              failed: failedTests.toLocaleString(),
-              total: totalTests.toLocaleString(),
-            })}
-          </span>
+          <span className={countsPending ? "invisible" : undefined}>{testCounts || " "}</span>
           {info && (
             <TooltipProvider delayDuration={200}>
               <Tooltip>

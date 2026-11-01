@@ -538,6 +538,13 @@ export function buildDqxCheckJson(
   const name = readTag(RESERVED_NAME_KEY);
   if (name) check.name = name;
   if (definition.error_message) check.message_expr = definition.error_message;
+  // The rule-level filter renders as DQX's native top-level per-check
+  // `filter` (mirrors `materializer.render_check`, with `{{slot}}`
+  // placeholders left unsubstituted); omitted when blank so a rule that
+  // validates every row carries no `filter` key.
+  if (typeof definition.filter === "string" && definition.filter.trim()) {
+    check.filter = definition.filter.trim();
+  }
   return check;
 }
 
