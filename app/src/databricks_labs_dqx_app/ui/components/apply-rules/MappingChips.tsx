@@ -26,8 +26,19 @@ import { cn } from "@/lib/utils";
 import type {
   AppliedRuleOutColumnMappingItem,
   ColumnOut,
+  RuleParameter,
   RuleSlot,
 } from "@/lib/api";
+import {
+  PARAM_PLACEHOLDER_CLASS,
+  displayParameterValue,
+  isUnboundParameterValue,
+  mappingGroupKey,
+  parameterInputFamily,
+  validateGroupParameterValues,
+} from "@/lib/apply-time-params";
+import { TypedCell } from "@/components/rules/test/TypedCell";
+import { Input } from "@/components/ui/input";
 import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import {
   ColumnDropdownList,
@@ -486,6 +497,89 @@ interface MappingChipsProps {
   /** Governed tags applied to each column of this table, keyed by column name.
    *  From `useGetTableTags`. */
   columnTags?: Record<string, string[]>;
+  /** Apply-time parameters rendered on the same row as each mapped check. */
+  parameters?: RuleParameter[];
+  storedParameterValues?: Record<string, Record<string, unknown>>;
+  canEditParameters?: boolean;
+  bindAllParameters?: boolean;
+  onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
+}
+
+function GroupParamInputs({
+  group,
+  groupIdx,
+  parameters,
+  stored,
+  canEdit,
+  bindAll,
+  onChange,
+}: {
+  group: Record<string, string>;
+  groupIdx: number;
+  parameters: RuleParameter[];
+  stored?: Record<string, Record<string, unknown>>;
+  canEdit: boolean;
+  bindAll: boolean;
+  onChange?: (groupIdx: number, values: Record<string, unknown>) => void;
+}) {
+  const key = mappingGroupKey(group);
+  const values = stored?.[key] ?? {};
+  const { error } = validateGroupParameterValues(parameters, values, bindAll);
+  return (
+    <div
+      className="flex flex-col items-start gap-0.5 shrink-0"
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {parameters.map((param) => {
+          const raw = displayParameterValue(
+            (values[param.name] as RuleParameter["value"]) ??
+              (isUnboundParameterValue(param.value) ? undefined : param.value),
+          );
+          const family = parameterInputFamily(param.type);
+          const invalid = error?.startsWith(`${param.name} `);
+          return (
+            <label key={param.name} className="flex items-center gap-1.5 text-xs">
+              <code className={PARAM_PLACEHOLDER_CLASS}>{`{{${param.name}}}`}</code>
+              {family === "boolean" ? (
+                <span
+                  className={cn(
+                    "w-28 shrink-0 rounded-md border bg-background",
+                    !canEdit && "opacity-60",
+                    invalid && "border-destructive",
+                  )}
+                >
+                  <TypedCell
+                    family={family}
+                    disabled={!canEdit}
+                    value={raw === "" ? null : raw}
+                    onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next ?? "" })}
+                  />
+                </span>
+              ) : (
+                <Input
+                  type={family === "numeric" ? "number" : family === "temporal" ? "date" : "text"}
+                  inputMode={family === "numeric" ? "decimal" : undefined}
+                  disabled={!canEdit}
+                  value={raw}
+                  aria-invalid={invalid || undefined}
+                  className={cn(
+                    "h-8 w-28 shrink-0 font-mono text-xs",
+                    invalid && "border-destructive",
+                  )}
+                  onChange={(event) =>
+                    onChange?.(groupIdx, { ...values, [param.name]: event.target.value })
+                  }
+                />
+              )}
+            </label>
+          );
+        })}
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
 }
 
 export function MappingChips({
@@ -503,6 +597,11 @@ export function MappingChips({
   className,
   slotTags,
   columnTags,
+  parameters = [],
+  storedParameterValues,
+  canEditParameters = false,
+  bindAllParameters = false,
+  onParameterValuesChange,
 }: MappingChipsProps) {
   const { t } = useTranslation();
   const addingGroup = pendingValues !== undefined;
@@ -514,7 +613,7 @@ export function MappingChips({
     return (
       <div className={cn("space-y-1", className)}>
         {columnMapping.map((group, groupIdx) => (
-          <div key={groupIdx} className="flex flex-wrap gap-1">
+          <div key={groupIdx} className="flex flex-wrap items-center gap-2">
             {Object.entries(group).map(([slot, column]) => (
               <ReadonlyChip
                 key={slot}
@@ -525,6 +624,17 @@ export function MappingChips({
                 }
               />
             ))}
+            {parameters.length > 0 && Object.values(group).some(Boolean) && (
+              <GroupParamInputs
+                group={group}
+                groupIdx={groupIdx}
+                parameters={parameters}
+                stored={storedParameterValues}
+                canEdit={canEditParameters}
+                bindAll={bindAllParameters}
+                onChange={onParameterValuesChange}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -704,6 +814,17 @@ export function MappingChips({
                               </Badge>
                             ))}
                           </span>
+                        )}
+                        {isLastSlot && parameters.length > 0 && (
+                          <GroupParamInputs
+                            group={columnMapping[groupIdx] ?? {}}
+                            groupIdx={groupIdx}
+                            parameters={parameters}
+                            stored={storedParameterValues}
+                            canEdit={canEditParameters}
+                            bindAll={bindAllParameters}
+                            onChange={onParameterValuesChange}
+                          />
                         )}
                       </span>
                     );
