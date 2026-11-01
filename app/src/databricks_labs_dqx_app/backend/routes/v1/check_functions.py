@@ -63,6 +63,12 @@ _HIDDEN_FROM_SINGLE_TABLE: frozenset[str] = frozenset(
 #     ``ref_table`` instead.
 _HIDDEN_PARAMS: frozenset[str] = frozenset({"row_filter", "ref_df_name"})
 
+# DQX marks these optional, but Studio treats them as required because leaving
+# them blank is a different check (or one Studio cannot run).
+STUDIO_REQUIRED_OPTIONAL_PARAMS: frozenset[str] = frozenset({"ref_table", "date_format", "timestamp_format"})
+_COLUMN_PARAM_KINDS: frozenset[str] = frozenset({"column", "columns"})
+_POLARITY_PARAM = "negate"
+
 
 # Hand-curated mapping from function name to UX category. New DQX checks
 # fall back to ``"Other"`` until added here — that's intentional: the UI
@@ -365,6 +371,61 @@ def _ensure_optional_modules_loaded() -> None:
         "databricks.labs.dqx.pii.pii_detection_funcs",
     ):
         _load_optional_check_module(module_path)
+
+
+def required_native_param_names(fn_name: str) -> frozenset[str]:
+    """Non-column parameters Studio requires before a native rule can be imported or submitted."""
+    for fn in _introspect_check_functions():
+        if fn.name != fn_name:
+            continue
+        names: set[str] = set()
+        for p in fn.params:
+            if p.kind in _COLUMN_PARAM_KINDS or p.name == _POLARITY_PARAM:
+                continue
+            if p.required or p.name in STUDIO_REQUIRED_OPTIONAL_PARAMS:
+                names.add(p.name)
+        return frozenset(names)
+    return frozenset()
+
+
+def imported_native_params_error(mode: str | None, definition: object) -> str | None:
+    """Why an imported native rule is missing a Studio-required parameter, or ``None``."""
+    if mode != "dqx_native":
+        return None
+    body = getattr(definition, "body", None)
+    if not isinstance(body, dict):
+        return None
+    fn_name = body.get("function")
+    if not isinstance(fn_name, str) or not fn_name:
+        return None
+    required = required_native_param_names(fn_name)
+    if not required:
+        return None
+    values: dict[str, object] = {}
+    for param in getattr(definition, "parameters", None) or []:
+        name = getattr(param, "name", None)
+        if isinstance(name, str):
+            values[name] = getattr(param, "value", None)
+    args = body.get("arguments")
+    arg_dict = args if isinstance(args, dict) else {}
+    missing = [
+        name
+        for name in sorted(required)
+        if _is_blank_param(values.get(name)) and _is_blank_param(arg_dict.get(name))
+    ]
+    if not missing:
+        return None
+    return f"Missing required parameter(s) for {fn_name}: {', '.join(missing)}."
+
+
+def _is_blank_param(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, list):
+        return len(value) == 0
+    return False
 
 
 def _build_param(param: inspect.Parameter, fn_name: str) -> CheckFunctionParam:

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Card,
@@ -24,7 +24,7 @@ import {
 import { isAxiosError } from "axios";
 import { toast } from "sonner";
 import { useLabelDefinitions, useValidateChecks } from "@/lib/api-custom";
-import { useListCheckFunctions } from "@/lib/api";
+import { useListCheckFunctions, type CreateRegistryRuleIn } from "@/lib/api";
 import { LabelsBadges } from "@/components/Labels";
 import {
   colorFor,
@@ -34,14 +34,25 @@ import {
 } from "@/components/RegistryRuleBadges";
 import { defaultSeverityForCriticality } from "@/lib/registry-rule-conversion";
 import { getUserMetadata } from "@/lib/format-utils";
+import { genericRuleMetadata } from "@/lib/application-tags";
 import {
   importChecksAsRegistryDrafts,
+  parseChecksForImport,
   parseImportYamlText,
   SQL_CHECK_PREFIX,
 } from "@/lib/import-registry-rules";
+import {
+  defaultReuseRuleIds,
+  groupSimilarRules,
+  previewSimilarRules,
+  type SimilarRuleChoice,
+} from "@/lib/similar-rules";
+import { SimilarRulesNotice } from "@/components/registry-rules/SimilarRulesNotice";
 import { IMPORT_EXAMPLES, ImportExampleLinks } from "@/components/imports/ImportExampleLinks";
 
-const CHECKS_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/guide/quality_checks_definition/";
+const IMPORT_RULES_DOCS_URL =
+  "https://databrickslabs.github.io/dqx/docs/studio/authoring/import-rules/#from-dqx-yaml";
+const SIMILAR_LOOKUP_DEBOUNCE_MS = 400;
 
 // Rules imports only create reusable rule templates from DQX YAML. ODCS
 // contracts, which also register tables, are imported from /monitored-tables/import.
@@ -57,7 +68,7 @@ export function ImportRulesWorkspace({ onDone }: { onDone: () => void }) {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <a
-            href={CHECKS_DOCS_URL}
+            href={IMPORT_RULES_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -107,6 +118,39 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
   const checkFunctions = useMemo(() => fnData?.data?.functions ?? [], [fnData]);
   const { data: labelDefsData } = useLabelDefinitions();
   const severityDefs = (labelDefsData?.definitions ?? []) as LabelColorDefinition[];
+  const [similar, setSimilar] = useState<{
+    inputs: CreateRegistryRuleIn[];
+    choices: SimilarRuleChoice[];
+  }>({ inputs: [], choices: [] });
+  const [reuseRuleIds, setReuseRuleIds] = useState<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    const inputs =
+      parsedChecks && checkFunctions.length > 0
+        ? parseChecksForImport(parsedChecks, checkFunctions, t, "human").rules
+        : [];
+    if (inputs.length === 0) {
+      setSimilar({ inputs: [], choices: [] });
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      previewSimilarRules(inputs, false)
+        .then((matches) => {
+          if (cancelled) return;
+          const choices = groupSimilarRules(matches, inputs);
+          setSimilar({ inputs, choices });
+          setReuseRuleIds(defaultReuseRuleIds(choices, inputs));
+        })
+        .catch(() => {
+          if (!cancelled) setSimilar({ inputs: [], choices: [] });
+        });
+    }, SIMILAR_LOOKUP_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [parsedChecks, checkFunctions, t]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
@@ -177,6 +221,7 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         checkFunctions,
         t,
         alsoSubmit,
+        reuseRuleIds: similar.choices.map((c) => c.rule.rule_id).filter((id) => reuseRuleIds.has(id)),
       });
       toast.dismiss(toastId);
       if (result.saved > 0) {
@@ -321,7 +366,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
                     const fn = isSqlCheck ? "sql_query" : fnRaw;
                     const argsObj = (check.arguments as Record<string, unknown>) ?? {};
                     const args = check.arguments ? JSON.stringify(check.arguments) : "—";
-                    const labels = getUserMetadata(entry as Record<string, unknown>);
+                    const labels = genericRuleMetadata(
+                      getUserMetadata(entry as Record<string, unknown>),
+                    ) as Record<string, string>;
                     const userMeta = (entry.user_metadata as Record<string, unknown>) ?? {};
                     const severity =
                       (typeof userMeta.severity === "string" && userMeta.severity) ||
@@ -365,6 +412,21 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
             </div>
           </div>
         )}
+
+        <SimilarRulesNotice
+          choices={similar.choices}
+          inputs={similar.inputs}
+          reuseRuleIds={reuseRuleIds}
+          disabled={busy}
+          onToggle={(ruleId, reuse) =>
+            setReuseRuleIds((prev) => {
+              const next = new Set(prev);
+              if (reuse) next.add(ruleId);
+              else next.delete(ruleId);
+              return next;
+            })
+          }
+        />
 
         {validationResult && !validationResult.valid && (
           <div className="space-y-1 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30">

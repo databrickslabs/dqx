@@ -37,6 +37,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleMode,
     RuleStatus,
     RuleVersion,
+    generic_rule_metadata,
     get_rule_dimension,
     get_rule_severity,
 )
@@ -310,6 +311,22 @@ class RegistryService:
         )
         return compute_registry_rule_fingerprint(probe)
 
+    def refresh_fingerprints(self) -> int:
+        """Rewrite stored fingerprints that no longer match the current algorithm. Returns the count."""
+        refreshed = 0
+        for rule in self.list_rules():
+            fingerprint = compute_registry_rule_fingerprint(rule)
+            if fingerprint == rule.fingerprint:
+                continue
+            self._sql.execute(
+                f"UPDATE {self._table} SET fingerprint = '{escape_sql_string(fingerprint)}' "  # noqa: S608
+                f"WHERE rule_id = '{escape_sql_string(rule.rule_id)}'"
+            )
+            refreshed += 1
+        if refreshed:
+            logger.info("Refreshed the fingerprint of %d registry rule(s)", refreshed)
+        return refreshed
+
     def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
         """Get the first ``approved`` registry rule matching *fingerprint*.
 
@@ -536,7 +553,7 @@ class RegistryService:
             return True
         if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
             return True
-        return rule.user_metadata != snapshot.user_metadata
+        return generic_rule_metadata(rule.user_metadata) != generic_rule_metadata(snapshot.user_metadata)
 
     def _get(self, rule_id: str) -> RegistryRule | None:
         e_rule_id = escape_sql_string(rule_id)
@@ -626,7 +643,7 @@ class RegistryService:
             polarity=polarity,
             author_kind=author_kind,
             definition=definition,
-            user_metadata=dict(user_metadata or {}),
+            user_metadata=generic_rule_metadata(user_metadata),
             owner=resolved_owner,
             owner_display_name=owner_display_name,
             is_builtin=False,
@@ -696,7 +713,7 @@ class RegistryService:
             polarity=None,
             author_kind="human",
             definition=definition,
-            user_metadata=dict(user_metadata or {}),
+            user_metadata=generic_rule_metadata(user_metadata),
             owner=owner,
             is_builtin=True,
             source="builtin",
@@ -768,7 +785,7 @@ class RegistryService:
         elif clear_polarity:
             rule.polarity = None
         if user_metadata is not None:
-            rule.user_metadata = dict(user_metadata)
+            rule.user_metadata = generic_rule_metadata(user_metadata)
         if owner is not None:
             rule.owner = owner
             # Owner changed without an explicit display name → resolve it at
