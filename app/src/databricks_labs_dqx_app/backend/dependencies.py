@@ -46,6 +46,7 @@ from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
 from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
+from .services.review_events import ReviewEventService
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
@@ -912,6 +913,13 @@ def resolve_execution_principals(workspace: WorkspaceClient) -> tuple[str, str]:
             ),
         )
     return runner, app_principal
+
+
+async def get_review_event_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> ReviewEventService:
+    """Create a ReviewEventService (``dq_review_events``, and ``dq_rules_history`` for rules) on the OLTP executor."""
+    return ReviewEventService(sql)
 
 
 async def get_run_set_service(

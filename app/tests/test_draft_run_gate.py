@@ -351,6 +351,7 @@ def _call_mt_submit(*, require_draft_run, has_run, mode=ApprovalMode.ENABLED):
         role=UserRole.RULE_APPROVER,
         principal_ids=frozenset({"me"}),
         obo_ws=_mock_obo_ws("alice@x"),
+        review_events=MagicMock(),
     )
     return materializer
 
@@ -375,6 +376,7 @@ class TestMonitoredTableSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
+                review_events=MagicMock(),
             )
         assert exc.value.status_code == 409
         # Gate fired before any materialization / state change.
@@ -411,6 +413,7 @@ class TestMonitoredTableSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
+                review_events=MagicMock(),
             )
         assert exc.value.status_code == 409
         assert exc.value.detail == DRAFT_RUN_STALE_MESSAGE
@@ -440,6 +443,7 @@ class TestDataProductSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
+                review_events=MagicMock(),
             )
         assert exc.value.status_code == 409
         svc.submit.assert_not_called()
@@ -467,6 +471,7 @@ class TestDataProductSubmitGate:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
+            review_events=MagicMock(),
         )
         svc.submit.assert_called_once()
 
@@ -491,5 +496,6 @@ class TestDataProductSubmitGate:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
+            review_events=MagicMock(),
         )
         svc.submit.assert_called_once()

@@ -103,6 +103,44 @@ class PgMigration:
 # can be re-targeted for tests/dev/prod without copy-paste.
 _S = "{schema}"
 
+# dq_data_product_versions — a collection as approved at each version (name,
+# description, owner, members and their pins), so View changes can compare
+# versions. Shared by the baseline and v5, so an upgraded install gets exactly
+# the table a fresh install creates.
+_DATA_PRODUCT_VERSIONS_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_product_versions ("
+    "  id          TEXT PRIMARY KEY,"
+    "  product_id  TEXT NOT NULL,"
+    "  version     INTEGER NOT NULL,"
+    "  state_json  JSONB NOT NULL,"
+    "  created_by  TEXT,"
+    "  created_at  TIMESTAMPTZ,"
+    "  CONSTRAINT uq_dq_data_product_versions_product_version "
+    "    UNIQUE (product_id, version)"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_dq_data_product_versions_product_id "
+    f"  ON {_S}.dq_data_product_versions (product_id);"
+)
+
+# dq_review_events — the review trail of monitored tables and collections:
+# each submit, approve, reject and withdraw, with who, when, the note and the
+# version approved. Registry rules keep theirs in dq_rules_history. Shared by
+# the baseline and v6.
+_REVIEW_EVENTS_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_review_events ("
+    "  id           TEXT PRIMARY KEY,"
+    "  object_type  TEXT NOT NULL,"
+    "  object_id    TEXT NOT NULL,"
+    "  action       TEXT NOT NULL,"
+    "  version      INTEGER,"
+    "  rationale    TEXT,"
+    "  actor        TEXT,"
+    "  created_at   TIMESTAMPTZ"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_dq_review_events_object "
+    f"  ON {_S}.dq_review_events (object_type, object_id, created_at);"
+)
+
 
 PG_MIGRATIONS: list[PgMigration] = [
     PgMigration(
@@ -564,7 +602,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "    UNIQUE (product_id, binding_id)"
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_data_product_members_product_id "
-            f"  ON {_S}.dq_data_product_members (product_id);"
+            f"  ON {_S}.dq_data_product_members (product_id);" + _DATA_PRODUCT_VERSIONS_DDL + _REVIEW_EVENTS_DDL +
             # ----------------------------------------------------------
             # dq_run_sets — one row per product-level run, grouping the
             # per-binding runs it fanned out into (``dq_run_set_members``).
@@ -813,6 +851,16 @@ PG_MIGRATIONS: list[PgMigration] = [
             "CHECK (status IS NULL OR status IN "
             "('pending','success','partial_failure','failed','skipped'));"
         ),
+    ),
+    PgMigration(
+        version=5,
+        description="Collection version snapshots for View changes",
+        sql=_DATA_PRODUCT_VERSIONS_DDL,
+    ),
+    PgMigration(
+        version=6,
+        description="Review trail of monitored tables and collections",
+        sql=_REVIEW_EVENTS_DDL,
     ),
 ]
 
