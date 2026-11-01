@@ -6,8 +6,12 @@ import {
   type RuleDefinition,
 } from "@/lib/api";
 import { batchImportRegistryRulesWithDedup } from "@/lib/api-custom";
-import { RESERVED_NAME_KEY } from "@/components/RegistryRuleBadges";
-import { parseDqxCheckJson } from "@/lib/registry-rule-conversion";
+import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
+import {
+  parseDqxCheckJson,
+  requiredNativeParamNames,
+  type ParsedCheckDefinition,
+} from "@/lib/registry-rule-conversion";
 
 /**
  * Naming convention for cross-table SQL rules exported from the active-rules
@@ -17,6 +21,22 @@ import { parseDqxCheckJson } from "@/lib/registry-rule-conversion";
 export const SQL_CHECK_PREFIX = "__sql_check__/";
 
 const EMPTY_DEFINITION: RuleDefinition = { body: {}, slots: [], parameters: [] };
+
+function missingImportedRequiredParams(
+  parsed: ParsedCheckDefinition,
+  checkFunctions: CheckFunctionDef[],
+): string[] {
+  if (parsed.mode !== "dqx_native") return [];
+  const fnName = String((parsed.definition.body as { function?: string } | undefined)?.function ?? "");
+  const fn = checkFunctions.find((f) => f.name === fnName);
+  const missing: string[] = [];
+  for (const name of requiredNativeParamNames(fn)) {
+    const param = (parsed.definition.parameters ?? []).find((p) => p.name === name);
+    const empty = param == null || param.value == null || String(param.value).trim() === "";
+    if (empty) missing.push(name);
+  }
+  return missing;
+}
 
 export interface ImportRegistryRulesResult {
   saved: number;
@@ -70,6 +90,13 @@ export function normalizeImportedCheck(raw: Record<string, unknown>): Record<str
   }
   if (typeof item.name === "string" && item.name) {
     userMetadata[RESERVED_NAME_KEY] = item.name;
+  }
+  const rawSeverity =
+    existing && typeof existing === "object" && RESERVED_SEVERITY_KEY in existing
+      ? (existing as Record<string, unknown>)[RESERVED_SEVERITY_KEY]
+      : item[RESERVED_SEVERITY_KEY];
+  if (rawSeverity !== undefined) {
+    userMetadata[RESERVED_SEVERITY_KEY] = typeof rawSeverity === "string" ? rawSeverity : "";
   }
 
   if (fn.startsWith(SQL_CHECK_PREFIX)) {
@@ -227,6 +254,18 @@ export function parseChecksForImport(
         checkFunctions,
         t,
       );
+      const missing = missingImportedRequiredParams(parsed, checkFunctions);
+      if (missing.length > 0) {
+        const name =
+          (typeof parsed.userMetadata?.[RESERVED_NAME_KEY] === "string" &&
+            parsed.userMetadata[RESERVED_NAME_KEY].trim()) ||
+          (parsed.mode === "dqx_native"
+            ? String((parsed.definition.body as { function?: string }).function ?? "")
+            : "") ||
+          t("rulesImport.unnamedRule");
+        errors.push(t("rulesImport.missingRequiredFields", { name, fields: missing.join(", ") }));
+        continue;
+      }
       // Checks tagged ``rule_type: text_llm`` were produced by the retired
       // LLM contract-import leg. Nothing emits the tag now, but rules saved
       // or exported earlier still carry it and must keep AI provenance.
@@ -280,6 +319,8 @@ export async function importChecksAsRegistryDrafts({
   alsoSubmit = false,
   autoApprove = false,
   source,
+  generalizeSlots = false,
+  reuseRuleIds = [],
 }: {
   checks: Record<string, unknown>[];
   checkFunctions: CheckFunctionDef[];
@@ -293,6 +334,8 @@ export async function importChecksAsRegistryDrafts({
   /** Provenance recorded on each rule (RuleSourceBadge). Defaults server-side
    *  to "import"; the Marketplace passes "marketplace". */
   source?: string;
+  generalizeSlots?: boolean;
+  reuseRuleIds?: string[];
 }): Promise<ImportRegistryRulesResult> {
   const { rules, errors: parseErrors } = parseChecksForImport(checks, checkFunctions, t, authorKind);
 
@@ -319,6 +362,8 @@ export async function importChecksAsRegistryDrafts({
     also_submit: alsoSubmit,
     auto_approve: autoApprove,
     skip_duplicates: true,
+    generalize_slots: generalizeSlots,
+    reuse_rule_ids: reuseRuleIds,
     ...(source ? { source } : {}),
   });
 
@@ -327,7 +372,12 @@ export async function importChecksAsRegistryDrafts({
   // optional (the backend model gives them defaults), so guard against
   // undefined rather than assuming a shape.
   const failedList = data.failed ?? [];
-  const serverErrors = failedList.map((f) => f.error);
+  const serverErrors = failedList.map((f) => {
+    const name = rulesWithOwner[f.index]?.user_metadata?.[RESERVED_NAME_KEY];
+    return typeof name === "string" && name
+      ? t("rulesBulkImport.errors.ruleCreateFailedNamed", { name, error: f.error })
+      : f.error;
+  });
 
   return {
     saved: data.saved ?? 0,

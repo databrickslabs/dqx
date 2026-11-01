@@ -21,7 +21,8 @@ from typing import Any
 
 from databricks.labs.dqx.utils import normalize_bound_args
 
-from .registry_models import RegistryRule, RuleParameter, RuleSlot
+from .registry_canonical import canonical_parameters, canonical_polarity
+from .registry_models import RegistryRule, RuleSlot
 
 __all__ = ["compute_registry_rule_fingerprint"]
 
@@ -32,7 +33,11 @@ def compute_registry_rule_fingerprint(rule: RegistryRule) -> str:
     Order-independent: slots and parameters are sorted by name before
     hashing, so declaring the same slots/params in a different order
     produces the same fingerprint. A slot's ``position`` (display-only
-    ordering) is excluded for the same reason.
+    ordering) is excluded for the same reason. Polarity and parameters are
+    compared in their behaviour-equivalent form (``registry_canonical``).
+    ``definition.filter`` is a *default* population that applied rules can
+    override, so it is excluded — two rules that differ only by filter
+    fingerprint identically.
 
     Args:
         rule: The registry rule to fingerprint.
@@ -42,17 +47,15 @@ def compute_registry_rule_fingerprint(rule: RegistryRule) -> str:
     """
     fingerprint_data = {
         "mode": rule.mode,
-        "polarity": rule.polarity,
+        "polarity": canonical_polarity(rule.polarity),
         "body": _normalize(rule.definition.body),
         "slots": sorted(
             (_normalize_slot(slot) for slot in rule.definition.slots),
             key=lambda s: s["name"],
         ),
-        "parameters": sorted(
-            (_normalize_parameter(param) for param in rule.definition.parameters),
-            key=lambda p: p["name"],
-        ),
-        "filter": rule.definition.filter,
+        "parameters": [
+            {**param, "value": _normalize(param["value"])} for param in canonical_parameters(rule.mode, rule.definition)
+        ],
     }
     combined = json.dumps(fingerprint_data, sort_keys=True)
     return hashlib.sha256(combined.encode()).hexdigest()
@@ -76,9 +79,3 @@ def _normalize_slot(slot: RuleSlot) -> dict[str, Any]:
     }
 
 
-def _normalize_parameter(param: RuleParameter) -> dict[str, Any]:
-    return {
-        "name": param.name,
-        "type": param.type,
-        "value": _normalize(param.value),
-    }

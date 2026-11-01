@@ -654,6 +654,41 @@ class BatchImportRegistryRulesIn(BaseModel):
             "no column-specific description. See ``slot_renames`` on each result."
         ),
     )
+    reuse_rule_ids: list[str] = Field(
+        default_factory=list,
+        max_length=BATCH_IMPORT_MAX_RULES,
+        description=(
+            "Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``): an "
+            "input with no identical rule is matched to the listed rule running the same check with "
+            "different parameters, and returned in ``reused`` instead of being created."
+        ),
+    )
+
+
+class PreviewBatchImportRegistryRulesIn(BaseModel):
+    """Imported rules to look up against the registry before a batch import."""
+
+    rules: list[CreateRegistryRuleIn] = Field(min_length=1, max_length=BATCH_IMPORT_MAX_RULES)
+    generalize_slots: bool = Field(default=False, description="Same meaning as on the batch import.")
+
+
+class BatchImportRuleMatch(BaseModel):
+    """Existing rules an imported rule would duplicate or nearly duplicate."""
+
+    index: int = Field(description="Index of the input rule")
+    exact: RegistryRuleOut | None = Field(
+        default=None, description="Identical active rule the batch import reuses automatically"
+    )
+    similar: list[RegistryRuleOut] = Field(
+        default_factory=list,
+        description="Active rules running the same check with different parameters, best candidate first",
+    )
+
+
+class PreviewBatchImportRegistryRulesOut(BaseModel):
+    matches: list[BatchImportRuleMatch] = Field(
+        default_factory=list, description="Only inputs that have an identical or similar rule"
+    )
 
 
 class BatchImportRegistryRulesFailure(BaseModel):
@@ -669,7 +704,10 @@ class BatchImportRegistryRulesOut(BaseModel):
     created: list[CreateRegistryRuleOut] = Field(default_factory=list)
     reused: list[CreateRegistryRuleOut] = Field(
         default_factory=list,
-        description="Rules matched to an existing active rule by fingerprint (skip_duplicates) — not created.",
+        description=(
+            "Rules matched to an existing active rule by fingerprint (skip_duplicates) or chosen via "
+            "``reuse_rule_ids`` — not created."
+        ),
     )
     saved: int = 0
     submitted: int = 0

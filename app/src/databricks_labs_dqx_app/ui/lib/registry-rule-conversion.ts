@@ -114,6 +114,24 @@ const POLARITY_PARAM = "negate";
 export function fnSupportsNegate(fn: ApiCheckFunctionDef | undefined): boolean {
   return (fn?.params ?? []).some((p) => p.name === POLARITY_PARAM);
 }
+/**
+ * Parameters the DQX signature marks optional but that define the check in
+ * Studio. ``ref_table`` is required because Studio has no in-memory DataFrame
+ * path. ``date_format`` / ``timestamp_format`` decide which values count as
+ * valid; leaving them blank is a different (lenient) check than a named format.
+ */
+const STUDIO_REQUIRED_OPTIONAL_PARAMS = new Set(["ref_table", "date_format", "timestamp_format"]);
+
+/** Non-column parameter names that must be filled before a native rule can be submitted. */
+export function requiredNativeParamNames(fn: ApiCheckFunctionDef | undefined): Set<string> {
+  const required = new Set<string>();
+  for (const p of fn?.params ?? []) {
+    if (COLUMN_KINDS.has(p.kind)) continue;
+    if (p.required || STUDIO_REQUIRED_OPTIONAL_PARAMS.has(p.name)) required.add(p.name);
+  }
+  return required;
+}
+
 export const PARAM_KIND_TO_TYPE: Record<string, RuleParameterType> = {
   boolean: "boolean",
   number: "number",
@@ -433,6 +451,74 @@ const SQL_FUNCTION_NAMES = new Set(["sql_query", "sql_expression"]);
  * edited in place, its already-declared families and names must survive, so
  * this only ADDS the undeclared tokens rather than rebuilding the list.
  */
+const SLOT_FAMILY_VALUES = new Set<RuleSlot["family"]>(["numeric", "text", "temporal", "boolean", "any"]);
+
+function slotsForCheckJson(slots: RuleSlot[] | undefined): Array<Record<string, unknown>> | undefined {
+  if (!slots || slots.length === 0) return undefined;
+  return slots.map((slot) => ({
+    name: slot.name,
+    family: slot.family,
+    ...(slot.position !== undefined ? { position: slot.position } : {}),
+    ...(slot.cardinality ? { cardinality: slot.cardinality } : {}),
+    ...(slot.arg_key ? { arg_key: slot.arg_key } : {}),
+  }));
+}
+
+function parseJsonSlots(raw: unknown): RuleSlot[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: RuleSlot[] = [];
+  raw.forEach((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.name !== "string" || !rec.name) return;
+    const family = SLOT_FAMILY_VALUES.has(rec.family as RuleSlot["family"])
+      ? (rec.family as RuleSlot["family"])
+      : "any";
+    out.push({
+      name: rec.name,
+      family,
+      position: typeof rec.position === "number" ? rec.position : index,
+      cardinality: rec.cardinality === "many" ? "many" : "one",
+      arg_key: typeof rec.arg_key === "string" ? rec.arg_key : null,
+    });
+  });
+  return out;
+}
+
+function overlaySlotFamilies(slots: RuleSlot[], jsonSlots: RuleSlot[] | null): RuleSlot[] {
+  if (!jsonSlots || jsonSlots.length === 0) return slots;
+  return slots.map((slot) => {
+    const match =
+      jsonSlots.find((s) => s.name === slot.name) ?? jsonSlots.find((s) => s.arg_key && s.arg_key === slot.arg_key);
+    return match ? { ...slot, family: match.family } : slot;
+  });
+}
+
+/**
+ * Family for a native slot recovered from YAML/JSON.
+ *
+ * DQX checks have no column-type field, so an import that doesn't declare
+ * `slots[].family` must land as ``any`` — not the catalog's implied family
+ * (e.g. regex_match → text). A later JSON edit can set family explicitly;
+ * an in-place JSON apply without `slots` keeps the already-stored family.
+ */
+function resolveImportedFamily(
+  template: RuleSlot,
+  slotName: string,
+  jsonSlots: RuleSlot[] | null,
+  currentSlots: RuleSlot[],
+): RuleSlot["family"] {
+  const fromJson =
+    jsonSlots?.find((s) => s.name === slotName) ??
+    jsonSlots?.find((s) => s.arg_key && s.arg_key === template.arg_key);
+  if (fromJson) return fromJson.family;
+  const fromCurrent =
+    currentSlots.find((s) => s.name === slotName) ??
+    currentSlots.find((s) => s.arg_key && s.arg_key === template.arg_key);
+  if (fromCurrent) return fromCurrent.family;
+  return "any";
+}
+
 function withSlotsForSqlTokens(existing: RuleSlot[], ...fragments: unknown[]): RuleSlot[] {
   const declared = new Set(existing.map((s) => s.name));
   const slots = [...existing];
@@ -538,6 +624,8 @@ export function buildDqxCheckJson(
   const name = readTag(RESERVED_NAME_KEY);
   if (name) check.name = name;
   if (definition.error_message) check.message_expr = definition.error_message;
+  const slotsJson = slotsForCheckJson(definition.slots);
+  if (slotsJson) check.slots = slotsJson;
   return check;
 }
 
@@ -629,6 +717,8 @@ export function parseDqxCheckJson(
   // Cross-table / custom SQL checks are intentionally omitted from the
   // single-table check-function picker (see check_functions.py) but must
   // still import via YAML/JSON — handle them before the registry lookup.
+  const jsonSlots = parseJsonSlots(dict.slots);
+
   if (SQL_FUNCTION_NAMES.has(functionName)) {
     const polarity: "pass" | "fail" = args.negate === true ? "fail" : "pass";
     const body: Record<string, unknown> =
@@ -638,11 +728,14 @@ export function parseDqxCheckJson(
     if (functionName === "sql_query" && Array.isArray(args.merge_columns)) {
       body.merge_columns = args.merge_columns.filter((c) => typeof c === "string");
     }
-    const slots = withSlotsForSqlTokens(
-      currentDefinition.slots ?? [],
-      body.sql_query,
-      body.predicate,
-      ...((body.merge_columns as unknown[]) ?? []),
+    const slots = overlaySlotFamilies(
+      withSlotsForSqlTokens(
+        currentDefinition.slots ?? [],
+        body.sql_query,
+        body.predicate,
+        ...((body.merge_columns as unknown[]) ?? []),
+      ),
+      jsonSlots,
     );
     // Preserve LOW-CODE identity when editing a low-code rule's JSON: keep
     // mode "lowcode" and carry the re-editable AST + group-by forward from
@@ -705,13 +798,28 @@ export function parseDqxCheckJson(
     const authored = extractSlotNames(args[argKey]);
     const names = authored.length > 0 ? authored : extractLiteralColumnNames(args[argKey]);
     if (names.length === 0) {
-      slots.push({ ...template, position: slotPosition++ });
+      slots.push({
+        ...template,
+        family: resolveImportedFamily(template, template.name, jsonSlots, currentDefinition.slots ?? []),
+        position: slotPosition++,
+      });
     } else if (argKey === listArgKey) {
       for (const authoredName of names) {
-        slots.push({ ...template, name: authoredName, position: slotPosition++ });
+        slots.push({
+          ...template,
+          name: authoredName,
+          family: resolveImportedFamily(template, authoredName, jsonSlots, currentDefinition.slots ?? []),
+          position: slotPosition++,
+        });
       }
     } else {
-      slots.push({ ...template, name: names[0], position: slotPosition++ });
+      const authoredName = names[0] ?? template.name;
+      slots.push({
+        ...template,
+        name: authoredName,
+        family: resolveImportedFamily(template, authoredName, jsonSlots, currentDefinition.slots ?? []),
+        position: slotPosition++,
+      });
     }
   }
   const parameters: RuleParameter[] = derivedParams.map((p) => {
