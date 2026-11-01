@@ -24,6 +24,14 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from databricks_labs_dqx_app.backend.apply_time_params import (
+    InvalidParameterValueError,
+    RESERVED_PARAMETER_VALUES_KEY,
+    binds_every_parameter,
+    get_applied_parameter_values,
+    prune_parameter_mapping,
+    validate_applied_parameter_values,
+)
 from databricks_labs_dqx_app.backend.registry_models import (
     ORIGIN_KEY,
     ORIGIN_TAG_AUTO,
@@ -49,6 +57,10 @@ class RuleNotPublishedError(ValueError):
 
 class MappingIncompleteError(ValueError):
     """Raised by :meth:`ApplyRulesService.apply_rule` when *column_mapping* doesn't cover every slot."""
+
+
+class InvalidAppliedParameterError(InvalidParameterValueError):
+    """Raised when apply-time parameter values are missing or invalid."""
 
 
 class UnsafeRowFilterError(ValueError):
@@ -643,8 +655,27 @@ class ApplyRulesService:
                     f"Registry rule '{entry.rule_id}' is not published (status='{rule.status}'); "
                     "only published rules can be applied to a monitored table."
                 )
+            entry.column_mapping, stored_params = prune_parameter_mapping(
+                entry.column_mapping,
+                rule.definition.parameters,
+                rule.definition.slots,
+                get_applied_parameter_values(entry.tags),
+            )
             self._validate_mapping_complete(entry.column_mapping, rule.definition.slots)
             validate_row_filter(entry.row_filter)
+            try:
+                validated_params = validate_applied_parameter_values(
+                    rule.definition.parameters,
+                    entry.column_mapping,
+                    stored_params,
+                    bind_all=binds_every_parameter(rule.mode),
+                )
+            except InvalidParameterValueError as exc:
+                raise InvalidAppliedParameterError(str(exc)) from exc
+            if validated_params:
+                entry.tags[RESERVED_PARAMETER_VALUES_KEY] = validated_params
+            else:
+                entry.tags.pop(RESERVED_PARAMETER_VALUES_KEY, None)
             desired_hashes[entry.rule_id] = compute_mapping_hash(entry.column_mapping)
 
         # Remove anything not present in the desired set (by rule_id) or

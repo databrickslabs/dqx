@@ -2363,9 +2363,16 @@ function ApplyRulesTab({
   // attention" filter and the by-rule incomplete/drift indicators.
   const statuses = useMemo(
     () =>
-      mergedRules.map((rule) =>
-        computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [], columns),
-      ),
+      mergedRules.map((rule) => {
+        const registry = ruleById.get(rule.rule_id);
+        return computeStatus(
+          rule,
+          registry?.definition.slots ?? [],
+          columns,
+          registry?.definition.parameters ?? [],
+          registry?.mode === "sql" || registry?.mode === "lowcode",
+        );
+      }),
     [mergedRules, ruleById, columns],
   );
   const attentionCount = statuses.filter(statusNeedsAttention).length;
@@ -2513,8 +2520,25 @@ function ApplyRulesTab({
       const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
       const target = rowsForRule[groupIdx];
       if (!target) return prev;
-      const nextGroup = { ...(target.column_mapping?.[0] ?? {}), [slotName]: colName };
-      return prev.map((r) => (r === target ? { ...r, column_mapping: [nextGroup] } : r));
+      const nextGroup = {
+        ...(target.column_mapping?.[0] ?? {}),
+        [slotName]: colName,
+      };
+      const prevGroup = target.column_mapping?.[0] ?? {};
+      const prevKey = JSON.stringify(
+        Object.fromEntries(Object.entries(prevGroup).sort(([a], [b]) => a.localeCompare(b))),
+      );
+      const nextKey = JSON.stringify(
+        Object.fromEntries(Object.entries(nextGroup).sort(([a], [b]) => a.localeCompare(b))),
+      );
+      const prevParams = { ...(target.parameter_values ?? {}) };
+      if (prevKey !== nextKey && prevParams[prevKey]) {
+        prevParams[nextKey] = prevParams[prevKey];
+        delete prevParams[prevKey];
+      }
+      return prev.map((r) =>
+        r === target ? { ...r, column_mapping: [nextGroup], parameter_values: prevParams } : r,
+      );
     });
   };
 
@@ -2541,6 +2565,27 @@ function ApplyRulesTab({
         created_at: null,
       };
       return [...prev, newRow];
+    });
+  };
+
+  const handleParameterValuesChange = (
+    ruleId: string,
+    groupIdx: number,
+    values: Record<string, unknown>,
+  ) => {
+    setStagedRows((prev) => {
+      const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
+      const target = rowsForRule[groupIdx];
+      if (!target) return prev;
+      const group = target.column_mapping?.[0] ?? {};
+      const key = JSON.stringify(
+        Object.fromEntries(Object.entries(group).sort(([a], [b]) => a.localeCompare(b))),
+      );
+      return prev.map((r) =>
+        r === target
+          ? { ...r, parameter_values: { ...(r.parameter_values ?? {}), [key]: values } }
+          : r,
+      );
     });
   };
 
@@ -2820,6 +2865,9 @@ function ApplyRulesTab({
                   handleChangeMapping(rule.rule_id, groupIdx, slotName, colName)
                 }
                 onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
+                onParameterValuesChange={(groupIdx, values) =>
+                  handleParameterValuesChange(rule.rule_id, groupIdx, values)
+                }
                 columns={columns}
                 isOpen={openRuleId === rule.rule_id}
                 onToggle={() => setOpenRuleId((prev) => (prev === rule.rule_id ? null : rule.rule_id))}

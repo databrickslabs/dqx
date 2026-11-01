@@ -58,6 +58,7 @@ import {
   Sparkles,
   Wrench,
   X,
+  GripVertical,
 } from "lucide-react";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
@@ -164,6 +165,13 @@ import {
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 import { formatDateShort } from "@/lib/format-utils";
+import {
+  COLUMN_PLACEHOLDER_CLASS,
+  PARAM_PLACEHOLDER_CLASS,
+  SQL_PARAMETER_TYPES,
+  inferSqlParamType,
+  partitionPlaceholderSlots,
+} from "@/lib/apply-time-params";
 import {
   buildDqxCheckJson,
   COLUMN_KINDS,
@@ -1227,6 +1235,44 @@ function mergeAiDeclaredSlots(
   return merged;
 }
 
+const DND_SLOT = "dqx-slot:";
+const DND_PARAM = "dqx-param:";
+
+function readDndIndex(event: { dataTransfer: DataTransfer }, prefix: string): number | null {
+  const raw = event.dataTransfer.getData("text/plain");
+  if (!raw.startsWith(prefix)) return null;
+  const index = Number(raw.slice(prefix.length));
+  return Number.isInteger(index) ? index : null;
+}
+
+function PlaceholderDragHandle({ payload, label }: { payload: string; label: string }) {
+  return (
+    <span
+      draggable
+      title={label}
+      aria-label={label}
+      onDragStart={(event) => {
+        event.dataTransfer.setData("text/plain", payload);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+    >
+      <GripVertical className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
+function mergeAiDeclaredParameters(
+  existing: RuleParameter[],
+  aiParameters: RuleParameter[],
+): RuleParameter[] {
+  const byName = new Map(existing.map((p) => [p.name, p]));
+  return aiParameters.map((ai) => {
+    const prev = byName.get(ai.name);
+    return prev ? { ...ai, type: prev.type } : ai;
+  });
+}
+
 /**
  * "Variable Columns" slot-declaration panel, ported from the dqlake
  * `ColumnsUsedPanel`. Shared by all three authoring modes: SQL / Low-Code
@@ -1256,6 +1302,8 @@ function SlotsPanel({
   onSlotTagsChange,
   isSingleColumnFn = false,
   addDisabledReason,
+  onMoveToParameters,
+  onAcceptParameter,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -1278,9 +1326,14 @@ function SlotsPanel({
   /** When set, "+ Add column" is disabled and shows this text as a tooltip —
    * used to gate adding columns until a rule condition/type is chosen. */
   addDisabledReason?: string;
+  /** SQL/low-code: drag a slot into Variable Parameters (keeps its name). */
+  onMoveToParameters?: (index: number) => void;
+  /** SQL/low-code: drop a parameter onto this panel to convert it into a column. */
+  onAcceptParameter?: (index: number) => void;
 }) {
   const { t } = useTranslation();
   const [singleColPopoverOpen, setSingleColPopoverOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
 
   const familyLabel = (f: RuleSlotFamilyType): string =>
     ({
@@ -1367,7 +1420,31 @@ function SlotsPanel({
   };
 
   return (
-    <div className="space-y-2">
+    <div
+      className={cn("space-y-2 rounded-md", dropActive && onAcceptParameter && "ring-1 ring-blue-400/70")}
+      onDragOver={(event) => {
+        if (!onAcceptParameter || disabled) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragEnter={(event) => {
+        if (!onAcceptParameter || disabled) return;
+        event.preventDefault();
+        setDropActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setDropActive(false);
+      }}
+      onDrop={(event) => {
+        setDropActive(false);
+        if (!onAcceptParameter || disabled) return;
+        const index = readDndIndex(event, DND_PARAM);
+        if (index === null) return;
+        event.preventDefault();
+        onAcceptParameter(index);
+      }}
+    >
       <SectionHeader
         tooltip={t("rulesRegistry.slotsPanelTooltip")}
         action={
@@ -1451,17 +1528,26 @@ function SlotsPanel({
           return (
             <div
               key={i}
-              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3"
+              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[auto_1fr_auto_auto] items-center gap-3"
             >
+              {!disabled && onMoveToParameters ? (
+                <PlaceholderDragHandle
+                  payload={`${DND_SLOT}${i}`}
+                  label={t("rulesRegistry.moveToParameters")}
+                />
+              ) : (
+                <span />
+              )}
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {/* Inline rename: click the name and type. Braces stay as
                     chrome so the row still reads as a {{slot}} placeholder. */}
                 {disabled ? (
-                  <code className={cn("text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
+                  <code className={cn(COLUMN_PLACEHOLDER_CLASS, "text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
                 ) : (
                   <label
                     className={cn(
-                      "inline-flex items-center gap-0 font-mono text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
+                      COLUMN_PLACEHOLDER_CLASS,
+                      "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
                       !nameOk && "text-destructive",
                     )}
                     aria-label={t("rulesRegistry.slotsPanelNameLabel")}
@@ -1514,6 +1600,188 @@ function SlotsPanel({
                 <button
                   type="button"
                   aria-label={t("rulesRegistry.slotsPanelRemove")}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                  onClick={() => removeAt(i)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Variable Parameters" — typed `{{name}}` values filled in per mapped column
+ * when the rule is applied. Values never live on the marketplace rule itself.
+ */
+function ParametersPanel({
+  value,
+  onChange,
+  disabled,
+  takenNames,
+  onAcceptSlot,
+}: {
+  value: RuleParameter[];
+  onChange: (next: RuleParameter[]) => void;
+  disabled?: boolean;
+  takenNames: string[];
+  onAcceptSlot?: (index: number) => void;
+}) {
+  const { t } = useTranslation();
+  const [dropActive, setDropActive] = useState(false);
+  const typeLabel = (type: RuleParameter["type"]): string =>
+    t(`rulesRegistry.parameterType_${type}`, { defaultValue: type });
+
+  const setAt = (i: number, patch: Partial<RuleParameter>) => {
+    const next = value.slice();
+    next[i] = { ...next[i], ...patch };
+    onChange(next);
+  };
+  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const add = () =>
+    onChange([
+      ...value,
+      {
+        name: nextSlotName([...takenNames, ...value.map((p) => p.name)], "param"),
+        type: "integer",
+        value: null,
+      },
+    ]);
+  const taken = new Set(takenNames);
+
+  return (
+    <div
+      className={cn("space-y-2 rounded-md", dropActive && onAcceptSlot && "ring-1 ring-amber-400/70")}
+      onDragOver={(event) => {
+        if (!onAcceptSlot || disabled) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragEnter={(event) => {
+        if (!onAcceptSlot || disabled) return;
+        event.preventDefault();
+        setDropActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setDropActive(false);
+      }}
+      onDrop={(event) => {
+        setDropActive(false);
+        if (!onAcceptSlot || disabled) return;
+        const index = readDndIndex(event, DND_SLOT);
+        if (index === null) return;
+        event.preventDefault();
+        onAcceptSlot(index);
+      }}
+    >
+      <SectionHeader
+        tooltip={t("rulesRegistry.parametersPanelTooltip", { example: "{{limit}}" })}
+        action={
+          !disabled ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={add}
+              className="h-7 px-2.5 text-xs gap-1.5"
+            >
+              {t("rulesRegistry.parametersPanelAddButton")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {t("rulesRegistry.parametersPanelTitle")}
+      </SectionHeader>
+      <div className="space-y-2">
+        {value.length === 0 && (
+          <p className="text-xs text-muted-foreground py-1">
+            {t("rulesRegistry.parametersPanelEmpty")}
+          </p>
+        )}
+        {value.map((param, i) => {
+          const nameOk =
+            SLOT_NAME_PATTERN.test(param.name) &&
+            !taken.has(param.name) &&
+            value.findIndex((p) => p.name === param.name) === i;
+          return (
+            <div
+              key={i}
+              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[auto_1fr_auto_auto] items-center gap-3"
+            >
+              {!disabled ? (
+                <PlaceholderDragHandle
+                  payload={`${DND_PARAM}${i}`}
+                  label={t("rulesRegistry.moveToColumns")}
+                />
+              ) : (
+                <span />
+              )}
+              <div className="flex items-center gap-2 min-w-0">
+                {disabled ? (
+                  <code className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs", !nameOk && "text-destructive")}>
+                    {`{{${param.name}}}`}
+                  </code>
+                ) : (
+                  <label
+                    className={cn(
+                      PARAM_PLACEHOLDER_CLASS,
+                      "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
+                      !nameOk && "text-destructive",
+                    )}
+                    aria-label={t("rulesRegistry.parametersPanelNameLabel")}
+                  >
+                    <span className="select-none">{"{{"}</span>
+                    <input
+                      value={param.name}
+                      onChange={(e) => setAt(i, { name: e.target.value })}
+                      className="bg-transparent outline-none max-w-[14rem] p-0"
+                      style={{ width: `${param.name.length || 1}ch` }}
+                      spellCheck={false}
+                    />
+                    <span className="select-none">{"}}"}</span>
+                  </label>
+                )}
+              </div>
+              {disabled ? (
+                <Badge variant="outline" className="text-[10px] font-medium">
+                  {typeLabel(param.type)}
+                </Badge>
+              ) : (
+                <Select
+                  value={param.type}
+                  onValueChange={(v) => setAt(i, { type: v as RuleParameter["type"] })}
+                >
+                  <SelectTrigger
+                    className="h-6 text-[11px] w-[7.5rem]"
+                    aria-label={t("rulesRegistry.parametersPanelTypeLabel")}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {(SQL_PARAMETER_TYPES as readonly RuleParameter["type"][]).includes(param.type)
+                      ? null
+                      : (
+                        <SelectItem value={param.type} className="text-xs">
+                          {typeLabel(param.type)}
+                        </SelectItem>
+                      )}
+                    {SQL_PARAMETER_TYPES.map((type) => (
+                      <SelectItem key={type} value={type} className="text-xs">
+                        {typeLabel(type)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {!disabled && (
+                <button
+                  type="button"
+                  aria-label={t("rulesRegistry.parametersPanelRemove")}
                   className="text-muted-foreground hover:text-destructive transition-colors"
                   onClick={() => removeAt(i)}
                 >
@@ -1630,6 +1898,8 @@ interface RuleEditSnapshot {
   paramRawValues: Record<string, string>;
   sqlPredicate: string;
   sqlSlots: RuleSlot[];
+  /** SQL/low-code: typed `{{name}}` values entered per column when the rule is applied. */
+  sqlParameters: RuleParameter[];
   nativeSlots: RuleSlot[];
   /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Hydrated
    * from / persisted to `user_metadata.slot_tags`. */
@@ -1648,6 +1918,15 @@ interface RuleEditSnapshot {
 function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "owner" | "authorKind"> {
   const { owner: _owner, authorKind: _authorKind, ...publishable } = snapshot;
   return publishable;
+}
+
+function sqlSlotsAndParameters(rule: RegistryRuleOut): { slots: RuleSlot[]; parameters: RuleParameter[] } {
+  if (rule.mode !== "sql" && rule.mode !== "lowcode") return { slots: [], parameters: [] };
+  const slots = rule.definition?.slots ?? [];
+  const parameters = rule.definition?.parameters ?? [];
+  if (parameters.length > 0) return { slots, parameters };
+  const partitioned = partitionPlaceholderSlots(slots);
+  return { slots: partitioned.columns, parameters: partitioned.parameters };
 }
 
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
@@ -1693,7 +1972,8 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     functionName: isNative ? String((rule.definition?.body ?? {}).function ?? "") : "",
     paramRawValues,
     sqlPredicate,
-    sqlSlots: isNative ? [] : (rule.definition?.slots ?? []),
+    sqlSlots: isNative ? [] : sqlSlotsAndParameters(rule).slots,
+    sqlParameters: isNative ? [] : sqlSlotsAndParameters(rule).parameters,
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     slotTags: slotTagsFromUserMetadata(md),
     lowcodeAst: rule.mode === "lowcode" && isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST,
@@ -1738,6 +2018,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   paramRawValues: {},
   sqlPredicate: "",
   sqlSlots: [seededFirstSlot()],
+  sqlParameters: [],
   nativeSlots: [],
   slotTags: {},
   lowcodeAst: EMPTY_LOWCODE_AST,
@@ -1826,6 +2107,7 @@ export function RegistryRuleFormDialog({
    * one or more joins = cross-table SQL (sql_query) — derived at save time via
    * compileJoinsToSql, no separate body-type flag needed. */
   const [sqlSlots, setSqlSlots] = useState<RuleSlot[]>([]);
+  const [sqlParameters, setSqlParameters] = useState<RuleParameter[]>([]);
   // Low-Code authoring state (shares `sqlSlots` for its "Columns used"
   // placeholders — the row/aggregate pickers bind to the same declared
   // slots). `lowcodeAst` holds the row stack + joins; `groupBy` is the raw
@@ -2034,6 +2316,7 @@ export function RegistryRuleFormDialog({
         setParamRawValues(raw);
         setSqlPredicate("");
         setSqlSlots([]);
+        setSqlParameters([]);
         setLowcodeAst(EMPTY_LOWCODE_AST);
         setGroupBy("");
         // Load the persisted slots as-authored (custom names/families
@@ -2081,7 +2364,11 @@ export function RegistryRuleFormDialog({
           setSqlMergeColumns("");
           setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
         }
-        setSqlSlots(sourceRule.definition?.slots ?? []);
+        {
+          const { slots, parameters } = sqlSlotsAndParameters(sourceRule);
+          setSqlSlots(slots);
+          setSqlParameters(parameters);
+        }
         setFunctionName("");
         setParamRawValues({});
         // Low-Code rules rehydrate the exact row stack / joins / group-by the
@@ -2106,6 +2393,7 @@ export function RegistryRuleFormDialog({
       setSqlGranularity("row");
       setSqlMergeColumns("");
       setSqlSlots([seededFirstSlot()]);
+      setSqlParameters([]);
       setNativeSlots([]);
       setLowcodeAst(EMPTY_LOWCODE_AST);
       setGroupBy("");
@@ -2261,6 +2549,7 @@ export function RegistryRuleFormDialog({
     paramRawValues,
     sqlPredicate,
     sqlSlots,
+    sqlParameters,
     nativeSlots,
     slotTags,
     lowcodeAst,
@@ -2453,13 +2742,39 @@ export function RegistryRuleFormDialog({
     return [];
   }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, lowcodeAst, groupBy, filter]);
 
+  const sqlParamsActive = mode === "sql" || mode === "lowcode";
+  const unusedParameters =
+    mode === "sql"
+      ? sqlParameters.filter((p) => !sqlPredicate.includes(`{{${p.name}}}`))
+      : [];
+  const slotNameSet = new Set(sqlSlots.map((s) => s.name));
+  const parameterNamesValid =
+    !sqlParamsActive ||
+    (sqlParameters.every((p) => SLOT_NAME_PATTERN.test(p.name)) &&
+      new Set(sqlParameters.map((p) => p.name)).size === sqlParameters.length);
+  const collidingParameters = sqlParamsActive
+    ? sqlParameters.filter((p) => slotNameSet.has(p.name))
+    : [];
+
   const structurallyValid =
     mode === "dqx_native"
       ? functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots)
       : mode === "sql"
-        ? sqlPredicate.trim().length > 0 && sqlError === null && slotsHaveValidNames(sqlSlots)
-        : lowcodePredicate.length > 0 && slotsHaveValidNames(sqlSlots);
-  const canSaveDraft = name.trim().length > 0 && !nameError && structurallyValid && unusedSlots.length === 0;
+        ? sqlPredicate.trim().length > 0 &&
+          sqlError === null &&
+          slotsHaveValidNames(sqlSlots) &&
+          parameterNamesValid &&
+          collidingParameters.length === 0
+        : lowcodePredicate.length > 0 &&
+          slotsHaveValidNames(sqlSlots) &&
+          parameterNamesValid &&
+          collidingParameters.length === 0;
+  const canSaveDraft =
+    name.trim().length > 0 &&
+    !nameError &&
+    structurallyValid &&
+    unusedSlots.length === 0 &&
+    unusedParameters.length === 0;
   const canSubmit =
     canSaveDraft &&
     severity.trim().length > 0 &&
@@ -2493,6 +2808,13 @@ export function RegistryRuleFormDialog({
   } else if (mode === "sql") {
     if (!sqlPredicate.trim() || sqlError) missingDraftFieldLabels.push(t("rulesRegistry.conditionLabel"));
     if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
+    if (!parameterNamesValid) missingDraftFieldLabels.push(t("rulesRegistry.parametersPanelTitle"));
+    if (collidingParameters.length > 0)
+      missingDraftFieldLabels.push(
+        t("rulesRegistry.parameterNameCollision", {
+          names: collidingParameters.map((p) => `{{${p.name}}}`).join(", "),
+        }),
+      );
   } else if (mode === "lowcode") {
     if (!lowcodePredicate) missingDraftFieldLabels.push(t("rulesRegistry.lowcodeConditionsLabel"));
     if (!slotsHaveValidNames(sqlSlots)) missingDraftFieldLabels.push(t("rulesRegistry.columnSlotsLabel"));
@@ -2501,6 +2823,12 @@ export function RegistryRuleFormDialog({
     missingDraftFieldLabels.push(
       t("rulesRegistry.unusedColumnsError", {
         columns: unusedSlots.map((s) => `{{${s.name}}}`).join(", "),
+      }),
+    );
+  if (unusedParameters.length > 0)
+    missingDraftFieldLabels.push(
+      t("rulesRegistry.unusedParametersError", {
+        names: unusedParameters.map((p) => `{{${p.name}}}`).join(", "),
       }),
     );
   const missingSubmitFieldLabels: string[] = [...missingDraftFieldLabels];
@@ -2546,7 +2874,7 @@ export function RegistryRuleFormDialog({
       return {
         body: sqlBody as Record<string, unknown>,
         slots: sqlSlots,
-        parameters: [],
+        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: null })),
         error_message: trimmedError || undefined,
         filter: trimmedFilter || undefined,
       };
@@ -2565,7 +2893,7 @@ export function RegistryRuleFormDialog({
       return {
         body,
         slots: sqlSlots,
-        parameters: [],
+        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: null })),
         error_message: trimmedError || undefined,
         filter: trimmedFilter || undefined,
       };
@@ -2625,6 +2953,7 @@ export function RegistryRuleFormDialog({
       setNativeSlots(def.slots ?? []);
       setSqlPredicate("");
       setSqlSlots([]);
+      setSqlParameters([]);
       setLowcodeAst(EMPTY_LOWCODE_AST);
       setGroupBy("");
     } else {
@@ -2632,6 +2961,7 @@ export function RegistryRuleFormDialog({
       setParamRawValues({});
       setSqlPredicate(typeof body.predicate === "string" ? body.predicate : "");
       setSqlSlots(def.slots ?? []);
+      setSqlParameters(def.parameters ?? []);
       if (parsed.mode === "lowcode") {
         const storedAst = body.lowcode_ast;
         setLowcodeAst(isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST);
@@ -2728,7 +3058,11 @@ export function RegistryRuleFormDialog({
       const storedAst = body.lowcode_ast;
       setLowcodeAst(isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST);
       setGroupBy(typeof body.group_by === "string" ? body.group_by : "");
-      setSqlSlots(proposal.slots ?? []);
+      {
+        const partitioned = partitionPlaceholderSlots(proposal.slots ?? []);
+        setSqlSlots(partitioned.columns);
+        setSqlParameters(partitioned.parameters);
+      }
       setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
       setSqlPredicate("");
       setFunctionName("");
@@ -2756,7 +3090,11 @@ export function RegistryRuleFormDialog({
       // two-column proposal read as "1 column used" and only one of its
       // placeholders could be mapped. The backend derives these from the
       // {{placeholder}}s in the predicate itself, so they always match.
-      setSqlSlots(proposal.slots ?? []);
+      {
+        const partitioned = partitionPlaceholderSlots(proposal.slots ?? []);
+        setSqlSlots(partitioned.columns);
+        setSqlParameters(partitioned.parameters);
+      }
       setPolarity(proposal.polarity === "fail" ? "fail" : "pass");
       setFunctionName("");
       setParamRawValues({});
@@ -2764,6 +3102,7 @@ export function RegistryRuleFormDialog({
       setPendingNativeSlots(null);
     } else {
       setFunctionName(nativeFn);
+      setSqlParameters([]);
       setSqlPredicate("");
       const args =
         body.arguments && typeof body.arguments === "object"
@@ -3540,6 +3879,25 @@ export function RegistryRuleFormDialog({
   //   2. If a family RETYPE would strand low-code conditions (LHS operator or
   //      RHS column-comparison family), defer behind a warning modal; otherwise
   //      apply immediately.
+  const moveSlotToParameters = (index: number) => {
+    const slot = sqlSlots[index];
+    if (!slot) return;
+    setSqlSlots(sqlSlots.filter((_, i) => i !== index).map((s, i) => ({ ...s, position: i })));
+    setSqlParameters([
+      ...sqlParameters,
+      { name: slot.name, type: inferSqlParamType(slot.name), value: null },
+    ]);
+  };
+  const moveParameterToColumns = (index: number) => {
+    const param = sqlParameters[index];
+    if (!param) return;
+    setSqlParameters(sqlParameters.filter((_, i) => i !== index));
+    setSqlSlots([
+      ...sqlSlots,
+      { name: param.name, family: "any", position: sqlSlots.length, cardinality: "one" },
+    ]);
+  };
+
   const handleSlotsChange = (next: RuleSlot[]) => {
     // Detect renames by pairing slots positionally (same index, name changed).
     // Length changes are adds/removes, not renames, so skip rename detection.
@@ -3994,6 +4352,7 @@ export function RegistryRuleFormDialog({
             value={filter}
             onChange={setFilter}
             declaredColumns={currentSlots}
+            declaredParameters={mode === "sql" || mode === "lowcode" ? sqlParameters : []}
             placeholder={t("rulesRegistry.filterPlaceholder")}
             disabled={readOnly}
             autoHeight
@@ -4036,6 +4395,17 @@ export function RegistryRuleFormDialog({
           onSlotTagsChange={setSlotTags}
           isSingleColumnFn={mode === "dqx_native" && fnDerivedSlots.length === 1 && !nativeExpandableArgKey}
           addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
+          onMoveToParameters={mode === "sql" || mode === "lowcode" ? moveSlotToParameters : undefined}
+          onAcceptParameter={mode === "sql" || mode === "lowcode" ? moveParameterToColumns : undefined}
+        />
+      )}
+      {(mode === "sql" || mode === "lowcode") && (
+        <ParametersPanel
+          value={sqlParameters}
+          onChange={setSqlParameters}
+          disabled={readOnly}
+          takenNames={sqlSlots.map((s) => s.name)}
+          onAcceptSlot={moveSlotToParameters}
         />
       )}
 
@@ -4264,7 +4634,11 @@ export function RegistryRuleFormDialog({
                 granularity={effectiveGranularity}
                 onPredicateReplace={setSqlPredicate}
                 onPolarityChange={setPolarity}
-                onSlotsDeclare={(aiSlots) => setSqlSlots((prev) => mergeAiDeclaredSlots(prev, aiSlots, filter))}
+                onSlotsDeclare={(aiSlots) => {
+                  const partitioned = partitionPlaceholderSlots(aiSlots);
+                  setSqlSlots((prev) => mergeAiDeclaredSlots(prev, partitioned.columns, filter));
+                  setSqlParameters((prev) => mergeAiDeclaredParameters(prev, partitioned.parameters));
+                }}
                 aiAvailability={aiAvailability}
                 disabled={readOnly}
               />
@@ -4277,6 +4651,7 @@ export function RegistryRuleFormDialog({
                 value={sqlPredicate}
                 onChange={setSqlPredicate}
                 declaredColumns={sqlSlots}
+                declaredParameters={sqlParameters}
                 placeholder={t("rulesRegistry.sqlPredicatePlaceholder")}
                 disabled={readOnly}
               />
@@ -4522,6 +4897,7 @@ export function RegistryRuleFormDialog({
                 value={filter}
                 onChange={setFilter}
                 declaredColumns={sqlSlots}
+                declaredParameters={sqlParameters}
                 placeholder={t("rulesRegistry.filterPlaceholder")}
                 disabled={readOnly}
                 autoHeight
