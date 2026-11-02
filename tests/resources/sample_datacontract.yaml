@@ -108,7 +108,7 @@ schema:
                 function: is_valid_timestamp
                 arguments:
                   column: reading_timestamp
-                  timestamp_format: '%Y-%m-%d %H:%M:%S'
+                  timestamp_format: 'yyyy-MM-dd HH:mm:ss'
       
       - name: calibration_date
         logicalType: date
