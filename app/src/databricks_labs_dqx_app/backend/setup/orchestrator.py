@@ -972,7 +972,8 @@ class SetupOrchestrator:
                     "application_wheels_missing",
                     "This Studio build is missing the application files the task runner needs.",
                 )
-        except Exception:
+        except Exception as error:
+            logger.error(f"Wheel publication failed ({_diagnostic(error)})")
             return _failed(
                 SetupStepId.WHEELS,
                 "wheel_publication_failed",
@@ -980,7 +981,8 @@ class SetupOrchestrator:
             )
         try:
             await asyncio.to_thread(self.jobs.configure, self.runtime.require_job_id(), wheel_paths)
-        except Exception:
+        except Exception as error:
+            logger.error(f"Task-runner job update failed ({_diagnostic(error)})")
             return _failed(
                 SetupStepId.WHEELS,
                 "task_runner_job_update_failed",
