@@ -33,7 +33,7 @@ checks_metadata = dq.load_checks(config=...)
 | `VolumeFileChecksStorageConfig` | `"/Volumes/cat/schema/vol/checks.yml"` | Unity Catalog volume — versioned, auditable, works across workspaces. |
 | `TableChecksStorageConfig` | `"catalog.schema.checks"` | Most scalable. Schema includes a `run_config_name` discriminator so multiple pipelines can share one table. |
 | `InstallationChecksStorageConfig` | `run_config_name="default"` | Resolves to whatever `checks_location` is set in the DQX workspace install's `RunConfig`. Use this inside workflows so a single config change re-points every pipeline. |
-| `LakebaseChecksStorageConfig` | `"database.schema.checks"` | Store checks in a Lakebase Postgres-compatible catalog. |
+| `LakebaseChecksStorageConfig` | `"database.schema.checks"` | Store checks in a Lakebase Postgres-compatible catalog. Set `instance_name` for a Lakebase database instance, or `endpoint="projects/<p>/branches/<b>/endpoints/<e>"` for a Lakebase Autoscaling project. |
 
 ## YAML / JSON file example
 
