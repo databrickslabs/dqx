@@ -55,13 +55,19 @@ def _failing_destination(name: str, error_message: str = "delivery failed\nwith 
 # ---------------------------------------------------------------------------
 
 
-def _make_context(*, metrics: dict[str, object] | None = None, condition: str | None = None) -> ActionContext:
+def _make_context(
+    *,
+    metrics: dict[str, object] | None = None,
+    condition: str | None = None,
+    extras: dict[str, dict[str, str]] | None = None,
+) -> ActionContext:
     return ActionContext(
         metrics=metrics or {"error_row_count": 5},
         run_id="run-test-001",
         run_time=datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
         input_location="catalog.schema.my_table",
         condition=condition,
+        extras=extras,
     )
 
 
@@ -151,6 +157,21 @@ def test_dq_alert_execute_includes_gating_condition_in_message() -> None:
 
     assert len(received) == 1
     assert received[0].condition == "error_row_count > 0"
+
+
+def test_dq_alert_execute_propagates_context_extras_to_message() -> None:
+    """Extras accumulated in the ActionContext (from prior actions) surface on the delivered message."""
+    dest, received = _recording_destination("dest")
+    alert = DQAlert(destinations=[dest])
+
+    alert.execute(
+        _make_context(extras={"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}}),
+        _make_services(),
+    )
+
+    assert len(received) == 1
+    assert received[0].extras == {"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}}
+    assert received[0].fields["extras.collect_lineage.lineage_location"] == "cat.sch.lineage_edges"
 
 
 def test_dq_alert_execute_returns_action_result_with_action_name() -> None:

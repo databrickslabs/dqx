@@ -701,6 +701,28 @@ class TestCreateAndUpdateContinued:
             )
         assert excinfo.value.status_code == 404
 
+    @pytest.mark.parametrize(
+        ("payload", "clear"),
+        [({"polarity": None}, True), ({}, False), ({"polarity": "fail"}, False)],
+    )
+    def test_update_clears_polarity_only_when_null_is_sent(self, payload, clear):
+        """The editor sends "polarity": null for a native function without negate
+        (e.g. after switching a SQL rule to is_not_in_list); an omitted field must
+        leave the stored polarity alone."""
+        svc = MagicMock()
+        svc.update_draft.return_value = _rule(status="draft")
+        body = UpdateRegistryRuleIn.model_validate({"user_metadata": {"name": "x"}, **payload})
+        update_registry_rule(
+            "r1",
+            body=body,
+            svc=svc,
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        assert svc.update_draft.call_args.kwargs["clear_polarity"] is clear
+
     def test_update_passes_author_kind_through_to_service(self):
         svc = MagicMock()
         svc.update_draft.return_value = _rule(status="draft")

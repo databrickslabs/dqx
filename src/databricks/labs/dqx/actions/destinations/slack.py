@@ -96,6 +96,17 @@ class DQSlackAlertDestination(WebhookAlertDestination):
                 }
             )
 
+        if message.extras:
+            extras_text = ", ".join(
+                f"{producer}.{k}: {v}" for producer, payload in message.extras.items() for k, v in payload.items()
+            )
+            blocks.append(
+                {
+                    "type": "section",
+                    "fields": [{"type": "mrkdwn", "text": f"*Extras:*\n{extras_text}"}],
+                }
+            )
+
         return {"blocks": blocks}
 
 

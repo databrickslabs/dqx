@@ -152,6 +152,72 @@ The minimal schema for manual creation has no versioning columns. When you first
   </Tabs>
 </details>
 
+### Saving checks that use custom check functions
+
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.17.0" heading={false} />
+</FeatureTags>
+
+Checks that use [custom check functions](/docs/reference/quality_checks/#creating-custom-row-level-checks) can be saved to a Unity Catalog or Lakebase table. When saving checks, pass custom check functions using the `custom_check_functions` argument. DQX uses custom functions to validate the checks and compute their names and fingerprints.
+
+<Admonition type="warning" title="Loading rules with custom check functions">
+When checks with custom functions are saved to a table, DQX stores only the function name. The function body is not stored. It must be passed using `custom_check_functions` when you apply the loaded checks.
+</Admonition>
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    import pyspark.sql.functions as F
+    from pyspark.sql import Column
+    from databricks.labs.dqx.check_funcs import make_condition
+    from databricks.labs.dqx.rule import register_rule
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import TableChecksStorageConfig
+    from databricks.sdk import WorkspaceClient
+
+    # define a custom check function
+    @register_rule("row")
+    def not_ends_with(column: str, suffix: str) -> Column:
+      col_expr = F.col(column)
+      return make_condition(
+        col_expr.endswith(suffix),
+        f"Column {column} ends with {suffix}",
+        f"{column}_ends_with_{suffix}"
+      )
+
+    # define the checks
+    checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: not_ends_with
+        arguments:
+          column: col1
+          suffix: .com
+    """)
+
+    # create a mapping of check names and custom check functions
+    custom_check_functions = {"not_ends_with": not_ends_with}
+
+    # specify the table where checks will be stored
+    config = TableChecksStorageConfig(location="catalog.schema.checks_table")
+
+    # save checks that reference custom check functions
+    dq_engine = DQEngine(WorkspaceClient())
+    dq_engine.save_checks(checks, config=config, custom_check_functions=custom_check_functions)
+
+    # load the checks and pass the same custom check functions when applying them
+    loaded_checks = dq_engine.load_checks(config=config)
+    input_df = spark.createDataFrame([["user1@email.com"], ["user2"]], "col1: string")
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(
+      input_df,
+      checks=loaded_checks,
+      custom_check_functions=custom_check_functions
+    )
+    ```
+  </TabItem>
+</Tabs>
+
 ## Loading quality checks from a storage
 
 You can load quality checks from various storage locations. You can then apply the loaded checks using the methods described [here](/docs/guide/quality_checks_apply).

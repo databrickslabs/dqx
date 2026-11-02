@@ -535,9 +535,284 @@ If you don't have LLM dependencies installed or want to skip text processing:
   </TabItem>
 </Tabs>
 
+## Metric Rule Generation
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+ODCS quality entries with `type: library` (or, per the spec, no `type` at all as long as `metric` is set) reference a named, standard data quality metric instead of a natural-language description or a hand-written DQX check. DQX recognizes five of these metrics — `rowCount`, `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues` — and maps each one onto the DQX check(s) that best express it.
+
+<Admonition type="note" title="A fast on-ramp, not the long-term home for your checks">
+Library metrics are for teams who are already ODCS-native, or who have existing ODCS contracts and want DQX enforcing them straight away. Point DQX at a contract you already have and you get checks immediately, with no rewrite — and the same five-metric vocabulary is understood by any other ODCS-compliant tool.
+
+Treat that as a starting point. The five metrics cover the common cases, but not the rest of what DQX can check: no outlier detection, freshness, foreign keys, schema validation, or dataset comparison. Longer term you will get more out of defining checks natively, either as [explicit rules](#explicit-rule-generation) with `type: custom` and `engine: dqx` or as [text-based expectations](#text-based-rule-generation) — both give you the full DQX check surface and far more flexibility than a fixed metric vocabulary.
+
+This five-metric surface is intentionally closed: DQX does not plan to grow this mapping into a general ODCS interpreter for arbitrary quality vocabularies.
+</Admonition>
+
+Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
+
+<Admonition type="note" title="Where the ODCS spec is silent">
+Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX follows the interpretation already established by other ODCS-compliant tooling rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit and `invalidValues`'s combined-condition handling of `validValues` + `pattern`. Bound inclusivity for `mustBeBetween`/`mustNotBeBetween` is a different case — the spec is inconsistent rather than silent — and is covered under [Threshold Fields and the SQL Fallback](#threshold-fields-and-the-sql-fallback).
+</Admonition>
+
+### Defining Metric Rules in ODCS v3.x Contracts
+
+A library quality entry sets a `metric` name (and optionally `type: library`) in the `quality` section of a property (for `nullValues`, `missingValues`, `invalidValues`, and the single-column form of `duplicateValues`) or a schema (for `rowCount` and the composite-key form of `duplicateValues`):
+
+```yaml
+quality:
+  - type: library
+    metric: nullValues
+    mustBe: 0
+    dimension: completeness   # optional; defaults per metric, see below
+    severity: critical        # optional; recorded verbatim, DQX defines no vocabulary for it
+```
+
+Contracts written against ODCS 3.0.x may use the deprecated `rule` key instead of `metric`; DQX accepts both.
+
+Every metric shares the same **threshold fields** (one of which must be set) and an optional **`unit`** — see [Threshold Fields and the SQL Fallback](#threshold-fields-and-the-sql-fallback) and [Rows vs. Percent](#rows-vs-percent) below. `dimension` and `severity` are recorded in `user_metadata` for every metric rule; `dimension` falls back to a per-metric ODCS default when the contract omits it, and `severity` is only present when the contract sets it.
+
+### Supported Metrics
+
+| Metric | Level | Default `dimension` | What it validates |
+|--------|-------|----------------------|--------------------|
+| `rowCount` | Schema | `completeness` | The total row count of the dataset. |
+| `nullValues` | Property | `completeness` | The count or percentage of `NULL` values in a column. |
+| `missingValues` | Property | `completeness` | The count or percentage of `NULL`s plus contract-supplied sentinel values (e.g. `""`, `"N/A"`) in a column. |
+| `invalidValues` | Property | `conformity` | The count or percentage of values in a column that fail an allowlist and/or a regex pattern. |
+| `duplicateValues` | Property (single column) or Schema (composite key) | `uniqueness` | The count or percentage of distinct values (or key combinations) that occur more than once. |
+
+`nullValues`, `missingValues`, and `invalidValues` are property-level only; a schema-level entry for one of these is skipped with a warning. `rowCount` is schema-level only. `duplicateValues` supports both: a property-level entry with no arguments checks that single column, while a schema-level entry reads a composite key from `arguments.properties`.
+
+### Threshold Fields and the SQL Fallback
+
+Every library metric is evaluated against the eight ODCS threshold fields: `mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`, `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`. Each field set on an entry produces its own rule, so a range written as two fields on one entry (e.g. `mustBeGreaterOrEqualTo: 10` and `mustBeLessOrEqualTo: 1000`) enforces both bounds.
+
+- **`mustBe: 0`** is special-cased for `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`: it maps onto a cheap **row-level** check (`is_not_null`, `is_not_in_list`, `is_in_list`/`regex_match`, or `is_unique`) that pinpoints the offending rows, rather than a dataset-level count.
+- **`mustBe`, `mustNotBe`, `mustBeGreaterOrEqualTo`, `mustBeLessOrEqualTo`** (including `mustBe` with a non-zero value) map onto exact-fit **dataset-level aggregate checks** — `is_aggr_equal`, `is_aggr_not_equal`, `is_aggr_not_less_than`, `is_aggr_not_greater_than` — over the metric's count or percentage, for `rowCount`, `nullValues`, `missingValues`, and `invalidValues`.
+- **`mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, `mustNotBeBetween`** have no strict-inequality or range equivalent among DQX's aggregate checks, so they fall back to a dataset-level [`sql_query`](/docs/reference/quality_checks#using-sql-query) check. For `mustBeBetween`/`mustNotBeBetween`, **both bounds are inclusive** — a value exactly equal to either bound counts as being "between" them. The ODCS spec is inconsistent here: its operator table writes `mustBeBetween: [0, 100]` as `∈` (a closed interval), while a note calls it equivalent to `mustBeGreaterThan` + `mustBeLessThan`. DQX follows SQL `BETWEEN`, so `mustBeBetween: [0, 5]` passes a column with no nulls.
+- **`duplicateValues` is the one exception**: every non-`mustBe: 0` threshold falls back to `sql_query`, not just the four above. See [duplicateValues](#duplicatevalues) below for exactly what it counts.
+
+<Admonition type="note" title="No recognized threshold field">
+An entry with none of the eight fields set is skipped with a warning naming all eight, so a contract author can spot a typo (e.g. `mustbe` instead of `mustBe`) without reading DQX source. Threshold values must be numbers (a numeric string such as `"0"` is accepted), and `mustBeBetween`/`mustNotBeBetween` must be two numbers, smallest first; anything else is skipped with a warning.
+</Admonition>
+
+### Rows vs. Percent
+
+The optional `unit` field controls whether a non-`mustBe: 0` threshold is evaluated as a raw row count (`unit: rows`, the default) or a percentage of all rows (`unit: percent`). This applies to `nullValues`, `missingValues`, `invalidValues`, and `duplicateValues`. `rowCount` is inherently a count and accepts only `unit: rows`. Any other `unit` value causes the entry's thresholds to be skipped with a warning, except `mustBe: 0`, which ignores the unit, since zero rows and zero percent are the same fact. On an empty dataset a percentage is treated as 0.
+
+### rowCount
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    schema:
+      - name: orders
+        physicalType: table
+        quality:
+          - type: library
+            metric: rowCount
+            mustBeGreaterOrEqualTo: 1   # → is_aggr_not_less_than(column="*", aggr_type="count")
+    ```
+  </TabItem>
+</Tabs>
+
+A `mustBeGreaterThan`, `mustBeLessThan`, `mustBeBetween`, or `mustNotBeBetween` threshold on `rowCount` falls back to a `sql_query` check counting `COUNT(*)` over the whole dataset.
+
+### nullValues
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    properties:
+      - name: customer_email
+        logicalType: string
+        physicalType: string
+        quality:
+          - type: library
+            metric: nullValues
+            mustBe: 0                # → row-level is_not_null(column="customer_email")
+
+      - name: middle_name
+        logicalType: string
+        physicalType: string
+        quality:
+          # `type: library` can be omitted when `metric` is set, which is how the ODCS
+          # spec's own examples are written -- DQX recognizes both forms.
+          - metric: nullValues
+            mustBeLessOrEqualTo: 5
+            unit: percent            # → dataset-level check on the null percentage
+    ```
+  </TabItem>
+</Tabs>
+
+### missingValues
+
+`missingValues` combines real `NULL`s with a contract-supplied sentinel list, so it needs `arguments.missingValues` — a list that may include a literal `null` alongside sentinel strings:
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    properties:
+      - name: country_code
+        logicalType: string
+        physicalType: string
+        quality:
+          - type: library
+            metric: missingValues
+            mustBe: 0
+            arguments:
+              missingValues: [null, "", "N/A", "UNKNOWN"]
+            # → row-level is_not_null (for the null entry)
+            #   + row-level is_not_in_list(forbidden=["", "N/A", "UNKNOWN"])
+    ```
+  </TabItem>
+</Tabs>
+
+`NULL` is always counted as missing, whether or not a literal `null` appears in `arguments.missingValues` — listing it is redundant, not required. With `mustBe: 0`, a row-level `is_not_null` rule is always generated, plus a row-level `is_not_in_list` rule when non-null sentinels are present; both rules share the same `user_metadata` and are OR'd together via DQX's own per-row error/warning union, since `is_not_in_list`'s `forbidden` list can never itself match a real SQL `NULL`. Any other threshold routes through a dataset-level count/percentage of rows matching `column IS NULL OR column IN (...)` — the same unconditional-`NULL` condition, so the metric means the same thing at every threshold.
+
+### invalidValues
+
+`invalidValues` accepts an allowlist (`arguments.validValues`), a regex (`arguments.pattern`), or both — a row fails if it matches neither. When both are present, DQX combines them into a single "invalid" condition (`NOT (in the allowlist) OR NOT (matches the pattern)`) rather than treating them as two independent thresholds, so `mustBeLessOrEqualTo: 5` means at most 5 rows failing *either* criterion, not up to 5 failing each independently. This combination is a DQX judgment call: other ODCS tooling commonly honors only `validValues` and ignores `arguments.pattern` for `invalidValues`, so `pattern` support here goes beyond what most implementations cover, even though the spec documents the field:
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    properties:
+      - name: order_status
+        logicalType: string
+        physicalType: string
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            arguments:
+              validValues: ["pending", "confirmed", "shipped", "delivered", "cancelled"]
+            # → row-level is_in_list(allowed=[...], case_sensitive=true)
+
+      - name: postal_code
+        logicalType: string
+        physicalType: string
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBeLessOrEqualTo: 0.5
+            unit: percent
+            arguments:
+              pattern: '^[0-9]{5}$'
+            # → dataset-level check on the invalid percentage
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Pattern safety check">
+`arguments.pattern` is a Java regular expression (Spark evaluates it with Java's regex engine) and is checked at generation time. A pattern that fails a check is treated as absent — its own warning is logged, and the entry still proceeds using `validValues` alone if present. A pattern is rejected when it:
+
+- Could cause catastrophic backtracking (ReDoS): it is longer than 200 characters, or it repeats (`+`, `*`, `{m,}`, `{m,n}`) a group that contains a variable quantifier or an alternation, at any nesting depth — e.g. `(a+)+`, `((a+))+`, `(\w+\s?)+` or `(a|ab)*`. Optional groups (`(a+)?`) and exact counts (`(\d{3})+`) are allowed.
+- Uses Python-only syntax that Java rejects: `(?P<name>...)` (write `(?<name>...)`), `(?#...)` comments, conditionals or `{,n}`.
+- Is not a valid regular expression, e.g. an unclosed group or class.
+
+Java syntax such as Unicode classes (`\p{L}`), possessive quantifiers (`\d++`), atomic groups and inline flags is accepted.
+</Admonition>
+
+### duplicateValues
+
+The single-column, argument-less form is a property-level entry; the composite-key form is a schema-level entry with `arguments.properties`.
+
+<Admonition type="note" title="Counts distinct recurring values, not rows in a duplicated group">
+For a non-`mustBe: 0` threshold, `duplicateValues` counts the number of *distinct values (or key combinations) that recur* — for a column holding `[A, A, A, B, B, C]` that's 2 (`A` and `B` each recur), not 5 (the rows sitting in those two groups). `unit: percent` divides that count by the total row count. This matches how other ODCS-compliant tooling counts duplicates; the ODCS spec text ("Counts duplicate values in a column") doesn't settle it either way, so DQX follows the established interpretation rather than counting affected rows. `mustBe: 0` is unaffected by this choice, since both readings agree at zero.
+</Admonition>
+
+<Tabs>
+  <TabItem value="single_column" label="Single column (property-level)" default>
+    ```yaml
+    properties:
+      - name: order_id
+        logicalType: string
+        physicalType: string
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0   # → row-level is_unique(columns=["order_id"])
+    ```
+  </TabItem>
+  <TabItem value="composite_key" label="Composite key (schema-level)">
+    ```yaml
+    schema:
+      - name: order_lines
+        physicalType: table
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBeLessOrEqualTo: 1
+            unit: percent
+            arguments:
+              properties: [order_id, line_number]
+            # → dataset-level check on the percentage of (order_id, line_number)
+            #   combinations that recur
+    ```
+  </TabItem>
+</Tabs>
+
+### Rule Names and Row Filters
+
+Each library entry produces rules named `<property>_<metric>_<thresholdField>` (or `<schema>_<metric>_<thresholdField>` for schema-level entries), e.g. `email_nullValues_mustBeLessOrEqualTo`. Where `mustBe: 0` produces more than one row-level rule, each carries a suffix naming its part (`_null`/`_sentinel` for `missingValues`, `_allowed`/`_pattern` for `invalidValues`). Two entries that would still share a name, such as two `mustBeLessOrEqualTo` entries on the same property, get `_2`, `_3`, ... suffixes, so a range expressed as two entries never collides. Suffixes also skip names already used by other rules generated from the contract (for example an explicit rule), so every generated rule name is unique.
+
+A `row_filter` (or `rowFilter`) custom property on a library entry is honoured the same way as on an explicit rule: it is emitted as the rule's `filter`, so the metric is computed over, and reported on, the matching rows only.
+
+```yaml
+quality:
+  - metric: nullValues
+    mustBeLessOrEqualTo: 5
+    customProperties:
+      - property: row_filter
+        value: "country = 'UK'"
+```
+
+### Malformed and Unrecognized Entries
+
+DQX **warns and skips** an individual `type: library` entry — logging the reason and continuing to process the rest of the contract — rather than failing generation, whenever it encounters:
+
+- A missing or unrecognized `metric` name (the warning names all five supported metrics).
+- No recognized threshold field set (none of the eight `mustBe...`/`mustNotBe...` fields). A threshold field whose value is not a number is skipped on its own; the entry's other valid threshold fields still produce rules.
+- An unrecognized `unit` (anything other than `rows` or `percent`, or anything other than `rows` for `rowCount`). Only the entry's thresholds other than `mustBe: 0` are skipped, since `mustBe: 0` ignores the unit; the warning is still logged, and a kept `mustBe: 0` rule records `unit: rows` — see [Rows vs. Percent](#rows-vs-percent).
+- A schema-level entry for a property-only metric (`nullValues`, `missingValues`, `invalidValues`), or a property-level `rowCount` entry.
+- Malformed `arguments` — not a dict, a missing or wrong-typed key (e.g. `arguments.missingValues` not a list of scalar values, or containing `NaN`/infinity), or an empty list where a non-empty one is required.
+- For `invalidValues`, an entry with neither a usable `arguments.validValues` list nor a usable `arguments.pattern` string (after the pattern safety check, described above).
+
+This per-entry warn-and-skip behavior is independent of `process_library_rules`: even with `process_library_rules=True` (the default), an individual malformed entry is skipped rather than failing the whole contract. Set `process_library_rules=False` to skip *all* `type: library` entries instead — e.g. if a contract's library entries need to be ignored altogether.
+
+<Admonition type="note" title="No dedup against predefined rules">
+DQX does not deduplicate library metric rules against predefined rules generated from schema constraints. A property marked `required: true` (which generates a predefined `is_not_null` rule) that also carries a `nullValues`/`mustBe: 0` entry produces two separate `is_not_null` rules under different names. Both are harmless (they agree on every row), but if you want only one, disable one of the two sources — e.g. `generate_predefined_rules=False` or omit the redundant `nullValues` entry.
+</Admonition>
+
+### Disabling Library Metric Processing
+
+If a contract's `type: library` entries misbehave, or you'd rather express quality entirely through [explicit rules](#explicit-rule-generation):
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Skip type: library processing, generate only predefined/explicit/text rules
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        process_library_rules=False  # Skip library metric mapping
+    )
+    ```
+  </TabItem>
+</Tabs>
+
 ## Complete Usage Example
 
-Here's a complete example showing contract-based rule generation with all three rule types:
+Here's a complete example showing contract-based rule generation with every rule type. Each generated rule records how it was produced in *user_metadata.rule_type*:
+
+- **Predefined** (`rule_type: "predefined"`): derived from the schema, e.g. `required`, `unique` and `logicalTypeOptions` such as `pattern`, `minimum` and `maximum`.
+- **Explicit** (`rule_type: "explicit"`): DQX-native checks declared as `type: custom` with `engine: dqx`.
+- **Text** (`rule_type: "text_llm"`): `type: text` expectations translated into checks by the LLM (requires `process_text_rules=True`).
+- **Metric** (`rule_type: "metric"`): ODCS `type: library` metrics such as `rowCount` or `nullValues`, see [Metric Rule Generation](#metric-rule-generation).
+- **Schema validation** (`rule_type: "schema_validation"`): one `has_valid_schema` rule per schema (disable with `generate_schema_validation=False`).
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
@@ -559,8 +834,8 @@ Here's a complete example showing contract-based rule generation with all three 
         physicalType: table
         description: Real-time sensor readings from IoT devices
         
-        # Explicit dataset-level check
         quality:
+          # Explicit (rule_type: explicit): DQX-native dataset-level check
           - type: custom
             engine: dqx
             description: Ensure sensor data is fresh and recent
@@ -574,15 +849,19 @@ Here's a complete example showing contract-based rule generation with all three 
                   window_minutes: 60
                   min_records_per_window: 1
                   lookback_windows: 24
-                  groupby_columns:
-                    - sensor_id
           
-          # Text-based expectation
+          # Text (rule_type: text_llm): expectation translated into a check by the LLM
           - type: text
             description: |
               The dataset should not contain duplicate sensor readings for the
               same sensor_id and reading_timestamp combination.
-        
+
+          # Metric (rule_type: metric): ODCS library metric, the table must not be empty
+          - type: library
+            metric: rowCount
+            mustBeGreaterOrEqualTo: 1
+
+        # Predefined (rule_type: predefined): derived from the property definitions marked below
         properties:
           - name: sensor_id
             logicalType: string
@@ -600,7 +879,7 @@ Here's a complete example showing contract-based rule generation with all three 
               minimum: -40.0           # Predefined: sql_expression (range check)
               maximum: 125.0           # Predefined: sql_expression (range check)
             quality:
-              # Text expectation
+              # Text (rule_type: text_llm): property-level expectation
               - type: text
                 description: |
                   Temperature readings outside normal operating range (-10°C to 50°C)
@@ -612,6 +891,16 @@ Here's a complete example showing contract-based rule generation with all three 
             required: true           # Predefined: is_not_null
             logicalTypeOptions:
               pattern: '^(active|maintenance|offline)$'  # Predefined: regex_match
+
+          - name: battery_level
+            logicalType: integer
+            physicalType: int
+            quality:
+              # Metric (rule_type: metric): at most 5% of readings may lack a battery level
+              - type: library
+                metric: nullValues
+                mustBeLessOrEqualTo: 5
+                unit: percent
     ```
   </TabItem>
   <TabItem value="Python" label="Python Code">
@@ -624,24 +913,30 @@ Here's a complete example showing contract-based rule generation with all three 
     ws = WorkspaceClient()
     generator = DQGenerator(workspace_client=ws, spark=spark)
 
-    # Generate all rule types from contract
+    # Generate every rule type from the contract (explicit rules are always generated)
     rules = generator.generate_rules_from_contract(
         contract_file="/Workspace/Shared/contracts/sensor_readings.yaml",
-        generate_predefined_rules=True,   # Schema-derived rules
-        process_text_rules=True,        # LLM-processed expectations
-        default_criticality="error"     # Default for predefined rules
+        generate_predefined_rules=True,   # Predefined (rule_type: predefined): schema-derived rules
+        process_text_rules=True,          # Text (rule_type: text_llm): LLM-processed expectations
+        process_library_rules=True,       # Metric (rule_type: metric): ODCS library metrics
+        generate_schema_validation=True,  # Schema validation (rule_type: schema_validation): has_valid_schema
+        default_criticality="error"       # Default for predefined rules
     )
 
     print(f"Generated {len(rules)} quality rules:")
-    
-    # Group rules by type
+
+    # Group rules by rule_type
     predefined_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'predefined']
     explicit_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'explicit']
     text_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'text_llm']
-    
-    print(f"  - {len(predefined_rules)} predefined (from schema)")
+    metric_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'metric']
+    schema_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'schema_validation']
+
+    print(f"  - {len(predefined_rules)} predefined (from schema properties)")
     print(f"  - {len(explicit_rules)} explicit (DQX native)")
-    print(f"  - {len(text_rules)} text-based (LLM-generated)")
+    print(f"  - {len(text_rules)} text_llm (LLM-generated)")
+    print(f"  - {len(metric_rules)} metric (ODCS library metrics)")
+    print(f"  - {len(schema_rules)} schema_validation (has_valid_schema)")
 
     # Apply rules to data
     engine = DQEngine(ws)
@@ -679,7 +974,7 @@ All generated rules include rich metadata that traces them back to the source co
     "odcs_version": "v3.0.2",
     "schema": "sensor_readings",
     "field": "sensor_id",
-    "rule_type": "predefined"  # or "explicit" or "text_llm"
+    "rule_type": "predefined"  # or "explicit", "text_llm", "metric" or "schema_validation"
   }
 }
 ```
@@ -692,9 +987,15 @@ All generated rules include rich metadata that traces them back to the source co
 | `contract_version` | Contract version | `2.1.0` |
 | `odcs_version` | ODCS API version (standard version) | `v3.0.2` |
 | `schema` | Schema/table name (ODCS v3.x) | `sensor_readings` |
-| `field` | Property/column name (if property-level rule) | `sensor_id` |
-| `rule_type` | How rule was generated | `predefined`, `explicit`, or `text_llm` |
+| `field` | Property/column name (single-field property-level rule) | `sensor_id` |
+| `fields` | Composite key columns as a JSON-encoded list, since `user_metadata` is a string map (schema-level `duplicateValues` metric rule only) | `'["order_id", "line_number"]'` |
+| `rule_type` | How rule was generated | `predefined`, `explicit`, `text_llm`, `metric` (see [Metric Rule Generation](#metric-rule-generation)), or `schema_validation` |
 | `text_expectation` | Original text (for text-based rules only) | Natural language description |
+| `metric` | ODCS library metric name (`rule_type: "metric"` only) | `rowCount`, `nullValues`, `missingValues`, `invalidValues`, or `duplicateValues` |
+| `threshold_field` | ODCS threshold field that produced the check (`rule_type: "metric"` only) | `mustBe`, `mustBeGreaterOrEqualTo`, `mustBeBetween`, etc. |
+| `unit` | Threshold unit for the metric (`rule_type: "metric"` only) | `rows` (default) or `percent` |
+| `dimension` | Data quality dimension — the contract's own `dimension` (whitespace trimmed) if set and not blank, else the metric's ODCS default | `completeness`, `uniqueness`, or `conformity` |
+| `severity` | Contract's own `severity` value, recorded verbatim for audit only (never used to derive `criticality`); present only when the contract sets it | Any contract-defined string |
 
 This metadata enables:
 - **Traceability**: Link quality check results back to contract specifications
@@ -954,7 +1255,8 @@ pip install 'databricks-labs-dqx[datacontract]'
 - The data contract feature requires the `datacontract-cli` library which increases package size.
 - Text-based rule generation requires LLM dependencies and network access to the model endpoint.
 - Only ODCS v3.0.x format is currently supported (earlier versions are not supported).
-- Dataset-level quality checks must be defined as explicit DQX rules (custom quality checks).
+- Dataset-level checks beyond the `rowCount` and `duplicateValues` library metrics must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
+- `type: library` covers five metrics only (see [Metric Rule Generation](#metric-rule-generation)) and is not intended to grow into a general ODCS interpreter; use `type: custom` with `engine: dqx` for anything beyond simple row-count/null/duplicate/allowlist checks.
 

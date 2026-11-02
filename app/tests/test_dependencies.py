@@ -12,6 +12,7 @@ from databricks_labs_dqx_app.backend import dependencies
 from databricks_labs_dqx_app.backend.dependencies import get_sp_oltp_executor, set_oltp_executor, setup_access
 from databricks_labs_dqx_app.backend.runtime import rt
 from databricks_labs_dqx_app.backend.setup.runtime import setup_runtime
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 
 @pytest.mark.asyncio
@@ -71,3 +72,24 @@ def test_workspace_admins_membership_ignores_control_characters_and_case() -> No
     user = User(user_name="a@example.com", groups=[ComplexValue(display=" Admins\n")])
 
     assert setup_access(user, "dqx-admins").can_manage is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "expected"),
+    [
+        (User(user_name="a@example.com", id="42"), "a@example.com"),
+        (User(id="42"), "42"),
+        (User(), "unknown"),
+    ],
+)
+async def test_both_discovery_services_key_their_caches_by_the_same_user(user: User, expected: str) -> None:
+    obo_ws = create_autospec(WorkspaceClient, instance=True)
+    obo_ws.current_user.me.return_value = user
+
+    user_id = await dependencies.get_obo_user_id(obo_ws)
+    discovery = await dependencies.get_discovery_service(obo_ws, create_autospec(SqlExecutor, instance=True), user_id)
+    catalogs = await dependencies.get_catalog_discovery_service(obo_ws, user_id)
+
+    assert user_id == expected
+    assert discovery.user_id == catalogs.user_id == expected

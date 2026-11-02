@@ -7,20 +7,34 @@ import {
 } from "@tanstack/react-query";
 
 import { useState } from "react";
-import axios from "axios";
+import type { AxiosError, AxiosResponse } from "axios";
 import {
   configureSetup,
   getGetSetupStatusQueryKey,
   getSetupStatus,
   overrideSetupStep,
   reconcileSetup,
+  useApplySetupStepGrants,
+  useListCatalogs,
+  useListSetupGroups,
+  type HTTPValidationError,
+  type SetupApplyGrantsResponse,
+  type SetupStatusResponse,
   type SetupStepId,
 } from "@/lib/api";
 import {
+  configurationListsWanted,
+  setupErrorCode,
   setupView,
   unacknowledgedWarnings,
   warningKey,
 } from "@/lib/setup-state";
+import { setupOptionList } from "@/lib/setup-options";
+import {
+  grantRequestFailure,
+  grantRunOutcome,
+  type StepGrantOutcome,
+} from "@/lib/setup-grants";
 import {
   acknowledgeWarnings,
   readAcknowledgedWarnings,
@@ -70,15 +84,30 @@ export function reconciliationMutationOptions(
   };
 }
 
-/** Extract the backend error code from a failed configuration request. */
-export function configurationErrorCode(error: unknown): string | undefined {
-  if (!axios.isAxiosError(error)) return undefined;
-  const detail: unknown = error.response?.data?.detail;
-  if (typeof detail === "object" && detail !== null && "code" in detail) {
-    const { code } = detail;
-    return typeof code === "string" ? code : undefined;
-  }
-  return undefined;
+/**
+ * After a step's GRANT statements run, show the re-verified report straight away,
+ * then refetch the full status.
+ */
+export function applyGrantsCallbacks(
+  queryClient: QueryClient,
+): UseMutationOptions<
+  AxiosResponse<SetupApplyGrantsResponse>,
+  AxiosError<HTTPValidationError>,
+  { stepId: SetupStepId }
+> {
+  return {
+    onSuccess: (response) => {
+      queryClient.setQueryData<AxiosResponse<SetupStatusResponse>>(
+        getGetSetupStatusQueryKey(),
+        (current) =>
+          current && {
+            ...current,
+            data: { ...current.data, report: response.data.report },
+          },
+      );
+    },
+    onSettled: () => invalidateSetupStatus(queryClient),
+  };
 }
 
 /**
@@ -95,8 +124,14 @@ export function SetupGate({ children }: SetupGateProps) {
       overrideSetupStep({ step_id: stepId }),
     onSettled: () => invalidateSetupStatus(queryClient),
   });
+  const applyGrants = useApplySetupStepGrants({
+    mutation: applyGrantsCallbacks(queryClient),
+  });
+  const [editingConfiguration, setEditingConfiguration] = useState(false);
   const configuration = useMutation({
     mutationFn: (values: SetupConfigurationValues) => configureSetup(values),
+    // A successful save closes the form; the saved summary shows instead.
+    onSuccess: () => setEditingConfiguration(false),
     onSettled: () => invalidateSetupStatus(queryClient),
   });
   const setupStatus = useQuery({
@@ -105,7 +140,9 @@ export function SetupGate({ children }: SetupGateProps) {
     refetchInterval: (query) =>
       setupPollingInterval(
         query.state.data?.data.report.state,
-        reconciliation.isPending || override.isPending,
+        reconciliation.isPending ||
+          override.isPending ||
+          applyGrants.isPending,
       ),
     refetchIntervalInBackground: setupPollingInBackground(),
   });
@@ -117,14 +154,50 @@ export function SetupGate({ children }: SetupGateProps) {
         setupStatus.data.data.report.state !== "ready",
     },
   });
+  // Only list catalogs and groups while the configuration form shows.
+  const listsWanted = configurationListsWanted(
+    setupStatus.data?.data,
+    acknowledged,
+    editingConfiguration,
+  );
+  const catalogs = useListCatalogs({
+    query: {
+      enabled: listsWanted,
+      retry: false,
+      staleTime: 5 * 60_000,
+    },
+  });
+  const groups = useListSetupGroups({
+    query: {
+      enabled: listsWanted,
+      retry: false,
+      staleTime: 5 * 60_000,
+    },
+  });
   // While readiness is being checked, show the same "Loading DQX Studio" spinner
   // AuthGuard uses, so the check reads as one continuous load — no flash of the
   // "Checking Studio readiness" card, and no blank/black screen.
   if (setupStatus.isPending) return <StudioLoadingScreen />;
   if (!setupStatus.data) return <SetupStatusUnavailable />;
 
-  const view = setupView(setupStatus.data.data, acknowledged);
+  const view = setupView(
+    setupStatus.data.data,
+    acknowledged,
+    editingConfiguration,
+  );
   if (view.kind === "ready") return <>{children}</>;
+
+  const grantStepId = applyGrants.variables?.stepId;
+  let grantOutcome: StepGrantOutcome | undefined;
+  if (grantStepId && applyGrants.isSuccess) {
+    const outcome = grantRunOutcome(applyGrants.data.data);
+    grantOutcome = outcome ? { stepId: grantStepId, outcome } : undefined;
+  } else if (grantStepId && applyGrants.isError) {
+    grantOutcome = {
+      stepId: grantStepId,
+      outcome: grantRequestFailure(setupErrorCode(applyGrants.error)),
+    };
+  }
 
   const onAcknowledgeWarnings = () =>
     setAcknowledged((current) =>
@@ -139,7 +212,11 @@ export function SetupGate({ children }: SetupGateProps) {
       view={view}
       workspaceHost={workspaceHost.data?.workspace_host}
       isReconciling={reconciliation.isPending}
-      onReconcile={() => reconciliation.mutate()}
+      onReconcile={() => {
+        // A fresh check replaces the outcome of the last GRANT run.
+        applyGrants.reset();
+        reconciliation.mutate();
+      }}
       reconciliationFailed={reconciliation.isError || override.isError}
       onOverride={(stepId) => override.mutate(stepId)}
       isOverriding={override.isPending}
@@ -148,9 +225,27 @@ export function SetupGate({ children }: SetupGateProps) {
       isConfiguring={configuration.isPending}
       configurationError={
         configuration.isError
-          ? (configurationErrorCode(configuration.error) ?? "default")
+          ? (setupErrorCode(configuration.error) ?? "default")
           : undefined
       }
+      catalogList={setupOptionList({
+        isPending: catalogs.isPending,
+        isError: catalogs.isError,
+        options: catalogs.data?.data.map((catalog) => catalog.name),
+      })}
+      groupList={setupOptionList({
+        isPending: groups.isPending,
+        isError: groups.isError,
+        options: groups.data?.data.groups,
+        truncated: groups.data?.data.truncated,
+      })}
+      onEditConfiguration={(editing) => {
+        configuration.reset();
+        setEditingConfiguration(editing);
+      }}
+      onApplyGrants={(stepId) => applyGrants.mutate({ stepId })}
+      applyingGrantsStepId={applyGrants.isPending ? grantStepId : undefined}
+      grantOutcome={grantOutcome}
     />
   );
 }
