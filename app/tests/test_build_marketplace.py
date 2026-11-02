@@ -256,7 +256,7 @@ def test_app_locks_match_the_app_pyproject_dependencies() -> None:
         name = canonicalize_name(name)
         return (
             name,
-            frozenset(extras),
+            frozenset(canonicalize_name(extra) for extra in extras),
             None if name == DQX_PACKAGE else SpecifierSet(specifier),
             Marker(marker) if marker else None,
         )
@@ -384,6 +384,7 @@ def test_deploy_task_runner_build_keeps_every_package_index(
 def test_marketplace_task_runner_build_drops_the_extra_package_indexes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
+    """Marketplace builds must not pull from a deployer's extra package index."""
     captured = _fake_uv(tmp_path, monkeypatch)
     monkeypatch.setenv(name, MIRROR)
 
