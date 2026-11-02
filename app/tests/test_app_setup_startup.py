@@ -232,7 +232,7 @@ def _patch_startup(
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "ComputeService", lambda **_kwargs: compute)
     monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: MagicMock())
-    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args, **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "MigrationRunner", lambda *_args: MagicMock())
     monkeypatch.setattr(startup, "SetupOrchestrator", capture)
@@ -484,7 +484,7 @@ async def test_startup_without_storage_configuration_opens_lakebase_and_waits_fo
     monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: pg_executor)
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
-    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args, **_kwargs: MagicMock())
     sql_executor = MagicMock()
     monkeypatch.setattr(startup, "SqlExecutor", sql_executor)
 
@@ -524,7 +524,7 @@ async def test_startup_reports_invalid_deployment_audience_on_configuration_step
     monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: pg_executor)
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
-    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args, **_kwargs: MagicMock())
 
     lifecycle = await startup.start_studio(app)
 
@@ -828,7 +828,7 @@ def _deployment_startup(monkeypatch: pytest.MonkeyPatch, catalog: str) -> _Deplo
     monkeypatch.setattr(startup, "build_pg_executor_from_connection", lambda *_args, **_kwargs: pg_executor)
     monkeypatch.setattr(startup, "AppSettingsService", lambda **_kwargs: app_settings)
     monkeypatch.setattr(startup, "PgMigrationRunner", lambda *_args: MagicMock())
-    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args: MagicMock())
+    monkeypatch.setattr(startup, "TaskRunnerJobManager", lambda *_args, **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "SqlExecutor", lambda **_kwargs: MagicMock())
     monkeypatch.setattr(startup, "ResourceCheckers", lambda **_kwargs: checkers)
     monkeypatch.setattr(startup, "MigrationRunner", build_migrations)

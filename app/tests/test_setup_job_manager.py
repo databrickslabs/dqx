@@ -89,6 +89,31 @@ def test_resolve_rediscovers_tagged_job_before_create(manager: TaskRunnerJobMana
     manager.workspace.jobs.create.assert_not_called()
 
 
+def test_resolve_skips_tagged_job_created_by_another_app() -> None:
+    """Another Studio install's runner is visible to every workspace principal, but is never reused."""
+    workspace = MagicMock(name="WorkspaceClient")
+    other = managed_job(job_id=50)
+    other.creator_user_name = "other-app-sp"
+    own = managed_job(job_id=51)
+    own.creator_user_name = "THIS-APP-SP"
+    workspace.jobs.list.return_value = [other, own]
+    manager = TaskRunnerJobManager(workspace=workspace, app_application_id="this-app-sp")
+
+    assert manager.resolve(None) == ResolvedJob(job_id=51, created=False)
+    workspace.jobs.create.assert_not_called()
+
+
+def test_resolve_creates_its_own_job_when_only_another_apps_job_exists() -> None:
+    workspace = MagicMock(name="WorkspaceClient")
+    other = managed_job(job_id=50)
+    other.creator_user_name = "other-app-sp"
+    workspace.jobs.list.return_value = [other]
+    workspace.jobs.create.return_value.job_id = 52
+    manager = TaskRunnerJobManager(workspace=workspace, app_application_id="this-app-sp")
+
+    assert manager.resolve(None) == ResolvedJob(job_id=52, created=True)
+
+
 def test_resolve_rediscovers_and_upgrades_legacy_managed_job(manager: TaskRunnerJobManager) -> None:
     """An upgraded installation reuses its legacy job and adds the ownership tag."""
     legacy_job = Job(
@@ -132,6 +157,54 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
         "dqx_component": "task_runner",
     }
     assert created["access_control_list"][0].user_name == "admin@example.com"
+
+
+def test_resolve_creates_job_viewable_by_all_users(manager: TaskRunnerJobManager) -> None:
+    """A created runner gives every workspace user view access, never run or manage access."""
+    manager.workspace.jobs.create.return_value.job_id = 44
+
+    manager.resolve(None)
+
+    acl = manager.workspace.jobs.create.call_args.kwargs["access_control_list"]
+    view = [entry for entry in acl if entry.group_name == "users"]
+    assert [entry.permission_level for entry in view] == [JobPermissionLevel.CAN_VIEW]
+
+
+def test_grant_workspace_view_adds_view_for_all_users_additively(manager: TaskRunnerJobManager) -> None:
+    """An existing job gains workspace-wide view access through an additive update."""
+    manager.workspace.jobs.get_permissions.return_value = JobPermissions(access_control_list=[])
+
+    manager.grant_workspace_view(42)
+
+    manager.workspace.jobs.update_permissions.assert_called_once()
+    args, kwargs = manager.workspace.jobs.update_permissions.call_args
+    assert args == ("42",)
+    [entry] = kwargs["access_control_list"]
+    assert entry.group_name == "users"
+    assert entry.permission_level == JobPermissionLevel.CAN_VIEW
+    manager.workspace.jobs.set_permissions.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "existing_level",
+    [JobPermissionLevel.CAN_VIEW, JobPermissionLevel.CAN_MANAGE_RUN, JobPermissionLevel.CAN_MANAGE],
+)
+def test_grant_workspace_view_leaves_existing_view_or_higher_untouched(
+    manager: TaskRunnerJobManager, existing_level: JobPermissionLevel
+) -> None:
+    """A retry does not rewrite the ACL when all users already have a view level or higher."""
+    manager.workspace.jobs.get_permissions.return_value = JobPermissions(
+        access_control_list=[
+            JobAccessControlResponse(
+                group_name="Users",
+                all_permissions=[JobPermission(inherited=False, permission_level=existing_level)],
+            )
+        ]
+    )
+
+    manager.grant_workspace_view(42)
+
+    manager.workspace.jobs.update_permissions.assert_not_called()
 
 
 @pytest.mark.parametrize("permission_level", [JobPermissionLevel.IS_OWNER, JobPermissionLevel.CAN_MANAGE])

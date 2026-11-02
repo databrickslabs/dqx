@@ -468,6 +468,16 @@ export function sqlEditorShape(sqlPredicate: string): "predicate" | "query" {
 }
 
 /**
+ * The DQX check a saved SQL-authored body materializes to: `sql_query` when the
+ * body carries a `sql_query` key, otherwise `sql_expression`. Mirrors the backend
+ * `sql_check_function` helper, which the job's materializer uses, so the Test tab
+ * sends the same decision the saved rule will run with.
+ */
+export function sqlCheckFunctionOf(body: { sql_query?: unknown }): "sql_query" | "sql_expression" {
+  return "sql_query" in body ? "sql_query" : "sql_expression";
+}
+
+/**
  * Whether a hand-written query reads columns of the table under test without
  * ever reading the table itself.
  *

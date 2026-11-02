@@ -28,7 +28,8 @@ import type { SchedulePreflightTableOut } from "@/lib/api";
 import { grantStatementsSql } from "@/lib/setup-grants";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 
-type Entity = "table" | "collection";
+/** *reference* is a rule's joined or read tables, which the task runner reads as its service principal. */
+type Entity = "table" | "collection" | "reference";
 
 interface Props {
   /** Which entity is being scheduled — drives the description wording. */
@@ -120,6 +121,18 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
   const single = entity === "table";
   const tables = preflight.missingGrantTables;
   const statements = [...new Set(tables.flatMap((tbl) => (tbl.missing_grants ?? []).map((g) => g.statement)))];
+  const copy =
+    entity === "reference"
+      ? {
+          title: t("schedule.grantWarning.referenceMissingTitle"),
+          description: t("schedule.grantWarning.referenceMissingDescription"),
+        }
+      : {
+          title: t("schedule.grantWarning.missingGrantsTitle"),
+          description: single
+            ? t("schedule.grantWarning.missingGrantsDescriptionTable")
+            : t("schedule.grantWarning.missingGrantsDescriptionCollection"),
+        };
   return (
     <div
       role="alert"
@@ -128,12 +141,8 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div className="space-y-1">
-          <h4 className="text-sm font-medium">{t("schedule.grantWarning.missingGrantsTitle")}</h4>
-          <p className="text-xs text-amber-800 dark:text-amber-200/90">
-            {single
-              ? t("schedule.grantWarning.missingGrantsDescriptionTable")
-              : t("schedule.grantWarning.missingGrantsDescriptionCollection")}
-          </p>
+          <h4 className="text-sm font-medium">{copy.title}</h4>
+          <p className="text-xs text-amber-800 dark:text-amber-200/90">{copy.description}</p>
         </div>
       </div>
       <div className="space-y-2 pl-6">
@@ -201,6 +210,7 @@ function UnverifiedNotice({
   reason,
 }: Props & { tables: SchedulePreflightTableOut[]; reason: UnverifiedReason }) {
   const { t } = useTranslation();
+  if (entity === "reference") return <ReferenceUnverifiedNotice preflight={preflight} tables={tables} reason={reason} />;
   const single = entity === "table";
   const copy = {
     warehouse: {
@@ -246,9 +256,66 @@ function UnverifiedNotice({
   );
 }
 
+/** Unverified access for a rule's joined tables: advisory, so the same yellow box as
+ *  the other reference notices, and worded about the rule's runs rather than schedules. */
+function ReferenceUnverifiedNotice({
+  preflight,
+  tables,
+  reason,
+}: {
+  preflight: Props["preflight"];
+  tables: SchedulePreflightTableOut[];
+  reason: UnverifiedReason;
+}) {
+  const { t } = useTranslation();
+  const description = {
+    warehouse: t("schedule.grantWarning.referenceUnverifiedWarehouse"),
+    permissions: t("schedule.grantWarning.referenceUnverifiedPermissions"),
+    configuration: t("schedule.grantWarning.referenceUnverifiedConfiguration"),
+  }[reason];
+  return (
+    <div
+      role="status"
+      className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 space-y-3 text-amber-900 dark:text-amber-100"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <div className="space-y-1">
+          <h4 className="text-sm font-medium">{t("schedule.grantWarning.referenceUnverifiedTitle")}</h4>
+          <p className="text-xs text-amber-800 dark:text-amber-200/90">{description}</p>
+          <ul className="list-disc pl-4 text-xs text-amber-800 dark:text-amber-200/90">
+            {tables.map((tbl) => (
+              <li key={tbl.fqn} className="break-all">
+                {tbl.fqn}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div className="pl-6">
+        <Button size="sm" variant="outline" onClick={preflight.retry} disabled={preflight.isFetching}>
+          {t("schedule.grantWarning.retry")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function BlockedNotice({ entity, blockedTables }: { entity: Entity; blockedTables: SchedulePreflightTableOut[] }) {
   const { t } = useTranslation();
   const single = entity === "table";
+  const copy =
+    entity === "reference"
+      ? {
+          title: t("schedule.grantWarning.referenceBlockedTitle"),
+          description: t("schedule.grantWarning.referenceBlockedDescription"),
+        }
+      : {
+          title: t("schedule.grantWarning.title"),
+          description: single
+            ? t("schedule.grantWarning.descriptionTable")
+            : t("schedule.grantWarning.descriptionCollection"),
+        };
 
   return (
     <div
@@ -258,10 +325,8 @@ function BlockedNotice({ entity, blockedTables }: { entity: Entity; blockedTable
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div className="space-y-1">
-          <h4 className="text-sm font-medium">{t("schedule.grantWarning.title")}</h4>
-          <p className="text-xs text-amber-800 dark:text-amber-200/90">
-            {single ? t("schedule.grantWarning.descriptionTable") : t("schedule.grantWarning.descriptionCollection")}
-          </p>
+          <h4 className="text-sm font-medium">{copy.title}</h4>
+          <p className="text-xs text-amber-800 dark:text-amber-200/90">{copy.description}</p>
         </div>
       </div>
 

@@ -1,7 +1,9 @@
 import { hashKey, useQuery, useQueryClient, type QueryClient, type UseMutationOptions } from "@tanstack/react-query";
 import axios, { type AxiosError, type AxiosResponse } from "axios";
 import {
+  preflightReferenceGrants,
   preflightScheduleGrants,
+  useApplyReferenceGrants,
   useApplyScheduleGrants,
   type HTTPValidationError,
   type ScheduleGrantApplyIn,
@@ -50,9 +52,17 @@ export function splitPreflightTables(
   return { blockedTables, missingGrantTables, unverifiedTables, hasGrantIssue };
 }
 
+/** React Query key of a grant preflight: which check ran, and for which inputs. */
+export type GrantPreflightQueryKey = readonly unknown[];
+
 /** React Query key of the preflight for *tableFqns*. */
 export function scheduleGrantPreflightQueryKey(tableFqns: readonly string[]) {
   return ["scheduleGrantPreflight", tableFqns] as const;
+}
+
+/** React Query key of the joined-table preflight for *tableFqns* and a raw SQL rule's text. */
+export function referenceGrantPreflightQueryKey(tableFqns: readonly string[], sqlQuery: string) {
+  return ["referenceGrantPreflight", tableFqns, sqlQuery] as const;
 }
 
 /** Table names to send when running the missing grants: only the tables that list some.
@@ -63,7 +73,7 @@ export function missingGrantTableFqns(missingGrantTables: readonly SchedulePrefl
 
 /** The preflight key a run of the grants was started for, kept on the mutation. */
 export interface ScheduleGrantApplyContext {
-  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>;
+  queryKey: GrantPreflightQueryKey;
 }
 
 /**
@@ -74,7 +84,7 @@ export interface ScheduleGrantApplyContext {
  */
 export function applyScheduleGrantsCallbacks(
   queryClient: QueryClient,
-  queryKey: ReturnType<typeof scheduleGrantPreflightQueryKey>,
+  queryKey: GrantPreflightQueryKey,
 ): UseMutationOptions<
   AxiosResponse<ScheduleGrantApplyOut>,
   AxiosError<HTTPValidationError>,
@@ -111,18 +121,28 @@ export function applyScheduleGrantsFailure(error: unknown): GrantRunOutcome {
  * after the tables change.
  */
 export function scheduleGrantApplyResult(
-  apply: {
-    isSuccess: boolean;
-    isError: boolean;
-    isPending: boolean;
-    data: { data: ScheduleGrantApplyOut } | undefined;
-    error: unknown;
-    context: ScheduleGrantApplyContext | undefined;
-  },
+  apply: GrantApplyState,
   tableFqns: readonly string[],
 ): Pick<ScheduleGrantPreflight, "applyOutcome" | "recheckFailed" | "isApplying"> {
-  const current =
-    !!apply.context && hashKey(apply.context.queryKey) === hashKey(scheduleGrantPreflightQueryKey(tableFqns));
+  return grantApplyResultFor(apply, scheduleGrantPreflightQueryKey(tableFqns));
+}
+
+/** The apply mutation's state, as far as the result view needs it. */
+type GrantApplyState = {
+  isSuccess: boolean;
+  isError: boolean;
+  isPending: boolean;
+  data: { data: ScheduleGrantApplyOut } | undefined;
+  error: unknown;
+  context: ScheduleGrantApplyContext | undefined;
+};
+
+/** Like scheduleGrantApplyResult, for the run started under *queryKey*. */
+export function grantApplyResultFor(
+  apply: GrantApplyState,
+  queryKey: GrantPreflightQueryKey,
+): Pick<ScheduleGrantPreflight, "applyOutcome" | "recheckFailed" | "isApplying"> {
+  const current = !!apply.context && hashKey(apply.context.queryKey) === hashKey(queryKey);
   if (!current) return { applyOutcome: null, recheckFailed: null, isApplying: false };
   let applyOutcome: GrantRunOutcome | null = null;
   if (apply.isSuccess && apply.data) applyOutcome = grantRunOutcome(apply.data.data);
@@ -131,6 +151,29 @@ export function scheduleGrantApplyResult(
     applyOutcome,
     recheckFailed: apply.isSuccess && apply.data ? scheduleGrantsRecheckFailure(apply.data.data) : null,
     isApplying: apply.isPending,
+  };
+}
+
+/** Assemble the preflight view from a query of the check and its apply mutation. */
+function assembleGrantPreflight(
+  queryKey: GrantPreflightQueryKey,
+  query: { data: SchedulePreflightOut | undefined; isFetching: boolean; refetch: () => unknown },
+  apply: GrantApplyState & {
+    reset: () => void;
+    mutate: (vars: { data: ScheduleGrantApplyIn }) => void;
+  },
+): ScheduleGrantPreflight {
+  const split = splitPreflightTables(query.data?.tables ?? []);
+  return {
+    ...split,
+    ...grantApplyResultFor(apply, queryKey),
+    isFetching: query.isFetching,
+    retry: () => {
+      // A fresh check replaces the outcome of the last run.
+      apply.reset();
+      void query.refetch();
+    },
+    applyGrants: () => apply.mutate({ data: { table_fqns: missingGrantTableFqns(split.missingGrantTables) } }),
   };
 }
 
@@ -157,16 +200,29 @@ export function useScheduleGrantPreflight(tableFqns: readonly string[], enabled:
     staleTime: 60_000,
   });
   const apply = useApplyScheduleGrants({ mutation: applyScheduleGrantsCallbacks(queryClient, queryKey) });
-  const split = splitPreflightTables(query.data?.tables ?? []);
-  return {
-    ...split,
-    ...scheduleGrantApplyResult(apply, tableFqns),
-    isFetching: query.isFetching,
-    retry: () => {
-      // A fresh check replaces the outcome of the last run.
-      apply.reset();
-      void query.refetch();
-    },
-    applyGrants: () => apply.mutate({ data: { table_fqns: missingGrantTableFqns(split.missingGrantTables) } }),
-  };
+  return assembleGrantPreflight(queryKey, query, apply);
+}
+
+/**
+ * Grant preflight for the tables a rule joins or reads (*tableFqns*, plus the
+ * FROM / JOIN tables of a raw SQL rule's *sqlQuery*). The task runner runs the
+ * rule as its service principal, so each table needs SELECT for it. The check is
+ * advisory: nothing here blocks saving the rule.
+ */
+export function useReferenceGrantPreflight(
+  tableFqns: readonly string[],
+  sqlQuery: string,
+  enabled: boolean,
+): ScheduleGrantPreflight {
+  const queryClient = useQueryClient();
+  const queryKey = referenceGrantPreflightQueryKey(tableFqns, sqlQuery);
+  const query = useQuery({
+    queryKey,
+    queryFn: async () =>
+      (await preflightReferenceGrants({ table_fqns: [...tableFqns], sql_query: sqlQuery || null })).data,
+    enabled: enabled && (tableFqns.length > 0 || sqlQuery.trim() !== ""),
+    staleTime: 60_000,
+  });
+  const apply = useApplyReferenceGrants({ mutation: applyScheduleGrantsCallbacks(queryClient, queryKey) });
+  return assembleGrantPreflight(queryKey, query, apply);
 }

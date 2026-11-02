@@ -382,6 +382,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
         )
         lifecycle.binder = binder
         configuration_store = SetupConfigurationStore(app_settings)
+        app_sp_id = compute.sp_application_id()
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
             bootstrap=bootstrap,
@@ -389,9 +390,9 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             pg_migrations=PgMigrationRunner(pg_executor),
             configuration=_ConfigurationResolver(conf, configuration_store),
             binder=binder,
-            jobs=TaskRunnerJobManager(sp_ws),
+            jobs=TaskRunnerJobManager(sp_ws, app_application_id=app_sp_id),
             app_settings=app_settings,
-            app_sp_id=compute.sp_application_id(),
+            app_sp_id=app_sp_id,
             overrides=SetupOverrides(app_settings),
         )
         app.state.setup_orchestrator = orchestrator

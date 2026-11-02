@@ -9,6 +9,7 @@ import {
   pruneStaleGroupByRefs,
   queryOmitsInputView,
   rowStrandedByRetype,
+  sqlCheckFunctionOf,
   sqlEditorShape,
 } from "./lowcodeCompile";
 import type { LowcodeColumnRef } from "./lowcodeCompile";
@@ -1042,5 +1043,34 @@ describe("rowStrandedByRetype — retype stranding predicate", () => {
   test("row not referencing the retyped slot is never stranded", () => {
     const r = row({ column_ref: "other", operator: "contains", value: "x" });
     expect(rowStrandedByRetype(r, "code", "NUMERIC", "TEXTUAL", lookup({}))).toBe(false);
+  });
+});
+
+describe("sqlCheckFunctionOf", () => {
+  test("a body with a sql_query key is a dataset-level sql_query", () => {
+    expect(sqlCheckFunctionOf({ sql_query: "SELECT (x) AS condition FROM {{input_view}}" })).toBe("sql_query");
+  });
+
+  test("a bare predicate body is a row-level sql_expression", () => {
+    expect(sqlCheckFunctionOf({ predicate: "{{amount}} > 0" })).toBe("sql_expression");
+  });
+
+  test("a SELECT saved as a predicate key stays a row-level sql_expression", () => {
+    // Only the stored key decides; the text alone never promotes a body to a query.
+    expect(sqlCheckFunctionOf({ predicate: "SELECT (x) AS condition FROM {{input_view}}" })).toBe("sql_expression");
+  });
+
+  test("a loaded cross-table query that does not start with SELECT stays a sql_query", () => {
+    const body = buildSqlBody({
+      sqlPredicate: "WITH t AS (SELECT 1 AS id) SELECT (NOT (c.id IS NULL)) AS condition FROM {{input_view}} c",
+      sqlJoins: [],
+      sqlQueryPassthrough: {},
+    });
+    expect(sqlCheckFunctionOf(body)).toBe("sql_query");
+  });
+
+  test("a bare predicate built by buildSqlBody is a sql_expression", () => {
+    const body = buildSqlBody({ sqlPredicate: "{{amount}} > 0", sqlJoins: [] });
+    expect(sqlCheckFunctionOf(body)).toBe("sql_expression");
   });
 });

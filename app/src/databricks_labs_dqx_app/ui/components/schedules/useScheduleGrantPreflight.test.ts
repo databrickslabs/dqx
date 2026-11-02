@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { MutationObserver, QueryClient } from "@tanstack/react-query";
+import { hashKey, MutationObserver, QueryClient } from "@tanstack/react-query";
 import { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from "axios";
 import {
   applyScheduleGrantsCallbacks,
   applyScheduleGrantsFailure,
   missingGrantTableFqns,
+  grantApplyResultFor,
+  referenceGrantPreflightQueryKey,
   scheduleGrantApplyResult,
   scheduleGrantPreflightQueryKey,
   scheduleGrantsRecheckFailure,
@@ -290,5 +292,30 @@ describe("a run whose re-check failed", () => {
 
     expect(queryClient.getQueryData(queryKey)).toEqual(cached);
     expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("reference (joined-table) grant preflight", () => {
+  it("keys the check by both the joined tables and the raw SQL text", () => {
+    const base = referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 1 FROM c.s.a");
+
+    expect(hashKey(base)).toBe(hashKey(referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 1 FROM c.s.a")));
+    expect(hashKey(base)).not.toBe(hashKey(referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 2 FROM c.s.a")));
+    expect(hashKey(base)).not.toBe(hashKey(scheduleGrantPreflightQueryKey(["c.s.a"])));
+  });
+
+  it("shows a run's outcome only under the check it was started for", () => {
+    const queryKey = referenceGrantPreflightQueryKey(["c.s.a"], "");
+    const apply = {
+      isSuccess: false,
+      isError: true,
+      isPending: false,
+      data: undefined,
+      error: new Error("boom"),
+      context: { queryKey: referenceGrantPreflightQueryKey(["c.s.b"], "") },
+    };
+
+    expect(grantApplyResultFor(apply, queryKey).applyOutcome).toBeNull();
+    expect(grantApplyResultFor({ ...apply, context: { queryKey } }, queryKey).applyOutcome).not.toBeNull();
   });
 });
