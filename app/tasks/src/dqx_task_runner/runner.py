@@ -489,7 +489,7 @@ def _run_profile(
         ],
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-            "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
+            "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled BIGINT, columns_profiled INT, "
             "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
             "status STRING, error_message STRING, "
             "rule_set_fingerprint STRING"
@@ -628,23 +628,12 @@ def _run_dryrun(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
+            "total_rows BIGINT, valid_rows BIGINT, invalid_rows BIGINT, error_rows BIGINT, warning_rows BIGINT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
     )
-    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
-    result_row.writeTo(result_table).append()
-    logger.info(
-        "Dry-run results written to %s (run_id=%s, run_type=%s, errors=%d, warnings=%d)",
-        result_table,
-        run_id,
-        run_type,
-        error_rows,
-        warning_rows,
-    )
-
     if run_type != "preview":
         _write_quarantine_records(
             spark, invalid_df, run_id, source_table_fqn, requesting_user, result_catalog, result_schema
@@ -662,6 +651,19 @@ def _run_dryrun(
             result_catalog=result_catalog,
             result_schema=result_schema,
         )
+
+    # Last: the app drops the run's tmp view once this terminal row appears,
+    # and the quarantine write above re-scans the (lazy) view.
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
+    result_row.writeTo(result_table).append()
+    logger.info(
+        "Dry-run results written to %s (run_id=%s, run_type=%s, errors=%d, warnings=%d)",
+        result_table,
+        run_id,
+        run_type,
+        error_rows,
+        warning_rows,
+    )
 
 
 def _run_dryrun_sql_check(
@@ -752,18 +754,12 @@ def _run_dryrun_sql_check(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
+            "total_rows BIGINT, valid_rows BIGINT, invalid_rows BIGINT, error_rows BIGINT, warning_rows BIGINT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
     )
-    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
-    result_row.writeTo(result_table).append()
-    logger.info(
-        "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
-    )
-
     if run_type != "preview":
         # Persist the full violation set (capped — see ``_SQL_QUARANTINE_MAX_ROWS``)
         # so the run-history UI can offer a true CSV/Excel export instead of
@@ -812,6 +808,14 @@ def _run_dryrun_sql_check(
             result_catalog=result_catalog,
             result_schema=result_schema,
         )
+
+    # Last: the app drops the run's tmp view once this terminal row appears,
+    # and the quarantine write above re-scans the (lazy) view.
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
+    result_row.writeTo(result_table).append()
+    logger.info(
+        "SQL-check %s results written to %s (run_id=%s, violations=%d)", run_type, result_table, run_id, invalid_rows
+    )
 
 
 def _write_quarantine_records(
@@ -1240,22 +1244,12 @@ def _run_scheduled(
         schema=(
             "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
             "view_fqn STRING, checks_json STRING, sample_size INT, "
-            "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
+            "total_rows BIGINT, valid_rows BIGINT, invalid_rows BIGINT, error_rows BIGINT, warning_rows BIGINT, "
             "error_summary_json STRING, sample_invalid_json STRING, "
             "status STRING, error_message STRING, "
             "run_type STRING, rule_set_fingerprint STRING"
         ),
     )
-    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
-    result_row.writeTo(result_table).append()
-    logger.info(
-        "Scheduled run results written to %s (run_id=%s, errors=%d, warnings=%d)",
-        result_table,
-        run_id,
-        error_rows,
-        warning_rows,
-    )
-
     _write_quarantine_records(
         spark,
         invalid_df,
@@ -1277,6 +1271,18 @@ def _run_scheduled(
         user_metadata=_aggregate_rule_labels(checks) or None,
         result_catalog=result_catalog,
         result_schema=result_schema,
+    )
+
+    # Last: the app drops the run's tmp view once this terminal row appears,
+    # and the quarantine write above re-scans the (lazy) view.
+    result_row = _stamp_run_provenance(result_row, job_run_id=job_run_id, duration_seconds=time.time() - start)
+    result_row.writeTo(result_table).append()
+    logger.info(
+        "Scheduled run results written to %s (run_id=%s, errors=%d, warnings=%d)",
+        result_table,
+        run_id,
+        error_rows,
+        warning_rows,
     )
 
 
@@ -1333,7 +1339,7 @@ def _write_error(
             ],
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
-                "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled INT, columns_profiled INT, "
+                "view_fqn STRING, sample_limit INT, sample_kind STRING, rows_profiled BIGINT, columns_profiled INT, "
                 "duration_seconds DOUBLE, summary_json STRING, generated_rules_json STRING, "
                 "status STRING, error_message STRING, "
                 "rule_set_fingerprint STRING"
@@ -1374,7 +1380,7 @@ def _write_error(
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
                 "view_fqn STRING, checks_json STRING, sample_size INT, "
-                "total_rows INT, valid_rows INT, invalid_rows INT, error_rows INT, warning_rows INT, "
+                "total_rows BIGINT, valid_rows BIGINT, invalid_rows BIGINT, error_rows BIGINT, warning_rows BIGINT, "
                 "error_summary_json STRING, sample_invalid_json STRING, "
                 "status STRING, error_message STRING, "
                 "run_type STRING, rule_set_fingerprint STRING"

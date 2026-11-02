@@ -114,10 +114,11 @@ class RegistryService:
     # :meth:`update_draft`). ``approved`` is editable because that is how a
     # revision is authored — the edits stay inert (the frozen vN snapshot
     # keeps serving) until the revision is submitted and re-approved as vN+1.
-    # ``pending_approval`` is intentionally NOT editable (it is under review —
-    # reject or approve it first), and neither is ``rejected``/``deprecated``
-    # (use "Duplicate" / undeprecate respectively).
-    EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved"})
+    # ``pending_approval`` is editable so an approver can correct the rule
+    # (same validation and audit trail as a draft edit) and then approve;
+    # the queue still holds it until approve/reject. ``rejected`` /
+    # ``deprecated`` still aren't editable (use "Duplicate" / undeprecate).
+    EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved", "pending_approval"})
 
     def __init__(
         self,
@@ -754,9 +755,11 @@ class RegistryService:
         suggester corpus) until the revision is submitted and re-approved as
         vN+1 (see :meth:`submit`/:meth:`approve`). The rule therefore reads as
         "Modified since vN" (:meth:`_compute_modified`) while it carries
-        unpublished edits. A ``pending_approval`` rule is under review and
-        cannot be edited (reject or approve it first); ``rejected`` /
-        ``deprecated`` rules aren't editable either (duplicate / undeprecate).
+        unpublished edits. A ``pending_approval`` rule stays in the review
+        queue: an approver can correct it in place (same validation and
+        ``update`` history row as a draft edit) and then approve; authors
+        still cannot change a pending rule from the form. ``rejected`` /
+        ``deprecated`` rules aren't editable (duplicate / undeprecate).
 
         *author_kind* lets an edit-in-place session re-stamp AI provenance
         (e.g. a human accepts an AI-suggested field on an otherwise

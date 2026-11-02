@@ -19,6 +19,10 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string
 
 logger = logging.getLogger(__name__)
 
+# INLINE results are chunked; walking more than this many extra chunks is a
+# cycle or a runaway statement, not a legitimate download.
+_MAX_RESULT_CHUNKS = 10_000
+
 
 class SqlStatementError(RuntimeError):
     """SQL execution failure carrying a validated SQLSTATE diagnostic."""
@@ -734,6 +738,38 @@ class SqlExecutor:
             raise SqlStatementError(f"SQL execution failed: {msg}\nSQL: {sql}", getattr(status, "sql_state", None))
         raise RuntimeError(f"SQL statement ended in unexpected state {state}\nSQL: {sql}")
 
+    def _collect_statement_rows(self, resp: Any) -> list[list[str]]:
+        """Read every INLINE result chunk, not only the first.
+
+        ``execute_statement`` / ``get_statement`` return the first chunk
+        only (INLINE is capped around 25 MiB). Wide JSON from uniqueness
+        quarantine commonly fills that first chunk well before SQL LIMIT,
+        so callers that only read ``result.data_array`` silently drop the
+        rest of the set. Follow ``next_chunk_index`` the same way the
+        complete-result path does.
+        """
+        chunk = resp.result
+        statement_id = resp.statement_id
+        rows: list[list[str]] = []
+        seen: set[int] = set()
+        while chunk is not None:
+            if chunk.data_array:
+                rows.extend(chunk.data_array)
+            next_index = chunk.next_chunk_index
+            if next_index is None or not statement_id:
+                break
+            if next_index in seen or len(seen) >= _MAX_RESULT_CHUNKS:
+                logger.warning(
+                    "Stopping SQL result chunk walk at index %s (statement_id=%s, chunks=%s)",
+                    next_index,
+                    statement_id,
+                    len(seen),
+                )
+                break
+            seen.add(next_index)
+            chunk = self._ws.statement_execution.get_statement_result_chunk_n(statement_id, next_index)
+        return rows
+
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
         """Execute a SQL query and return rows as lists of strings.
 
@@ -767,9 +803,7 @@ class SqlExecutor:
         if state != StatementState.SUCCEEDED:
             raise RuntimeError(f"SQL query ended in unexpected state {state}\nSQL: {sql}")
 
-        if resp.result and resp.result.data_array:
-            return resp.result.data_array
-        return []
+        return self._collect_statement_rows(resp)
 
     def query_dicts(
         self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
@@ -909,14 +943,15 @@ class SqlExecutor:
                 chunk = self._ws.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
                 chunk_index = index
 
-        if not resp.result or not resp.result.data_array:
+        rows = self._collect_statement_rows(resp)
+        if not rows:
             return []
 
         columns = [
             col.name or ""
             for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
         ]
-        return [dict(zip(columns, row)) for row in resp.result.data_array]
+        return [dict(zip(columns, row)) for row in rows]
 
     # ------------------------------------------------------------------
     # CRUD-builder shortcuts (Protocol contract)

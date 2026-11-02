@@ -28,10 +28,7 @@ import { FilterChips } from "@/components/results/FilterChips";
 import { ResultsFacetFilter, type FacetFilterOption } from "@/components/results/ResultsFacetFilters";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
-import {
-  EXPORT_ROW_LIMIT,
-  toFailingRecords,
-} from "@/components/results/failedRecordsExport";
+import { collectFailedRowPages, toFailingRecords } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
@@ -491,9 +488,13 @@ export function MultiTableResultsSection({
   // Single-table invalid samples (E2). The hook is always called (rules of
   // hooks) but disabled until a single table is selected. Per-table row-level
   // fetch via the Task 7 OBO-gated failed-rows endpoint (FQN-keyed).
+  const failedRowsParams = {
+    ...facetQueryParams(filters),
+    include_drafts: draftsParam,
+  };
   const failedRowsQuery = useGetDqResultsFailedRows(
     selectedFqn ?? "",
-    { limit: 200, include_drafts: draftsParam },
+    { ...failedRowsParams, limit: 200 },
     {
       query: {
         enabled: Boolean(selectedFqn),
@@ -520,16 +521,16 @@ export function MultiTableResultsSection({
     },
   );
 
-  // Download fetches the WHOLE undrilled set for the selected table (no facet
-  // filters, high limit) — independent of the 200-capped on-screen
-  // invalid-samples table.
   const fetchAllFailedRows = async () => {
     if (!selectedFqn) return [];
-    const res = await getDqResultsFailedRows(selectedFqn, {
-      limit: EXPORT_ROW_LIMIT,
-      include_drafts: draftsParam,
+    return collectFailedRowPages(async ({ offset, limit }) => {
+      const res = await getDqResultsFailedRows(selectedFqn, {
+        ...failedRowsParams,
+        offset,
+        limit,
+      });
+      return res.data;
     });
-    return toFailingRecords(res.data.rows);
   };
 
   const toRows = (groups: EntityResultsOut["by_dimension"]) =>

@@ -26,6 +26,51 @@ export function toFailingRecords(
  *  `le` on the failed-rows endpoint, so a download can pull the whole set. */
 export const EXPORT_ROW_LIMIT = 100000;
 
+/** Page size for CSV/XLSX downloads. A single warehouse call with a huge
+ *  LIMIT is truncated to the first INLINE chunk (~25 MiB), which for fat
+ *  uniqueness quarantine JSON lands around a few thousand rows even when
+ *  the drilldown total is much larger. Smaller pages keep each response
+ *  inside one chunk; we walk `offset` until `total` is covered. */
+export const FAILED_ROWS_DOWNLOAD_PAGE_SIZE = 1000;
+
+export type FailedRowsPage = {
+  rows?: FailedRowsOut["rows"];
+  total?: number;
+};
+
+/** Fetch every failed row matching the active filters, paging by `total`.
+ *
+ *  Continues even when a page is shorter than `limit` as long as
+ *  `all.length < total` — that is the truncated-INLINE case (first chunk
+ *  of a large LIMIT, `total` still reports the full matching set). */
+export async function collectFailedRowPages(
+  fetchPage: (args: {
+    offset: number;
+    limit: number;
+  }) => Promise<FailedRowsPage>,
+  options?: { pageSize?: number; maxRows?: number },
+): Promise<FailingRecord[]> {
+  const pageSize = options?.pageSize ?? FAILED_ROWS_DOWNLOAD_PAGE_SIZE;
+  const maxRows = options?.maxRows ?? EXPORT_ROW_LIMIT;
+  const all: FailingRecord[] = [];
+  let offset = 0;
+  while (all.length < maxRows) {
+    const limit = Math.min(pageSize, maxRows - all.length);
+    const page = await fetchPage({ offset, limit });
+    const records = toFailingRecords(page.rows);
+    all.push(...records);
+    const total =
+      typeof page.total === "number" && Number.isFinite(page.total)
+        ? page.total
+        : offset + records.length;
+    offset += records.length;
+    if (records.length === 0 || all.length >= total || all.length >= maxRows) {
+      break;
+    }
+  }
+  return all;
+}
+
 /** Source columns for the export/table = union of all rows' row_values keys
  *  AND their failed_columns, in first-seen order. Callers pass only rows; the
  *  columns are derived here.

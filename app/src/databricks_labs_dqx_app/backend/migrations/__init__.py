@@ -285,7 +285,7 @@ _V1_ANALYTICAL_BASELINE = (
     # Which unit ``sample_limit`` speaks. Without it a 10%-of-1M run and a
     # whole-table run both persist sample_limit=0 and cannot be told apart.
     "  sample_kind STRING,"
-    "  rows_profiled INT,"
+    "  rows_profiled BIGINT,"
     "  columns_profiled INT,"
     "  duration_seconds DOUBLE,"
     "  summary_json STRING,"
@@ -312,11 +312,11 @@ _V1_ANALYTICAL_BASELINE = (
     "  view_fqn STRING,"
     "  checks_json STRING,"
     "  sample_size INT,"
-    "  total_rows INT,"
-    "  valid_rows INT,"
-    "  invalid_rows INT,"
-    "  error_rows INT,"
-    "  warning_rows INT,"
+    "  total_rows BIGINT,"
+    "  valid_rows BIGINT,"
+    "  invalid_rows BIGINT,"
+    "  error_rows BIGINT,"
+    "  warning_rows BIGINT,"
     "  error_summary_json STRING,"
     "  sample_invalid_json STRING,"
     "  status STRING NOT NULL,"
@@ -388,6 +388,23 @@ MIGRATIONS: list[Migration] = [
             "  config STRING NOT NULL,"
             "  created_at TIMESTAMP NOT NULL"
             ") CLUSTER BY (run_id)"
+        ),
+    ),
+    Migration(
+        # Row counts of tables over 2^31 rows overflowed INT and failed the
+        # run at the final result write. Type widening keeps existing data
+        # (no rewrite) and re-running ALTER COLUMN on a BIGINT is a no-op.
+        version=3,
+        description="Widen run row counts to BIGINT",
+        sql_template=(
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true');"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ALTER COLUMN total_rows TYPE BIGINT;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ALTER COLUMN valid_rows TYPE BIGINT;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ALTER COLUMN invalid_rows TYPE BIGINT;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ALTER COLUMN error_rows TYPE BIGINT;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs ALTER COLUMN warning_rows TYPE BIGINT;"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true');"
+            f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results ALTER COLUMN rows_profiled TYPE BIGINT"
         ),
     ),
 ]

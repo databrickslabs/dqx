@@ -163,6 +163,7 @@ class TestBaselineOnlyCatalogue:
         assert [(m.version, m.description) for m in MIGRATIONS] == [
             (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)"),
             (2, "Staged run configs too large to inline in job parameters"),
+            (3, "Widen run row counts to BIGINT"),
         ]
 
     def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
@@ -183,7 +184,28 @@ class TestBaselineOnlyCatalogue:
             for stmt in _statements(migration.sql_template):
                 creates = stmt.startswith("CREATE TABLE IF NOT EXISTS")
                 constrains = stmt.startswith("ALTER TABLE") and "ADD CONSTRAINT" in stmt
-                assert creates or constrains, f"v{migration.version} statement is neither: {stmt[:120]}"
+                enables_widening = stmt.startswith("ALTER TABLE") and stmt.endswith(
+                    "SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')"
+                )
+                widens_to_bigint = stmt.startswith("ALTER TABLE") and re.search(r" ALTER COLUMN \w+ TYPE BIGINT$", stmt)
+                assert creates or constrains or enables_widening or widens_to_bigint, (
+                    f"v{migration.version} statement is neither: {stmt[:120]}"
+                )
+
+    def test_row_count_widening_enables_type_widening_before_each_alter(self) -> None:
+        widened: dict[str, list[str]] = {}
+        enabled: set[str] = set()
+        for stmt in _statements(MIGRATIONS[2].sql_template):
+            table = stmt.split()[2].rsplit(".", 1)[-1]
+            if "enableTypeWidening" in stmt:
+                enabled.add(table)
+            else:
+                assert table in enabled, f"{table} is altered before type widening is enabled"
+                widened.setdefault(table, []).append(stmt.split()[5])
+        assert widened == {
+            "dq_validation_runs": ["total_rows", "valid_rows", "invalid_rows", "error_rows", "warning_rows"],
+            "dq_profiling_results": ["rows_profiled"],
+        }
 
     def test_no_table_is_created_by_both_baselines(self) -> None:
         assert not set(ANALYTICAL_TABLE_NAMES) & set(OLTP_TABLE_NAMES)

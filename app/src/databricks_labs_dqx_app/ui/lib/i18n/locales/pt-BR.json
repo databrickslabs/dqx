@@ -64,6 +64,11 @@
           "unknown": "Não foi possível executar estes comandos. Copie-os e execute-os no SQL Editor (na barra lateral do Databricks), ou envie-os ao proprietário do catálogo ou do esquema."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "Não será executado até ser aprovado",
+      "descriptionTable": "As execuções agendadas usam as regras aprovadas mais recentes, e esta tabela ainda não tem nenhuma. Você pode salvar o agendamento agora; ele começará a ser executado quando a tabela for aprovada.",
+      "descriptionCollection": "As execuções agendadas usam a versão aprovada mais recente, e esta coleção ainda não tem nenhuma. Você pode salvar o agendamento agora; ele começará a ser executado quando a coleção for aprovada."
     }
   },
   "lifecycle": {
@@ -2110,7 +2115,8 @@
     "filterDimensions": "Dimensões",
     "filterSeverities": "Severidades",
     "filterOwners": "Proprietários",
-    "filterLabels": "Rótulos"
+    "filterLabels": "Rótulos",
+    "actionEditAndApprove": "Editar e aprovar"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelas",
@@ -3450,6 +3456,8 @@
     "pickCollectionTitle": "Adicionar coleção",
     "pickCollectionDescription": "Escolha a coleção que este agendamento executa. Todas as tabelas dela são executadas no agendamento.",
     "pickCollectionSearch": "Buscar coleções",
-    "pickCollectionEmpty": "Nenhuma coleção corresponde."
+    "pickCollectionEmpty": "Nenhuma coleção corresponde.",
+    "awaitingApproval": "Aguardando aprovação",
+    "awaitingApprovalHint": "Este agendamento começa a ser executado quando tiver uma versão aprovada."
   }
 }

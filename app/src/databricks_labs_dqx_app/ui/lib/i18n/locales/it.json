@@ -64,6 +64,11 @@
           "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo o dello schema."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "Non verrà eseguita finché non viene approvata",
+      "descriptionTable": "Le esecuzioni pianificate usano le ultime regole approvate e questa tabella non ne ha ancora. Puoi salvare la pianificazione ora; inizierà a essere eseguita quando la tabella sarà approvata.",
+      "descriptionCollection": "Le esecuzioni pianificate usano l'ultima versione approvata e questa collection non ne ha ancora. Puoi salvare la pianificazione ora; inizierà a essere eseguita quando la collection sarà approvata."
     }
   },
   "lifecycle": {
@@ -2110,7 +2115,8 @@
     "filterDimensions": "Dimensioni",
     "filterSeverities": "Gravità",
     "filterOwners": "Proprietari",
-    "filterLabels": "Etichette"
+    "filterLabels": "Etichette",
+    "actionEditAndApprove": "Modifica e approva"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle",
@@ -3450,6 +3456,8 @@
     "pickCollectionTitle": "Aggiungi raccolta",
     "pickCollectionDescription": "Scegli la raccolta eseguita da questa pianificazione. Tutte le sue tabelle vengono eseguite secondo la pianificazione.",
     "pickCollectionSearch": "Cerca raccolte",
-    "pickCollectionEmpty": "Nessuna raccolta corrisponde."
+    "pickCollectionEmpty": "Nessuna raccolta corrisponde.",
+    "awaitingApproval": "In attesa di approvazione",
+    "awaitingApprovalHint": "Questa pianificazione inizierà a essere eseguita quando avrà una versione approvata."
   }
 }
