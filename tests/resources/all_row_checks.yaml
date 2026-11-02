@@ -223,6 +223,58 @@
       column: col3
       limit: col2 + 10
 
+# is_greater_than check
+- criticality: error
+  check:
+    function: is_greater_than
+    arguments:
+      column: col2
+      limit: 0
+- criticality: error
+  check:
+    function: is_greater_than
+    arguments:
+      column: col5
+      limit: 2025-01-01
+- criticality: error
+  check:
+    function: is_greater_than
+    arguments:
+      column: col6
+      limit: 2025-01-01 01:00:00
+- criticality: error
+  check:
+    function: is_greater_than
+    arguments:
+      column: col3
+      limit: col2 - 10
+
+# is_less_than check
+- criticality: error
+  check:
+    function: is_less_than
+    arguments:
+      column: col2
+      limit: 10
+- criticality: error
+  check:
+    function: is_less_than
+    arguments:
+      column: col5
+      limit: 2025-03-01
+- criticality: error
+  check:
+    function: is_less_than
+    arguments:
+      column: col6
+      limit: 2025-03-24 01:00:00
+- criticality: error
+  check:
+    function: is_less_than
+    arguments:
+      column: col3
+      limit: col2 + 10
+
 # has_num_decimal_places check
 - criticality: error
   check:
