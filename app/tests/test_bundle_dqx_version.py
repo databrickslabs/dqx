@@ -1,15 +1,16 @@
 """Guard the DQX version wiring in the Studio bundle (``app/databricks.yml``).
 
 Studio deploys one published DQX, the ``dqx_version`` bundle variable: the app installs it from the
-committed lock and the task-runner job installs the ``databricks-labs-dqx==${var.dqx_version}`` pin, in
-DAB and Marketplace deploys alike. Two invariants must hold or a deploy silently ships the wrong DQX:
+committed lock and the task-runner job installs it through the runner wheel's
+``databricks-labs-dqx==${var.dqx_version}`` pin, in DAB and Marketplace deploys alike. Two invariants
+must hold or a deploy silently ships the wrong DQX:
 
 * ``dqx_version`` is a published DQX release that Studio moves to deliberately, in a Studio release and
   together with its Marketplace lock (``make fmt`` does not bump it). It can never be ahead of
   ``src/databricks/labs/dqx/__version__.py``; the Marketplace lock is checked against it in
   ``test_build_marketplace.py``.
-* the task runner's ``dqx_task_dependency`` must stay PINNED to the published registry release
-  ``databricks-labs-dqx==${var.dqx_version}``.
+* the task-runner job's only dependency is the runner wheel, which carries the pin itself; a second
+  DQX entry in the job spec could conflict with it.
 
 Parsed textually rather than via the Databricks CLI / PyYAML so the check needs no extra tooling.
 """
@@ -45,16 +46,16 @@ def test_dqx_version_is_not_ahead_of_the_library_version() -> None:
     assert Version(_dqx_version_default()) <= Version(_library_version())
 
 
-def test_task_runner_dqx_dependency_is_pinned_to_the_registry() -> None:
-    """The job's initial dqx dependency must be the published registry pin derived from the var.
+def test_task_runner_job_depends_only_on_the_pinned_runner_wheel() -> None:
+    """The runner wheel pins DQX, so the job must not list DQX again (the app republishes the same
+    wheel as the only dependency at startup; see test_build_app.py for the pin itself)."""
+    bundle = yaml.safe_load(_BUNDLE.read_text(encoding="utf-8"))
+    environments = [env for job in bundle["resources"]["jobs"].values() for env in job.get("environments", [])]
 
-    It only applies until the app's first start: from then on the app republishes the task-runner
-    wheel as the job's only dependency, and that wheel carries the same pin (see the next test).
-    """
-    text = _BUNDLE.read_text(encoding="utf-8")
-    match = re.search(r"dqx_task_dependency:\s*\n\s*default:\s*\"(?P<dep>[^\"]+)\"", text)
-    assert match, "dqx_task_dependency default not found in app/databricks.yml"
-    assert match.group("dep") == "databricks-labs-dqx==${var.dqx_version}"
+    assert environments
+    for environment in environments:
+        assert environment["spec"]["dependencies"] == ["${var.task_runner_wheel_path}"]
+    assert "dqx_task_dependency" not in bundle["variables"]
 
 
 def test_bundle_artifact_build_uses_the_frozen_app_lock() -> None:

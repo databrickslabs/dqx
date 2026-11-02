@@ -43,7 +43,7 @@ One Databricks Asset Bundle (`databricks.yml`) provisions everything in one `mak
 - **Serverless Job** for Spark work — the *task runner* — invoked for profiler, dry-run, and scheduled runs
 - **Lakebase Postgres project** (`postgres_projects.dqx_studio` + `postgres_roles.app_sp`) for OLTP state
 - **Four UC schemas** derived from a storage prefix (default `dqx_studio`): `<prefix>`, `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_demo`, under a customer-supplied catalog
-- **UC volume** (`<prefix>.wheels`) the app uses to ship DQX wheels into the job
+- **UC volume** (`<prefix>.wheels`) the app uses to ship the task-runner wheel (which pins DQX) into the job
 - **SQL warehouse** — managed by the bundle, or BYO (bring-your-own) if you already have one
 - **Lakeview dashboard** (`dashboards.dqx_quality_overview`) pinned to the app's *Insights* page
 

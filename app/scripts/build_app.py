@@ -45,6 +45,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -85,13 +86,18 @@ def _run(
 ) -> None:
     """Run a subprocess from ``APP_DIR`` with stdio passed through.
 
-    Failures abort the build via ``check=True`` — every stage must
-    succeed for the deploy tree to be considered usable.
+    Failures abort the build — every stage must succeed for the deploy tree
+    to be considered usable. A *quiet* run captures its output and prints it
+    only when the command fails, so the reason is never hidden.
     """
     if not quiet:
         print(f"  $ {' '.join(cmd)}", flush=True)
-    output = subprocess.DEVNULL if quiet else None
-    subprocess.run(cmd, cwd=cwd, check=True, env=env, stdout=output, stderr=output)  # noqa: S603
+    try:
+        subprocess.run(cmd, cwd=cwd, check=True, env=env, capture_output=quiet, text=quiet)  # noqa: S603
+    except subprocess.CalledProcessError as error:
+        if quiet:
+            print(f"{error.stdout or ''}{error.stderr or ''}", file=sys.stderr, end="", flush=True)
+        raise
 
 
 def _node_bin(name: str) -> str:
@@ -371,7 +377,7 @@ def normalize_newlines(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
+def build_task_runner_wheel(output_dir: Path, dqx_version: str, *, isolate_indexes: bool = False) -> Path:
     """Build a reproducible task-runner wheel pinned to the released DQX version.
 
     Used by both the DAB build (into *.build/tasks*) and the Marketplace build. At
@@ -382,6 +388,9 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
     Args:
         output_dir: Directory that will contain the single built wheel.
         dqx_version: Published DQX version required by the wheel.
+        isolate_indexes: Drop extra package-index settings from the build environment.
+            Only the Marketplace build sets this; DAB deploys keep the deployer's
+            package mirror.
 
     Returns:
         Path to the built task-runner wheel.
@@ -413,8 +422,9 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str) -> Path:
         build_env["SOURCE_DATE_EPOCH"] = REPRODUCIBLE_BUILD_EPOCH
         build_env["PYTHONHASHSEED"] = "0"
         build_env["UV_BUILD_CONSTRAINT"] = str(DQX_DIR / ".build-constraints.txt")
-        for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
-            build_env.pop(name, None)
+        if isolate_indexes:
+            for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+                build_env.pop(name, None)
         try:
             _run(
                 ["uv", "build", ".", "--wheel", "--out-dir", str(output_dir)],

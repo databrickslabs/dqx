@@ -39,7 +39,7 @@ An installation selects an existing catalog and a validated prefix. The prefix m
 ```text
 <catalog>
   <prefix>                  main Studio schema
-    wheels                  managed UC volume (app and runner wheels)
+    wheels                  managed UC volume (task-runner wheel)
   <prefix>_tmp              OBO temporary views
   <prefix>_genie            approved Genie views and metadata dimensions
   <prefix>_demo             demo content

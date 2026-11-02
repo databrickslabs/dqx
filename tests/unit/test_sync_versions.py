@@ -51,8 +51,6 @@ _APP_BUNDLE = """\
 variables:
   dqx_version:
     default: "0.15.0"
-  dqx_task_dependency:
-    default: "databricks-labs-dqx==${var.dqx_version}"
 """
 
 # The app + task-runner pyproject deps are UNPINNED (resolved from the checkout / job env spec), so
