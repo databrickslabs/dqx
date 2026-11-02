@@ -71,6 +71,7 @@ API_TS = PKG_DIR / "ui" / "lib" / "api.ts"
 DIST_DIR = PKG_DIR / "__dist__"
 TASKS_DIR = APP_DIR / "tasks"
 REPRODUCIBLE_BUILD_EPOCH = "315532800"
+EXTRA_PACKAGE_INDEX_ENV_VARS = ("UV_INDEX", "UV_EXTRA_INDEX_URL")
 
 
 def _step(msg: str) -> None:
@@ -388,9 +389,10 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str, *, isolate_index
     Args:
         output_dir: Directory that will contain the single built wheel.
         dqx_version: Published DQX version required by the wheel.
-        isolate_indexes: Drop extra package-index settings from the build environment.
-            Only the Marketplace build sets this; DAB deploys keep the deployer's
-            package mirror.
+        isolate_indexes: Drop the extra package-index settings in *EXTRA_PACKAGE_INDEX_ENV_VARS*
+            from the build environment; the primary index (*UV_DEFAULT_INDEX* or
+            *UV_INDEX_URL*) is kept. Only the Marketplace build sets this; DAB deploys
+            keep every index setting.
 
     Returns:
         Path to the built task-runner wheel.
@@ -423,7 +425,7 @@ def build_task_runner_wheel(output_dir: Path, dqx_version: str, *, isolate_index
         build_env["PYTHONHASHSEED"] = "0"
         build_env["UV_BUILD_CONSTRAINT"] = str(DQX_DIR / ".build-constraints.txt")
         if isolate_indexes:
-            for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+            for name in EXTRA_PACKAGE_INDEX_ENV_VARS:
                 build_env.pop(name, None)
         try:
             _run(
