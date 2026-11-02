@@ -3472,6 +3472,41 @@
     },
     {
       "group": null,
+      "name": "test_benchmark_is_greater_than",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_greater_than",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.4323969489996671,
+        "max": 0.7927299560005849,
+        "mean": 0.5718294873334647,
+        "stddev": 0.19348833747328859,
+        "rounds": 3,
+        "median": 0.49036155700014206,
+        "iqr": 0.2702497552506884,
+        "q1": 0.4468881009997858,
+        "q3": 0.7171378562504742,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.4323969489996671,
+        "hd15iqr": 0.7927299560005849,
+        "ops": 1.7487730558687435,
+        "total": 1.715488462000394,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_is_in_distribution",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_distribution",
       "params": null,
@@ -4127,6 +4162,41 @@
         "hd15iqr": 0.23990608399981284,
         "ops": 4.5680303577867765,
         "total": 1.0945636539995576,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
+      "name": "test_benchmark_is_less_than",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_less_than",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 3,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.40689381700030935,
+        "max": 0.8989310450006087,
+        "mean": 0.6920899606669385,
+        "stddev": 0.25520539752689064,
+        "rounds": 3,
+        "median": 0.7704450199998973,
+        "iqr": 0.3690279210002245,
+        "q1": 0.49778161775020635,
+        "q3": 0.8668095387504309,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.40689381700030935,
+        "hd15iqr": 0.8989310450006087,
+        "ops": 1.4448988669570375,
+        "total": 2.0762698820008154,
         "iterations": 1
       }
     },
