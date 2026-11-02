@@ -4565,6 +4565,7 @@ export interface ScheduleOverviewOut {
   next_run_at?: ScheduleOverviewOutNextRunAt;
   last_run_id?: ScheduleOverviewOutLastRunId;
   run_status?: ScheduleOverviewOutRunStatus;
+  awaiting_approval?: boolean;
 }
 
 export interface SchedulePauseIn {
@@ -16653,10 +16654,11 @@ export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof get
 /**
  * Update a registry rule's live definition/tags in place.
 
-Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
-revision path — the edits stay inert behind the frozen vN snapshot until
-the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
-any other status.
+Editable for ``draft`` and ``approved`` rules (the edit-in-place revision
+path — the edits stay inert behind the frozen vN snapshot until the rule
+is re-submitted and re-approved as vN+1) and for ``pending_approval``
+rules so an approver can correct the submitted definition before
+publishing. Rejected with 400 for any other status.
 
 Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
 inherited, or via ownership) unless the caller is an admin/approver.

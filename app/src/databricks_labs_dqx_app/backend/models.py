@@ -2780,6 +2780,7 @@ class ScheduleOverviewOut(BaseModel):
     next_run_at: str | None = None
     last_run_id: str | None = None
     run_status: str | None = None
+    awaiting_approval: bool = False
 
 
 class SchedulePauseIn(BaseModel):

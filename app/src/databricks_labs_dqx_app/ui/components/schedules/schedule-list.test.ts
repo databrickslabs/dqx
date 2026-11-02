@@ -52,6 +52,10 @@ describe("scheduleHealth", () => {
     expect(scheduleHealth(row({ run_status: "skipped" }))).toBe("skipped");
   });
 
+  it("is awaiting approval when the table or collection has no approved version", () => {
+    expect(scheduleHealth(row({ awaiting_approval: true }))).toBe("awaiting");
+  });
+
   it("is active otherwise", () => {
     expect(scheduleHealth(row({ run_status: "success" }))).toBe("active");
     expect(scheduleHealth(row())).toBe("active");

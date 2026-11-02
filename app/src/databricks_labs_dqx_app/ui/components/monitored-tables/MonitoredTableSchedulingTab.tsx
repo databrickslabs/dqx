@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ScheduleEditor, DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
+import { ScheduleApprovalNotice } from "@/components/common/ScheduleApprovalNotice";
 import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
 import { useScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 import {
@@ -188,12 +189,11 @@ export function MonitoredTableSchedulingTab({
         onRemove={handleRemove}
         onValidityChange={(valid) => setCronInvalid(!valid)}
         banner={
-          // Gated on the same condition as the save block, not on cannotManage
-          // alone: the warning describes a schedule the user cannot set up, so
-          // showing it on an unscheduled table alarms people about something
-          // they are not doing.
-          blockForSchedule ? (
-            <ScheduleGrantWarning entity="table" preflight={preflight} />
+          !table.version || blockForSchedule ? (
+            <div className="space-y-3">
+              {!table.version ? <ScheduleApprovalNotice entity="table" /> : null}
+              {blockForSchedule ? <ScheduleGrantWarning entity="table" preflight={preflight} /> : null}
+            </div>
           ) : undefined
         }
         footerNote={t("monitoredTables.scheduleFooterNote")}
