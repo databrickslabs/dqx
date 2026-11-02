@@ -55,9 +55,11 @@ def _structure(mode: str, definition: RuleDefinition, polarity: str | None) -> d
         "mode": mode,
         "polarity": canonical_polarity(polarity),
         "body": body,
-        "slots": [positional[s.name] + ":" + s.cardinality for s in ordered]
-        if mode in _RENAMEABLE_MODES
-        else [s.name + ":" + s.cardinality for s in ordered],
+        "slots": (
+            [positional[s.name] + ":" + s.cardinality for s in ordered]
+            if mode in _RENAMEABLE_MODES
+            else [s.name + ":" + s.cardinality for s in ordered]
+        ),
     }
 
 
