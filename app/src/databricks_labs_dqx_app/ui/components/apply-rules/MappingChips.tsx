@@ -554,7 +554,9 @@ function GroupParamInputs({
                     family={family}
                     disabled={!canEdit}
                     value={raw === "" ? null : raw}
-                    onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next ?? "" })}
+                    onChange={(next) => {
+                      onChange?.(groupIdx, { ...values, [param.name]: next ?? "" });
+                    }}
                   />
                 </span>
               ) : (

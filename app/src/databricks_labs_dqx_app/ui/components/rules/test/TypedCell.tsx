@@ -17,12 +17,14 @@ export function TypedCell({
   value,
   onChange,
   onEnter,
+  disabled,
 }: {
   family: CellFamily;
   value: string | null;
   onChange: (v: string | null) => void;
   /** Called when Enter is pressed in the cell — used to add + focus a new row. */
   onEnter?: () => void;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   const fam = (family || "any").toLowerCase();
@@ -47,6 +49,7 @@ export function TypedCell({
         style={widthStyle}
         placeholder={t("ruleTest.cellNumberPlaceholder")}
         value={value ?? ""}
+        disabled={disabled}
         onChange={(e) => set(e.target.value)}
         onKeyDown={onKeyDown}
       />
@@ -59,6 +62,7 @@ export function TypedCell({
         type="date"
         className={base}
         value={value ?? ""}
+        disabled={disabled}
         onChange={(e) => set(e.target.value)}
         onKeyDown={onKeyDown}
         aria-label={t("ruleTest.cellDateLabel")}
@@ -71,6 +75,7 @@ export function TypedCell({
       <select
         className="appearance-none bg-transparent border-0 outline-none h-8 w-full px-2 text-xs focus:bg-accent/40"
         value={value ?? ""}
+        disabled={disabled}
         onChange={(e) => set(e.target.value)}
         onKeyDown={onKeyDown}
         aria-label={t("ruleTest.cellBooleanLabel")}
@@ -90,6 +95,7 @@ export function TypedCell({
       style={widthStyle}
       placeholder={t("ruleTest.cellTextPlaceholder")}
       value={value ?? ""}
+      disabled={disabled}
       onChange={(e) => set(e.target.value)}
       onKeyDown={onKeyDown}
     />
