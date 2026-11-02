@@ -1350,7 +1350,8 @@ class TestDataContractGeneratorContractLoading(DataContractGeneratorTestBase):
         contract = DataContract()
         delattr(contract, "_data_contract_str")
         with pytest.raises(
-            ParameterError, match=r"datacontract-cli .* isn't supported. Install a version >=1\.2\.0,<2\.0"
+            ParameterError,
+            match=r"datacontract-cli version .* does not support '_data_contract_str'. Install a datacontract-cli version >=1\.2\.0 and <2\.0",
         ):
             generator.generate_rules_from_contract(contract)
 

@@ -195,16 +195,15 @@ class DataContractRulesGenerator(DQEngineBase):
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
-            # A YAML/JSON string has no public accessor: get_data_contract() lints it against the ODCS JSON
-            # schema, which would reject a whole contract that DQX handles entry by entry.
             if not hasattr(contract, "_data_contract_str"):
                 version = package_version("datacontract-cli")
-                raise ParameterError(f"datacontract-cli {version} isn't supported. Install a version >=1.2.0,<2.0.")
+                raise ParameterError(
+                    f"datacontract-cli version {version} does not support '_data_contract_str'. Install a datacontract-cli version >=1.2.0 and <2.0."
+                )
             contract_str = getattr(contract, "_data_contract_str", None)
             if contract_str:
                 return OpenDataContractStandard.model_validate(yaml.safe_load(contract_str))
 
-            # A parsed ODCS model (DataContract(data_contract=...)) is returned as is, without linting
             try:
                 return contract.get_data_contract()
             except DataContractException as e:
