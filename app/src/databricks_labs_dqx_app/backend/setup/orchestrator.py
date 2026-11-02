@@ -972,14 +972,22 @@ class SetupOrchestrator:
                     "application_wheels_missing",
                     "This Studio build is missing the application files the task runner needs.",
                 )
-            await asyncio.to_thread(self.jobs.configure, self.runtime.require_job_id(), wheel_paths)
-            return _passed(SetupStepId.WHEELS, "The task runner has the latest application files.")
         except Exception:
             return _failed(
                 SetupStepId.WHEELS,
                 "wheel_publication_failed",
                 "Studio couldn't upload its application files to the wheels volume.",
             )
+        try:
+            await asyncio.to_thread(self.jobs.configure, self.runtime.require_job_id(), wheel_paths)
+        except Exception:
+            return _failed(
+                SetupStepId.WHEELS,
+                "task_runner_job_update_failed",
+                "Studio couldn't update its task-runner job to use the new application files. "
+                "Check that Studio can manage the task-runner job, then click Verify again.",
+            )
+        return _passed(SetupStepId.WHEELS, "The task runner has the latest application files.")
 
     async def _run_postgres_migrations(self) -> SetupStep:
         try:

@@ -245,6 +245,7 @@ class FakeJobs:
     set_run_as_failure: Exception | None = None
     managed_by_deployment: list[bool] = field(default_factory=list)
     app_permission: str = "confirmed"
+    configure_failure: Exception | None = None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
@@ -268,6 +269,8 @@ class FakeJobs:
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
         self.events.append(f"configure_job:{job_id}:{len(wheel_paths)}")
+        if self.configure_failure is not None:
+            raise self.configure_failure
 
     def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission:
         self.events.append(f"app_permission:{application_id}:{app_application_id}")
@@ -1181,6 +1184,36 @@ async def test_wheel_publication_failure_blocks_migrations() -> None:
     assert report.current_step == SetupStepId.WHEELS
     assert report.step(SetupStepId.WHEELS).state == StepState.FAILED
     assert "raw storage payload" not in report.step(SetupStepId.WHEELS).summary
+    assert "delta" not in harness.events
+
+
+@pytest.mark.asyncio
+async def test_wheel_publication_failure_reports_upload_code() -> None:
+    async def fail_publish() -> list[str]:
+        raise RuntimeError("raw storage payload")
+
+    harness = _harness(publish_wheels=fail_publish)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.WHEELS).code == "wheel_publication_failed"
+    assert not any(event.startswith("configure_job:") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_task_runner_job_update_failure_reports_its_own_code() -> None:
+    harness = _harness()
+    harness.jobs.configure_failure = PermissionError("raw job payload")
+
+    report = await harness.orchestrator.reconcile()
+
+    step = report.step(SetupStepId.WHEELS)
+    assert report.current_step == SetupStepId.WHEELS
+    assert step.state == StepState.FAILED
+    assert step.code == "task_runner_job_update_failed"
+    assert "task-runner job" in step.summary
+    assert "wheels volume" not in step.summary
+    assert "raw job payload" not in step.summary
     assert "delta" not in harness.events
 
 
