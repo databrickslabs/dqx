@@ -409,9 +409,7 @@ def imported_native_params_error(mode: str | None, definition: object) -> str | 
     args = body.get("arguments")
     arg_dict = args if isinstance(args, dict) else {}
     missing = [
-        name
-        for name in sorted(required)
-        if _is_blank_param(values.get(name)) and _is_blank_param(arg_dict.get(name))
+        name for name in sorted(required) if _is_blank_param(values.get(name)) and _is_blank_param(arg_dict.get(name))
     ]
     if not missing:
         return None

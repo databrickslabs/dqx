@@ -77,5 +77,3 @@ def _normalize_slot(slot: RuleSlot) -> dict[str, Any]:
         "family": slot.family,
         "cardinality": slot.cardinality,
     }
-
-
