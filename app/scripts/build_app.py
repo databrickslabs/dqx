@@ -228,7 +228,7 @@ def assemble_deploy_tree(dqx_version: str) -> None:
     committed Marketplace lock, copies ``README.md`` and the package ``src/``
     (minus the ``ui/`` TS source and caches) into ``.build/``, and writes
     ``requirements.txt`` = ``uv``. ``.build/tasks`` is left untouched;
-    ``main`` builds the pinned task-runner wheel there afterwards (see
+    ``main()`` builds the pinned task-runner wheel there afterward (see
     *build_task_runner_wheel*).
     """
     # Sweep stale wheels from the previous (wheel-based) layout so they

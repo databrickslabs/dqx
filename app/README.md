@@ -120,7 +120,7 @@ For DAB, the schemas, wheels volume, and Lakebase Postgres **project** are decla
  │   ├── dq_schedule_configs_history  (OLTP*) schedule change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state
  │   ├── dq_migrations                ← Delta migration version tracker
- │   └── wheels (UC volume)           ← DQX + task-runner wheels uploaded at app startup
+ │   └── wheels (UC volume)           ← task-runner wheel (pins DQX) uploaded at app startup
  ├── <prefix>_tmp                     ← temp views created via OBO for profiler/dryrun jobs
  ├── <prefix>_genie                   ← derived views exposed to Genie
  └── <prefix>_demo                    ← demo source tables

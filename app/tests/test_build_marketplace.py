@@ -272,9 +272,9 @@ def test_app_locks_match_the_app_pyproject_dependencies() -> None:
             normalized(entry["name"], entry.get("extras", []), entry.get("specifier", ""), entry.get("marker", ""))
             for entry in _app_package(lock_path)["metadata"]["requires-dist"]
         }
-        assert locked == declared, (
-            f"{lock_path.relative_to(APP_DIR)} is stale vs app/pyproject.toml (see DEPLOYMENT.md)"
-        )
+        assert (
+            locked == declared
+        ), f"{lock_path.relative_to(APP_DIR)} is stale vs app/pyproject.toml (see DEPLOYMENT.md)"
 
 
 def test_marketplace_template_lock_holds_exactly_its_runtime_closure() -> None:

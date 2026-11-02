@@ -1188,7 +1188,7 @@ async def test_wheel_publication_failure_blocks_migrations() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wheel_publication_failure_reports_upload_code() -> None:
+async def test_wheel_publication_failure_reports_upload_code(caplog: pytest.LogCaptureFixture) -> None:
     async def fail_publish() -> list[str]:
         raise RuntimeError("raw storage payload")
 
@@ -1198,10 +1198,12 @@ async def test_wheel_publication_failure_reports_upload_code() -> None:
 
     assert report.step(SetupStepId.WHEELS).code == "wheel_publication_failed"
     assert not any(event.startswith("configure_job:") for event in harness.events)
+    assert "Wheel publication failed (RuntimeError)" in caplog.text
+    assert "raw storage payload" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_task_runner_job_update_failure_reports_its_own_code() -> None:
+async def test_task_runner_job_update_failure_reports_its_own_code(caplog: pytest.LogCaptureFixture) -> None:
     harness = _harness()
     harness.jobs.configure_failure = PermissionError("raw job payload")
 
@@ -1215,6 +1217,8 @@ async def test_task_runner_job_update_failure_reports_its_own_code() -> None:
     assert "wheels volume" not in step.summary
     assert "raw job payload" not in step.summary
     assert "delta" not in harness.events
+    assert "Task-runner job update failed (PermissionError)" in caplog.text
+    assert "raw job payload" not in caplog.text
 
 
 @pytest.mark.asyncio
