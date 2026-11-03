@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -58,7 +58,6 @@ import {
   Sparkles,
   Wrench,
   X,
-  GripVertical,
 } from "lucide-react";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
@@ -1245,21 +1244,32 @@ function readDndIndex(event: { dataTransfer: DataTransfer }, prefix: string): nu
   return Number.isInteger(index) ? index : null;
 }
 
-function PlaceholderDragHandle({ payload, label }: { payload: string; label: string }) {
-  return (
-    <span
-      draggable
-      title={label}
-      aria-label={label}
-      onDragStart={(event) => {
-        event.dataTransfer.setData("text/plain", payload);
-        event.dataTransfer.effectAllowed = "move";
-      }}
-      className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
-    >
-      <GripVertical className="h-3.5 w-3.5" />
-    </span>
+function reorderItems<T>(items: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return items;
+  const next = items.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+function isInteractiveDragTarget(target: EventTarget | null): boolean {
+  return Boolean(
+    (target as HTMLElement | null)?.closest?.(
+      "input, textarea, button, select, a, [role='combobox'], [role='listbox']",
+    ),
   );
+}
+
+function startPlaceholderDrag(
+  event: DragEvent,
+  payload: string,
+): void {
+  if (isInteractiveDragTarget(event.target)) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer.setData("text/plain", payload);
+  event.dataTransfer.effectAllowed = "move";
 }
 
 function mergeAiDeclaredParameters(
@@ -1304,6 +1314,7 @@ function SlotsPanel({
   addDisabledReason,
   onMoveToParameters,
   onAcceptParameter,
+  colorPlaceholders = false,
 }: {
   value: RuleSlot[];
   onChange: (next: RuleSlot[]) => void;
@@ -1330,6 +1341,8 @@ function SlotsPanel({
   onMoveToParameters?: (index: number) => void;
   /** SQL/low-code: drop a parameter onto this panel to convert it into a column. */
   onAcceptParameter?: (index: number) => void;
+  /** Colour {{tokens}} only when the rule also declares variable parameters. */
+  colorPlaceholders?: boolean;
 }) {
   const { t } = useTranslation();
   const [singleColPopoverOpen, setSingleColPopoverOpen] = useState(false);
@@ -1419,16 +1432,37 @@ function SlotsPanel({
     add();
   };
 
+  const canDrag = Boolean(!disabled && onMoveToParameters);
+  const canDrop = Boolean(!disabled && (onAcceptParameter || onMoveToParameters));
+  const columnTokenClass = colorPlaceholders ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
+
+  const handlePanelDrop = (event: DragEvent, atIndex?: number) => {
+    setDropActive(false);
+    if (disabled) return;
+    const paramIndex = readDndIndex(event, DND_PARAM);
+    if (paramIndex !== null) {
+      if (!onAcceptParameter) return;
+      event.preventDefault();
+      onAcceptParameter(paramIndex);
+      return;
+    }
+    const slotIndex = readDndIndex(event, DND_SLOT);
+    if (slotIndex === null || !onMoveToParameters) return;
+    event.preventDefault();
+    const target = atIndex ?? value.length - 1;
+    onChange(reorderItems(value, slotIndex, target).map((s, idx) => ({ ...s, position: idx })));
+  };
+
   return (
     <div
-      className={cn("space-y-2 rounded-md", dropActive && onAcceptParameter && "ring-1 ring-blue-400/70")}
+      className={cn("space-y-2 rounded-md p-3", dropActive && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
       onDragOver={(event) => {
-        if (!onAcceptParameter || disabled) return;
+        if (!canDrop) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
       }}
       onDragEnter={(event) => {
-        if (!onAcceptParameter || disabled) return;
+        if (!canDrop) return;
         event.preventDefault();
         setDropActive(true);
       }}
@@ -1436,14 +1470,7 @@ function SlotsPanel({
         if (event.currentTarget.contains(event.relatedTarget as Node)) return;
         setDropActive(false);
       }}
-      onDrop={(event) => {
-        setDropActive(false);
-        if (!onAcceptParameter || disabled) return;
-        const index = readDndIndex(event, DND_PARAM);
-        if (index === null) return;
-        event.preventDefault();
-        onAcceptParameter(index);
-      }}
+      onDrop={(event) => handlePanelDrop(event)}
     >
       <SectionHeader
         tooltip={t("rulesRegistry.slotsPanelTooltip")}
@@ -1520,33 +1547,48 @@ function SlotsPanel({
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <p className="text-xs text-muted-foreground py-1">{t("rulesRegistry.slotsPanelEmpty")}</p>
+          <div className="border rounded-md bg-muted/30 px-3 py-6">
+            <p className="text-xs text-muted-foreground">{t("rulesRegistry.slotsPanelEmpty")}</p>
+            {dropActive && onAcceptParameter ? (
+              <p className="text-xs text-blue-700 dark:text-blue-400 mt-2">{t("rulesRegistry.swapParameterToColumn")}</p>
+            ) : null}
+          </div>
         )}
+        {dropActive && value.length > 0 && onAcceptParameter ? (
+          <p className="text-xs text-blue-700 dark:text-blue-400">{t("rulesRegistry.swapParameterToColumn")}</p>
+        ) : null}
         {value.map((slot, i) => {
           const nameOk = SLOT_NAME_PATTERN.test(slot.name);
           const removable = canRemoveSlot(slot, i);
           return (
             <div
               key={i}
-              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[auto_1fr_auto_auto] items-center gap-3"
-            >
-              {!disabled && onMoveToParameters ? (
-                <PlaceholderDragHandle
-                  payload={`${DND_SLOT}${i}`}
-                  label={t("rulesRegistry.moveToParameters")}
-                />
-              ) : (
-                <span />
+              draggable={canDrag}
+              title={canDrag ? t("rulesRegistry.moveToParameters") : undefined}
+              onDragStart={(event) => startPlaceholderDrag(event, `${DND_SLOT}${i}`)}
+              onDragOver={(event) => {
+                if (!canDrop) return;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onDrop={(event) => {
+                event.stopPropagation();
+                handlePanelDrop(event, i);
+              }}
+              className={cn(
+                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
+                canDrag && "cursor-grab active:cursor-grabbing",
               )}
+            >
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {/* Inline rename: click the name and type. Braces stay as
                     chrome so the row still reads as a {{slot}} placeholder. */}
                 {disabled ? (
-                  <code className={cn(COLUMN_PLACEHOLDER_CLASS, "text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
+                  <code className={cn(columnTokenClass, "text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
                 ) : (
                   <label
                     className={cn(
-                      COLUMN_PLACEHOLDER_CLASS,
+                      columnTokenClass,
                       "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
                       !nameOk && "text-destructive",
                     )}
@@ -1624,17 +1666,25 @@ function ParametersPanel({
   disabled,
   takenNames,
   onAcceptSlot,
+  lockStructure = false,
+  colorPlaceholders = false,
 }: {
   value: RuleParameter[];
   onChange: (next: RuleParameter[]) => void;
   disabled?: boolean;
   takenNames: string[];
   onAcceptSlot?: (index: number) => void;
+  /** Built-in DQX checks: names/types come from the function signature. */
+  lockStructure?: boolean;
+  colorPlaceholders?: boolean;
 }) {
   const { t } = useTranslation();
   const [dropActive, setDropActive] = useState(false);
   const typeLabel = (type: RuleParameter["type"]): string =>
     t(`rulesRegistry.parameterType_${type}`, { defaultValue: type });
+  const paramTokenClass = colorPlaceholders ? PARAM_PLACEHOLDER_CLASS : "font-mono";
+  const canDrag = Boolean(!disabled && !lockStructure && onAcceptSlot);
+  const canDrop = Boolean(!disabled && !lockStructure && onAcceptSlot);
 
   const setAt = (i: number, patch: Partial<RuleParameter>) => {
     const next = value.slice();
@@ -1653,16 +1703,31 @@ function ParametersPanel({
     ]);
   const taken = new Set(takenNames);
 
+  const handlePanelDrop = (event: DragEvent, atIndex?: number) => {
+    setDropActive(false);
+    if (!canDrop) return;
+    const slotIndex = readDndIndex(event, DND_SLOT);
+    if (slotIndex !== null) {
+      event.preventDefault();
+      onAcceptSlot?.(slotIndex);
+      return;
+    }
+    const paramIndex = readDndIndex(event, DND_PARAM);
+    if (paramIndex === null) return;
+    event.preventDefault();
+    onChange(reorderItems(value, paramIndex, atIndex ?? value.length - 1));
+  };
+
   return (
     <div
-      className={cn("space-y-2 rounded-md", dropActive && onAcceptSlot && "ring-1 ring-amber-400/70")}
+      className={cn("space-y-2 rounded-md p-3", dropActive && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
       onDragOver={(event) => {
-        if (!onAcceptSlot || disabled) return;
+        if (!canDrop) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
       }}
       onDragEnter={(event) => {
-        if (!onAcceptSlot || disabled) return;
+        if (!canDrop) return;
         event.preventDefault();
         setDropActive(true);
       }}
@@ -1670,19 +1735,12 @@ function ParametersPanel({
         if (event.currentTarget.contains(event.relatedTarget as Node)) return;
         setDropActive(false);
       }}
-      onDrop={(event) => {
-        setDropActive(false);
-        if (!onAcceptSlot || disabled) return;
-        const index = readDndIndex(event, DND_SLOT);
-        if (index === null) return;
-        event.preventDefault();
-        onAcceptSlot(index);
-      }}
+      onDrop={(event) => handlePanelDrop(event)}
     >
       <SectionHeader
         tooltip={t("rulesRegistry.parametersPanelTooltip", { example: "{{limit}}" })}
         action={
-          !disabled ? (
+          !disabled && !lockStructure ? (
             <Button
               type="button"
               variant="outline"
@@ -1699,37 +1757,51 @@ function ParametersPanel({
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <p className="text-xs text-muted-foreground py-1">
-            {t("rulesRegistry.parametersPanelEmpty")}
-          </p>
+          <div className="border rounded-md bg-muted/30 px-3 py-6">
+            <p className="text-xs text-muted-foreground">{t("rulesRegistry.parametersPanelEmpty")}</p>
+            {dropActive && canDrop ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">{t("rulesRegistry.swapColumnToParameter")}</p>
+            ) : null}
+          </div>
         )}
+        {dropActive && value.length > 0 && canDrop ? (
+          <p className="text-xs text-amber-700 dark:text-amber-400">{t("rulesRegistry.swapColumnToParameter")}</p>
+        ) : null}
         {value.map((param, i) => {
           const nameOk =
             SLOT_NAME_PATTERN.test(param.name) &&
             !taken.has(param.name) &&
             value.findIndex((p) => p.name === param.name) === i;
+          const defaultRaw = paramValueToRaw(param.value);
           return (
             <div
               key={i}
-              className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[auto_1fr_auto_auto] items-center gap-3"
-            >
-              {!disabled ? (
-                <PlaceholderDragHandle
-                  payload={`${DND_PARAM}${i}`}
-                  label={t("rulesRegistry.moveToColumns")}
-                />
-              ) : (
-                <span />
+              draggable={canDrag}
+              title={canDrag ? t("rulesRegistry.moveToColumns") : undefined}
+              onDragStart={(event) => startPlaceholderDrag(event, `${DND_PARAM}${i}`)}
+              onDragOver={(event) => {
+                if (!canDrop) return;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onDrop={(event) => {
+                event.stopPropagation();
+                handlePanelDrop(event, i);
+              }}
+              className={cn(
+                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto_auto] items-center gap-3",
+                canDrag && "cursor-grab active:cursor-grabbing",
               )}
+            >
               <div className="flex items-center gap-2 min-w-0">
-                {disabled ? (
-                  <code className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs", !nameOk && "text-destructive")}>
+                {disabled || lockStructure ? (
+                  <code className={cn(paramTokenClass, "text-xs", !nameOk && "text-destructive")}>
                     {`{{${param.name}}}`}
                   </code>
                 ) : (
                   <label
                     className={cn(
-                      PARAM_PLACEHOLDER_CLASS,
+                      paramTokenClass,
                       "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
                       !nameOk && "text-destructive",
                     )}
@@ -1747,7 +1819,7 @@ function ParametersPanel({
                   </label>
                 )}
               </div>
-              {disabled ? (
+              {disabled || lockStructure ? (
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {typeLabel(param.type)}
                 </Badge>
@@ -1778,7 +1850,15 @@ function ParametersPanel({
                   </SelectContent>
                 </Select>
               )}
-              {!disabled && (
+              <Input
+                disabled={disabled}
+                value={defaultRaw}
+                placeholder={t("rulesRegistry.parametersPanelDefaultLabel")}
+                aria-label={t("rulesRegistry.parametersPanelDefaultLabel")}
+                className="h-6 w-24 text-xs"
+                onChange={(event) => setAt(i, { value: parseParamValue(param.type, event.target.value) })}
+              />
+              {!disabled && !lockStructure ? (
                 <button
                   type="button"
                   aria-label={t("rulesRegistry.parametersPanelRemove")}
@@ -1787,6 +1867,8 @@ function ParametersPanel({
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
+              ) : (
+                <span />
               )}
             </div>
           );
@@ -1922,11 +2004,10 @@ function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "ow
 
 function sqlSlotsAndParameters(rule: RegistryRuleOut): { slots: RuleSlot[]; parameters: RuleParameter[] } {
   if (rule.mode !== "sql" && rule.mode !== "lowcode") return { slots: [], parameters: [] };
-  const slots = rule.definition?.slots ?? [];
-  const parameters = rule.definition?.parameters ?? [];
-  if (parameters.length > 0) return { slots, parameters };
-  const partitioned = partitionPlaceholderSlots(slots);
-  return { slots: partitioned.columns, parameters: partitioned.parameters };
+  return {
+    slots: rule.definition?.slots ?? [],
+    parameters: rule.definition?.parameters ?? [],
+  };
 }
 
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
@@ -2425,6 +2506,16 @@ export function RegistryRuleFormDialog({
     () => deriveSlotsAndParameters(selectedFn),
     [selectedFn],
   );
+  const nativeScalarParams = useMemo(
+    () => derivedParams.filter((p) => p.type !== "ref_table" && p.type !== "ref_column"),
+    [derivedParams],
+  );
+  const nativeRefParams = useMemo(
+    () => derivedParams.filter((p) => p.type === "ref_table" || p.type === "ref_column"),
+    [derivedParams],
+  );
+  const colorPlaceholders =
+    (mode === "sql" || mode === "lowcode" ? sqlParameters.length : nativeScalarParams.length) > 0;
 
   // After applying an AI proposal for a dqx_native function, we need the
   // function's real parameter list (derived above, once `checkFunctions`
@@ -2874,7 +2965,7 @@ export function RegistryRuleFormDialog({
       return {
         body: sqlBody as Record<string, unknown>,
         slots: sqlSlots,
-        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: null })),
+        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: p.value ?? null })),
         error_message: trimmedError || undefined,
         filter: trimmedFilter || undefined,
       };
@@ -2893,7 +2984,7 @@ export function RegistryRuleFormDialog({
       return {
         body,
         slots: sqlSlots,
-        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: null })),
+        parameters: sqlParameters.map((p) => ({ name: p.name, type: p.type, value: p.value ?? null })),
         error_message: trimmedError || undefined,
         filter: trimmedFilter || undefined,
       };
@@ -4397,6 +4488,7 @@ export function RegistryRuleFormDialog({
           addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
           onMoveToParameters={mode === "sql" || mode === "lowcode" ? moveSlotToParameters : undefined}
           onAcceptParameter={mode === "sql" || mode === "lowcode" ? moveParameterToColumns : undefined}
+          colorPlaceholders={colorPlaceholders}
         />
       )}
       {(mode === "sql" || mode === "lowcode") && (
@@ -4406,6 +4498,26 @@ export function RegistryRuleFormDialog({
           disabled={readOnly}
           takenNames={sqlSlots.map((s) => s.name)}
           onAcceptSlot={moveSlotToParameters}
+          colorPlaceholders={colorPlaceholders}
+        />
+      )}
+      {mode === "dqx_native" && (
+        <ParametersPanel
+          value={nativeScalarParams.map((p) => ({
+            ...p,
+            value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
+          }))}
+          onChange={(next) => {
+            setParamRawValues((prev) => {
+              const updated = { ...prev };
+              for (const param of next) updated[param.name] = paramValueToRaw(param.value);
+              return updated;
+            });
+          }}
+          disabled={readOnly}
+          takenNames={currentSlots.map((s) => s.name)}
+          lockStructure
+          colorPlaceholders={colorPlaceholders}
         />
       )}
 
@@ -4732,18 +4844,10 @@ export function RegistryRuleFormDialog({
           {/* The selected function is shown (and re-selected) via the
               persistent condition picker chip above — no separate function
               combobox here. Only the function's parameters render below. */}
-          {derivedParams.length > 0 && (
+          {nativeRefParams.length > 0 && (
             <div className="space-y-2 border-l pl-5 ml-3">
-              <Label className="text-xs">{t("rulesRegistry.parametersLabel")}</Label>
-              {/* Item 17: `flex-wrap` + a fixed narrow basis (rather than a
-                  2-column grid stretching each field to half the dialog's
-                  width) — DQX Native parameters are typically short scalars
-                  (thresholds, flags, small literals), so a half-dialog-wide
-                  input just wastes space and reads as over-emphasized.
-                  Reference-table/-column pickers still take the full row —
-                  they genuinely need it. */}
               <div className="flex flex-wrap gap-3">
-                {derivedParams.map((p) => {
+                {nativeRefParams.map((p) => {
                   if (p.type === "ref_table") {
                     return (
                       <div key={p.name} className="space-y-1 w-full">
@@ -4761,68 +4865,20 @@ export function RegistryRuleFormDialog({
                       </div>
                     );
                   }
-                  if (p.type === "ref_column") {
-                    return (
-                      <div key={p.name} className="space-y-1 w-full">
-                        <div className="flex items-center gap-1.5">
-                          <Label className="text-[11px] text-muted-foreground font-mono">
-                            {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
-                          </Label>
-                          <HelpTooltip text={t("rulesRegistry.refColumnsTooltip")} />
-                        </div>
-                        <ReferenceColumnsField
-                          refTableFqn={paramRawValues["ref_table"] ?? ""}
-                          value={paramRawValues[p.name] ?? ""}
-                          onChange={(csv) => setParamRawValues((prev) => ({ ...prev, [p.name]: csv }))}
-                          disabled={readOnly}
-                        />
-                      </div>
-                    );
-                  }
                   return (
-                    <div key={p.name} className="space-y-1 w-40">
-                      <Label className="text-[11px] text-muted-foreground font-mono">
-                        {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
-                      </Label>
-                      {p.type === "boolean" ? (
-                        <Select
-                          value={paramRawValues[p.name] || "false"}
-                          onValueChange={(v) => setParamRawValues((prev) => ({ ...prev, [p.name]: v }))}
-                          disabled={readOnly}
-                        >
-                          <SelectTrigger className="h-7 text-xs w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="true" className="text-xs">true</SelectItem>
-                            <SelectItem value="false" className="text-xs">false</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : p.type === "number" ? (
-                        <Input
-                          className="h-7 w-40 text-xs"
-                          type="number"
-                          value={paramRawValues[p.name] ?? ""}
-                          onChange={(e) => setParamRawValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
-                          disabled={readOnly}
-                        />
-                      ) : (
-                        // Free-text params (string / list / regex) get a
-                        // resizable field (item 17) — a plain `Input` can't be
-                        // resized by the user, but a `Textarea` can (Tailwind's
-                        // base styles make it vertically resizable, and we
-                        // additionally allow horizontal resize since these
-                        // values are often single long tokens like a regex or
-                        // comma-separated list).
-                        <Textarea
-                          className="min-h-7 h-7 w-40 resize py-1 px-2 text-xs font-mono"
-                          rows={1}
-                          placeholder={p.type === "list" ? t("rulesRegistry.listPlaceholder") : undefined}
-                          value={paramRawValues[p.name] ?? ""}
-                          onChange={(e) => setParamRawValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
-                          disabled={readOnly}
-                        />
-                      )}
+                    <div key={p.name} className="space-y-1 w-full">
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-[11px] text-muted-foreground font-mono">
+                          {p.name} {requiredParamNames.has(p.name) && <span className="text-destructive">*</span>}
+                        </Label>
+                        <HelpTooltip text={t("rulesRegistry.refColumnsTooltip")} />
+                      </div>
+                      <ReferenceColumnsField
+                        refTableFqn={paramRawValues["ref_table"] ?? ""}
+                        value={paramRawValues[p.name] ?? ""}
+                        onChange={(csv) => setParamRawValues((prev) => ({ ...prev, [p.name]: csv }))}
+                        disabled={readOnly}
+                      />
                     </div>
                   );
                 })}

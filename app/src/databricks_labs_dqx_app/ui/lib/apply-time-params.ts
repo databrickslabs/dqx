@@ -30,9 +30,7 @@ export function isSqlParamPlaceholderName(name: string): boolean {
 }
 
 export function mappingGroupKey(group: Record<string, string>): string {
-  return JSON.stringify(
-    Object.fromEntries(Object.entries(group).sort(([a], [b]) => a.localeCompare(b))),
-  );
+  return JSON.stringify(Object.fromEntries(Object.entries(group).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
 }
 
 export function displayParameterValue(value: RuleParameterValue | undefined): string {

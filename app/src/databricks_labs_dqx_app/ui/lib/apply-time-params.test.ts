@@ -38,6 +38,7 @@ describe("apply-time parameter validation", () => {
 
   test("mapping group keys distinguish columns of the same rule", () => {
     expect(mappingGroupKey({ column: "email" })).not.toBe(mappingGroupKey({ column: "name" }));
+    expect(mappingGroupKey({ column: "café" })).toBe('{"column":"café"}');
   });
 
   test("SQL max-length tokens are parameters, not columns", () => {

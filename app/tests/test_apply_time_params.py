@@ -80,6 +80,9 @@ class TestOverlayAndSubstitute:
         assert out[mapping_group_key({"column": "email"})]["limit"] == 50
         assert out[mapping_group_key({"column": "name"})]["limit"] == 100
 
+    def test_mapping_group_key_keeps_non_ascii(self):
+        assert mapping_group_key({"column": "café"}) == '{"column":"café"}'
+
 
 _LEGACY_SCALE_DEFINITION = {
     "body": {"predicate": "length(split(CAST({{column}} AS STRING), '[.]')[1]) > {{allowed_scale}}"},
@@ -95,7 +98,11 @@ class TestLegacySqlParameterSlots:
     def test_value_named_sql_slot_is_promoted_to_a_parameter(self):
         from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
 
-        definition = RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION)
+        from databricks_labs_dqx_app.backend.registry_models import promote_sql_parameter_slots
+
+        stored = RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION)
+        assert [s.name for s in stored.slots] == ["column", "allowed_scale"]
+        definition = promote_sql_parameter_slots(stored)
         assert [s.name for s in definition.slots] == ["column"]
         assert [(p.name, p.type, p.value) for p in definition.parameters] == [("allowed_scale", "integer", None)]
 
@@ -126,9 +133,9 @@ class TestLegacySqlParameterSlots:
 
     def test_stale_mapping_key_is_dropped_and_values_rekeyed(self):
         from databricks_labs_dqx_app.backend.apply_time_params import prune_parameter_mapping
-        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, promote_sql_parameter_slots
 
-        definition = RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION)
+        definition = promote_sql_parameter_slots(RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION))
         legacy_group = {"column": "amount", "allowed_scale": "review"}
         mapping, stored = prune_parameter_mapping(
             [legacy_group],
@@ -142,10 +149,14 @@ class TestLegacySqlParameterSlots:
         assert validated[mapping_group_key({"column": "amount"})] == {"allowed_scale": 2}
 
     def test_legacy_sql_rule_renders_with_apply_time_scale(self):
-        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RuleDefinition,
+            RuleVersion,
+            promote_sql_parameter_slots,
+        )
         from databricks_labs_dqx_app.backend.services.materializer import render_check
 
-        definition = RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION)
+        definition = promote_sql_parameter_slots(RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION))
         version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
         check, _ = render_check(
             mode="sql",
@@ -280,13 +291,13 @@ class TestSqlParameterSubstitution:
         assert self._sub("x > {{n}}", _param("n", "integer", 3)) == "x > 3"
 
     def test_strings_dates_and_lists_become_literals(self):
-        assert self._sub("s = {{v}}", _param("v", "string", "it's")) == "s = 'it\\'s'"
+        assert self._sub("s = {{v}}", _param("v", "string", "it's")) == "s = 'it''s'"
         assert self._sub("d >= {{d}}", _param("d", "date", "2026-03-01")) == "d >= DATE'2026-03-01'"
         assert self._sub("s IN ({{a}})", _param("a", "list", ["A", "B"])) == "s IN ('A', 'B')"
         assert self._sub("b = {{f}}", _param("f", "boolean", True)) == "b = TRUE"
 
     def test_author_quoted_tokens_get_escaped_content_only(self):
-        assert self._sub("s rlike '{{r}}'", _param("r", "regex", "^\\d+$")) == "s rlike '^\\\\d+$'"
+        assert self._sub("s rlike '{{r}}'", _param("r", "regex", "^\\d+$")) == "s rlike '^\\d+$'"
         assert self._sub("d >= '{{d}}'", _param("d", "date", "2026-03-01")) == "d >= '2026-03-01'"
 
     def test_unbound_parameters_are_left_for_the_leftover_guard(self):

@@ -225,7 +225,13 @@ function PolarityLine({ registryRule }: { registryRule: RegistryRuleOut }) {
 // Exported so the Marketplace preview can render the read-only rule body
 // directly (function/SQL/low-code + polarity pill) inside its own animated
 // accordion, rather than nesting the toggle-owning RuleLogicDisclosure.
-export function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
+export function RuleLogicBody({
+  registryRule,
+  hideParameters = false,
+}: {
+  registryRule: RegistryRuleOut;
+  hideParameters?: boolean;
+}) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const fn = typeof body.function === "string" ? body.function : undefined;
@@ -273,7 +279,7 @@ export function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut 
       </pre>
       {/* Non-column parameters only apply to DQX-native (function-based)
           checks — SQL/predicate rules have no declared `parameters`. */}
-      {fn && <RuleParametersView parameters={parameters} />}
+      {fn && !hideParameters && <RuleParametersView parameters={parameters} />}
       <PolarityLine registryRule={registryRule} />
     </div>
   );
@@ -323,7 +329,7 @@ export function RuleLogicDisclosure({
         <div className="overflow-hidden">
           <div className="px-3 pb-3 border-t pt-3 space-y-3">
             {registryRule ? (
-              <RuleLogicBody registryRule={registryRule} />
+              <RuleLogicBody registryRule={registryRule} hideParameters />
             ) : (
               <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
             )}

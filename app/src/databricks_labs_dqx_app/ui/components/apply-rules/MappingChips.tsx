@@ -30,6 +30,7 @@ import type {
   RuleSlot,
 } from "@/lib/api";
 import {
+  COLUMN_PLACEHOLDER_CLASS,
   PARAM_PLACEHOLDER_CLASS,
   displayParameterValue,
   isUnboundParameterValue,
@@ -531,7 +532,7 @@ function GroupParamInputs({
       onMouseDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col items-start gap-1">
         {parameters.map((param) => {
           const raw = displayParameterValue(
             (values[param.name] as RuleParameter["value"]) ??
@@ -567,7 +568,7 @@ function GroupParamInputs({
                   value={raw}
                   aria-invalid={invalid || undefined}
                   className={cn(
-                    "h-8 w-28 shrink-0 font-mono text-xs",
+                    "h-6 w-24 shrink-0 text-xs",
                     invalid && "border-destructive",
                   )}
                   onChange={(event) =>
@@ -659,8 +660,9 @@ export function MappingChips({
     ? slots.find((s) => !pendingValues?.[s.name])?.name
     : undefined;
 
+  const slotTokenClass = parameters.length > 0 ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-2 overflow-x-auto", className)}>
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-blue-500 dark:text-blue-400">
           {t("monitoredTables.mappingCheckCount", { count: n })}
@@ -706,7 +708,7 @@ export function MappingChips({
                   mirroring the column-chip side (below). */}
               <div className="flex flex-col items-start gap-1 min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
+                  <span className={cn(slotTokenClass, "text-xs truncate")}>{`{{${slot.name}}}`}</span>
                   <FamilyBadge family={slot.family} />
                 </div>
                 {slotMatchedTags.length > 0 && (
@@ -818,15 +820,17 @@ export function MappingChips({
                           </span>
                         )}
                         {isLastSlot && parameters.length > 0 && (
-                          <GroupParamInputs
-                            group={columnMapping[groupIdx] ?? {}}
-                            groupIdx={groupIdx}
-                            parameters={parameters}
-                            stored={storedParameterValues}
-                            canEdit={canEditParameters}
-                            bindAll={bindAllParameters}
-                            onChange={onParameterValuesChange}
-                          />
+                          <div className="w-full min-w-0">
+                            <GroupParamInputs
+                              group={columnMapping[groupIdx] ?? {}}
+                              groupIdx={groupIdx}
+                              parameters={parameters}
+                              stored={storedParameterValues}
+                              canEdit={canEditParameters}
+                              bindAll={bindAllParameters}
+                              onChange={onParameterValuesChange}
+                            />
+                          </div>
                         )}
                       </span>
                     );

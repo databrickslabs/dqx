@@ -7,12 +7,10 @@ mapping group on the applied rule, and substituted at materialization so
 placeholders never reach ``dq_resolved_rules`` / results.
 """
 
-from __future__ import annotations
-
 import json
+import math
 import re
 from datetime import date
-from typing import Any
 
 from databricks_labs_dqx_app.backend.registry_models import (
     ColumnMappingGroup,
@@ -21,6 +19,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleSlot,
     is_sql_param_placeholder_name,
 )
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 RESERVED_PARAMETER_VALUES_KEY = "parameter_values"
 
@@ -109,15 +108,20 @@ def must_bind_parameter(param: RuleParameter, *, bind_all: bool = False) -> bool
 
 def mapping_group_key(group: ColumnMappingGroup) -> str:
     """Stable identity for one mapping group, matching the frontend ``mappingGroupKey``."""
-    return json.dumps({str(k): str(v) for k, v in group.items()}, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        {str(k): str(v) for k, v in group.items()},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
-def get_applied_parameter_values(user_metadata: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+def get_applied_parameter_values(user_metadata: dict[str, object] | None) -> dict[str, dict[str, object]]:
     """``{mappingGroupKey: {paramName: value}}`` stored on an applied rule."""
     raw = (user_metadata or {}).get(RESERVED_PARAMETER_VALUES_KEY)
     if not isinstance(raw, dict):
         return {}
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[str, dict[str, object]] = {}
     for key, vals in raw.items():
         if not isinstance(key, str) or not isinstance(vals, dict):
             continue
@@ -125,7 +129,7 @@ def get_applied_parameter_values(user_metadata: dict[str, Any] | None) -> dict[s
     return out
 
 
-def parameter_values_for_group(user_metadata: dict[str, Any] | None, group: ColumnMappingGroup) -> dict[str, Any]:
+def parameter_values_for_group(user_metadata: dict[str, object] | None, group: ColumnMappingGroup) -> dict[str, object]:
     return dict(get_applied_parameter_values(user_metadata).get(mapping_group_key(group), {}))
 
 
@@ -145,8 +149,8 @@ def prune_parameter_mapping(
     column_mapping: list[ColumnMappingGroup],
     parameters: list[RuleParameter],
     slots: list[RuleSlot],
-    stored: dict[str, dict[str, Any]],
-) -> tuple[list[ColumnMappingGroup], dict[str, dict[str, Any]]]:
+    stored: dict[str, dict[str, object]],
+) -> tuple[list[ColumnMappingGroup], dict[str, dict[str, object]]]:
     """Drop stale parameter keys from every group, re-keying stored values to the pruned group."""
     pruned_mapping: list[ColumnMappingGroup] = []
     rekeyed = dict(stored)
@@ -162,7 +166,7 @@ def prune_parameter_mapping(
     return pruned_mapping, rekeyed
 
 
-def overlay_parameters(parameters: list[RuleParameter], apply_values: dict[str, Any] | None) -> list[RuleParameter]:
+def overlay_parameters(parameters: list[RuleParameter], apply_values: dict[str, object] | None) -> list[RuleParameter]:
     """Copy definition parameters with apply-time values taking precedence.
 
     Unbound definition values (``None`` / ``{{placeholder}}``) are replaced.
@@ -202,7 +206,7 @@ def _as_number(name: str, value: object) -> float:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise InvalidParameterValueError(f"{name} must be a number.") from exc
-    if number != number or number in (float("inf"), float("-inf")):  # noqa: PLR0124
+    if math.isnan(number) or math.isinf(number):
         raise InvalidParameterValueError(f"{name} must be a number.")
     return number
 
@@ -273,7 +277,7 @@ def coerce_parameter_value(param: RuleParameter, raw: object) -> RuleParamValue:
     return text
 
 
-def _range_pairs(values: dict[str, Any]) -> list[tuple[str, str]]:
+def _range_pairs(values: dict[str, object]) -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     for min_name, max_name in zip(_RANGE_MIN_NAMES, _RANGE_MAX_NAMES, strict=True):
         if min_name in values and max_name in values:
@@ -283,11 +287,11 @@ def _range_pairs(values: dict[str, Any]) -> list[tuple[str, str]]:
 
 def validate_group_parameter_values(
     parameters: list[RuleParameter],
-    raw_values: dict[str, Any] | None,
+    raw_values: dict[str, object] | None,
     *,
     require_all: bool,
     bind_all: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Validate apply-time values for one mapping group.
 
     When *require_all* is true (the group is mapped and will materialize),
@@ -300,7 +304,7 @@ def validate_group_parameter_values(
     raw_values = raw_values or {}
     if not require_all and not raw_values:
         return {}
-    coerced: dict[str, Any] = {}
+    coerced: dict[str, object] = {}
     for param in parameters:
         if param.name not in raw_values:
             if not is_unbound_parameter_value(param.value):
@@ -324,15 +328,15 @@ def validate_group_parameter_values(
 def validate_applied_parameter_values(
     parameters: list[RuleParameter],
     column_mapping: list[ColumnMappingGroup],
-    stored: dict[str, dict[str, Any]] | None,
+    stored: dict[str, dict[str, object]] | None,
     *,
     bind_all: bool = False,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, dict[str, object]]:
     """Validate every mapped group's apply-time parameters. Empty mapping is allowed."""
     stored = stored or {}
     if not parameters:
         return {}
-    validated: dict[str, dict[str, Any]] = {}
+    validated: dict[str, dict[str, object]] = {}
     for group in column_mapping:
         if not group:
             continue
@@ -366,7 +370,7 @@ def validate_parameter_declarations(parameters: list[RuleParameter], slots: list
 
 
 def _escape_sql_string(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("'", "\\'")
+    return escape_sql_string(text)
 
 
 def _sql_number(param: RuleParameter, value: object) -> str:
@@ -413,12 +417,12 @@ def substitute_sql_parameters(text: str, parameters: list[RuleParameter]) -> str
     return text
 
 
-def leftover_placeholders(value: Any, *, ignore: frozenset[str] = _RESERVED_PLACEHOLDERS) -> list[str]:
+def leftover_placeholders(value: object, *, ignore: frozenset[str] = _RESERVED_PLACEHOLDERS) -> list[str]:
     """Return leftover ``{{token}}`` names in a rendered argument tree."""
     found: list[str] = []
     seen: set[str] = set()
 
-    def walk(node: Any) -> None:
+    def walk(node: object) -> None:
         if isinstance(node, dict):
             for item in node.values():
                 walk(item)
@@ -440,7 +444,7 @@ def leftover_placeholders(value: Any, *, ignore: frozenset[str] = _RESERVED_PLAC
     return found
 
 
-def assert_no_placeholders(value: Any) -> None:
+def assert_no_placeholders(value: object) -> None:
     leftover = leftover_placeholders(value)
     if leftover:
         raise UnboundParameterError(
@@ -450,7 +454,7 @@ def assert_no_placeholders(value: Any) -> None:
         )
 
 
-def substitute_param_placeholders(value: Any, values: dict[str, Any]) -> Any:
+def substitute_param_placeholders(value: object, values: dict[str, object]) -> object:
     """Replace ``{{param}}`` tokens inside strings using *values* (JSON-scalar)."""
     if isinstance(value, list):
         return [substitute_param_placeholders(item, values) for item in value]

@@ -158,6 +158,7 @@ import {
   type MonitoredTableDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { mappingGroupKey } from "@/lib/apply-time-params";
 import {
   RESERVED_SEVERITY_KEY,
   buildDesiredApplications,
@@ -2525,12 +2526,8 @@ function ApplyRulesTab({
         [slotName]: colName,
       };
       const prevGroup = target.column_mapping?.[0] ?? {};
-      const prevKey = JSON.stringify(
-        Object.fromEntries(Object.entries(prevGroup).sort(([a], [b]) => a.localeCompare(b))),
-      );
-      const nextKey = JSON.stringify(
-        Object.fromEntries(Object.entries(nextGroup).sort(([a], [b]) => a.localeCompare(b))),
-      );
+      const prevKey = mappingGroupKey(prevGroup);
+      const nextKey = mappingGroupKey(nextGroup);
       const prevParams = { ...(target.parameter_values ?? {}) };
       if (prevKey !== nextKey && prevParams[prevKey]) {
         prevParams[nextKey] = prevParams[prevKey];
@@ -2578,9 +2575,7 @@ function ApplyRulesTab({
       const target = rowsForRule[groupIdx];
       if (!target) return prev;
       const group = target.column_mapping?.[0] ?? {};
-      const key = JSON.stringify(
-        Object.fromEntries(Object.entries(group).sort(([a], [b]) => a.localeCompare(b))),
-      );
+      const key = mappingGroupKey(group);
       return prev.map((r) =>
         r === target
           ? { ...r, parameter_values: { ...(r.parameter_values ?? {}), [key]: values } }

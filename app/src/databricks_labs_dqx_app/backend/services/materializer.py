@@ -680,9 +680,7 @@ class Materializer:
                     pass_threshold=applied.pass_threshold,
                     apply_parameter_values=parameter_values_for_group(applied.user_metadata, group),
                 )
-            except UnboundParameterError:
-                raise
-            except (ValueError, UnsafeSqlQueryError):
+            except (UnboundParameterError, ValueError, UnsafeSqlQueryError):
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
                 continue
             if multi_column:

@@ -27,6 +27,7 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.sdk import WorkspaceClient
 
+from databricks_labs_dqx_app.backend.apply_time_params import validate_parameter_declarations
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -620,6 +621,7 @@ class RegistryService:
                 draft" clone path used when editing a non-draft rule.
         """
         self._validate_definition_sql_safety(mode, definition)
+        validate_parameter_declarations(definition.parameters, definition.slots)
         now = datetime.now(timezone.utc)
         # Default the owner to the creator when none was supplied, so a
         # freshly authored rule always has an accountable owner (mirrors how
@@ -778,6 +780,7 @@ class RegistryService:
             rule.mode = mode
         if definition is not None:
             self._validate_definition_sql_safety(rule.mode, definition)
+            validate_parameter_declarations(definition.parameters, definition.slots)
             rule.definition = definition
         if polarity is not None:
             rule.polarity = polarity
