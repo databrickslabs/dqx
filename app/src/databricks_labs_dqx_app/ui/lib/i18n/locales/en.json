@@ -2255,9 +2255,8 @@
     "appliedRuleCount_other": "{{count}} applied rules",
     "emptyAppliedRules": "No rules applied to this table yet.",
     "emptyAppliedRulesCta": "No rules applied yet",
-    "applyRowFilterLabel": "Population filter (this table)",
-    "applyRowFilterPlaceholder": "Inherit the rule default, or e.g. region = 'EU'",
-    "applyRowFilterHint": "Optional SQL WHERE clause. Leave blank to inherit the rule's default filter.",
+    "applyRowFilterLabel": "Filter",
+    "applyRowFilterPlaceholder": "Optional filter, for example \"{{region}}='EU'\"",
     "pendingApplications": {
       "title_one": "{{count}} rule awaiting approval",
       "title_other": "{{count}} rules awaiting approval",

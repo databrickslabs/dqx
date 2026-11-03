@@ -2255,9 +2255,8 @@
     "appliedRuleCount_other": "{{count}} reglas aplicadas",
     "emptyAppliedRules": "Ninguna regla aplicada a esta tabla todavía.",
     "emptyAppliedRulesCta": "Todavía no hay reglas aplicadas",
-    "applyRowFilterLabel": "Filtro de población (esta tabla)",
-    "applyRowFilterPlaceholder": "Heredar el filtro predeterminado, o p. ej. region = 'EU'",
-    "applyRowFilterHint": "Cláusula SQL WHERE opcional. Déjela en blanco para heredar el filtro predeterminado de la regla.",
+    "applyRowFilterLabel": "Filtro",
+    "applyRowFilterPlaceholder": "Filtro opcional, por ejemplo \"{{region}}='EU'\"",
     "pendingApplications": {
       "title_one": "{{count}} regla pendiente de aprobación",
       "title_other": "{{count}} reglas pendientes de aprobación",

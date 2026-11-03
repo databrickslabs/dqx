@@ -522,11 +522,8 @@ export interface BatchImportRegistryRulesIn {
   source?: string;
   /** When true, rules whose slots are named after concrete columns (data contracts) are created as generic rules: slots renamed to 'column'/'column_N', a generic name, and no column-specific description. See ``slot_renames`` on each result. */
   generalize_slots?: boolean;
-  /**
-   * Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``): an input with no identical rule is matched to the listed rule running the same check with different parameters, and returned in ``reused`` instead of being created.
-   * @maxItems 500
-   */
-  reuse_rule_ids?: string[];
+  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates. */
+  reuse_rule_ids?: { [key: string]: string };
 }
 
 /**
@@ -1184,6 +1181,8 @@ export interface CreateRegistryRuleOut {
   input_index?: CreateRegistryRuleOutInputIndex;
   /** Batch import only: input slot name -> slot name on the returned rule, when they differ (the input was matched to, or created as, a generic rule with different slot names). */
   slot_renames?: CreateRegistryRuleOutSlotRenames;
+  /** Batch import only: imported filter that differs from the returned rule's default. Apply it as the applied rule's row_filter. */
+  row_filter?: string | null;
 }
 
 export interface CreateRoleMappingIn {

@@ -304,15 +304,31 @@ def _identical_active_rule(
     return None
 
 
-def _chosen_rules_by_similarity(svc: RegistryService, rule_ids: list[str]) -> dict[str, RegistryRuleOut]:
-    """``reuse_rule_ids`` keyed by :func:`similar_key`; unknown or inactive rules are skipped."""
-    chosen: dict[str, RegistryRuleOut] = {}
-    for rule_id in dict.fromkeys(rule_ids):
-        rule = svc.get_rule(rule_id)
-        if rule is None or rule.status not in _ACTIVE_STATUS_RANK:
-            continue
-        chosen.setdefault(similar_key(rule.mode, rule.definition, rule.polarity), RegistryRuleOut.from_domain(rule))
+def _chosen_rules_by_index(svc: RegistryService, reuse_rule_ids: dict[int, str]) -> dict[int, RegistryRuleOut]:
+    """``reuse_rule_ids`` keyed by input index; unknown or inactive rules are skipped."""
+    chosen: dict[int, RegistryRuleOut] = {}
+    loaded: dict[str, RegistryRuleOut] = {}
+    for index, rule_id in reuse_rule_ids.items():
+        if rule_id not in loaded:
+            rule = svc.get_rule(rule_id)
+            if rule is None or rule.status not in _ACTIVE_STATUS_RANK:
+                continue
+            loaded[rule_id] = RegistryRuleOut.from_domain(rule)
+        match = loaded.get(rule_id)
+        if match is not None:
+            chosen[index] = match
     return chosen
+
+
+def _imported_row_filter(imported_definition: object, stored_definition: object) -> str | None:
+    """Population filter from the import that the reused rule does not already default to."""
+    imported = getattr(imported_definition, "filter", None)
+    stored = getattr(stored_definition, "filter", None)
+    imported_filter = imported.strip() if isinstance(imported, str) else ""
+    stored_filter = stored.strip() if isinstance(stored, str) else ""
+    if imported_filter and imported_filter != stored_filter:
+        return imported_filter
+    return None
 
 
 @router.post(
@@ -329,7 +345,7 @@ def preview_batch_import_registry_rules(
 
     "Similar" rules run the same check on the same slots but with different
     parameters (e.g. ``trim_strings``); the importer decides whether to reuse
-    one by passing it in ``reuse_rule_ids`` on the batch import.
+    one by passing it in ``reuse_rule_ids`` (input index -> rule id) on the batch import.
     """
     ranked = _ranked_reusable_rules(svc)
     best_by_shape = _best_rule_by_shape(ranked)
@@ -406,7 +422,7 @@ def batch_import_registry_rules(
     # columns collapses to one rule (skip_duplicates only).
     seen_in_batch: dict[str, RegistryRuleOut] = {}
     best_by_shape = _best_rule_by_shape(_ranked_reusable_rules(svc)) if body.skip_duplicates else {}
-    chosen_by_similarity = _chosen_rules_by_similarity(svc, body.reuse_rule_ids)
+    chosen_by_index = _chosen_rules_by_index(svc, body.reuse_rule_ids)
 
     for index, rule_in in enumerate(body.rules):
         try:
@@ -417,13 +433,13 @@ def batch_import_registry_rules(
             if param_error is not None:
                 raise ValueError(param_error)
             key: str | None = None
-            if body.skip_duplicates or chosen_by_similarity:
+            if body.skip_duplicates or chosen_by_index:
                 key = shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)
                 match = seen_in_batch.get(key)
                 if match is None and body.skip_duplicates:
                     match = _identical_active_rule(svc, rule_in, body.generalize_slots, best_by_shape)
                 if match is None:
-                    match = chosen_by_similarity.get(similar_key(rule_in.mode, rule_in.definition, rule_in.polarity))
+                    match = chosen_by_index.get(index)
                 if match is not None:
                     renames = slot_renames_between(rule_in.definition, match.definition)
                     reused.append(
@@ -431,6 +447,7 @@ def batch_import_registry_rules(
                             rule=match,
                             input_index=index,
                             slot_renames={k: v for k, v in renames.items() if k != v},
+                            row_filter=_imported_row_filter(rule_in.definition, match.definition),
                         )
                     )
                     seen_in_batch[key] = match

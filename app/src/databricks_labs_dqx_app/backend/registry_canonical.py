@@ -15,7 +15,8 @@ import functools
 import inspect
 import logging
 from types import MappingProxyType
-from typing import Any
+
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 
 from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
 
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["canonical_parameters", "canonical_polarity", "native_parameter_defaults"]
 
+JsonDefault = bool | int | float | str | None
 _JSON_SCALARS = (bool, int, float, str)
 
 
@@ -31,10 +33,8 @@ def canonical_polarity(polarity: str | None) -> str:
 
 
 @functools.cache
-def native_parameter_defaults(function: str) -> MappingProxyType[str, Any]:
+def native_parameter_defaults(function: str) -> MappingProxyType[str, JsonDefault]:
     """JSON-scalar keyword defaults of the DQX check function *function* (empty when unknown)."""
-    from databricks.labs.dqx.checks_resolver import resolve_check_function  # noqa: PLC0415
-
     try:
         fn = resolve_check_function(function, fail_on_missing=False)
         signature = inspect.signature(fn) if fn is not None else None
@@ -52,14 +52,14 @@ def native_parameter_defaults(function: str) -> MappingProxyType[str, Any]:
     )
 
 
-def _is_default(value: Any, default: Any) -> bool:
+def _is_default(value: object, default: object) -> bool:
     return value is None or (type(value) is type(default) and value == default)
 
 
-def canonical_parameters(mode: str, definition: RuleDefinition) -> list[dict[str, Any]]:
+def canonical_parameters(mode: str, definition: RuleDefinition) -> list[dict[str, object]]:
     """Parameters sorted by name, minus native parameters left at the function's default."""
-    defaults: MappingProxyType[str, Any] = MappingProxyType({})
-    body_arguments: dict[str, Any] = {}
+    defaults: MappingProxyType[str, JsonDefault] = MappingProxyType({})
+    body_arguments: dict[str, object] = {}
     if mode == "dqx_native":
         function = str(definition.body.get("function") or "").strip()
         defaults = native_parameter_defaults(function) if function else defaults
