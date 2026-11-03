@@ -949,15 +949,15 @@ class SqlExecutor:
                 chunk = self._ws.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
                 chunk_index = index
 
-        rows = self._collect_statement_rows(resp)
-        if not rows:
+        collected = self._collect_statement_rows(resp)
+        if not collected:
             return []
 
         columns = [
             col.name or ""
             for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
         ]
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row)) for row in collected]
 
     # ------------------------------------------------------------------
     # CRUD-builder shortcuts (Protocol contract)

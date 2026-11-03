@@ -335,12 +335,12 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         runner, _ = runner_state
         captured: list[str] = []
         runner._sql.execute = lambda s, **_: captured.append(s)  # type: ignore[method-assign]
-        runner._sql.query = lambda s, **_: [  # type: ignore[method-assign]
-            ["total_rows", "bigint"],
-            ["valid_rows", "bigint"],
-            ["invalid_rows", "bigint"],
-            ["error_rows", "bigint"],
-            ["warning_rows", "bigint"],
+        runner._sql.query_dicts = lambda s, **_: [  # type: ignore[method-assign]
+            {"column_name": "total_rows", "full_data_type": "bigint"},
+            {"column_name": "valid_rows", "full_data_type": "bigint"},
+            {"column_name": "invalid_rows", "full_data_type": "bigint"},
+            {"column_name": "error_rows", "full_data_type": "bigint"},
+            {"column_name": "warning_rows", "full_data_type": "bigint"},
         ]
         runner._apply(MIGRATIONS[2])
         assert len(captured) == 1
