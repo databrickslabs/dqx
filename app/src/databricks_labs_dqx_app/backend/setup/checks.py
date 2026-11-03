@@ -1,8 +1,10 @@
 """Deployment-agnostic capability checks for DQX Studio setup resources."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
@@ -17,7 +19,7 @@ from databricks_labs_dqx_app.backend.setup.verification_memo import (
     requirement_fingerprint,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import quote_ident, validate_fqn, validate_identifier
 
 _VOLUME_PRIVILEGES = frozenset({"READ_VOLUME", "WRITE_VOLUME"})
 _CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "CREATE_SCHEMA"})
@@ -26,10 +28,41 @@ _SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "CREATE_TABLE"})
 _SCHEMA_PRIVILEGE_ORDER = ("USE_SCHEMA", "CREATE_TABLE")
 _VOLUME_PRIVILEGE_ORDER = ("READ_VOLUME", "WRITE_VOLUME")
 _RUNNER_OUTPUTS_SCOPE = "task_runner_outputs"
+# Securables grant_runner_access gives the runner itself: Studio's schemas and wheels volume.
+_STUDIO_GRANTED_KINDS = frozenset({"SCHEMA", "VOLUME"})
+# Marks an inspection that left out a statement because a name in it can't be quoted safely.
+_UNSAFE_NAME = "UNSAFE_NAME"
 _ADMIN_VERIFIED_SUFFIX = " was confirmed by an administrator earlier. Click Verify again to re-check it."
 _OVERRIDABLE = (SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE)
-RUN_GRANTS_AS_OWNER = "Ask the owner of these objects to run the following in a SQL editor, then click Verify again:"
+RUN_GRANTS_AS_OWNER = "Studio needs the access below before it can continue."
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RunnerGrants:
+    """Access a task-runner service principal still needs.
+
+    Args:
+        grant_statements: GRANT statements only a person can run, such as catalog usage on the
+            catalog Studio doesn't own.
+        automatic_grants: GRANT statements on Studio's own schemas and wheels volume, which setup
+            grants itself once the task-runner job runs as the service principal.
+        unreadable: Instructions for privileges Studio couldn't read, so couldn't confirm.
+    """
+
+    grant_statements: tuple[str, ...]
+    automatic_grants: tuple[str, ...]
+    unreadable: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RunnerInspection:
+    grant_statements: tuple[str, ...]
+    automatic_grants: tuple[str, ...]
+    unreadable: tuple[str, ...]
+    unreadable_kinds: frozenset[str]
+    scope: str
+    fingerprint: str
 
 
 class ResourceCheckers:
@@ -121,20 +154,27 @@ class ResourceCheckers:
                     missing = frozenset()
             if missing:
                 missing_by_principal.append((principal, missing))
-        if uninspectable:
+        grant_statements, unsafe = _catalog_grant_statements(catalog, missing_by_principal)
+        if uninspectable or unsafe:
             if not missing_by_principal and self._reuses_verification(
                 SetupStepId.UNITY_CATALOG.value, fingerprint, reader_sql, reader_ws
             ):
                 return _passed(SetupStepId.UNITY_CATALOG, "Catalog access" + _ADMIN_VERIFIED_SUFFIX)
+            label = instruction_identifier(catalog)
             return SetupStep(
                 id=SetupStepId.UNITY_CATALOG,
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permission_check_failed",
-                summary="Studio couldn't read the permissions on its catalog.",
-                instructions=(
-                    _read_permissions_instruction("catalog", instruction_identifier(catalog)),
-                    *_catalog_grant_instructions(catalog, missing_by_principal),
+                summary=(
+                    "Studio couldn't read the permissions on its catalog."
+                    if uninspectable
+                    else "Studio couldn't confirm that its users have the permissions they need on the catalog."
                 ),
+                instructions=(
+                    *((_read_permissions_instruction("catalog", label),) if uninspectable else ()),
+                    *((unsafe_name_instruction("catalog", label),) if unsafe else ()),
+                ),
+                grant_statements=grant_statements,
                 actions=_OVERRIDABLE,
             )
         if missing_by_principal:
@@ -143,7 +183,8 @@ class ResourceCheckers:
                 state=StepState.ACTION_REQUIRED,
                 code="catalog_permissions_missing",
                 summary="Studio or its users don't have the permissions they need on the catalog.",
-                instructions=(RUN_GRANTS_AS_OWNER, *_catalog_grant_instructions(catalog, missing_by_principal)),
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=grant_statements,
                 actions=_OVERRIDABLE,
             )
         self._record_verification(SetupStepId.UNITY_CATALOG.value, fingerprint)
@@ -176,64 +217,147 @@ class ResourceCheckers:
                 Schema grants cover current and future outputs; source access
                 remains run-specific. Runner Lakebase access is not checked.
         """
-        app_sp = self._app_sp
-        try:
-            job = self._workspace.jobs.get(job_id)
-            run_as = getattr(getattr(job, "settings", None), "run_as", None)
-            principal = getattr(run_as, "service_principal_name", None)
-        except Exception:
-            # Setup must remain action-required when the Jobs API cannot resolve the identity.
-            principal = None
-        if (
-            not app_sp
-            or not isinstance(principal, str)
-            or not principal.strip()
-            or _has_control_characters(principal)
-            or principal.casefold() == app_sp.casefold()
-        ):
+        principal = self._job_runner_principal(job_id)
+        if principal is None:
             return SetupStep(
                 id=SetupStepId.TASK_RUNNER,
                 state=StepState.ACTION_REQUIRED,
                 code="task_runner_identity_unresolved",
                 summary="Studio couldn't find the service principal that runs its jobs.",
                 instructions=(
-                    "Set the task-runner job to run as a service principal other than the app's own "
-                    "(Jobs > the Studio task runner > Run as), then click Verify again.",
+                    "Click Open task-runner job below. In the Job details panel, change Run as (the identity the "
+                    "job runs under) to a service principal other than the DQX Studio app's own, then click "
+                    "Verify again.",
                 ),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
-        self._grant_runner_access(principal, include_outputs=include_outputs)
+        self.grant_runner_access(principal, include_outputs=include_outputs)
+        inspection = self._inspect_runner_access(
+            principal, reader_ws, reader_sql=reader_sql, include_outputs=include_outputs
+        )
+        grant_statements = inspection.grant_statements
+        if inspection.unreadable:
+            # Studio-managed schemas and the wheels volume must stay inspectable by the app;
+            # only the user-selected catalog may rely on a previous verification.
+            if (
+                not grant_statements
+                and inspection.unreadable_kinds == {"CATALOG"}
+                and self._reuses_verification(inspection.scope, inspection.fingerprint, reader_sql, reader_ws)
+            ):
+                return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permission_check_failed",
+                summary="Studio couldn't read the task runner's permissions.",
+                instructions=inspection.unreadable,
+                grant_statements=grant_statements,
+                actions=_OVERRIDABLE,
+            )
+        if grant_statements:
+            return SetupStep(
+                id=SetupStepId.TASK_RUNNER,
+                state=StepState.ACTION_REQUIRED,
+                code="task_runner_permissions_missing",
+                summary="The task runner doesn't have all the permissions it needs to run checks.",
+                instructions=(RUN_GRANTS_AS_OWNER,),
+                grant_statements=grant_statements,
+                actions=_OVERRIDABLE,
+            )
+        self._record_verification(inspection.scope, inspection.fingerprint)
+        return _passed(SetupStepId.TASK_RUNNER, "The task runner has the access it needs.")
+
+    def runner_grants(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+    ) -> RunnerGrants:
+        """Report the GRANT statements service principal *principal* still needs to run Studio's checks.
+
+        Covers everything the task runner needs once setup finishes (including the main
+        schema's data access), split into what only a person can grant and what setup grants
+        itself on Studio's own objects once the job runs as the service principal. Only
+        inspects: nothing is granted, and the task-runner job isn't consulted, so a service
+        principal can be checked before the job runs as it.
+
+        Args:
+            principal: Application ID of the service principal to check.
+            reader_ws: Setup administrator's OBO client for read-only ownership inspection.
+            reader_sql: Administrator's SQL executor for SHOW GRANTS.
+
+        Raises:
+            InvalidParameterError: If *principal* is empty, unprintable or the app's own.
+        """
+        checked = self._usable_runner_principal(principal)
+        if checked is None:
+            raise InvalidParameterError("The task runner needs a service principal other than the app's own.")
+        inspection = self._inspect_runner_access(checked, reader_ws, reader_sql=reader_sql, include_outputs=True)
+        automatic = set(inspection.automatic_grants)
+        return RunnerGrants(
+            grant_statements=tuple(item for item in inspection.grant_statements if item not in automatic),
+            automatic_grants=inspection.automatic_grants,
+            unreadable=inspection.unreadable,
+        )
+
+    def _job_runner_principal(self, job_id: int) -> str | None:
+        """The service principal task-runner job *job_id* runs as, when the runner may use it."""
+        try:
+            job = self._workspace.jobs.get(job_id)
+            run_as = getattr(getattr(job, "settings", None), "run_as", None)
+            principal = getattr(run_as, "service_principal_name", None)
+        except Exception:
+            # Setup must remain action-required when the Jobs API cannot resolve the identity.
+            return None
+        return self._usable_runner_principal(principal) if isinstance(principal, str) else None
+
+    def _usable_runner_principal(self, principal: str) -> str | None:
+        app_sp = self._app_sp
+        if (
+            not app_sp
+            or not principal.strip()
+            or _has_control_characters(principal)
+            or principal.casefold() == app_sp.casefold()
+        ):
+            return None
+        return principal
+
+    def _inspect_runner_access(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None,
+        *,
+        reader_sql: SqlExecutor | None,
+        include_outputs: bool,
+    ) -> _RunnerInspection:
         volume = self._resources.volume
-        catalog = instruction_identifier(volume.catalog)
-        schema = f"{catalog}.{instruction_identifier(volume.schema)}"
-        quoted_volume = f"{schema}.{instruction_identifier(volume.volume)}"
-        quoted_principal = instruction_identifier(principal)
+        catalog = (volume.catalog,)
+        schema = (volume.catalog, volume.schema)
+        wheels = (volume.catalog, volume.schema, volume.volume)
+        tmp = (volume.catalog, self._resources.tmp_schema)
         requirements = [
             ("CATALOG", volume.catalog, "USE_CATALOG", "USE_CATALOG", catalog),
             ("SCHEMA", self._main_schema_full_name(), "USE_SCHEMA", "USE_SCHEMA", schema),
             *(
-                (
-                    "SCHEMA",
-                    f"{volume.catalog}.{self._resources.tmp_schema}",
-                    privilege,
-                    grant,
-                    f"{catalog}.{instruction_identifier(self._resources.tmp_schema)}",
-                )
+                ("SCHEMA", f"{volume.catalog}.{self._resources.tmp_schema}", privilege, grant, tmp)
                 for privilege, grant in (("USE_SCHEMA", "USE_SCHEMA"), ("SELECT", "SELECT"))
             ),
-            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ_VOLUME", quoted_volume),
+            ("VOLUME", self._volume_full_name(), "READ_VOLUME", "READ_VOLUME", wheels),
         ]
         if include_outputs:
             requirements.extend(
                 ("SCHEMA", self._main_schema_full_name(), privilege, privilege, schema)
                 for privilege in ("SELECT", "MODIFY")
             )
-        instructions: list[str] = []
+        grant_statements: list[str] = []
+        automatic_grants: list[str] = []
         unknown: list[str] = []
         unknown_kinds: set[str] = set()
         inspected: dict[tuple[str, str], frozenset[str] | None] = {}
         inspector = GrantInspector(self._workspace, reader_sql)
-        for kind, full_name, privilege, grant, quoted_name in requirements:
+        for kind, full_name, privilege, grant, parts in requirements:
+            quoted_name = ".".join(instruction_identifier(part) for part in parts)
             key = (kind, full_name)
             if key not in inspected:
                 required = frozenset(item[2] for item in requirements if item[:2] == key)
@@ -253,7 +377,17 @@ class ResourceCheckers:
                 if guidance not in unknown:
                     unknown.append(guidance)
                 continue
-            instructions.append(f"GRANT {grant} ON {kind} {quoted_name} TO {quoted_principal};")
+            statement = grant_statement(grant, kind, parts, principal)
+            if statement is None:
+                # Never reused from an earlier verification: the access can't be granted from here.
+                unknown_kinds.add(_UNSAFE_NAME)
+                guidance = unsafe_name_instruction(kind.lower(), quoted_name)
+                if guidance not in unknown:
+                    unknown.append(guidance)
+                continue
+            grant_statements.append(statement)
+            if kind in _STUDIO_GRANTED_KINDS:
+                automatic_grants.append(statement)
         scope = _RUNNER_OUTPUTS_SCOPE if include_outputs else SetupStepId.TASK_RUNNER.value
         fingerprint = requirement_fingerprint(
             scope,
@@ -263,34 +397,14 @@ class ResourceCheckers:
                 for kind, full_name, privilege, *_ in requirements
             ),
         )
-        if unknown:
-            # Studio-managed schemas and the wheels volume must stay inspectable by the app;
-            # only the user-selected catalog may rely on a previous verification.
-            if (
-                not instructions
-                and unknown_kinds == {"CATALOG"}
-                and self._reuses_verification(scope, fingerprint, reader_sql, reader_ws)
-            ):
-                return _passed(SetupStepId.TASK_RUNNER, "Task-runner access" + _ADMIN_VERIFIED_SUFFIX)
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_permission_check_failed",
-                summary="Studio couldn't read the task runner's permissions.",
-                instructions=(*unknown, *instructions),
-                actions=_OVERRIDABLE,
-            )
-        if instructions:
-            return SetupStep(
-                id=SetupStepId.TASK_RUNNER,
-                state=StepState.ACTION_REQUIRED,
-                code="task_runner_permissions_missing",
-                summary="The task runner doesn't have all the permissions it needs to run checks.",
-                instructions=(RUN_GRANTS_AS_OWNER, *instructions),
-                actions=_OVERRIDABLE,
-            )
-        self._record_verification(scope, fingerprint)
-        return _passed(SetupStepId.TASK_RUNNER, "The task runner has the access it needs.")
+        return _RunnerInspection(
+            grant_statements=tuple(grant_statements),
+            automatic_grants=tuple(automatic_grants),
+            unreadable=tuple(unknown),
+            unreadable_kinds=frozenset(unknown_kinds),
+            scope=scope,
+            fingerprint=fingerprint,
+        )
 
     def _reuses_verification(
         self,
@@ -417,30 +531,35 @@ class ResourceCheckers:
             code="storage_collision",
             summary="A schema with the name Studio wants to use already exists, and Studio doesn't manage it.",
             instructions=tuple(
-                f"Schema {catalog}.{instruction_identifier(schema)} already exists. Choose a different storage "
-                "prefix, or rename or drop that schema, then click Verify again."
+                f"Studio wants to create schema {catalog}.{instruction_identifier(schema)}, but a schema with that "
+                "name already exists and wasn't created by Studio. Click Change on the Studio configuration step "
+                "above and pick a different storage prefix. If you own that schema and no longer need it, you can "
+                "instead rename or delete it in Catalog Explorer. Deleting it deletes everything in it. Then click "
+                "Verify again."
                 for schema in schemas
             ),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
     def _schema_permissions_step(self, incomplete: list[tuple[str, frozenset[str]]], app_sp: str) -> SetupStep:
-        catalog = instruction_identifier(self._resources.volume.catalog)
-        principal = instruction_identifier(app_sp)
+        catalog = self._resources.volume.catalog
+        statements: list[str] = []
+        instructions = [RUN_GRANTS_AS_OWNER]
+        for schema, missing in incomplete:
+            names = ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
+            statement = grant_statement(names, "SCHEMA", (catalog, schema), app_sp)
+            if statement is None:
+                label = f"{instruction_identifier(catalog)}.{instruction_identifier(schema)}"
+                instructions.append(unsafe_name_instruction("schema", label))
+            else:
+                statements.append(statement)
         return SetupStep(
             id=SetupStepId.STORAGE,
             state=StepState.ACTION_REQUIRED,
             code="storage_permissions_missing",
             summary="Studio needs more permissions on one of its schemas.",
-            instructions=(
-                RUN_GRANTS_AS_OWNER,
-                *(
-                    "GRANT "
-                    + ", ".join(name for name in _SCHEMA_PRIVILEGE_ORDER if name in missing)
-                    + f" ON SCHEMA {catalog}.{instruction_identifier(schema)} TO {principal};"
-                    for schema, missing in incomplete
-                ),
-            ),
+            instructions=tuple(instructions),
+            grant_statements=tuple(statements),
             actions=(SetupActionId.VERIFY_AGAIN,),
         )
 
@@ -478,25 +597,22 @@ class ResourceCheckers:
         missing = [name for name in _VOLUME_PRIVILEGE_ORDER if not has_privilege(privileges, name)]
         if missing and not self._is_owner("VOLUME", full_name, app_sp):
             volume = self._resources.volume
-            quoted_volume = ".".join(
-                instruction_identifier(part) for part in (volume.catalog, volume.schema, volume.volume)
-            )
+            parts = (volume.catalog, volume.schema, volume.volume)
+            statement = grant_statement(", ".join(missing), "VOLUME", parts, app_sp)
+            label = ".".join(instruction_identifier(part) for part in parts)
             return SetupStep(
                 id=SetupStepId.STORAGE,
                 state=StepState.ACTION_REQUIRED,
                 code="volume_permissions_missing",
                 summary="Studio needs permission to read and write its wheels volume.",
-                instructions=(
-                    RUN_GRANTS_AS_OWNER,
-                    f"GRANT {', '.join(p for p in missing)} ON VOLUME {quoted_volume} "
-                    f"TO {instruction_identifier(app_sp)};",
-                ),
+                instructions=(RUN_GRANTS_AS_OWNER if statement else unsafe_name_instruction("volume", label),),
+                grant_statements=(statement,) if statement else (),
                 actions=(SetupActionId.VERIFY_AGAIN,),
             )
         return _passed(SetupStepId.STORAGE, "Studio's schemas and wheels volume are ready.")
 
-    def _grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
-        """Best-effort least-privilege grants for the task runner on Studio-managed objects.
+    def grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
+        """Best-effort least-privilege grants, as the app, for the task runner on Studio-managed objects.
 
         Grants USE SCHEMA and SELECT on the temporary-view schema (the runner reads OBO
         temporary views through that schema-level SELECT, not per-view grants). Never grants
@@ -652,19 +768,26 @@ class ResourceCheckers:
         return f"{volume.catalog}.{volume.schema}"
 
 
-def _catalog_grant_instructions(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[str, ...]:
-    quoted_catalog = instruction_identifier(catalog)
-    return tuple(
-        f"GRANT {', '.join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)} "
-        f"ON CATALOG {quoted_catalog} TO {instruction_identifier(principal)};"
-        for principal, privileges in missing
-    )
+def _catalog_grant_statements(catalog: str, missing: list[tuple[str, frozenset[str]]]) -> tuple[tuple[str, ...], bool]:
+    """Return the catalog GRANT statements for *missing*, and whether any was left out as unsafe."""
+    statements: list[str] = []
+    unsafe = False
+    for principal, privileges in missing:
+        names = ", ".join(name for name in _CATALOG_PRIVILEGE_ORDER if name in privileges)
+        statement = grant_statement(names, "CATALOG", (catalog,), principal)
+        if statement is None:
+            unsafe = True
+        else:
+            statements.append(statement)
+    return tuple(statements), unsafe
 
 
 def _read_permissions_instruction(kind: str, quoted_name: str) -> str:
     return (
-        f"Sign in as the owner of {kind} {quoted_name} or a metastore admin, then click Verify again "
-        "so Studio can read its permissions. You also need access to Studio's SQL warehouse."
+        f"Studio couldn't check who has access to {kind} {quoted_name}, because your account isn't allowed to "
+        f"view its permissions. Ask the {kind}'s owner (shown on its page under Catalog in the Databricks "
+        "sidebar) or a Databricks admin to open this page and click Verify again. They also need permission to "
+        "use Studio's SQL warehouse, the Databricks compute that runs Studio's queries."
     )
 
 
@@ -715,6 +838,56 @@ def _identity_required(step_id: SetupStepId) -> SetupStep:
 
 def _validated_identifier(value: str) -> str:
     return validate_identifier(value)
+
+
+def grant_statement(privileges: str, kind: str, securable: Sequence[str], principal: str) -> str | None:
+    """Build a GRANT statement that can be run, from validated and quoted names.
+
+    Each part of *securable* and *principal* must pass *validate_identifier*, the per-part
+    check behind *validate_fqn* (a three-part name also passes *validate_fqn* itself), and
+    must not hold any control character, then is quoted with *quote_ident*, part by part as
+    *quote_fqn* does. A name with a backtick, a backslash or a control character can't be
+    quoted safely, so no statement is built for it.
+
+    Args:
+        privileges: Comma-separated privilege names, from Studio's own constants.
+        kind: Securable type in GRANT syntax, such as *CATALOG* or *MODEL SERVICE*.
+        securable: The securable's name parts, such as (catalog, schema).
+        principal: Principal to grant to.
+
+    Returns:
+        The statement, ending with a semicolon, or None when a name can't be quoted safely.
+    """
+    names = (*securable, principal)
+    try:
+        for name in names:
+            validate_identifier(name)
+        if len(securable) == 3:
+            validate_fqn(".".join(securable))
+    except ValueError:
+        return None
+    # validate_identifier allows C1 control characters and a trailing newline.
+    if not securable or any(_has_control_characters(name) for name in names):
+        return None
+    quoted = ".".join(quote_ident(part) for part in securable)
+    return f"GRANT {privileges} ON {kind} {quoted} TO {quote_ident(principal)};"
+
+
+def unsafe_name_instruction(kind: str, label: str) -> str:
+    """Explain a grant Studio left out because a name in it can't be quoted safely.
+
+    Args:
+        kind: Securable type in plain words, such as *catalog*.
+        label: The securable, as *instruction_identifier* shows it.
+
+    Returns:
+        Prose telling the administrator to give the access by hand.
+    """
+    return (
+        f"Studio can't write a safe command to give access to {kind} {label}, because a name in it contains "
+        "characters Studio won't put in SQL (a backtick, a backslash or an invisible character). Give the access "
+        f"by hand on the {kind}'s Permissions tab (under Catalog in the Databricks sidebar), then click Verify again."
+    )
 
 
 def instruction_identifier(value: str) -> str:

@@ -389,6 +389,36 @@ class TestGenieReprovision:
         assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES)
 
 
+class TestGenieReprovisionTagging:
+    """The lazy (post-reset) Genie path must tag the space it ensures, like startup does."""
+
+    @pytest.mark.asyncio
+    async def test_reset_reprovision_tags_the_ensured_genie_space(self, monkeypatch: pytest.MonkeyPatch):
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors import NotFound
+        from databricks.sdk.service.tags import TagAssignment
+
+        from databricks_labs_dqx_app.backend import dependencies
+        from databricks_labs_dqx_app.backend.services import genie_space_service
+
+        monkeypatch.setattr(genie_space_service, "ensure_dq_genie_space", lambda **_kwargs: "01f0space")
+        sp_ws = create_autospec(WorkspaceClient)
+        sp_ws.workspace_entity_tag_assignments.get_tag_assignment.side_effect = NotFound("missing")
+        service = await dependencies.get_database_reset_service(
+            delta_sql=_FakeExecutor(),
+            oltp_sql=_FakeExecutor(),
+            sp_ws=sp_ws,
+            app_settings=create_autospec(AppSettingsService),
+        )
+
+        result = service.reset_all_data(performed_by="admin@x.com")
+
+        assert "genie_space" in result.reprovisioned_defaults
+        sp_ws.workspace_entity_tag_assignments.create_tag_assignment.assert_called_once_with(
+            TagAssignment(entity_type="geniespaces", entity_id="01f0space", tag_key="app", tag_value="dqx-studio")
+        )
+
+
 class TestAudit:
     def test_result_records_actor_and_timestamp(self):
         result = DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor()).reset_all_data(

@@ -100,6 +100,8 @@ header shows **Applies to**. Pick the level that matches what the query means.
   matched to rows of the monitored table.
 - Those merge columns must appear in the query's `SELECT` list alongside
   `condition`.
+- **Merge results back on** lives under **Advanced** and takes column slots
+  like `{{order_id}}`, which Studio maps to the table's real columns.
 
 ```sql
 SELECT

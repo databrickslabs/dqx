@@ -8,7 +8,7 @@ import pytest
 
 from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty, is_unique
 from databricks.labs.dqx.errors import InvalidCheckError
-from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.rule_fingerprint import (
     compute_rule_fingerprint,
     compute_rule_set_fingerprint,
@@ -374,3 +374,36 @@ def test_dq_rule_rejects_unknown_kwarg():
     """
     with pytest.raises(InvalidCheckError):
         DQRowRule(check_func=is_not_null, column="id", colummn="typo")
+
+
+@pytest.mark.parametrize(
+    "rule, expected",
+    [
+        (DQRowRule(check_func=is_not_null, column="id", filter="a > 1"), "a > 1"),
+        (
+            DQDatasetRule(
+                check_func=is_unique, columns=["id"], filter="a > 1", check_func_kwargs={"row_filter": "b > 2"}
+            ),
+            "a > 1",
+        ),
+        (DQDatasetRule(check_func=is_unique, columns=["id"], check_func_kwargs={"row_filter": "b > 2"}), "b > 2"),
+        (DQDatasetRule(check_func=is_unique, columns=["id"], check_func_args=[True, "b > 2"]), "b > 2"),
+        (DQRowRule(check_func=is_not_null, column="id"), None),
+        (DQDatasetRule(check_func=is_unique, columns=["id"]), None),
+        (DQDatasetRule(check_func=is_unique, columns=["id"], check_func_kwargs={"row_filter": 1}), None),
+        (DQDatasetRule(check_func=is_unique, columns=["id"], check_func_args=[True, 1]), None),
+    ],
+)
+def test_dq_rule_effective_filter(rule, expected):
+    """`effective_filter` returns the rule filter, else a string `row_filter` from kwargs or positional args."""
+    assert rule.effective_filter == expected
+
+
+def test_dq_rule_effective_filter_returns_none_when_args_do_not_bind():
+    """`effective_filter` returns None instead of raising when the check args cannot bind to the signature.
+    Normal construction fails validation. This test uses `model_construct` to skip validation."""
+    rule = DQDatasetRule.model_construct(
+        check_func=is_unique, columns=["id"], check_func_args=[True, "b > 2", False, 1]
+    )
+
+    assert rule.effective_filter is None

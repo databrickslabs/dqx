@@ -12,6 +12,10 @@ WHEELS_VOLUME_NAME = "wheels"
 _PREFIX_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
+class InvalidCatalogNameError(InvalidParameterError):
+    """Raised when the Studio catalog name is empty or not a valid identifier."""
+
+
 @dataclass(frozen=True)
 class StudioStorage:
     """Validated Unity Catalog locations owned by one Studio installation."""
@@ -86,11 +90,16 @@ def derive_storage(
         Validated storage locations.
 
     Raises:
-        InvalidParameterError: If any name is invalid, over-length, or duplicated.
+        InvalidCatalogNameError: If the catalog name is empty or not a valid identifier.
+        InvalidParameterError: If any other name is invalid, over-length, or duplicated.
     """
     validate_prefix(prefix)
+    try:
+        catalog_name = _identifier(catalog.strip(), "catalog")
+    except InvalidParameterError as error:
+        raise InvalidCatalogNameError(str(error)) from None
     storage = StudioStorage(
-        catalog=_identifier(catalog.strip(), "catalog"),
+        catalog=catalog_name,
         schema=_identifier(schema.strip() or prefix, "main schema"),
         tmp_schema=_identifier(tmp_schema.strip() or f"{prefix}_tmp", "temporary schema"),
         genie_schema=_identifier(genie_schema.strip() or f"{prefix}_genie", "Genie schema"),

@@ -57,6 +57,7 @@ class SetupActionId(_StrEnum):
     VERIFY_AGAIN = "verify_again"
     CONFIGURE = "configure"
     OVERRIDE = "override"
+    CHOOSE_TASK_RUNNER = "choose_task_runner"
 
 
 class _ImmutableModel(BaseModel):
@@ -64,13 +65,18 @@ class _ImmutableModel(BaseModel):
 
 
 class SetupStep(_ImmutableModel):
-    """Sanitized status for one setup step."""
+    """Sanitized status for one setup step.
+
+    *instructions* is prose for the administrator; *grant_statements* holds the GRANT
+    statements the step still needs, kept apart so they can be copied or run as SQL.
+    """
 
     id: SetupStepId
     state: StepState
     code: str = ""
     summary: str = ""
     instructions: tuple[str, ...] = ()
+    grant_statements: tuple[str, ...] = ()
     actions: tuple[SetupActionId, ...] = ()
 
 
@@ -99,6 +105,25 @@ class SetupReport(_ImmutableModel):
         raise LookupError(f"Setup report does not contain step {step_id.value!r}")
 
 
+GrantErrorCode = Literal["permission_denied", "warehouse_unavailable", "not_found", "rate_limited", "unknown"]
+
+
+class SetupGrantFailure(_ImmutableModel):
+    """A setup GRANT statement that could not be run, with a sanitized error code."""
+
+    statement: str
+    error_code: GrantErrorCode
+
+
+class SetupApplyGrantsResponse(_ImmutableModel):
+    """Outcome of running a step's GRANT statements as the signed-in administrator."""
+
+    report: SetupReport
+    applied: int
+    total: int
+    failed: tuple[SetupGrantFailure, ...] = ()
+
+
 class SetupConfigurationView(_ImmutableModel):
     """Sanitized view of the active Studio storage and audience configuration."""
 
@@ -121,12 +146,87 @@ class SetupConfigurationRequest(BaseModel):
     audience_group: str = Field(max_length=255)
 
 
+class SetupGroupsResponse(_ImmutableModel):
+    """Display names of the workspace groups an administrator can choose as the default user group.
+
+    *truncated* is true when the workspace has more groups than are listed, so the
+    administrator may need to type the name.
+    """
+
+    groups: tuple[str, ...] = ()
+    truncated: bool = False
+
+
 class SetupOverrideRequest(BaseModel):
     """Administrator confirmation that a step's requirement was met in a way Studio cannot see."""
 
     model_config = ConfigDict(extra="forbid")
 
     step_id: SetupStepId
+
+
+class TaskRunnerPrincipal(_ImmutableModel):
+    """A workspace service principal the task-runner job could run as."""
+
+    id: str
+    display_name: str
+    application_id: str
+
+
+class TaskRunnerPrincipalsResponse(_ImmutableModel):
+    """Service principals an administrator can choose for the task-runner job.
+
+    *available* is false when Studio couldn't list them, so the administrator pastes an
+    Application ID instead. *app_name* names the DQX Studio app so the administrator can
+    find it when giving it access to the chosen service principal. *truncated* is true
+    when the workspace has more service principals than are listed, so the administrator
+    may need to paste the Application ID.
+    """
+
+    available: bool
+    principals: tuple[TaskRunnerPrincipal, ...] = ()
+    app_name: str = ""
+    truncated: bool = False
+
+
+class TaskRunnerPrincipalRequest(BaseModel):
+    """The service principal an administrator picked for the task-runner job, by Application ID."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: str = Field(max_length=64)
+
+
+TaskRunnerSpPermission = Literal["confirmed", "missing", "unverified"]
+
+
+class TaskRunnerAccessResponse(_ImmutableModel):
+    """Whether a picked service principal is ready to run Studio's task-runner job.
+
+    *sp_permission* says whether the app may use the service principal: *confirmed*,
+    *missing*, or *unverified* when Studio can't read that permission. *grant_statements*
+    are the GRANT statements only a person can run for it; *automatic_grants* are the ones
+    setup runs itself on Studio's own objects once the task-runner job runs as it.
+    *grants_unverified* is true when some of its access couldn't be read.
+    """
+
+    sp_permission: TaskRunnerSpPermission
+    grant_statements: tuple[str, ...] = ()
+    automatic_grants: tuple[str, ...] = ()
+    grants_unverified: bool = False
+
+
+class TaskRunnerGrantsResponse(_ImmutableModel):
+    """Outcome of running a picked service principal's GRANT statements as the administrator.
+
+    *grant_statements* are the statements the service principal still needs afterwards.
+    """
+
+    applied: int
+    total: int
+    failed: tuple[SetupGrantFailure, ...] = ()
+    grant_statements: tuple[str, ...] = ()
+    grants_unverified: bool = False
 
 
 class SetupStatusResponse(_ImmutableModel):

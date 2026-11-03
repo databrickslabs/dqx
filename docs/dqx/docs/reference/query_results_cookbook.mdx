@@ -377,10 +377,12 @@ The `check_metrics` field in the summary table already contains a per-check brea
     ```sql
     SELECT
       cm.check_name,
+      cm.rule_fingerprint,
       cm.error_count,
-      cm.warning_count
+      cm.warning_count,
+      cm.checked_count
     FROM catalog.schema.summary_metrics
-    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,error_count:bigint,warning_count:bigint>>')) AS cm
+    LATERAL VIEW explode(from_json(metric_value, 'array<struct<check_name:string,rule_fingerprint:string,error_count:bigint,warning_count:bigint,checked_count:bigint>>')) AS cm
     WHERE run_id = '<run_id>'
       AND metric_name = 'check_metrics'
       AND (cm.error_count > 0 OR cm.warning_count > 0);
@@ -393,8 +395,10 @@ The `check_metrics` field in the summary table already contains a per-check brea
 
     check_metrics_schema = ArrayType(StructType([
       StructField("check_name", StringType()),
+      StructField("rule_fingerprint", StringType()),
       StructField("error_count", LongType()),
       StructField("warning_count", LongType()),
+      StructField("checked_count", LongType()),
     ]))
 
     failed_checks_df = (
@@ -717,8 +721,10 @@ This extends Recipe 7. Instead of the current error rate, you want the *first* r
 
     check_metrics_schema = ArrayType(StructType([
       StructField("check_name", StringType()),
+      StructField("rule_fingerprint", StringType()),
       StructField("error_count", LongType()),
       StructField("warning_count", LongType()),
+      StructField("checked_count", LongType()),
     ]))
 
     first_failures_df = (

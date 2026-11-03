@@ -1,5 +1,6 @@
 """Tests for the non-blocking AI model access setup check."""
 
+import dataclasses
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec
@@ -167,12 +168,52 @@ def test_missing_grants_list_the_statements_to_run(resources, workspace, grants)
 
     assert step.state == StepState.WARNING
     assert step.code == "ai_access_missing"
+    # The statements are kept apart from the prose, so they show as SQL that can be copied or run.
+    assert step.grant_statements == (
+        "GRANT USE_SCHEMA ON SCHEMA `system`.`ai` TO `data-team`;",
+        "GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`chat-model` TO `data-team`;",
+    )
     assert len(step.instructions) == 1
-    instruction = step.instructions[0]
-    assert "metastore admin" in instruction
-    assert instruction.count("GRANT USE_SCHEMA ON SCHEMA `system`.`ai` TO `data-team`;") == 1
-    assert "GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`chat-model` TO `data-team`;" in instruction
-    assert "USE_CATALOG" not in instruction
+    assert "metastore admin" in step.instructions[0]
+    assert "GRANT" not in step.instructions[0]
+
+
+def test_a_name_that_cant_be_quoted_safely_is_never_a_statement(resources, workspace, grants) -> None:
+    unsafe = "data`team\nGRANT ALL"
+    resources = dataclasses.replace(
+        resources, audience=dataclasses.replace(resources.audience, uc_principals=(unsafe, "data-team"))
+    )
+    grants.default = set()
+
+    step = _check(resources, workspace, FakeAiSettings())
+
+    assert step.grant_statements
+    assert all("data-team" in statement for statement in step.grant_statements)
+    assert not any("ALL" in statement or "data`" in statement for statement in step.grant_statements)
+    assert any("can't write a safe" in instruction for instruction in step.instructions)
+
+
+def test_inspect_only_never_changes_the_ai_setting(resources, grants) -> None:
+    workspace = _client(grants, existing={"system.ai.embed-model"})
+    reader = _client(grants, existing={"system.ai.embed-model"})
+    grants.default = set()
+    settings = FakeAiSettings()
+
+    access = AiAccess(resources=resources, workspace=workspace, settings=settings)
+    step = access.check_ai_access(reader, inspect_only=True)
+
+    assert step.state == StepState.WARNING
+    assert settings.saves == []
+    assert settings.enabled is True
+
+
+def test_inspect_only_never_turns_ai_back_on(resources, workspace) -> None:
+    settings = FakeAiSettings(enabled=False, source="setup")
+
+    access = AiAccess(resources=resources, workspace=workspace, settings=settings)
+    access.check_ai_access(workspace, inspect_only=True)
+
+    assert settings.saves == []
 
 
 def test_all_privileges_satisfies_every_requirement(resources, workspace, grants) -> None:
@@ -188,10 +229,7 @@ def test_app_service_principal_needs_the_embedding_model(resources, workspace, g
     step = _check(resources, workspace, FakeAiSettings(), app_sp_id=sp)
 
     assert step.code == "ai_access_missing"
-    assert any(
-        f"GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`embed-model` TO `{sp}`;" in instruction
-        for instruction in step.instructions
-    )
+    assert f"GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`embed-model` TO `{sp}`;" in step.grant_statements
     inspected_for_chat = {
         call.kwargs["principal"]
         for call in workspace.grants.get_effective.call_args_list
