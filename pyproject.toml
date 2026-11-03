@@ -44,6 +44,9 @@ dependencies = [
     # NOTE: protobuf 7 removed FieldDescriptor.label, which MLflow 2.x still uses. Pinned in core rather than in the
     # anomaly extra because classic job clusters install the wheel without extras, so an extra-only pin is ignored there.
     "protobuf<7.0",
+    # NOTE: certifi is transitive (via requests/httpx); the floor forces a CA bundle without the distrusted
+    # eMudhra "emSign ECC Root CA - G3" root.
+    "certifi>=2026.10.19",
 ]
 
 [project.optional-dependencies]
@@ -161,7 +164,8 @@ yq = [
 
 [tool.uv]
 required-version = "~=0.11.0"
-exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false }
+# TODO: drop the certifi exemption once certifi>=2026.10.19 is older than the 7-day exclude-newer window.
+exclude-newer-package = { "databricks-sdk" = false, "databricks-connect" = false, "certifi" = false }
 
 [tool.pydoc-markdown]
 loaders = [

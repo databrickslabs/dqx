@@ -56,7 +56,8 @@ app-module = "databricks_labs_dqx_app.backend.app:app"
 
 
 [tool.uv]
-exclude-newer-package = { "databricks-sdk" = false }
+# TODO: drop the certifi exemption once certifi>=2026.10.19 is older than the 7-day exclude-newer window.
+exclude-newer-package = { "databricks-sdk" = false, "certifi" = false }
 
 # Rules Registry co-develops the DQX library with this app: local symbols
 # (e.g. llm helpers) are not yet in the published 0.15.0 wheel. Non-editable

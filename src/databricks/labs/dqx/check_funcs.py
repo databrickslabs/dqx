@@ -1460,6 +1460,82 @@ def is_not_greater_than(
 
 
 @register_rule("row")
+def is_greater_than(
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether the values in the input column are strictly greater than the provided limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+        allow_nulls: If True (default), null values pass the check, following Spark's null comparison
+            semantics. If False, null values fail the check.
+
+    Returns:
+        new Column
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    condition = col_expr <= limit_expr
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not greater than limit: "),
+            limit_expr.cast("string"),
+        ),
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "not_greater_than_limit",
+    )
+
+
+@register_rule("row")
+def is_less_than(
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    allow_nulls: bool = True,
+) -> Column:
+    """Checks whether the values in the input column are strictly less than the provided limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+        allow_nulls: If True (default), null values pass the check, following Spark's null comparison
+            semantics. If False, null values fail the check.
+
+    Returns:
+        new Column
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
+    condition = col_expr >= limit_expr
+
+    return _make_condition_handling_nulls(
+        allow_nulls,
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not less than limit: "),
+            limit_expr.cast("string"),
+        ),
+        col_expr,
+        col_expr_str,
+        col_str_norm,
+        "not_less_than_limit",
+    )
+
+
+@register_rule("row")
 def is_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
@@ -1675,7 +1751,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
 
     Args:
         column: column to check; can be a string column name or a column expression
-        date_format: date format (e.g. 'yyyy-mm-dd')
+        date_format: date format (e.g. 'yyyy-MM-dd')
 
     Returns:
         Column object for condition
@@ -1699,7 +1775,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
     Args:
         column: column to check; can be a string column name or a column expression
-        timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
+        timestamp_format: timestamp format (e.g. 'yyyy-MM-dd HH:mm:ss')
 
     Returns:
         Column object for condition
@@ -4249,6 +4325,10 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     """
     Checks whether the values in the input column contain specific keys in the outermost JSON object.
 
+    JSON values that are not objects (e.g. arrays, scalars, or JSON nulls) fail with an *"is not a JSON object"*
+    message. Malformed JSON values fail with an *"is not a valid JSON string"* message. SQL NULL values pass; use
+    *is_not_null* separately when the input is required.
+
     Args:
         column: The name of the column or the column expression to check for JSON keys.
         keys: A list of JSON keys to verify within the outermost JSON object.
@@ -4277,7 +4357,17 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         F.concat_ws(", ", F.lit(keys)),
         F.lit("]"),
     )
-    message = F.when(is_invalid_json, json_validation_error).otherwise(has_json_keys_msg)
+    has_json_non_object_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not a JSON object"),
+    )
+    message = (
+        F.when(is_invalid_json, json_validation_error)
+        .when(json_keys_array.isNull() & col_expr.isNotNull(), has_json_non_object_msg)
+        .otherwise(has_json_keys_msg)
+    )
 
     if require_all:
         missing = F.array_except(required_keys, json_keys_array)
@@ -4287,7 +4377,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
 
     condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
     # Treat NULL values as valid (no violation) to ensure consistent behavior across ANSI/non-ANSI modes
-    condition = condition | col_expr.isNull()
+    condition = F.coalesce(condition, F.lit(False)) | col_expr.isNull()
 
     return make_condition(
         ~condition,
