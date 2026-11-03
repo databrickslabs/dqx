@@ -198,14 +198,20 @@ def _looks_like_rate_param(name: str) -> bool:
 
 
 def _as_number(name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+    if isinstance(value, bool):
         raise InvalidParameterValueError(f"{name} must be a number.")
-    if isinstance(value, str) and not value.strip():
-        raise InvalidParameterValueError(f"{name} is required.")
-    try:
+    number: float
+    if isinstance(value, (int, float)):
         number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise InvalidParameterValueError(f"{name} must be a number.") from exc
+    elif isinstance(value, str):
+        if not value.strip():
+            raise InvalidParameterValueError(f"{name} is required.")
+        try:
+            number = float(value)
+        except ValueError as exc:
+            raise InvalidParameterValueError(f"{name} must be a number.") from exc
+    else:
+        raise InvalidParameterValueError(f"{name} must be a number.")
     if math.isnan(number) or math.isinf(number):
         raise InvalidParameterValueError(f"{name} must be a number.")
     return number
@@ -316,9 +322,9 @@ def validate_group_parameter_values(
         coerced[param.name] = coerce_parameter_value(param, raw_values[param.name])
     for min_name, max_name in _range_pairs(coerced):
         try:
-            minimum = float(coerced[min_name])
-            maximum = float(coerced[max_name])
-        except (TypeError, ValueError):
+            minimum = _as_number(min_name, coerced[min_name])
+            maximum = _as_number(max_name, coerced[max_name])
+        except InvalidParameterValueError:
             continue
         if minimum > maximum:
             raise InvalidParameterValueError(f"{min_name} ({minimum}) must not be greater than {max_name} ({maximum}).")

@@ -21,7 +21,7 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
