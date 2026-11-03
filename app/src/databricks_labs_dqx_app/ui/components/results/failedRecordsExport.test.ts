@@ -195,7 +195,34 @@ describe("collectFailedRowPages", () => {
     expect(calls).toEqual([0]);
   });
 
-  it("requests 1000-row pages by default", () => {
-    expect(FAILED_ROWS_DOWNLOAD_PAGE_SIZE).toBe(1000);
+  it("keeps paging while a page is full when total is unknown", async () => {
+    const calls: number[] = [];
+    const out = await collectFailedRowPages(
+      async ({ offset, limit }) => {
+        calls.push(offset);
+        if (offset === 0) return { rows: [row("a"), row("b")], total: null, run_id: "run-1" };
+        return { rows: [row("c")], total: null, run_id: "run-1" };
+      },
+      { pageSize: 2 },
+    );
+    expect(out.map((r) => r.record_key)).toEqual(["a", "b", "c"]);
+    expect(calls).toEqual([0, 2]);
+  });
+
+  it("pins run_id from the first page onto later requests", async () => {
+    const runIds: Array<string | undefined> = [];
+    await collectFailedRowPages(
+      async ({ offset, limit, run_id }) => {
+        runIds.push(run_id);
+        if (offset === 0) return { rows: [row("a"), row("b")], total: 3, run_id: "run-9" };
+        return { rows: [row("c")], total: 3, run_id: "run-9" };
+      },
+      { pageSize: 2 },
+    );
+    expect(runIds).toEqual([undefined, "run-9"]);
+  });
+
+  it("requests 5000-row pages by default", () => {
+    expect(FAILED_ROWS_DOWNLOAD_PAGE_SIZE).toBe(5000);
   });
 });

@@ -523,9 +523,10 @@ export function MultiTableResultsSection({
 
   const fetchAllFailedRows = async () => {
     if (!selectedFqn) return [];
-    return collectFailedRowPages(async ({ offset, limit }) => {
+    return collectFailedRowPages(async ({ offset, limit, run_id }) => {
       const res = await getDqResultsFailedRows(selectedFqn, {
         ...failedRowsParams,
+        run_id,
         offset,
         limit,
       });
@@ -1192,7 +1193,7 @@ export function MultiTableResultsSection({
                 ) : (
                   <FailingRecordsTable
                     rows={failingRows}
-                    total={failedRows?.total}
+                    total={failedRows?.total ?? undefined}
                     loading={failedRowsQuery.isFetching || failedRowsQuery.isPending}
                     severityColors={sevColors}
                     severityRanks={sevRanks}

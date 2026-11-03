@@ -752,6 +752,11 @@ class SqlExecutor:
         statement_id = resp.statement_id
         rows: list[list[str]] = []
         seen: set[int] = set()
+        if getattr(getattr(resp, "manifest", None), "truncated", False):
+            logger.warning(
+                "SQL result marked truncated by the warehouse INLINE cap (statement_id=%s)",
+                statement_id,
+            )
         while chunk is not None:
             if chunk.data_array:
                 rows.extend(chunk.data_array)
@@ -816,8 +821,9 @@ class SqlExecutor:
             sql: SQL query to execute.
             timeout_seconds: Maximum time to wait for statement completion.
             require_complete: Validate the result schema and read every data
-                chunk, rejecting incomplete or ambiguous results. Defaults to
-                the existing permissive first-chunk behavior.
+                chunk, rejecting incomplete or ambiguous results. When false
+                (the default), every INLINE chunk is still collected; a
+                warehouse-truncated result is logged rather than rejected.
 
         Raises:
             RuntimeError: The query fails or complete results cannot be verified.

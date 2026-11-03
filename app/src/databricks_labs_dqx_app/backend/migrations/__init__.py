@@ -16,6 +16,10 @@ The Delta schema contains the tables the Spark task runner reads or writes:
 - **v2 — Staged run configs.** ``dq_run_configs`` holds run configs too
   large for the 10,000-character job-parameter limit. The app writes a
   row keyed by ``run_id`` and the runner reads it back with Spark.
+- **v3 — BIGINT row counts.** Existing workspaces that created
+  ``dq_validation_runs`` / ``dq_profiling_results`` with ``INT`` counts
+  are widened in place (Delta type widening). Fresh installs already
+  get ``BIGINT`` from the v1 baseline, so v3 is a no-op there.
 
 Transactional application state is always created by
 :mod:`backend.migrations.postgres` in Lakebase. There is no Delta OLTP
@@ -105,9 +109,11 @@ upgrade yet, so a shape change is edited into the baseline in place
 (adding the column to the ``CREATE TABLE`` body). OLTP changes belong only
 in :mod:`backend.migrations.postgres`.
 
-The only ``ALTER TABLE`` statements here are ``ADD CONSTRAINT``: Delta
+The only ``ALTER TABLE`` statements here are ``ADD CONSTRAINT`` (Delta
 accepts just PRIMARY KEY / FOREIGN KEY inline in ``CREATE TABLE``, so
-every CHECK constraint has to follow its table as a separate statement.
+every CHECK constraint has to follow its table as a separate statement)
+and v3's ``ALTER COLUMN … TYPE BIGINT`` for workspaces that still have
+INT row-count columns.
 
 **An existing deployment does not pick up an edited baseline.** Its
 ``dq_migrations`` table already records v1 as applied, so the runner
@@ -244,9 +250,9 @@ class Migration:
     sql_template: str
 
 
-# Order is significant: v1 before v2.
+# Order is significant: v1 before v2 before v3.
 #
-# Both entries are baselines — every table is defined at its final shape
+# v1 and v2 are baselines — every table is defined at its final shape
 # with liquid clustering, primary keys, and CHECK constraints. Editing a
 # baseline in place is the intended way to change the schema until the
 # app ships externally; existing dev workspaces pick the change up by
@@ -654,21 +660,24 @@ class MigrationRunner:
         inside a string literal, but :func:`_validate_template_split_safe`
         rules out the dangerous shape ahead of time.
         """
-        formatted = migration.sql_template.format(catalog=self._catalog_q, schema=self._schema_q)
-        for stmt in formatted.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                try:
-                    self._sql.execute(stmt)
-                except Exception as exc:
-                    if any(frag in str(exc) for frag in self._IDEMPOTENT_ERROR_FRAGMENTS):
-                        logger.warning(
-                            "Migration v%d DDL already applied (safe to skip): %s",
-                            migration.version,
-                            exc,
-                        )
-                    else:
-                        raise
+        if migration.version == 3 and self._run_counts_already_bigint():
+            logger.info("Skipping v3 type widening; row-count columns are already BIGINT")
+        else:
+            formatted = migration.sql_template.format(catalog=self._catalog_q, schema=self._schema_q)
+            for stmt in formatted.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    try:
+                        self._sql.execute(stmt)
+                    except Exception as exc:
+                        if any(frag in str(exc) for frag in self._IDEMPOTENT_ERROR_FRAGMENTS):
+                            logger.warning(
+                                "Migration v%d DDL already applied (safe to skip): %s",
+                                migration.version,
+                                exc,
+                            )
+                        else:
+                            raise
 
         escaped_desc = escape_sql_string(migration.description)
         record_sql = (
@@ -681,3 +690,27 @@ class MigrationRunner:
             migration.version,
             migration.description,
         )
+
+    def _run_counts_already_bigint(self) -> bool:
+        """True when v1 already created the row-count columns as BIGINT.
+
+        Fresh installs must not enable ``delta.enableTypeWidening`` just
+        to no-op ALTER COLUMN TYPE — that table feature is an irreversible
+        reader/writer protocol upgrade.
+        """
+        try:
+            schema_lit = escape_sql_string(self._schema.lower())
+            rows = self._sql.query(
+                "SELECT lower(column_name), lower(full_data_type) "
+                f"FROM {self._catalog_q}.information_schema.columns "
+                f"WHERE lower(table_schema) = '{schema_lit}' "
+                f"AND lower(table_name) = 'dq_validation_runs' "
+                f"AND lower(column_name) IN ('total_rows','valid_rows','invalid_rows',"
+                f"'error_rows','warning_rows')"
+            )
+        except Exception:
+            logger.debug("Could not inspect dq_validation_runs column types; applying v3", exc_info=True)
+            return False
+        types = {str(row[0]): str(row[1]) for row in rows if len(row) >= 2}
+        needed = ("total_rows", "valid_rows", "invalid_rows", "error_rows", "warning_rows")
+        return bool(types) and all("bigint" in types.get(name, "") for name in needed)

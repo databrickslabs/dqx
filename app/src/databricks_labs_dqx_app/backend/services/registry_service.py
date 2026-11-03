@@ -28,6 +28,7 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.apply_time_params import validate_parameter_declarations
+from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -114,11 +115,15 @@ class RegistryService:
     # :meth:`update_draft`). ``approved`` is editable because that is how a
     # revision is authored — the edits stay inert (the frozen vN snapshot
     # keeps serving) until the revision is submitted and re-approved as vN+1.
-    # ``pending_approval`` is editable so an approver can correct the rule
-    # (same validation and audit trail as a draft edit) and then approve;
-    # the queue still holds it until approve/reject. ``rejected`` /
-    # ``deprecated`` still aren't editable (use "Duplicate" / undeprecate).
+    # ``pending_approval`` is editable so an approver/admin can correct the
+    # rule (same validation and audit trail as a draft edit) and then
+    # approve; the queue still holds it until approve/reject. Authors with
+    # MODIFY cannot change a pending definition — ``approve()`` freezes the
+    # live row, so a post-review author edit would otherwise publish an
+    # unreviewed definition. ``rejected`` / ``deprecated`` still aren't
+    # editable (use "Duplicate" / undeprecate).
     EDITABLE_STATUSES: frozenset[str] = frozenset({"draft", "approved", "pending_approval"})
+    _PENDING_EDITORS: frozenset[UserRole] = frozenset({UserRole.ADMIN, UserRole.RULE_APPROVER})
 
     def __init__(
         self,
@@ -743,11 +748,13 @@ class RegistryService:
         owner_display_name: str | None = None,
         author_kind: AuthorKind | None = None,
         clear_polarity: bool = False,
+        editor_role: UserRole | None = None,
     ) -> RegistryRule:
         """Update a registry rule's LIVE ``dq_rules`` row in place.
 
-        Editable statuses are :data:`EDITABLE_STATUSES` — ``draft`` and
-        ``approved``. Editing a ``draft`` works exactly as before. Editing an
+        Editable statuses are :data:`EDITABLE_STATUSES` — ``draft``,
+        ``approved``, and ``pending_approval`` (approvers/admins only).
+        Editing a ``draft`` works exactly as before. Editing an
         ``approved`` rule is the edit-in-place REVISION path: the live
         definition/tags change but ``version`` stays N and no new
         ``dq_rule_versions`` snapshot is written, so the frozen vN snapshot
@@ -756,9 +763,10 @@ class RegistryService:
         vN+1 (see :meth:`submit`/:meth:`approve`). The rule therefore reads as
         "Modified since vN" (:meth:`_compute_modified`) while it carries
         unpublished edits. A ``pending_approval`` rule stays in the review
-        queue: an approver can correct it in place (same validation and
-        ``update`` history row as a draft edit) and then approve; authors
-        still cannot change a pending rule from the form. ``rejected`` /
+        queue: an approver or admin can correct it in place (same validation
+        and ``update`` history row as a draft edit) and then approve. Authors
+        cannot change a pending rule even if they have MODIFY, because
+        :meth:`approve` freezes the live definition. ``rejected`` /
         ``deprecated`` rules aren't editable (duplicate / undeprecate).
 
         *author_kind* lets an edit-in-place session re-stamp AI provenance
@@ -778,6 +786,11 @@ class RegistryService:
             raise ValueError(
                 f"Cannot edit registry rule '{rule_id}': only {sorted(self.EDITABLE_STATUSES)} rules can be "
                 f"edited (current status='{rule.status}')."
+            )
+        if rule.status == "pending_approval" and editor_role not in self._PENDING_EDITORS:
+            raise ValueError(
+                f"Cannot edit registry rule '{rule_id}': pending_approval rules can only be "
+                "changed by an approver or admin."
             )
         if mode is not None:
             rule.mode = mode

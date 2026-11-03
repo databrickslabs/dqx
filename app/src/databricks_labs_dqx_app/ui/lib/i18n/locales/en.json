@@ -1823,6 +1823,7 @@
     "toastUpdated": "Rule updated.",
     "saveFailed": "Failed to save rule.",
     "toastSavedSubmitFailed": "Rule saved, but it could not be submitted for review: {{error}}",
+    "toastSavedApproveFailed": "Rule saved, but it could not be approved: {{error}}",
     "submitNoRevisionTooltip": "Nothing to review — this change takes effect as soon as you save it. Only edits to the rule's logic or metadata create a new version to approve.",
     "dialogSrDescription": "Create or edit a reusable data quality rule.",
     "createTitle": "New registry rule",

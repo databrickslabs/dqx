@@ -3766,8 +3766,9 @@ export function RegistryRuleFormDialog({
 
   const handleEditAndApprove = async () => {
     if (readOnly || !editingRule || !onApprove) return;
-    if (!validate() || !canSubmit) return;
+    if (isDirty && (!validate() || !canSubmit)) return;
     setSaving(true);
+    let didSave = false;
     try {
       if (isDirty) {
         const definition = buildDefinition();
@@ -3785,18 +3786,58 @@ export function RegistryRuleFormDialog({
               author_kind: authorKind,
             },
           });
+          didSave = true;
         } catch (err) {
           toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), {
             duration: 6000,
           });
           return;
         }
+        if (ownerGrantIntent) {
+          const capturedIntent = ownerGrantIntent;
+          setOwnerGrantIntent(null);
+          try {
+            await setGrantMut.mutateAsync({
+              objectType: "registry_rule",
+              objectId: editingRule.rule_id,
+              data: {
+                principal_id: capturedIntent.newPrincipalId,
+                principal_type: capturedIntent.newPrincipalType,
+                principal_name: capturedIntent.newPrincipalName,
+                privileges: ["SELECT", "MODIFY", "APPLY"],
+                inherit: false,
+              },
+            });
+            if (capturedIntent.removeOldPrincipalId) {
+              await removeGrantMut.mutateAsync({
+                objectType: "registry_rule",
+                objectId: editingRule.rule_id,
+                principalId: capturedIntent.removeOldPrincipalId,
+              });
+            }
+            queryClient.invalidateQueries({
+              queryKey: getListObjectGrantsQueryKey("registry_rule", editingRule.rule_id),
+            });
+          } catch (grantErr) {
+            toast.error(extractApiError(grantErr, t("permissions.ownerGrantFailed")), {
+              duration: 6000,
+            });
+          }
+        }
       }
-      await onApprove();
-      onSaved(editingRule.rule_id);
-      closeAndReset();
-    } catch {
-      // onApprove already toasted the approve failure.
+      try {
+        await onApprove();
+        onSaved(editingRule.rule_id);
+        closeAndReset();
+      } catch (approveErr) {
+        if (didSave) onSaved(editingRule.rule_id);
+        toast.error(
+          t(didSave ? "rulesRegistry.toastSavedApproveFailed" : "rulesRegistry.toastApproveFailed", {
+            error: extractApiError(approveErr, t("rulesRegistry.saveFailed")),
+          }),
+          { duration: 8000 },
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -5742,11 +5783,11 @@ export function RegistryRuleFormDialog({
       return (
         <Button
           onClick={() => void handleEditAndApprove()}
-          disabled={saving || !canSubmit}
+          disabled={saving || (isDirty && !canSubmit)}
           className="gap-2"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-          {t("rulesRegistry.actionEditAndApprove")}
+          {isDirty ? t("rulesRegistry.actionEditAndApprove") : t("rulesRegistry.actionApprove")}
         </Button>
       );
     }

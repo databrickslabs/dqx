@@ -544,12 +544,39 @@ class TestUpdateDraft:
             definition=_native_definition(),
         )
         sql.query.return_value = [_row_for(pending)]
-        updated = svc.update_draft("r1", user_email="approver@x", user_metadata={"name": "corrected"})
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+
+        updated = svc.update_draft(
+            "r1",
+            user_email="approver@x",
+            user_metadata={"name": "corrected"},
+            editor_role=UserRole.RULE_APPROVER,
+        )
         assert updated.status == "pending_approval"
         assert updated.version == 1
         assert updated.user_metadata == {"name": "corrected"}
         update_sql = next(c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("UPDATE"))
         assert "dq_rule_versions" not in update_sql
+
+    def test_authors_cannot_edit_pending_approval_rules(self, svc, sql):
+        from databricks_labs_dqx_app.backend.common.authorization import UserRole
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        pending = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="pending_approval",
+            version=1,
+            definition=_native_definition(),
+        )
+        sql.query.return_value = [_row_for(pending)]
+        with pytest.raises(ValueError, match="approver or admin"):
+            svc.update_draft(
+                "r1",
+                user_email="alice@x",
+                user_metadata={"name": "sneak"},
+                editor_role=UserRole.RULE_AUTHOR,
+            )
 
     @pytest.mark.parametrize("status", ["rejected", "deprecated"])
     def test_rejects_editing_non_editable_status(self, svc, sql, status):
