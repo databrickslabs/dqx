@@ -432,7 +432,6 @@ schema:
       # ----- Binary -----
       - name: col_binary
         physicalType: BINARY
-        logicalType: binary
         description: Binary data
 
       # ----- Object and semi-structured types -----
