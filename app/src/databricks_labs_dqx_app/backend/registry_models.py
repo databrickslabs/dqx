@@ -167,34 +167,30 @@ class RuleDefinition(BaseModel):
         ),
     )
 
-    @model_validator(mode="after")
-    def _promote_sql_parameter_slots(self) -> "RuleDefinition":
-        """Treat value-named SQL tokens (e.g. ``{{allowed_scale}}``) as parameters, not columns.
 
-        Rules imported before apply-time parameters existed stored such tokens
-        as column slots; normalizing on parse fixes them everywhere at once.
-        A definition that already declares parameters was authored with both
-        buckets, so its slots are taken as written.
-        """
-        if self.parameters or "function" in self.body or "lowcode_ast" in self.body:
-            return self
-        if "predicate" not in self.body and "sql_query" not in self.body:
-            return self
-        promoted = [s for s in self.slots if s.arg_key is None and is_sql_param_placeholder_name(s.name)]
-        if not promoted:
-            return self
-        promoted_names = {s.name for s in promoted}
-        existing = {p.name for p in self.parameters}
-        self.slots = [s for s in self.slots if s.name not in promoted_names]
-        self.parameters = [
-            *self.parameters,
-            *(
-                RuleParameter(name=s.name, type=infer_sql_param_type(s.name))
-                for s in promoted
-                if s.name not in existing
-            ),
-        ]
-        return self
+def promote_sql_parameter_slots(definition: RuleDefinition) -> RuleDefinition:
+    """Move value-named SQL ``{{tokens}}`` from slots to parameters.
+
+    Call this only at import / AI-proposal time, where the author can see and
+    undo the split. Inferring a slot's kind from its name on every parse would
+    rewrite real column slots such as ``{{exchange_rate}}`` or ``{{pattern_id}}``.
+    """
+    if definition.parameters or "function" in definition.body or "lowcode_ast" in definition.body:
+        return definition
+    if "predicate" not in definition.body and "sql_query" not in definition.body:
+        return definition
+    promoted = [s for s in definition.slots if s.arg_key is None and is_sql_param_placeholder_name(s.name)]
+    if not promoted:
+        return definition
+    promoted_names = {s.name for s in promoted}
+    existing = {p.name for p in definition.parameters}
+    next_definition = definition.model_copy(deep=True)
+    next_definition.slots = [s for s in definition.slots if s.name not in promoted_names]
+    next_definition.parameters = [
+        *definition.parameters,
+        *(RuleParameter(name=s.name, type=infer_sql_param_type(s.name)) for s in promoted if s.name not in existing),
+    ]
+    return next_definition
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RegistryRule,
     canonicalize_reserved_label_values,
     imported_severity_error,
+    promote_sql_parameter_slots,
 )
 from databricks_labs_dqx_app.backend.routes.v1.check_functions import imported_native_params_error
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -453,7 +454,7 @@ def batch_import_registry_rules(
                     seen_in_batch[key] = match
                     continue
 
-            definition = rule_in.definition
+            definition = promote_sql_parameter_slots(rule_in.definition)
             user_metadata = rule_in.user_metadata
             renames: dict[str, str] = {}
             if body.generalize_slots:
