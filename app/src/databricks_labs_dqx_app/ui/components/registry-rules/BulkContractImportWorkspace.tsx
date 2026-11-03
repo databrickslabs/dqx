@@ -419,6 +419,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule: CreateRegistryRuleOut["rule"];
             reused: boolean;
             slotRenames: Record<string, string>;
+            rowFilter: string | null;
           }[];
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally

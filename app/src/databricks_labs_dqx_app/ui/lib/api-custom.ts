@@ -1327,6 +1327,8 @@ export interface RecordPendingApplicationIn {
   /** One slot-name -> column-name group per materialized check; empty for
    *  whole-table rules (no slots). */
   column_mapping: Array<Record<string, string>>;
+  /** Imported filter applied when the pending rule is approved. */
+  row_filter?: string | null;
 }
 
 export interface BatchRecordPendingApplicationsIn {
