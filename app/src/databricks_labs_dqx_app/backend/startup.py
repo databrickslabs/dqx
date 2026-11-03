@@ -267,7 +267,6 @@ class _Binder:
                 sql=sp_sql,
                 settings=self.settings,
                 app_name=conf.app_slug_name,
-                dashboard_id=conf.default_dashboard_id,
             ),
             delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
