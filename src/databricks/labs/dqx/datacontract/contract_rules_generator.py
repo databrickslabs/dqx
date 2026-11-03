@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ import yaml
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
+from datacontract.model.exceptions import DataContractException  # type: ignore
 from open_data_contract_standard.model import (  # type: ignore
     DataQuality,
     OpenDataContractStandard,
@@ -29,12 +31,17 @@ from pydantic import ValidationError  # type: ignore
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.datacontract.library_metrics import LibraryMetricRulesBuilder
+from databricks.labs.dqx.datacontract.library_metrics import (
+    LibraryMetricRulesBuilder,
+    MetricTarget,
+    is_library_entry,
+)
+from databricks.labs.dqx.datacontract.common import FormatCheck, SkipReason
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr
+from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -44,6 +51,13 @@ if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
+
+
+_FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, FormatCheck] = {
+    "date": FormatCheck("is_valid_date", "date_format", "valid_date_format"),
+    "timestamp": FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "datetime": FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+}
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -117,6 +131,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
                 - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                - DataContract(data_contract=odcs_model) - from a parsed ODCS model
                 Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
@@ -173,28 +188,26 @@ class DataContractRulesGenerator(DQEngineBase):
             return self._load_contract_from_file(contract_file)
 
         if contract is not None:
-            # Try to load from file path if available
-            contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
-                contract, 'data_contract_file', None
-            )
-
+            contract_file_path = contract.get_data_contract_file()
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
-            # Try to load from data_contract attribute (pre-parsed dict)
-            contract_data = getattr(contract, 'data_contract', None)
-            if contract_data:
-                return OpenDataContractStandard.model_validate(contract_data)
-
-            # Try to load from data_contract_str attribute (YAML/JSON string)
-            contract_str = getattr(contract, '_data_contract_str', None) or getattr(contract, 'data_contract_str', None)
+            if not hasattr(contract, "_data_contract_str"):
+                version = package_version("datacontract-cli")
+                raise ParameterError(
+                    f"datacontract-cli version {version} does not support '_data_contract_str'. Install a datacontract-cli version >=1.2.0 and <2.0."
+                )
+            contract_str = getattr(contract, "_data_contract_str", None)
             if contract_str:
-                contract_dict = yaml.safe_load(contract_str)
-                return OpenDataContractStandard.model_validate(contract_dict)
+                return OpenDataContractStandard.model_validate(yaml.safe_load(contract_str))
 
-            raise ParameterError(
-                "DataContract object must have either a file path, data_contract dict, or data_contract_str attribute"
-            )
+            try:
+                return contract.get_data_contract()
+            except DataContractException as e:
+                raise ParameterError(
+                    "DataContract has no contract: pass data_contract_file, data_contract_str or "
+                    "data_contract (a parsed ODCS model)"
+                ) from e
 
         raise ParameterError("Either contract or contract_file must be provided")
 
@@ -278,6 +291,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
+            self._warn_about_skipped_quality(schema_obj, schema_name, process_text_rules, process_library_rules)
 
             if process_library_rules:
                 taken_names.update(rule["name"] for rule in dq_rules[schema_start:] if rule.get("name"))
@@ -683,7 +697,7 @@ class DataContractRulesGenerator(DQEngineBase):
             )
 
         # Handle date and timestamp format constraints
-        if prop.logicalType in {'date', 'timestamp', 'datetime'} and opts.get('format'):
+        if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
                 self._generate_format_rules_from_options(
                     column_path, prop.logicalType, field_metadata, default_criticality, opts
@@ -983,91 +997,40 @@ class DataContractRulesGenerator(DQEngineBase):
     def _generate_format_rules_from_options(
         self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate format validation rules from logicalTypeOptions format (for date/timestamp fields)."""
-        format_str = opts.get('format')
-        if not format_str:
+        """
+        Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
+
+        ODCS defines the format as a Java DateTimeFormatter pattern (e.g. *'yyyy-MM-dd'*), the syntax Spark datetime
+        patterns are based on. The contract format is passed to the check unchanged. Any pattern containing '%' is
+        skipped with a warning.
+        """
+        format_value = opts['format']
+        if isinstance(format_value, str) and "%" in format_value:
+            logger.warning(
+                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}'; "
+                "use a Spark datetime pattern such as 'yyyy-MM-dd'."
+            )
             return []
 
-        python_format = self._convert_to_python_format(format_str)
-
-        if logical_type == 'date':
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_date",
-                        "arguments": {
-                            "column": column_path,
-                            "date_format": python_format,
-                        },
+        format_check = _FORMAT_CHECKS_BY_LOGICAL_TYPE[logical_type]
+        return [
+            {
+                "check": {
+                    "function": format_check.function,
+                    "arguments": {
+                        "column": column_path,
+                        format_check.format_argument: format_value,
                     },
-                    "name": f"{column_path}_valid_date_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        if logical_type in {'timestamp', 'datetime'}:
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_timestamp",
-                        "arguments": {
-                            "column": column_path,
-                            "timestamp_format": python_format,
-                        },
-                    },
-                    "name": f"{column_path}_valid_timestamp_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        logger.warning(
-            f"Format '{format_str}' specified for non-date/timestamp type '{logical_type}' on '{column_path}'"
-        )
-        return []
-
-    def _convert_to_python_format(self, format_str: str) -> str:
-        """
-        Convert Java SimpleDateFormat or ISO 8601 format to Python strftime format.
-
-        Common mappings:
-        - yyyy -> %Y (4-digit year)
-        - MM -> %m (2-digit month)
-        - dd -> %d (2-digit day)
-        - HH -> %H (24-hour format)
-        - mm -> %M (minutes)
-        - ss -> %S (seconds)
-        """
-        # If it's already in Python format (starts with %), return as-is
-        if '%' in format_str:
-            return format_str
-
-        # Common Java SimpleDateFormat to Python strftime conversions
-        conversions = {
-            'yyyy': '%Y',
-            'yy': '%y',
-            'MM': '%m',
-            'dd': '%d',
-            'HH': '%H',
-            'hh': '%I',
-            'mm': '%M',
-            'ss': '%S',
-            'SSS': '%f',  # Milliseconds
-            'a': '%p',  # AM/PM
-        }
-
-        result = format_str
-        for java_fmt, python_fmt in conversions.items():
-            result = result.replace(java_fmt, python_fmt)
-
-        return result
+                },
+                "name": f"{column_path}_{format_check.rule_name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
 
     def _process_text_rules_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard
@@ -1259,7 +1222,58 @@ class DataContractRulesGenerator(DQEngineBase):
                     rules.append(rule)
         return rules
 
-    def _is_dqx_explicit_rule(self, quality_rule: DataQuality) -> bool:
+    def _warn_about_skipped_quality(
+        self, schema_obj: SchemaObject, schema_name: str, process_text_rules: bool, process_library_rules: bool
+    ) -> None:
+        """Log a warning for each quality entry of the schema that does not become a rule."""
+        targets = [(MetricTarget(schema_name, prop.name), prop.quality) for prop in schema_obj.properties or []]
+        targets.append((MetricTarget(schema_name, None), schema_obj.quality))
+        for target, quality_list in targets:
+            for quality_rule in quality_list or []:
+                reason = self._skip_reason(quality_rule, process_text_rules, process_library_rules)
+                if reason is None:
+                    continue
+                description = sanitize_for_logging(quality_rule.description or "")
+                engine = sanitize_for_logging(str(quality_rule.engine))
+                logger.warning(
+                    f"Skipping type '{sanitize_for_logging(str(quality_rule.type))}' quality entry on {target.location} "
+                    f"(description: '{description}'): {reason.value.format(engine=engine)}."
+                )
+
+    def _skip_reason(
+        self, quality_rule: DataQuality, process_text_rules: bool, process_library_rules: bool
+    ) -> SkipReason | None:
+        """Return why a quality entry does not become a rule, or None if it does (or was opted out of)."""
+        if is_library_entry(quality_rule):
+            return None if process_library_rules else SkipReason.LIBRARY_DISABLED
+        if quality_rule.type == "text":
+            return self._text_skip_reason(quality_rule, process_text_rules)
+        if quality_rule.type == "sql":
+            return SkipReason.SQL_UNSUPPORTED
+        if quality_rule.type == "custom":
+            return self._custom_skip_reason(quality_rule)
+        return SkipReason.TYPE_UNSUPPORTED
+
+    def _text_skip_reason(self, quality_rule: DataQuality, process_text_rules: bool) -> SkipReason | None:
+        """Return why a type: text entry does not become a rule, or None if it does (or was opted out of)."""
+        if not process_text_rules:
+            return None
+        if not self.llm_engine:
+            return SkipReason.TEXT_NO_LLM_ENGINE
+        if not quality_rule.description:
+            return SkipReason.TEXT_NO_DESCRIPTION
+        return None
+
+    def _custom_skip_reason(self, quality_rule: DataQuality) -> SkipReason | None:
+        """Return why a type: custom entry does not become a rule, or None if it is a DQX explicit rule."""
+        if self._is_dqx_explicit_rule(quality_rule):
+            return None
+        if quality_rule.engine != "dqx":
+            return SkipReason.CUSTOM_ENGINE_UNSUPPORTED
+        return SkipReason.CUSTOM_NO_CHECK
+
+    @staticmethod
+    def _is_dqx_explicit_rule(quality_rule: DataQuality) -> bool:
         """Check if a quality rule is a DQX explicit rule with implementation.
 
         In ODCS v3.x, implementation is always a dict when loaded directly.

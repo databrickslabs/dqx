@@ -9,6 +9,7 @@ import pyspark.sql.functions as F
 import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
@@ -175,7 +176,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'reading_timestamp', 'date_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'date_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'reading_timestamp_valid_date_format',
                 'criticality': 'error',
@@ -206,7 +207,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'calibration_date', 'date_format': '%Y-%m-%d'},
+                    'arguments': {'column': 'calibration_date', 'date_format': 'yyyy-MM-dd'},
                 },
                 'name': 'calibration_date_valid_date_format',
                 'criticality': 'error',
@@ -540,7 +541,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_timestamp',
-                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'valid_reading_timestamp',
                 'criticality': 'error',
@@ -867,10 +868,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_requires_either_valid_contract_object(self, generator):
         """Test that either contract or contract_file must be provided."""
-        with pytest.raises(
-            ParameterError,
-            match="DataContract object must have either a file path, data_contract dict, or data_contract_str attribute",
-        ):
+        with pytest.raises(ParameterError, match="DataContract has no contract"):
             generator.generate_rules_from_contract(DataContract())
 
     def test_cannot_provide_both_contract_and_file(self, generator, sample_contract_path):
@@ -1330,6 +1328,36 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 None,
             )
             assert match is not None, f"No matching rule for expected {exp} in {explicit_rules}"
+
+
+class TestDataContractGeneratorContractLoading(DataContractGeneratorTestBase):
+    """Tests for loading contracts from datacontract-cli DataContract objects."""
+
+    @pytest.mark.parametrize("source", ["data_contract_str", "data_contract"])
+    def test_generate_rules_from_datacontract_object_without_path(self, generator, sample_contract_path, source):
+        """Test generating rules from a DataContract built from a YAML string or a parsed ODCS model."""
+        with open(sample_contract_path, encoding="utf-8") as f:
+            contract_str = f.read()
+        if source == "data_contract_str":
+            contract = DataContract(data_contract_str=contract_str)
+        else:
+            contract = DataContract(data_contract=OpenDataContractStandard.model_validate(yaml.safe_load(contract_str)))
+        rules = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
+        assert rules == self.get_expected_contract_rules()
+
+    def test_unsupported_datacontract_cli_version_raises_clear_error(self, generator):
+        """Test that a DataContract without the string attribute DQX reads gives a version error."""
+        contract = DataContract()
+        delattr(contract, "_data_contract_str")
+        with pytest.raises(
+            ParameterError,
+            match=r"datacontract-cli version .* does not support '_data_contract_str'. Install a datacontract-cli version >=1\.2\.0 and <2\.0",
+        ):
+            generator.generate_rules_from_contract(contract)
+
+    def test_datacontract_still_stores_the_string_input(self):
+        """Fails when a datacontract-cli upgrade renames the attribute DQX reads for string contracts."""
+        assert "_data_contract_str" in vars(DataContract(data_contract_str="kind: DataContract"))
 
 
 class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
@@ -1907,13 +1935,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "event_date",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd"},
                 },
                 {
                     "name": "event_time",
                     "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d %H:%M:%S"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
                 },
             ]
         )
@@ -1927,7 +1955,12 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             timestamp_rules = [r for r in rules if r["check"]["function"] == "is_valid_timestamp"]
 
             assert len(date_rules) == 1
+            assert date_rules[0]["check"]["arguments"] == {"column": "event_date", "date_format": "yyyy-MM-dd"}
             assert len(timestamp_rules) == 1
+            assert timestamp_rules[0]["check"]["arguments"] == {
+                "column": "event_time",
+                "timestamp_format": "yyyy-MM-dd HH:mm:ss",
+            }
         finally:
             os.unlink(temp_path)
 
@@ -3170,16 +3203,27 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     # Additional tests for coverage improvement
 
-    def test_format_generates_timestamp_validation(self, generator):
-        """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
+    @pytest.mark.parametrize(
+        "timestamp_format",
+        [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "dd/MM/yy hh:mm a",
+            "dd 'de' MMMM yyyy HH:mm",
+            "hh 'o''clock' a",
+        ],
+    )
+    @pytest.mark.parametrize("logical_type", ["timestamp", "datetime"])
+    def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format, logical_type):
+        """Test that format on a timestamp (or datetime) field generates is_valid_timestamp with the format unchanged."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "created_at",
                     "physicalType": "TIMESTAMP",
-                    "logicalType": "timestamp",
+                    "logicalType": logical_type,
                     "required": True,
-                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
+                    "logicalTypeOptions": {"format": timestamp_format},
                 }
             ]
         )
@@ -3187,14 +3231,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            # Should generate is_valid_timestamp rule
+            # Should generate is_valid_timestamp rule with the JDK DateTimeFormatter pattern Spark expects
             timestamp_rules = [r for r in rules if "is_valid_timestamp" in r["check"]["function"]]
             assert len(timestamp_rules) == 1
-            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == "%Y-%m-%d %H:%M:%S"
+            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == timestamp_format
+            assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
         finally:
             os.unlink(temp_path)
 
@@ -3230,15 +3276,22 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    def test_python_format_passthrough(self, generator):
-        """Test that Python format strings (with %) are passed through as-is."""
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, format_str",
+        [("date", "DATE", "%Y-%m-%d"), ("date", "DATE", "%d/%m/%y"), ("timestamp", "TIMESTAMP", "%H:%M")],
+    )
+    def test_python_strftime_format_is_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, format_str
+    ):
+        """Test that a Python strftime format generates no rule and logs a warning."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
-                    "name": "birth_date",
-                    "physicalType": "DATE",
-                    "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
+                    "name": "event",
+                    "physicalType": physical_type,
+                    "logicalType": logical_type,
+                    "required": True,
+                    "logicalTypeOptions": {"format": format_str},
                 }
             ]
         )
@@ -3246,14 +3299,45 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
-            assert len(date_rules) == 1
-            # Should keep Python format as-is
-            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert [r["check"]["function"] for r in rules if r["check"]["arguments"].get("column") == "event"] == [
+                "is_not_null"
+            ]
+            assert (
+                f"Skipping format on 'event': '{format_str}'; use a Spark datetime pattern such as 'yyyy-MM-dd'."
+                in caplog.messages
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_non_string_format_is_not_treated_as_strftime(self, generator, caplog):
+        """Test that a non-string format is not treated as strftime."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "event",
+                    "physicalType": "DATE",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"format": ["%"]},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger=contract_rules_generator_module.__name__):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
+
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert not [message for message in caplog.messages if "is a Python strftime pattern" in message]
         finally:
             os.unlink(temp_path)
 
@@ -3593,6 +3677,189 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert len(rules) == 0
         finally:
             os.unlink(temp_path)
+
+
+class TestDataContractGeneratorSkippedQuality(DataContractGeneratorTestBase):
+    """Test that quality entries which do not become rules are logged as warnings."""
+
+    _QTY = "property 'qty' in schema 'test_table'"
+
+    def _qty_contract(self, quality_checks):
+        return self.create_contract_with_quality(
+            property_name="qty", logical_type="integer", quality_checks=quality_checks
+        )
+
+    def _generate_with_warnings(self, generator, caplog, contract_dict, **kwargs):
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=False, generate_schema_validation=False, **kwargs
+                )
+        finally:
+            os.unlink(temp_path)
+        skip_warnings = [
+            rec.message for rec in caplog.records if rec.levelno == logging.WARNING and "Skipping type" in rec.message
+        ]
+        return rules, skip_warnings
+
+    @pytest.mark.parametrize(
+        "quality, expected",
+        [
+            (
+                {"type": "sql", "description": "no negatives", "query": "SELECT COUNT(*) FROM {object}", "mustBe": 0},
+                f"Skipping type 'sql' quality entry on {_QTY} (description: 'no negatives'): "
+                "type: sql rules are not supported yet.",
+            ),
+            (
+                {"type": "custom", "engine": "soda", "description": "soda check"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'soda check'): "
+                "engine 'soda' is not supported; only engine: dqx is supported.",
+            ),
+            (
+                {"type": "custom", "description": "no engine"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'no engine'): "
+                "engine 'None' is not supported; only engine: dqx is supported.",
+            ),
+            (
+                {"type": "custom", "engine": "dqx", "description": "no check"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'no check'): "
+                "engine: dqx rules need an implementation with a 'check'.",
+            ),
+            (
+                {"type": "great_expectations", "description": "unknown type"},
+                f"Skipping type 'great_expectations' quality entry on {_QTY} (description: 'unknown type'): "
+                "this quality type is not supported; use library, custom (engine: dqx) or text.",
+            ),
+        ],
+        ids=["sql", "custom_other_engine", "custom_no_engine", "custom_dqx_without_check", "unknown_type"],
+    )
+    def test_quality_entry_is_skipped_with_warning(self, generator, caplog, quality, expected):
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert rules == []
+        assert warnings == [expected]
+
+    def test_text_quality_entry_is_skipped_with_warning_without_llm_extras(
+        self, mock_workspace_client, mock_spark, caplog, monkeypatch
+    ):
+        monkeypatch.setattr(generator_module, "LLM_ENABLED", False)
+        generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract([{"type": "text", "description": "Quantity should be positive"}])
+        )
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type 'text' quality entry on {self._QTY} (description: 'Quantity should be positive'): "
+            "text rules need an LLM engine; install the LLM extras with pip install 'databricks-labs-dqx[llm]'."
+        ]
+
+    def test_text_quality_entry_without_description_is_skipped_with_warning(self, generator, caplog):
+        generator.llm_engine = Mock()
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([{"type": "text"}]))
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type 'text' quality entry on {self._QTY} (description: ''): text rules need a description."
+        ]
+
+    def test_library_quality_entry_is_skipped_with_warning_when_library_processing_disabled(self, generator, caplog):
+        contract_dict = self._qty_contract([{"type": "library", "metric": "nullValues", "mustBe": 0}])
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, contract_dict, process_library_rules=False)
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type 'library' quality entry on {self._QTY} (description: ''): process_library_rules is False."
+        ]
+
+    @pytest.mark.parametrize(
+        "quality",
+        [
+            {"type": "library", "metric": "nullValues", "mustBe": 0},
+            {
+                "type": "custom",
+                "engine": "dqx",
+                "implementation": {"check": {"function": "is_not_null", "arguments": {"column": "qty"}}},
+            },
+        ],
+        ids=["library", "custom_dqx_with_check"],
+    )
+    def test_quality_entry_that_becomes_a_rule_is_not_warned(self, generator, caplog, quality):
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert len(rules) == 1
+        assert warnings == []
+
+    def test_text_quality_entry_with_llm_engine_and_description_is_not_warned(self, generator, caplog):
+        prediction = Mock()
+        prediction.quality_rules = json.dumps([{"check": {"function": "is_not_null", "arguments": {"column": "qty"}}}])
+        generator.llm_engine = Mock()
+        generator.llm_engine.detect_business_rules_with_llm.return_value = prediction
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract([{"type": "text", "description": "Quantity should be positive"}])
+        )
+
+        assert len(rules) == 1
+        assert warnings == []
+
+    def test_text_quality_entry_is_not_warned_when_text_processing_disabled(self, generator, caplog):
+        quality = [
+            {"type": "text", "description": "positive"},
+            {"type": "sql", "description": "no negatives", "query": "SELECT COUNT(*) FROM {object}", "mustBe": 0},
+        ]
+
+        _, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract(quality), process_text_rules=False
+        )
+
+        assert warnings == [
+            f"Skipping type 'sql' quality entry on {self._QTY} (description: 'no negatives'): "
+            "type: sql rules are not supported yet."
+        ]
+        assert not any("type 'text'" in message or "'positive'" in message for message in warnings)
+
+    def test_schema_level_quality_entry_warning_omits_property(self, generator, caplog):
+        contract_dict = self.create_basic_contract(
+            schema_name="orders", properties=[{"name": "order_id", "physicalType": "STRING"}]
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "custom", "engine": "soda", "description": "row check"}]
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert rules == []
+        assert warnings == [
+            "Skipping type 'custom' quality entry on schema 'orders' (description: 'row check'): "
+            "engine 'soda' is not supported; only engine: dqx is supported."
+        ]
+
+    def test_each_skipped_entry_is_warned_once(self, generator, caplog):
+        contract_dict = self._qty_contract(
+            [
+                {"type": "custom", "engine": "soda", "description": "first"},
+                {"type": "great_expectations", "description": "second"},
+            ]
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "custom", "engine": "soda", "description": "third"}]
+
+        _, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert len(warnings) == 3
+        assert all(f"'{desc}'" in message for desc, message in zip(["first", "second", "third"], warnings))
+        assert "schema 'test_table' (description" in warnings[2]
+
+    def test_description_control_characters_are_escaped_in_warning(self, generator, caplog):
+        quality = {"type": "custom", "engine": "soda", "description": "line one\nline two\r"}
+
+        _, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert len(warnings) == 1
+        assert "(description: 'line one\\nline two\\r')" in warnings[0]
+        assert "\n" not in warnings[0] and "\r" not in warnings[0]
 
 
 class TestDataContractGeneratorLibraryRules(DataContractGeneratorTestBase):
