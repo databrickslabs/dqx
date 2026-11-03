@@ -1,0 +1,148 @@
+# ODCS v3 contract accepted by DQX Studio.
+# Import it from Tables > Import to tables. The physical names point at the
+# samples.bakehouse tables available in every Databricks workspace.
+
+kind: DataContract
+apiVersion: v3.0.2
+id: urn:datacontract:samples:bakehouse:sales
+name: Bakehouse Sales
+version: 1.0.0
+status: active
+domain: sales
+dataProduct: bakehouse_sales
+
+description:
+  purpose: Demonstrate data quality rules generated from an ODCS contract for bakehouse customers and sales transactions.
+
+schema:
+  - name: sales_customers
+    physicalName: samples.bakehouse.sales_customers
+    physicalType: table
+    description: One row per bakehouse customer.
+    properties:
+      - name: customerID
+        logicalType: integer
+        physicalType: BIGINT
+        description: Stable customer identifier.
+        required: true
+        unique: true
+        primaryKey: true
+
+      - name: first_name
+        logicalType: string
+        physicalType: STRING
+        description: Customer first name.
+
+      - name: last_name
+        logicalType: string
+        physicalType: STRING
+        description: Customer last name.
+
+      - name: email_address
+        logicalType: string
+        physicalType: STRING
+        description: Primary contact email address.
+        required: true
+        logicalTypeOptions:
+          pattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+      - name: phone_number
+        logicalType: string
+        physicalType: STRING
+        description: Contact phone number.
+
+      - name: city
+        logicalType: string
+        physicalType: STRING
+        description: Customer city.
+
+      - name: country
+        logicalType: string
+        physicalType: STRING
+        description: Customer country.
+        required: true
+
+      - name: continent
+        logicalType: string
+        physicalType: STRING
+        description: Customer continent.
+
+  - name: sales_transactions
+    physicalName: samples.bakehouse.sales_transactions
+    physicalType: table
+    description: One row per bakehouse sale.
+    properties:
+      - name: transactionID
+        logicalType: integer
+        physicalType: BIGINT
+        description: Stable transaction identifier.
+        required: true
+        unique: true
+        primaryKey: true
+
+      - name: customerID
+        logicalType: integer
+        physicalType: BIGINT
+        description: Customer who made the purchase.
+        required: true
+
+      - name: franchiseID
+        logicalType: integer
+        physicalType: BIGINT
+        description: Franchise where the sale happened.
+        required: true
+
+      - name: dateTime
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        description: When the sale happened.
+        required: true
+
+      - name: product
+        logicalType: string
+        physicalType: STRING
+        description: Product sold.
+        required: true
+
+      - name: quantity
+        logicalType: integer
+        physicalType: BIGINT
+        description: Units sold.
+        required: true
+        logicalTypeOptions:
+          minimum: 1
+
+      - name: unitPrice
+        logicalType: integer
+        physicalType: BIGINT
+        description: Price per unit.
+        required: true
+        logicalTypeOptions:
+          minimum: 0
+
+      - name: totalPrice
+        logicalType: integer
+        physicalType: BIGINT
+        description: Total price of the sale.
+        required: true
+        logicalTypeOptions:
+          minimum: 0
+
+      - name: paymentMethod
+        logicalType: string
+        physicalType: STRING
+        description: Payment method used.
+        required: true
+
+    quality:
+      - type: custom
+        engine: dqx
+        description: Sales must not be timestamped in the future.
+        dimension: timeliness
+        implementation:
+          name: sale_datetime_not_in_future
+          criticality: error
+          check:
+            function: is_not_in_future
+            arguments:
+              column: dateTime

@@ -1,0 +1,59 @@
+id: transactions-and-amounts
+title: Transactions & Amounts
+icon: ShieldAlert
+description: >
+  Banking transaction-integrity checks — structuring detection,
+  sign-vs-type consistency, and duplicate detection.
+rules:
+  - name: Round-amount structuring
+    description: Large round amounts that could indicate structuring behaviour are flagged.
+    industries: [banking]
+    dimension: Validity
+    severity: High
+    slot_families: {amount: numeric}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "not ({{amount}} >= 1000 and {{amount}} = round({{amount}}, -3))"
+  - name: Amount just below reporting threshold
+    description: Amounts in the suspicious band just below the reporting threshold are flagged.
+    industries: [banking]
+    dimension: Validity
+    severity: High
+    slot_families: {amount: numeric}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "not ({{amount}} between 9950 and 9999)"
+  - name: Credit must be positive
+    description: Transactions typed as credit carry a positive amount.
+    industries: [banking]
+    dimension: Consistency
+    severity: High
+    slot_families: {amount: numeric}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{type}} <> 'credit' or {{amount}} > 0"
+  - name: Debit must be negative
+    description: Transactions typed as debit carry a negative amount.
+    industries: [banking]
+    dimension: Consistency
+    severity: High
+    slot_families: {amount: numeric}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{type}} <> 'debit' or {{amount}} < 0"
+  - name: Duplicate transaction
+    description: Combination of account, amount, and reference is unique across the dataset.
+    industries: [banking]
+    dimension: Uniqueness
+    severity: High
+    check:
+      function: is_unique
+      arguments:
+        columns:
+          - "{{account}}"
+          - "{{amount}}"
+          - "{{reference}}"

@@ -1,0 +1,60 @@
+id: dates-and-freshness
+title: Dates & Freshness
+icon: CalendarClock
+description: >
+  Timestamp validity, ordering, freshness, and calendar-name checks.
+rules:
+  - name: Must not be in the future
+    description: Timestamp is not later than the current time.
+    dimension: Validity
+    severity: Medium
+    check:
+      function: is_not_in_future
+      arguments:
+        column: "{{ts}}"
+  - name: End must not precede start
+    description: End timestamp is greater than or equal to the start timestamp.
+    dimension: Consistency
+    severity: High
+    slot_families: {end_ts: temporal, start_ts: temporal}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{end_ts}} >= {{start_ts}}"
+  - name: Must be fresh (within SLA)
+    description: Timestamp is no older than one day from now.
+    dimension: Timeliness
+    severity: Medium
+    check:
+      function: is_data_fresh
+      arguments:
+        column: "{{ts}}"
+        max_age_minutes: 1440
+  - name: Admission before discharge
+    description: Admission timestamp is earlier than or equal to the discharge timestamp.
+    industries: [healthcare]
+    dimension: Consistency
+    severity: High
+    slot_families: {admission_ts: temporal, discharge_ts: temporal}
+    check:
+      function: sql_expression
+      arguments:
+        expression: "{{admission_ts}} <= {{discharge_ts}}"
+  - name: Valid day-of-week name
+    description: Day name is one of the seven standard English weekday names.
+    dimension: Validity
+    severity: Low
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{day}}"
+        allowed: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+  - name: Valid month name
+    description: Month name is one of the twelve standard English month names.
+    dimension: Validity
+    severity: Low
+    check:
+      function: is_in_list
+      arguments:
+        column: "{{month}}"
+        allowed: [January, February, March, April, May, June, July, August, September, October, November, December]
