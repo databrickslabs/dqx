@@ -2409,6 +2409,23 @@ class TestLifecycleHistory:
             "monitored_table", "b1", "update", "alice@x", state={"applied_rules": ["r1"]}
         )
 
+    def test_resubmitting_a_table_already_in_review_without_a_note_records_nothing(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
+        svc.set_status.return_value = _table(status="pending_approval")
+        extra = _submit_mt_extra()
+        extra["history"] = history = self._history()
+        submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=MagicMock(),
+            obo_ws=_mock_obo_ws(),
+            **extra,
+        )
+        history.record.assert_not_called()
+
     def test_the_trail_is_listed_for_readers(self):
         history = self._history()
         history.list_events.return_value = [

@@ -1600,7 +1600,8 @@ def submit_monitored_table(
             rationale=rationale,
             set_rationale=True,
         )
-        if status == "pending_approval":
+        # A re-submit of a table already in review only counts when it adds a note.
+        if status == "pending_approval" and (gate_detail.table.status != status or rationale):
             history.record(
                 "monitored_table",
                 binding_id,

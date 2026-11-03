@@ -867,6 +867,13 @@ class TestLifecycleHistory:
         )
         history.record.assert_called_once_with("data_product", "p1", "delete", "alice@x")
 
+    def test_resubmitting_a_collection_already_in_review_without_a_note_records_nothing(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=1)
+        history = self._history()
+        self._submit(svc, history, _enabled_settings())
+        history.record.assert_not_called()
+
     def test_the_trail_is_listed(self):
         history = self._history()
         history.list_events.return_value = [

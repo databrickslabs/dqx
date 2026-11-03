@@ -538,15 +538,17 @@ def submit_data_product(
             last_change_time=gate_detail.product.updated_at,
         )
         svc.submit(product_id, user_email, rationale=rationale)
-        history.record(
-            "data_product",
-            product_id,
-            "submit",
-            user_email,
-            prev_status=gate_detail.product.status,
-            new_status="pending_approval",
-            rationale=rationale,
-        )
+        # A re-submit of a collection already in review only counts when it adds a note.
+        if gate_detail.product.status != "pending_approval" or rationale:
+            history.record(
+                "data_product",
+                product_id,
+                "submit",
+                user_email,
+                prev_status=gate_detail.product.status,
+                new_status="pending_approval",
+                rationale=rationale,
+            )
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
