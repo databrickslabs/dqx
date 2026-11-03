@@ -698,6 +698,7 @@ def test_apply_checks_parses_dbr_version_with_suffix(dbr_version, required_check
         ("dlt:18.3.8-delta-pipelines-photon-dlt-release-dp-20261015-rc0", _check_requires_dbr_max),
         # A pipeline runtime below the required version must still fail the comparison, not the parse.
         ("dlt:16.4.2-delta-pipelines-photon-dlt-release", _check_requires_dbr_17_1),
+        ("dlt:17.0.5-delta-pipelines-photon", _check_requires_dbr_17_1),
         # Unprefixed versions keep parsing inside a pipeline.
         ("16.4", _check_requires_dbr_17_1),
     ],
@@ -723,10 +724,13 @@ def test_validate_dbr_version_accepts_dlt_prefixed_version_meeting_requirement_i
     engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
 
 
-@pytest.mark.parametrize("dbr_version", ["dlt:18.3.8-delta-pipelines-photon", "other:18.3"])
-def test_apply_checks_does_not_strip_runtime_prefix_outside_pipeline(dbr_version):
-    # The "dlt:" prefix is only expected inside a pipeline; elsewhere a prefixed version stays unparseable.
-    engine = _engine_returning_dbr_version(dbr_version)
+@pytest.mark.parametrize(
+    "dbr_version, pipelines_id",
+    [("dlt:18.3.8-delta-pipelines-photon", None), ("other:18.3", None), ("other:18.3", "pipeline-123")],
+)
+def test_apply_checks_does_not_strip_unexpected_runtime_prefix(dbr_version, pipelines_id):
+    # The "dlt:" prefix is only stripped inside a pipeline; any other prefix stays unparseable.
+    engine = _engine_returning_dbr_version(dbr_version, pipelines_id=pipelines_id)
     df = Mock()
     df.columns = ["a"]
     with pytest.raises(InvalidCheckError, match="Cannot parse Databricks Runtime version"):
