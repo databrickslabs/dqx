@@ -1,6 +1,6 @@
 """Live round trip of oversized run configs through the Delta *dq_run_configs* table."""
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -11,10 +11,9 @@ from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
 
-from databricks_labs_dqx_app.backend.config import conf
 from databricks_labs_dqx_app.backend.migrations import MigrationRunner
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS, PgMigrationRunner
-from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor
+from databricks_labs_dqx_app.backend.pg_executor import PgExecutor
 from databricks_labs_dqx_app.backend.run_config_store import (
     RUN_CONFIGS_TABLE,
     build_manifest_config_payload,
@@ -61,27 +60,6 @@ def staging_sql(
 def spark(databricks_profile: str) -> SparkSession:
     """Provide a serverless Spark session, the compute the task runner uses."""
     return DatabricksSession.builder.profile(databricks_profile).serverless(True).getOrCreate()
-
-
-@pytest.fixture
-def lakebase_pg(ws: WorkspaceClient, make_random: Callable[[int], str]) -> Generator[PgExecutor, None, None]:
-    """Provide a Postgres executor on a throwaway schema of an existing Lakebase endpoint."""
-    endpoint = os.environ.get("DQX_LAKEBASE_ENDPOINT", "").strip()
-    if not endpoint:
-        pytest.skip("Set DQX_LAKEBASE_ENDPOINT to an endpoint the test profile can create schemas on.")
-    pg = build_pg_executor(
-        ws,
-        endpoint=endpoint,
-        database=conf.lakebase_database_name,
-        schema=f"dqx_test_{make_random(8).lower()}",
-    )
-    try:
-        yield pg
-    finally:
-        try:
-            pg.execute_no_schema(f"DROP SCHEMA IF EXISTS {pg.q(pg.schema)} CASCADE")
-        finally:
-            pg.close()
 
 
 def _oversized_config() -> dict:
