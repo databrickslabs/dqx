@@ -403,6 +403,71 @@ class TestDataContractIntegration:
             status = DQEngine.validate_checks(rules)
             assert not status.has_errors
 
+    def test_generated_format_rules_apply_on_spark(self, ws, spark):
+        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:formats",
+            "name": "Formats",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "event_date",
+                            "physicalType": "STRING",
+                            "logicalType": "date",
+                            "logicalTypeOptions": {"format": "yyyy-MM-dd"},
+                        },
+                        {
+                            "name": "short_date",
+                            "physicalType": "STRING",
+                            "logicalType": "date",
+                            "logicalTypeOptions": {"format": "dd/MM/yy"},
+                        },
+                        {
+                            "name": "event_ts",
+                            "physicalType": "STRING",
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        test_df = spark.createDataFrame(
+            [
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
+                ["null", None, None, None],
+            ],
+            "case: string, event_date: string, short_date: string, event_ts: string",
+        )
+
+        checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+
+        flagged_by_case = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+        assert flagged_by_case == {
+            "valid": set(),
+            "invalid": {
+                "event_date_valid_date_format",
+                "event_ts_valid_timestamp_format",
+                "short_date_valid_date_format",
+            },
+            "null": set(),
+        }
+
     def test_schema_with_empty_properties_no_crash(self, ws, spark, caplog):
         """Schema with properties: [] produces no schema_validation rule for that schema; no exception."""
         contract = {
