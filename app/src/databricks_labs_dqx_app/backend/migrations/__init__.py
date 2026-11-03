@@ -700,8 +700,8 @@ class MigrationRunner:
         """
         try:
             schema_lit = escape_sql_string(self._schema.lower())
-            rows = self._sql.query(
-                "SELECT lower(column_name), lower(full_data_type) "
+            rows = self._sql.query_dicts(
+                "SELECT lower(column_name) AS column_name, lower(full_data_type) AS full_data_type "
                 f"FROM {self._catalog_q}.information_schema.columns "
                 f"WHERE lower(table_schema) = '{schema_lit}' "
                 f"AND lower(table_name) = 'dq_validation_runs' "
@@ -711,6 +711,6 @@ class MigrationRunner:
         except Exception:
             logger.debug("Could not inspect dq_validation_runs column types; applying v3", exc_info=True)
             return False
-        types = {str(row[0]): str(row[1]) for row in rows if len(row) >= 2}
+        types = {str(row.get("column_name") or ""): str(row.get("full_data_type") or "") for row in rows}
         needed = ("total_rows", "valid_rows", "invalid_rows", "error_rows", "warning_rows")
         return bool(types) and all("bigint" in types.get(name, "") for name in needed)
