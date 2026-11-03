@@ -37,7 +37,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleMode,
     RuleStatus,
     RuleVersion,
-    generic_rule_metadata,
     get_rule_dimension,
     get_rule_severity,
 )
@@ -553,7 +552,7 @@ class RegistryService:
             return True
         if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
             return True
-        return generic_rule_metadata(rule.user_metadata) != generic_rule_metadata(snapshot.user_metadata)
+        return (rule.user_metadata or {}) != (snapshot.user_metadata or {})
 
     def _get(self, rule_id: str) -> RegistryRule | None:
         e_rule_id = escape_sql_string(rule_id)
@@ -643,7 +642,7 @@ class RegistryService:
             polarity=polarity,
             author_kind=author_kind,
             definition=definition,
-            user_metadata=generic_rule_metadata(user_metadata),
+            user_metadata=dict(user_metadata or {}),
             owner=resolved_owner,
             owner_display_name=owner_display_name,
             is_builtin=False,
@@ -713,7 +712,7 @@ class RegistryService:
             polarity=None,
             author_kind="human",
             definition=definition,
-            user_metadata=generic_rule_metadata(user_metadata),
+            user_metadata=dict(user_metadata or {}),
             owner=owner,
             is_builtin=True,
             source="builtin",
@@ -785,7 +784,7 @@ class RegistryService:
         elif clear_polarity:
             rule.polarity = None
         if user_metadata is not None:
-            rule.user_metadata = generic_rule_metadata(user_metadata)
+            rule.user_metadata = dict(user_metadata)
         if owner is not None:
             rule.owner = owner
             # Owner changed without an explicit display name → resolve it at

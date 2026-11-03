@@ -1399,7 +1399,7 @@ export interface BatchImportRegistryRulesDedupIn extends BatchImportRegistryRule
   /** Reuse an existing active rule by fingerprint instead of creating a copy. */
   skip_duplicates?: boolean;
   generalize_slots?: boolean;
-  reuse_rule_ids?: string[];
+  reuse_rule_ids?: Record<number, string>;
 }
 
 export interface BatchImportRegistryRulesDedupOut extends BatchImportRegistryRulesOut {

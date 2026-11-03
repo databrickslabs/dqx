@@ -600,6 +600,14 @@ class CreateRegistryRuleOut(BaseModel):
             "(the input was matched to, or created as, a generic rule with different slot names)."
         ),
     )
+    row_filter: str | None = Field(
+        default=None,
+        description=(
+            "Batch import only: imported filter that differs from the returned rule's default. "
+            "Apply it as the applied rule's ``row_filter`` so skip_duplicates reuse does not drop "
+            "a population filter that is not part of the fingerprint."
+        ),
+    )
 
 
 # Upper bound on a single batch import. The endpoint runs a SYNCHRONOUS
@@ -654,13 +662,12 @@ class BatchImportRegistryRulesIn(BaseModel):
             "no column-specific description. See ``slot_renames`` on each result."
         ),
     )
-    reuse_rule_ids: list[str] = Field(
-        default_factory=list,
-        max_length=BATCH_IMPORT_MAX_RULES,
+    reuse_rule_ids: dict[int, str] = Field(
+        default_factory=dict,
         description=(
-            "Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``): an "
-            "input with no identical rule is matched to the listed rule running the same check with "
-            "different parameters, and returned in ``reused`` instead of being created."
+            "Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), "
+            "keyed by input index so two imported checks that share a similar_key can still pick "
+            "different candidates (e.g. ``case: lower`` vs ``case: upper``)."
         ),
     )
 

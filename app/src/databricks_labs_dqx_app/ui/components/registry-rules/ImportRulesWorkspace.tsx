@@ -221,7 +221,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         checkFunctions,
         t,
         alsoSubmit,
-        reuseRuleIds: similar.choices.map((c) => c.rule.rule_id).filter((id) => reuseRuleIds.has(id)),
+        reuseRuleIds: Object.fromEntries(
+          similar.choices
+            .filter((c) => reuseRuleIds.has(c.rule.rule_id))
+            .flatMap((c) => c.inputIndexes.map((i) => [i, c.rule.rule_id])),
+        ),
       });
       toast.dismiss(toastId);
       if (result.saved > 0) {

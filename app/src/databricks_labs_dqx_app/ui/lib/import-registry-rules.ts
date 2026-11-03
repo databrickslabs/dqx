@@ -320,7 +320,7 @@ export async function importChecksAsRegistryDrafts({
   autoApprove = false,
   source,
   generalizeSlots = false,
-  reuseRuleIds = [],
+  reuseRuleIds = {},
 }: {
   checks: Record<string, unknown>[];
   checkFunctions: CheckFunctionDef[];
@@ -335,7 +335,7 @@ export async function importChecksAsRegistryDrafts({
    *  to "import"; the Marketplace passes "marketplace". */
   source?: string;
   generalizeSlots?: boolean;
-  reuseRuleIds?: string[];
+  reuseRuleIds?: Record<number, string>;
 }): Promise<ImportRegistryRulesResult> {
   const { rules, errors: parseErrors } = parseChecksForImport(checks, checkFunctions, t, authorKind);
 

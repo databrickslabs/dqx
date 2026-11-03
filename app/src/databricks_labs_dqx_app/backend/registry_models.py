@@ -840,11 +840,12 @@ def _canonical_label_value(value: str, allowed: list[str], aliases: dict[str, st
 
 
 def generic_rule_metadata(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Return only the reserved keys a generic (registry) rule may carry.
+    """Return the reserved keys a generic (registry) rule uses for identity.
 
-    Custom tags (contract provenance, ownership, pass rates, ...) describe a
-    rule's use on a specific table, so they live on the applied rule
-    (``dq_applied_rules.user_metadata``), never on the reusable registry rule.
+    Custom tags still persist on the registry rule until an applied-rule
+    migration copies them onto ``dq_applied_rules.user_metadata``. This helper
+    is the reserved-key *view* (fingerprint/modified comparison), not a strip
+    on write.
     """
     return {k: v for k, v in (user_metadata or {}).items() if k in RESERVED_RULE_METADATA_KEYS}
 
@@ -854,11 +855,53 @@ def application_tags(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in (user_metadata or {}).items() if k not in RESERVED_RULE_METADATA_KEYS}
 
 
+def _severity_value_criticality(label_definitions: list[dict]) -> dict[str, str]:
+    """Configured ``value_criticality`` map for the reserved severity label."""
+    for definition in label_definitions:
+        if definition.get("key") != _SEVERITY_LABEL_KEY:
+            continue
+        mapping = definition.get("value_criticality")
+        return {str(k): str(v) for k, v in mapping.items()} if isinstance(mapping, dict) else {}
+    return {}
+
+
+def _criticality_of_severity(value: str, label_definitions: list[dict]) -> str | None:
+    """DQX criticality for *value*, using the configured map then the built-in names."""
+    mapping = _severity_value_criticality(label_definitions)
+    if value in mapping:
+        return mapping[value]
+    by_lower = {k.lower(): v for k, v in mapping.items()}
+    if value.lower() in by_lower:
+        return by_lower[value.lower()]
+    return SEVERITY_TO_CRITICALITY.get(value) or next(
+        (crit for name, crit in SEVERITY_TO_CRITICALITY.items() if name.lower() == value.lower()),
+        None,
+    )
+
+
+def _canonical_severity_value(value: str, allowed: list[str], label_definitions: list[dict]) -> str | None:
+    """Configured severity that matches *value* by spelling or by criticality."""
+    direct = _canonical_label_value(value, allowed, {})
+    if direct is not None:
+        return direct
+    if value in allowed:
+        return None
+    crit = _criticality_of_severity(value, label_definitions)
+    if crit is None:
+        return None
+    for name in allowed:
+        if _criticality_of_severity(name, label_definitions) == crit:
+            return name
+    return None
+
+
 def imported_severity_error(user_metadata: dict[str, Any] | None, label_definitions: list[dict]) -> str | None:
     """Why an imported rule's ``severity`` tag can't be accepted, or ``None`` if it can.
 
     Severity is required on every rule and must be one of the configured values
     (case-insensitive, as :func:`canonicalize_reserved_label_values` folds case).
+    Built-in names such as ``High`` that YAML back-fills from ``criticality``
+    also match a renamed vocabulary (P1–P4) via ``value_criticality``.
     Not enforced when no severity vocabulary is configured.
     """
     allowed = _configured_label_values(label_definitions, _SEVERITY_LABEL_KEY)
@@ -869,9 +912,11 @@ def imported_severity_error(user_metadata: dict[str, Any] | None, label_definiti
     choices = ", ".join(allowed)
     if not value:
         return f"Severity is required. Use one of: {choices}."
-    if value.lower() not in {v.lower() for v in allowed}:
-        return f"Invalid severity '{value}'. Use one of: {choices}."
-    return None
+    if value.lower() in {v.lower() for v in allowed}:
+        return None
+    if _canonical_severity_value(value, allowed, label_definitions) is not None:
+        return None
+    return f"Invalid severity '{value}'. Use one of: {choices}."
 
 
 def canonicalize_reserved_label_values(
@@ -902,7 +947,12 @@ def canonicalize_reserved_label_values(
         value = get_reserved_tag(result, key)
         if value is None:
             continue
-        canonical = _canonical_label_value(value, _configured_label_values(label_definitions, key), aliases)
+        allowed = _configured_label_values(label_definitions, key)
+        canonical = (
+            _canonical_severity_value(value, allowed, label_definitions)
+            if key == _SEVERITY_LABEL_KEY
+            else _canonical_label_value(value, allowed, aliases)
+        )
         if canonical is not None:
             result = set_reserved_tag(result, key, canonical)
     return result

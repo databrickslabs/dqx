@@ -2255,9 +2255,8 @@
     "appliedRuleCount_other": "{{count}} règles appliquées",
     "emptyAppliedRules": "Aucune règle n'est encore appliquée à cette table.",
     "emptyAppliedRulesCta": "Aucune règle appliquée pour le moment",
-    "applyRowFilterLabel": "Filtre de population (cette table)",
-    "applyRowFilterPlaceholder": "Hériter du filtre par défaut, ou ex. region = 'EU'",
-    "applyRowFilterHint": "Clause SQL WHERE facultative. Laissez vide pour hériter du filtre par défaut de la règle.",
+    "applyRowFilterLabel": "Filtre",
+    "applyRowFilterPlaceholder": "Filtre facultatif, par exemple \"{{region}}='EU'\"",
     "pendingApplications": {
       "title_one": "{{count}} règle en attente d'approbation",
       "title_other": "{{count}} règles en attente d'approbation",
