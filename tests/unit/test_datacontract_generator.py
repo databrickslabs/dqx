@@ -3267,7 +3267,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert len(rules) == 1
             assert rules[0]["check"] == {
                 "function": "is_valid_timestamp",
-                "arguments": {"column": "start_time", "timestamp_format": "%H:%M:%S"},
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
             }
         finally:
             os.unlink(temp_path)
