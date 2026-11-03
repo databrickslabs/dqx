@@ -39,6 +39,8 @@ export const SAMPLE_TABLES = {
   crossTableHost: "samples.tpcds_sf1.item",
   /** 73,049 rows (d_date_sk); its checks are exported as DQX YAML and ODCS, never run. */
   export: "samples.tpcds_sf1.date_dim",
+  /** 25 rows (n_nationkey 0-24) and 5 rows (r_regionkey 0-4); approving the second must keep the first's checks. */
+  approvalScope: ["samples.tpch_sf1.nation", "samples.tpch_sf1.region"],
 } as const;
 
 /**
