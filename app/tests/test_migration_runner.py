@@ -188,9 +188,9 @@ class TestBaselineOnlyCatalogue:
                     "SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')"
                 )
                 widens_to_bigint = stmt.startswith("ALTER TABLE") and re.search(r" ALTER COLUMN \w+ TYPE BIGINT$", stmt)
-                assert creates or constrains or enables_widening or widens_to_bigint, (
-                    f"v{migration.version} statement is neither: {stmt[:120]}"
-                )
+                assert (
+                    creates or constrains or enables_widening or widens_to_bigint
+                ), f"v{migration.version} statement is neither: {stmt[:120]}"
 
     def test_row_count_widening_enables_type_widening_before_each_alter(self) -> None:
         widened: dict[str, list[str]] = {}
@@ -328,6 +328,24 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         assert "prod-east.dqx_studio" not in " ".join(
             captured
         ), "Found raw (un-quoted) interpolation — hyphenated catalogs would emit parse-invalid DDL"
+
+    def test_apply_skips_v3_ddl_when_row_counts_are_already_bigint(
+        self, runner_state: tuple[MigrationRunner, MagicMock]
+    ) -> None:
+        runner, _ = runner_state
+        captured: list[str] = []
+        runner._sql.execute = lambda s, **_: captured.append(s)  # type: ignore[method-assign]
+        runner._sql.query = lambda s, **_: [  # type: ignore[method-assign]
+            ["total_rows", "bigint"],
+            ["valid_rows", "bigint"],
+            ["invalid_rows", "bigint"],
+            ["error_rows", "bigint"],
+            ["warning_rows", "bigint"],
+        ]
+        runner._apply(MIGRATIONS[2])
+        assert len(captured) == 1
+        assert captured[0].startswith("INSERT INTO `prod-east`.`dqx_studio`.dq_migrations")
+        assert not any("enableTypeWidening" in stmt for stmt in captured)
 
 
 # ---------------------------------------------------------------------------

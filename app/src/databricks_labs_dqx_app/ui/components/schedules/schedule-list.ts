@@ -55,7 +55,7 @@ export function matchesScheduleFilters(row: ScheduleOverviewOut, filters: Schedu
   if (filters.type !== SCHEDULE_FILTER_ALL && row.source_type !== filters.type) return false;
   if (filters.owner !== SCHEDULE_FILTER_ALL && (row.owner ?? "") !== filters.owner) return false;
   const health = scheduleHealth(row);
-  if (filters.status === "active" && health !== "active") return false;
+  if (filters.status === "active" && health !== "active" && health !== "awaiting") return false;
   if (filters.status === "paused" && health !== "paused") return false;
   if (filters.status === "failing" && health !== "failed" && health !== "partial") return false;
   const q = filters.search.trim().toLowerCase();

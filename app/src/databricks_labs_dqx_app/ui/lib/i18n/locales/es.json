@@ -1822,6 +1822,7 @@
     "toastUpdated": "Regla actualizada.",
     "saveFailed": "No se pudo guardar la regla.",
     "toastSavedSubmitFailed": "La regla se guardó, pero no se pudo enviar a revisión: {{error}}",
+    "toastSavedApproveFailed": "La regla se guardó, pero no se pudo aprobar: {{error}}",
     "submitNoRevisionTooltip": "No hay nada que revisar: este cambio se aplica en cuanto lo guardas. Solo los cambios en la lógica o los metadatos de la regla crean una nueva versión que aprobar.",
     "dialogSrDescription": "Crea o edita una regla de calidad de datos reutilizable.",
     "createTitle": "Nueva regla del registro",

@@ -85,6 +85,12 @@ describe("matchesScheduleFilters", () => {
     expect(matchesScheduleFilters(row({ paused: true }), { ...EMPTY_SCHEDULE_FILTERS, status: "paused" })).toBe(true);
   });
 
+  it("counts awaiting-approval schedules as active", () => {
+    expect(
+      matchesScheduleFilters(row({ awaiting_approval: true }), { ...EMPTY_SCHEDULE_FILTERS, status: "active" }),
+    ).toBe(true);
+  });
+
   it("searches name, target and owner case-insensitively", () => {
     expect(matchesScheduleFilters(row(), { ...EMPTY_SCHEDULE_FILTERS, search: "SALES" })).toBe(true);
     expect(matchesScheduleFilters(row(), { ...EMPTY_SCHEDULE_FILTERS, search: "ana@" })).toBe(true);

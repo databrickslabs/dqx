@@ -1822,6 +1822,7 @@
     "toastUpdated": "Regra atualizada.",
     "saveFailed": "Falha ao salvar a regra.",
     "toastSavedSubmitFailed": "A regra foi salva, mas não foi possível enviá-la para revisão: {{error}}",
+    "toastSavedApproveFailed": "A regra foi salva, mas não foi possível aprová-la: {{error}}",
     "submitNoRevisionTooltip": "Nada a revisar — esta alteração passa a valer assim que você salvar. Somente mudanças na lógica ou nos metadados da regra criam uma nova versão para aprovar.",
     "dialogSrDescription": "Crie ou edite uma regra de qualidade de dados reutilizável.",
     "createTitle": "Nova regra do registro",

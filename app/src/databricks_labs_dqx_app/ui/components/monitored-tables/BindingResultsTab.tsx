@@ -792,9 +792,10 @@ function ResultsBody({
   const failingRows = toFailingRecords(failedRows?.rows);
 
   const fetchAllFailedRows = async () =>
-    collectFailedRowPages(async ({ offset, limit }) => {
+    collectFailedRowPages(async ({ offset, limit, run_id }) => {
       const res = await getDqResultsFailedRows(tableFqn, {
         ...failedRowsParams,
+        run_id: run_id ?? failedRowsParams.run_id,
         offset,
         limit,
       });
@@ -1098,7 +1099,7 @@ function ResultsBody({
               ) : (
                 <FailingRecordsTable
                   rows={failingRows}
-                  total={failedRows?.total}
+                  total={failedRows?.total ?? undefined}
                   loading={failedRowsQuery.isFetching || failedRowsQuery.isPending}
                   severityColors={sevColors}
                   severityRanks={sevRanks}

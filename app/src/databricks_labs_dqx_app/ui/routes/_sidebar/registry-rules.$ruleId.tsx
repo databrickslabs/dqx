@@ -206,20 +206,13 @@ function RegistryRuleDetailPage() {
 
   const handleApprove = useCallback(
     async (rationale?: string | null) => {
-      try {
-        await approveMutation.mutateAsync({
-          ruleId,
-          rationale: rationale ?? null,
-        });
-        toast.success(t("rulesRegistry.toastApproved"));
-        invalidateDetail();
-        invalidateAfterLifecycleChange();
-      } catch (err) {
-        toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), {
-          duration: 6000,
-        });
-        throw err;
-      }
+      await approveMutation.mutateAsync({
+        ruleId,
+        rationale: rationale ?? null,
+      });
+      toast.success(t("rulesRegistry.toastApproved"));
+      invalidateDetail();
+      invalidateAfterLifecycleChange();
     },
     [approveMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange],
   );

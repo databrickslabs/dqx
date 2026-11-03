@@ -1822,6 +1822,7 @@
     "toastUpdated": "Règle mise à jour.",
     "saveFailed": "Échec de l'enregistrement de la règle.",
     "toastSavedSubmitFailed": "Règle enregistrée, mais elle n'a pas pu être soumise pour revue : {{error}}",
+    "toastSavedApproveFailed": "Règle enregistrée, mais elle n'a pas pu être approuvée : {{error}}",
     "submitNoRevisionTooltip": "Rien à revoir — cette modification prend effet dès que vous l'enregistrez. Seules les modifications de la logique ou des métadonnées de la règle créent une nouvelle version à approuver.",
     "dialogSrDescription": "Créer ou modifier une règle de qualité des données réutilisable.",
     "createTitle": "Nouvelle règle du registre",

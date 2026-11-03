@@ -31,22 +31,27 @@ export const EXPORT_ROW_LIMIT = 100000;
  *  uniqueness quarantine JSON lands around a few thousand rows even when
  *  the drilldown total is much larger. Smaller pages keep each response
  *  inside one chunk; we walk `offset` until `total` is covered. */
-export const FAILED_ROWS_DOWNLOAD_PAGE_SIZE = 1000;
+export const FAILED_ROWS_DOWNLOAD_PAGE_SIZE = 5000;
 
 export type FailedRowsPage = {
   rows?: FailedRowsOut["rows"];
-  total?: number;
+  total?: number | null;
+  run_id?: string | null;
 };
 
 /** Fetch every failed row matching the active filters, paging by `total`.
  *
  *  Continues even when a page is shorter than `limit` as long as
  *  `all.length < total` — that is the truncated-INLINE case (first chunk
- *  of a large LIMIT, `total` still reports the full matching set). */
+ *  of a large LIMIT, `total` still reports the full matching set).
+ *  When `total` is omitted (legacy run with no metrics), keep paging
+ *  while a page comes back full. Pins `run_id` after the first page so
+ *  a new run finishing mid-download cannot mix rows. */
 export async function collectFailedRowPages(
   fetchPage: (args: {
     offset: number;
     limit: number;
+    run_id?: string;
   }) => Promise<FailedRowsPage>,
   options?: { pageSize?: number; maxRows?: number },
 ): Promise<FailingRecord[]> {
@@ -54,19 +59,21 @@ export async function collectFailedRowPages(
   const maxRows = options?.maxRows ?? EXPORT_ROW_LIMIT;
   const all: FailingRecord[] = [];
   let offset = 0;
+  let pinnedRunId: string | undefined;
+  let knownTotal: number | undefined;
   while (all.length < maxRows) {
     const limit = Math.min(pageSize, maxRows - all.length);
-    const page = await fetchPage({ offset, limit });
+    const page = await fetchPage({ offset, limit, run_id: pinnedRunId });
+    if (typeof page.run_id === "string" && page.run_id) pinnedRunId = page.run_id;
     const records = toFailingRecords(page.rows);
     all.push(...records);
-    const total =
-      typeof page.total === "number" && Number.isFinite(page.total)
-        ? page.total
-        : offset + records.length;
-    offset += records.length;
-    if (records.length === 0 || all.length >= total || all.length >= maxRows) {
-      break;
+    if (typeof page.total === "number" && Number.isFinite(page.total)) {
+      knownTotal = page.total;
     }
+    offset += records.length;
+    if (records.length === 0 || all.length >= maxRows) break;
+    if (knownTotal !== undefined && all.length >= knownTotal) break;
+    if (knownTotal === undefined && records.length < limit) break;
   }
   return all;
 }

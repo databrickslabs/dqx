@@ -1746,8 +1746,9 @@ is also what a caller without SELECT on the source table receives.
  */
 export interface FailedRowsOut {
   rows?: FailedRowOut[];
-  total?: number;
+  total?: number | null;
   suppressed?: boolean;
+  run_id?: string | null;
 }
 
 export interface FilterTablesByColumnsIn {
