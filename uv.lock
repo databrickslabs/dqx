@@ -12,12 +12,13 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-21T12:40:41.079106Z"
+exclude-newer = "2026-10-27T20:48:25.143457Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 databricks-connect = false
 databricks-sdk = false
+databricks-labs-blueprint = "2026-11-05T05:00:00Z"
 certifi = false
 
 [[package]]
@@ -950,14 +951,16 @@ wheels = [
 
 [[package]]
 name = "databricks-labs-blueprint"
-version = "0.12.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "certifi" },
     { name = "databricks-sdk" },
+    { name = "pip" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/92/c3a15d7d1de5b684408189de899628df9b920a123c7e02a396953de85e2c/databricks_labs_blueprint-0.12.0.tar.gz", hash = "sha256:247c3394c2172c35993041a3c4de4418581b1881a6d8fcbe026ceb287a27c3db", upload-time = "2025-12-30T17:27:36.589Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/4b/fa4e10bdb9fadebbc1b1e38f4f5284770565283b38a05b984b94c60246b4/databricks_labs_blueprint-0.13.0.tar.gz", hash = "sha256:462d326a5caf0655b2d9ed07540ffa29412101775d52bda78f7ef57a8650f75c", upload-time = "2026-11-03T19:15:54.822Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/fa/68da7f40a645efdefed57b606b034ae992f62e3bc691762318f69003ae63/databricks_labs_blueprint-0.12.0-py3-none-any.whl", hash = "sha256:62d17f9a4c6fd42fb814ddc544926d247edc82463863d837a77be7aa26fe5d20", upload-time = "2025-12-30T17:27:35.02Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/58/a7897a397b13d648d6ede15813b640b8b9949fc5d4b5935e01e778dbf50a/databricks_labs_blueprint-0.13.0-py3-none-any.whl", hash = "sha256:5e1d9d7cd915d4ad69844c5cfc6721c2bf6d44453765f4e7610a72a8da7ca120", upload-time = "2026-11-03T19:15:53.494Z" },
 ]
 
 [package.optional-dependencies]
@@ -1080,7 +1083,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cloudpickle", marker = "extra == 'anomaly'", specifier = ">=3.0,<4.0" },
     { name = "databricks-connect", marker = "extra == 'cli'", specifier = ">=15.4,<18" },
-    { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<=0.12" },
+    { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<=0.13" },
     { name = "databricks-langchain", marker = "extra == 'llm'", specifier = ">=0.1.0,<1.0" },
     { name = "databricks-sdk", specifier = "~=0.73" },
     { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=1.2.0,<2.0" },
@@ -3589,11 +3592,11 @@ wheels = [
 
 [[package]]
 name = "pip"
-version = "26.0.1"
+version = "26.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/48/83/0d7d4e9efe3344b8e2fe25d93be44f64b65364d3c8d7bc6dc90198d5422e/pip-26.0.1.tar.gz", hash = "sha256:c4037d8a277c89b320abe636d59f91e6d0922d08a05b60e85e53b296613346d8", upload-time = "2026-02-05T02:20:18.702Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/e8/0842d757e483e895e670f655084cfe8b8c72580c6769a76b30b2789a0608/pip-26.2.2.tar.gz", hash = "sha256:3a8e5c800492787f33a4114ef54444546c340df428974ebba17e0fd47e11af2f", upload-time = "2026-10-20T16:36:29.008Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/f0/c81e05b613866b76d2d1066490adf1a3dbc4ee9d9c839961c3fc8a6997af/pip-26.0.1-py3-none-any.whl", hash = "sha256:bdb1b08f4274833d62c1aa29e20907365a2ceb950410df15fc9521bad440122b", upload-time = "2026-02-05T02:20:16.416Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl", hash = "sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70", upload-time = "2026-10-20T16:36:27.046Z" },
 ]
 
 [[package]]
