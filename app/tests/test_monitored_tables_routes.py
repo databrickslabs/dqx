@@ -26,7 +26,7 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import Privilege
-from databricks_labs_dqx_app.backend.services.review_events import ReviewEvent, ReviewEventService
+from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryEvent, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.registry_models import (
     AppliedRule,
     MonitoredTable,
@@ -46,7 +46,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     get_monitored_table,
     get_monitored_table_changes,
     get_monitored_table_profile,
-    list_monitored_table_review_events,
+    list_monitored_table_history,
     list_monitored_table_versions,
     list_implemented_rules,
     list_monitored_tables,
@@ -120,7 +120,7 @@ def _submit_mt_extra() -> dict:
     app_settings.get_approvals_mode.return_value = "enabled"
     return {
         "version_svc": MagicMock(),
-        "review_events": MagicMock(),
+        "history": MagicMock(),
         "app_settings": app_settings,
         "draft_run_gate": MagicMock(),
         "perms": MagicMock(),
@@ -271,6 +271,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
             tag_suggestions=_tag_suggestions_mock(),
+            history=MagicMock(),
         )
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
@@ -295,6 +296,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
             tag_suggestions=_tag_suggestions_mock(),
+            history=MagicMock(),
         )
         svc.register.assert_called_once()
 
@@ -309,6 +311,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
             tag_suggestions=_tag_suggestions_mock(),
+            history=MagicMock(),
         )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner="owner@x", owner_display_name=None)
@@ -326,6 +329,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
             tag_suggestions=_tag_suggestions_mock(),
+            history=MagicMock(),
         )
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner=None, owner_display_name=None)
 
@@ -340,6 +344,7 @@ class TestRegister:
                 obo_ws=_mock_obo_ws(),
                 discovery=_mock_discovery(),
                 tag_suggestions=_tag_suggestions_mock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -354,6 +359,7 @@ class TestRegister:
                 obo_ws=_mock_obo_ws(),
                 discovery=_mock_discovery(),
                 tag_suggestions=_tag_suggestions_mock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -369,6 +375,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
             tag_suggestions=tag_suggestions,
+            history=MagicMock(),
         )
         tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
 
@@ -385,6 +392,7 @@ class TestRegister:
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
             tag_suggestions=tag_suggestions,
+            history=MagicMock(),
         )
         assert result.table.table_fqn == "cat.schema.tbl"
 
@@ -403,7 +411,7 @@ class TestBulkRegister:
             owner="bob@x",
         )
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock(), history=MagicMock()
         )
         assert result.registered == ["cat.schema.a", "cat.schema.b"]
         assert result.skipped_existing == ["cat.schema.existing"]
@@ -417,7 +425,7 @@ class TestBulkRegister:
         svc.bulk_register.return_value = BulkRegisterResult()
         body = BulkRegisterMonitoredTablesIn(table_fqns=[])
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock(), history=MagicMock()
         )
         assert result.registered == []
         assert result.skipped_existing == []
@@ -429,7 +437,7 @@ class TestBulkRegister:
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
             bulk_register_monitored_tables(
-                body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+                body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock(), history=MagicMock()
             )
         assert excinfo.value.status_code == 500
 
@@ -447,7 +455,9 @@ class TestBulkRegister:
         )
         tag_suggestions = _tag_suggestions_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1", "cat.schema.t2", "cat.schema.existing"])
-        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        bulk_register_monitored_tables(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions, history=MagicMock()
+        )
         assert tag_suggestions.apply_matches.call_count == 2
         tag_suggestions.apply_matches.assert_any_call("bid-t1", "alice@x")
         tag_suggestions.apply_matches.assert_any_call("bid-t2", "alice@x")
@@ -464,7 +474,9 @@ class TestBulkRegister:
         )
         tag_suggestions = _tag_suggestions_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
-        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        bulk_register_monitored_tables(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions, history=MagicMock()
+        )
         tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
 
     def test_bulk_register_apply_matches_failure_is_non_fatal(self):
@@ -481,7 +493,7 @@ class TestBulkRegister:
         tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions, history=MagicMock()
         )
         assert result.registered == ["cat.schema.t1"]
 
@@ -501,7 +513,9 @@ class TestBulkRegister:
             table_fqns=["cat.schema.ok", "cat.schema.missing", "cat.schema.hidden", "bad-fqn"]
         )
         with pytest.raises(HTTPException) as excinfo:
-            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+            bulk_register_monitored_tables(
+                body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock(), history=MagicMock()
+            )
         assert excinfo.value.status_code == 422
         assert excinfo.value.detail["code"] == "import_tables_unavailable"
         assert sorted(excinfo.value.detail["tables"]) == ["cat.schema.hidden", "cat.schema.missing"]
@@ -513,7 +527,9 @@ class TestBulkRegister:
         obo.tables.get.side_effect = RuntimeError("UC down")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
-            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+            bulk_register_monitored_tables(
+                body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock(), history=MagicMock()
+            )
         assert excinfo.value.status_code == 502
         svc.bulk_register.assert_not_called()
 
@@ -621,7 +637,13 @@ class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
         result = delete_monitored_table(
-            "b1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+            "b1",
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result == {"status": "deleted", "binding_id": "b1"}
         svc.delete.assert_called_once_with("b1", "alice@x")
@@ -631,7 +653,13 @@ class TestDelete:
         svc.delete.side_effect = RuntimeError("Monitored table not found: b1")
         with pytest.raises(HTTPException) as excinfo:
             delete_monitored_table(
-                "b1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+                "b1",
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -651,6 +679,7 @@ class TestUpdateOwner:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.owner == "bob@x"
         svc.update_owner.assert_called_once_with("b1", "bob@x", "alice@x")
@@ -668,6 +697,7 @@ class TestUpdateOwner:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -684,6 +714,7 @@ class TestUpdateOwner:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -861,6 +892,7 @@ class TestApplyRuleToTable:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.id == "ar1"
         svc.apply_rule.assert_called_once_with(
@@ -888,6 +920,7 @@ class TestApplyRuleToTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 422
 
@@ -904,6 +937,7 @@ class TestApplyRuleToTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -920,6 +954,7 @@ class TestApplyRuleToTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -939,6 +974,7 @@ class TestSaveAppliedRules:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert [r.id for r in result] == ["ar1"]
         (called_binding_id, called_desired, called_user_email), _kwargs = svc.save_applied_rules.call_args
@@ -964,6 +1000,7 @@ class TestSaveAppliedRules:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result[0].rule_name == "Not Null Check"
         assert result[0].rule_dimension == "Completeness"
@@ -983,6 +1020,7 @@ class TestSaveAppliedRules:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result == []
         svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x")
@@ -1000,6 +1038,7 @@ class TestSaveAppliedRules:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 422
 
@@ -1016,6 +1055,7 @@ class TestSaveAppliedRules:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -1032,6 +1072,7 @@ class TestSaveAppliedRules:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -1060,6 +1101,7 @@ class TestSaveAppliedRules:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
         assert called_desired[0].tags[RESERVED_COLUMN_PASS_THRESHOLDS_KEY] == {"email": 90}
@@ -1093,6 +1135,7 @@ class TestSaveAppliedRules:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
             (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
             assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
@@ -1131,6 +1174,7 @@ class TestSaveAppliedRules:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
         assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
@@ -1151,6 +1195,7 @@ class TestRemoveAppliedRule:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result == {"status": "removed", "binding_id": "b1", "applied_rule_id": "ar1"}
         svc.remove_applied.assert_called_once_with("ar1", "alice@x")
@@ -1167,6 +1212,7 @@ class TestRemoveAppliedRule:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -1184,6 +1230,7 @@ class TestSetAppliedRulePin:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.pinned_version == 2
         svc.set_pin.assert_called_once_with("ar1", 2)
@@ -1201,6 +1248,7 @@ class TestSetAppliedRulePin:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -1220,6 +1268,7 @@ class TestSetAppliedRuleSeverityOverride:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.severity_override == "Critical"
         svc.set_severity_override.assert_called_once_with("ar1", "Critical")
@@ -1237,6 +1286,7 @@ class TestSetAppliedRuleSeverityOverride:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -1468,7 +1518,7 @@ class TestApproveMonitoredTable:
             rules_catalog=rules_catalog,
             version_svc=version_svc,
             obo_ws=_mock_obo_ws(),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         assert result.table.status == "approved"
         assert result.affected_check_count == 2
@@ -1490,7 +1540,7 @@ class TestApproveMonitoredTable:
             rules_catalog=MagicMock(),
             version_svc=version_svc,
             obo_ws=_mock_obo_ws(),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         assert result.affected_check_count == 0
         assert result.new_version == 4
@@ -1513,7 +1563,7 @@ class TestApproveMonitoredTable:
             rules_catalog=MagicMock(),
             version_svc=version_svc,
             obo_ws=_mock_obo_ws(),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         version_svc.freeze_new_version.assert_called_once_with("b1", "alice@x")
         assert result.new_version == 2
@@ -1529,7 +1579,7 @@ class TestApproveMonitoredTable:
                 rules_catalog=MagicMock(),
                 version_svc=version_svc,
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
         svc.set_status.assert_not_called()
@@ -1547,7 +1597,7 @@ class TestApproveMonitoredTable:
                 rules_catalog=rules_catalog,
                 version_svc=version_svc,
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
         # Neither the checks, the binding's own status, nor the version should be touched.
@@ -1568,7 +1618,7 @@ class TestRejectMonitoredTable:
             monitored_tables_svc=svc,
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         assert result.table.status == "rejected"
         assert result.affected_check_count == 1
@@ -1584,7 +1634,7 @@ class TestRejectMonitoredTable:
                 monitored_tables_svc=svc,
                 rules_catalog=MagicMock(),
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
         svc.set_status.assert_not_called()
@@ -1603,7 +1653,7 @@ class TestRejectMonitoredTable:
                 monitored_tables_svc=svc,
                 rules_catalog=rules_catalog,
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
         # Neither the materialized checks nor the binding's own status should be touched.
@@ -1623,7 +1673,7 @@ class TestRevertMonitoredTable:
             monitored_tables_svc=svc,
             rules_catalog=rules_catalog,
             obo_ws=_mock_obo_ws(),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         assert result.table.status == "draft"
         assert result.affected_check_count == 1
@@ -1639,7 +1689,7 @@ class TestRevertMonitoredTable:
                 monitored_tables_svc=svc,
                 rules_catalog=MagicMock(),
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
         svc.set_status.assert_not_called()
@@ -1654,7 +1704,7 @@ class TestRevertMonitoredTable:
                 monitored_tables_svc=svc,
                 rules_catalog=rules_catalog,
                 obo_ws=_mock_obo_ws(),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
         rules_catalog.set_status.assert_not_called()
@@ -2179,12 +2229,12 @@ class TestGetMonitoredTableChanges:
         assert [c.status for c in result.changes] == ["removed", "removed", "unchanged"]
 
 
-class TestReviewTrail:
+class TestLifecycleHistory:
     """Each review step on a table is recorded, so its History tab can show who did what and why."""
 
     @staticmethod
-    def _review_events() -> MagicMock:
-        return create_autospec(ReviewEventService, instance=True)
+    def _history() -> MagicMock:
+        return create_autospec(LifecycleHistoryService, instance=True)
 
     def test_a_submit_that_enters_review_is_recorded(self):
         svc = MagicMock()
@@ -2192,7 +2242,7 @@ class TestReviewTrail:
         svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
         svc.set_status.return_value = _table(status="pending_approval")
         extra = _submit_mt_extra()
-        extra["review_events"] = review_events = self._review_events()
+        extra["history"] = history = self._history()
         submit_monitored_table(
             "b1",
             monitored_tables_svc=svc,
@@ -2202,8 +2252,14 @@ class TestReviewTrail:
             body=LifecycleRationaleIn(rationale="new key check"),
             **extra,
         )
-        review_events.record.assert_called_once_with(
-            "monitored_table", "b1", "submitted", "alice@x", rationale="new key check"
+        history.record.assert_called_once_with(
+            "monitored_table",
+            "b1",
+            "submit",
+            "alice@x",
+            prev_status="draft",
+            new_status="pending_approval",
+            rationale="new key check",
         )
 
     def test_a_submit_with_nothing_to_review_records_nothing(self):
@@ -2212,7 +2268,7 @@ class TestReviewTrail:
         svc.list_materialized_rule_statuses.return_value = []
         svc.set_status.return_value = _table(status="draft")
         extra = _submit_mt_extra()
-        extra["review_events"] = review_events = self._review_events()
+        extra["history"] = history = self._history()
         submit_monitored_table(
             "b1",
             monitored_tables_svc=svc,
@@ -2221,7 +2277,7 @@ class TestReviewTrail:
             obo_ws=_mock_obo_ws(),
             **extra,
         )
-        review_events.record.assert_not_called()
+        history.record.assert_not_called()
 
     def test_an_auto_approved_submit_records_the_approval_and_its_version(self):
         svc = MagicMock()
@@ -2231,7 +2287,7 @@ class TestReviewTrail:
         extra = _submit_mt_extra()
         extra["app_settings"].get_approvals_mode.return_value = "disabled"
         extra["version_svc"].freeze_new_version.return_value = 2
-        extra["review_events"] = review_events = self._review_events()
+        extra["history"] = history = self._history()
         submit_monitored_table(
             "b1",
             monitored_tables_svc=svc,
@@ -2240,10 +2296,10 @@ class TestReviewTrail:
             obo_ws=_mock_obo_ws(),
             **extra,
         )
-        (object_type, object_id, action, actor), kwargs = review_events.record.call_args
-        assert (object_type, object_id, action) == ("monitored_table", "b1", "approved")
+        (object_type, object_id, action, actor), kwargs = history.record.call_args
+        assert (object_type, object_id, action) == ("monitored_table", "b1", "approve")
         assert actor.startswith("alice@x") and actor != "alice@x"
-        assert kwargs == {"rationale": None, "version": 2}
+        assert kwargs == {"prev_status": "pending_approval", "new_status": "approved", "version": 2, "rationale": None}
 
     def test_approve_records_the_approver_note_and_version(self):
         svc = MagicMock()
@@ -2252,18 +2308,25 @@ class TestReviewTrail:
         svc.set_status.return_value = _table(status="approved")
         version_svc = MagicMock()
         version_svc.freeze_new_version.return_value = 5
-        review_events = self._review_events()
+        history = self._history()
         approve_monitored_table(
             "b1",
             monitored_tables_svc=svc,
             rules_catalog=MagicMock(),
             version_svc=version_svc,
             obo_ws=_mock_obo_ws(),
-            review_events=review_events,
+            history=history,
             body=LifecycleRationaleIn(rationale="ok"),
         )
-        review_events.record.assert_called_once_with(
-            "monitored_table", "b1", "approved", "alice@x", rationale="ok", version=5
+        history.record.assert_called_once_with(
+            "monitored_table",
+            "b1",
+            "approve",
+            "alice@x",
+            prev_status="pending_approval",
+            new_status="approved",
+            version=5,
+            rationale="ok",
         )
 
     def test_reject_records_the_note(self):
@@ -2271,17 +2334,23 @@ class TestReviewTrail:
         svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
         svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
         svc.set_status.return_value = _table(status="rejected")
-        review_events = self._review_events()
+        history = self._history()
         reject_monitored_table(
             "b1",
             monitored_tables_svc=svc,
             rules_catalog=MagicMock(),
             obo_ws=_mock_obo_ws(),
-            review_events=review_events,
+            history=history,
             body=LifecycleRationaleIn(rationale="too broad"),
         )
-        review_events.record.assert_called_once_with(
-            "monitored_table", "b1", "rejected", "alice@x", rationale="too broad"
+        history.record.assert_called_once_with(
+            "monitored_table",
+            "b1",
+            "reject",
+            "alice@x",
+            prev_status="pending_approval",
+            new_status="rejected",
+            rationale="too broad",
         )
 
     def test_withdraw_is_recorded(self):
@@ -2289,30 +2358,71 @@ class TestReviewTrail:
         svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
         svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval")]
         svc.set_status.return_value = _table(status="draft")
-        review_events = self._review_events()
+        history = self._history()
         revert_monitored_table(
             "b1",
             monitored_tables_svc=svc,
             rules_catalog=MagicMock(),
             obo_ws=_mock_obo_ws(),
-            review_events=review_events,
+            history=history,
         )
-        review_events.record.assert_called_once_with("monitored_table", "b1", "withdrawn", "alice@x")
+        history.record.assert_called_once_with(
+            "monitored_table", "b1", "withdraw", "alice@x", prev_status="pending_approval", new_status="draft"
+        )
+
+    def test_registering_a_table_records_its_creation(self):
+        svc = MagicMock()
+        svc.register.return_value = _table()
+        history = self._history()
+        register_monitored_table(
+            body=RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x"),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            discovery=_mock_discovery(owner="owner@x"),
+            tag_suggestions=_tag_suggestions_mock(),
+            history=history,
+        )
+        history.record.assert_called_once_with(
+            "monitored_table", "b1", "create", "alice@x", new_status="draft", state={"table_fqn": "cat.schema.tbl"}
+        )
+
+    def test_saving_applied_rules_records_an_edit_with_the_rules(self):
+        svc = MagicMock()
+        svc.save_applied_rules.return_value = [
+            AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
+        ]
+        svc.rule_display_tags.return_value = (None, None, None, None)
+        history = self._history()
+        save_applied_rules(
+            "b1",
+            body=SaveAppliedRulesIn(
+                applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+            ),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            history=history,
+        )
+        history.record.assert_called_once_with(
+            "monitored_table", "b1", "update", "alice@x", state={"applied_rules": ["r1"]}
+        )
 
     def test_the_trail_is_listed_for_readers(self):
-        review_events = self._review_events()
-        review_events.list_events.return_value = [
-            ReviewEvent(action="approved", actor="bob@x", created_at="2026-10-02", rationale="ok", version=3),
+        history = self._history()
+        history.list_events.return_value = [
+            HistoryEvent(action="approved", actor="bob@x", created_at="2026-10-02", rationale="ok", version=3),
         ]
         perms = MagicMock()
-        out = list_monitored_table_review_events(
+        out = list_monitored_table_history(
             "b1",
-            review_events=review_events,
+            history=history,
             obo_ws=_mock_obo_ws(),
             role=UserRole.VIEWER,
             principal_ids=frozenset(),
             perms=perms,
         )
-        review_events.list_events.assert_called_once_with("monitored_table", "b1")
+        history.list_events.assert_called_once_with("monitored_table", "b1")
         assert [(e.action, e.actor, e.version, e.rationale) for e in out] == [("approved", "bob@x", 3, "ok")]
         assert perms.require_object.call_args.args[2] == Privilege.SELECT

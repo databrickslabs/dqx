@@ -2110,6 +2110,38 @@ export interface HTTPValidationError {
   detail?: ValidationError[];
 }
 
+/**
+ * Who did it; an automatic approval carries an (auto) marker
+ */
+export type HistoryEventOutActor = string | null;
+
+export type HistoryEventOutCreatedAt = string | null;
+
+/**
+ * The note left with it
+ */
+export type HistoryEventOutRationale = string | null;
+
+/**
+ * The version an approval created
+ */
+export type HistoryEventOutVersion = number | null;
+
+/**
+ * One step of a table's, collection's or rule's history — backs the History tab.
+ */
+export interface HistoryEventOut {
+  /** created | edited | submitted | approved | rejected | withdrawn */
+  action: string;
+  /** Who did it; an automatic approval carries an (auto) marker */
+  actor?: HistoryEventOutActor;
+  created_at?: HistoryEventOutCreatedAt;
+  /** The note left with it */
+  rationale?: HistoryEventOutRationale;
+  /** The version an approval created */
+  version?: HistoryEventOutVersion;
+}
+
 export type HomeStatsOutScore = number | null;
 
 export type HomeStatsOutFailedTests = number | null;
@@ -3573,38 +3605,6 @@ export interface RetentionSettingsOut {
   retention_days_max?: number;
   retention_days_set: boolean;
   quarantine_retention_days_set: boolean;
-}
-
-/**
- * Who did it; an automatic approval carries an (auto) marker
- */
-export type ReviewEventOutActor = string | null;
-
-export type ReviewEventOutCreatedAt = string | null;
-
-/**
- * The note left with it
- */
-export type ReviewEventOutRationale = string | null;
-
-/**
- * The version an approval created
- */
-export type ReviewEventOutVersion = number | null;
-
-/**
- * One step of a table's, collection's or rule's review trail — backs the History tab.
- */
-export interface ReviewEventOut {
-  /** submitted | approved | rejected | withdrawn */
-  action: string;
-  /** Who did it; an automatic approval carries an (auto) marker */
-  actor?: ReviewEventOutActor;
-  created_at?: ReviewEventOutCreatedAt;
-  /** The note left with it */
-  rationale?: ReviewEventOutRationale;
-  /** The version an approval created */
-  version?: ReviewEventOutVersion;
 }
 
 export type ReviewStatusHistoryEntryOutPreviousStatus = string | null;
@@ -16282,85 +16282,85 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * A registry rule's review trail, newest first: each submit, approve, reject and withdraw.
- * @summary List Registry Rule Review Events
+ * A registry rule's history, newest first: created, edits, and each submit, approve, reject and withdraw.
+ * @summary List Registry Rule History
  */
-export const listRegistryRuleReviewEvents = (
+export const listRegistryRuleHistory = (
     ruleId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<ReviewEventOut[]>> => {
+ ): Promise<AxiosResponse<HistoryEventOut[]>> => {
     
     
     return axios.default.get(
-      `/api/v1/registry-rules/${ruleId}/review-events`,options
+      `/api/v1/registry-rules/${ruleId}/history`,options
     );
   }
 
 
 
 
-export const getListRegistryRuleReviewEventsQueryKey = (ruleId?: string,) => {
+export const getListRegistryRuleHistoryQueryKey = (ruleId?: string,) => {
     return [
-    `/api/v1/registry-rules/${ruleId}/review-events`
+    `/api/v1/registry-rules/${ruleId}/history`
     ] as const;
     }
 
     
-export const getListRegistryRuleReviewEventsQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListRegistryRuleHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleReviewEventsQueryKey(ruleId);
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleHistoryQueryKey(ruleId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>> = ({ signal }) => listRegistryRuleReviewEvents(ruleId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleHistory>>> = ({ signal }) => listRegistryRuleHistory(ruleId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, enabled: !!(ruleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, enabled: !!(ruleId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListRegistryRuleReviewEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>>
-export type ListRegistryRuleReviewEventsQueryError = AxiosError<HTTPValidationError>
+export type ListRegistryRuleHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleHistory>>>
+export type ListRegistryRuleHistoryQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListRegistryRuleReviewEvents<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>> & Pick<
+export function useListRegistryRuleHistory<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>,
+          Awaited<ReturnType<typeof listRegistryRuleHistory>>,
           TError,
-          Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>
+          Awaited<ReturnType<typeof listRegistryRuleHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListRegistryRuleReviewEvents<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>> & Pick<
+export function useListRegistryRuleHistory<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>,
+          Awaited<ReturnType<typeof listRegistryRuleHistory>>,
           TError,
-          Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>
+          Awaited<ReturnType<typeof listRegistryRuleHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListRegistryRuleReviewEvents<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistory<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Registry Rule Review Events
+ * @summary List Registry Rule History
  */
 
-export function useListRegistryRuleReviewEvents<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistory<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListRegistryRuleReviewEventsQueryOptions(ruleId,options)
+  const queryOptions = getListRegistryRuleHistoryQueryOptions(ruleId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -16372,50 +16372,50 @@ export function useListRegistryRuleReviewEvents<TData = Awaited<ReturnType<typeo
 
 
 
-export const getListRegistryRuleReviewEventsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListRegistryRuleHistorySuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleReviewEventsQueryKey(ruleId);
+  const queryKey =  queryOptions?.queryKey ?? getListRegistryRuleHistoryQueryKey(ruleId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>> = ({ signal }) => listRegistryRuleReviewEvents(ruleId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRegistryRuleHistory>>> = ({ signal }) => listRegistryRuleHistory(ruleId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListRegistryRuleReviewEventsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>>
-export type ListRegistryRuleReviewEventsSuspenseQueryError = AxiosError<HTTPValidationError>
+export type ListRegistryRuleHistorySuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRegistryRuleHistory>>>
+export type ListRegistryRuleHistorySuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListRegistryRuleReviewEventsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistorySuspense<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListRegistryRuleReviewEventsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistorySuspense<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListRegistryRuleReviewEventsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistorySuspense<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Registry Rule Review Events
+ * @summary List Registry Rule History
  */
 
-export function useListRegistryRuleReviewEventsSuspense<TData = Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListRegistryRuleHistorySuspense<TData = Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRegistryRuleHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListRegistryRuleReviewEventsSuspenseQueryOptions(ruleId,options)
+  const queryOptions = getListRegistryRuleHistorySuspenseQueryOptions(ruleId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -18265,85 +18265,85 @@ export function useGetMonitoredTableChangesSuspense<TData = Awaited<ReturnType<t
 
 
 /**
- * A monitored table's review trail, newest first: each submit, approve, reject and withdraw.
- * @summary List Monitored Table Review Events
+ * A monitored table's history, newest first: created, edits, and each submit, approve, reject and withdraw.
+ * @summary List Monitored Table History
  */
-export const listMonitoredTableReviewEvents = (
+export const listMonitoredTableHistory = (
     bindingId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<ReviewEventOut[]>> => {
+ ): Promise<AxiosResponse<HistoryEventOut[]>> => {
     
     
     return axios.default.get(
-      `/api/v1/monitored-tables/${bindingId}/review-events`,options
+      `/api/v1/monitored-tables/${bindingId}/history`,options
     );
   }
 
 
 
 
-export const getListMonitoredTableReviewEventsQueryKey = (bindingId?: string,) => {
+export const getListMonitoredTableHistoryQueryKey = (bindingId?: string,) => {
     return [
-    `/api/v1/monitored-tables/${bindingId}/review-events`
+    `/api/v1/monitored-tables/${bindingId}/history`
     ] as const;
     }
 
     
-export const getListMonitoredTableReviewEventsQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListMonitoredTableHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableReviewEventsQueryKey(bindingId);
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableHistoryQueryKey(bindingId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>> = ({ signal }) => listMonitoredTableReviewEvents(bindingId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableHistory>>> = ({ signal }) => listMonitoredTableHistory(bindingId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, enabled: !!(bindingId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListMonitoredTableReviewEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>>
-export type ListMonitoredTableReviewEventsQueryError = AxiosError<HTTPValidationError>
+export type ListMonitoredTableHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableHistory>>>
+export type ListMonitoredTableHistoryQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListMonitoredTableReviewEvents<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>> & Pick<
+export function useListMonitoredTableHistory<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>,
+          Awaited<ReturnType<typeof listMonitoredTableHistory>>,
           TError,
-          Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>
+          Awaited<ReturnType<typeof listMonitoredTableHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListMonitoredTableReviewEvents<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>> & Pick<
+export function useListMonitoredTableHistory<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>,
+          Awaited<ReturnType<typeof listMonitoredTableHistory>>,
           TError,
-          Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>
+          Awaited<ReturnType<typeof listMonitoredTableHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListMonitoredTableReviewEvents<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistory<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Monitored Table Review Events
+ * @summary List Monitored Table History
  */
 
-export function useListMonitoredTableReviewEvents<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistory<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListMonitoredTableReviewEventsQueryOptions(bindingId,options)
+  const queryOptions = getListMonitoredTableHistoryQueryOptions(bindingId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -18355,50 +18355,50 @@ export function useListMonitoredTableReviewEvents<TData = Awaited<ReturnType<typ
 
 
 
-export const getListMonitoredTableReviewEventsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListMonitoredTableHistorySuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableReviewEventsQueryKey(bindingId);
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableHistoryQueryKey(bindingId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>> = ({ signal }) => listMonitoredTableReviewEvents(bindingId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableHistory>>> = ({ signal }) => listMonitoredTableHistory(bindingId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListMonitoredTableReviewEventsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>>
-export type ListMonitoredTableReviewEventsSuspenseQueryError = AxiosError<HTTPValidationError>
+export type ListMonitoredTableHistorySuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableHistory>>>
+export type ListMonitoredTableHistorySuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListMonitoredTableReviewEventsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistorySuspense<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListMonitoredTableReviewEventsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistorySuspense<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListMonitoredTableReviewEventsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistorySuspense<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Monitored Table Review Events
+ * @summary List Monitored Table History
  */
 
-export function useListMonitoredTableReviewEventsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListMonitoredTableHistorySuspense<TData = Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError = AxiosError<HTTPValidationError>>(
+ bindingId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListMonitoredTableReviewEventsSuspenseQueryOptions(bindingId,options)
+  const queryOptions = getListMonitoredTableHistorySuspenseQueryOptions(bindingId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -26916,85 +26916,85 @@ export function useGetDataProductChangesSuspense<TData = Awaited<ReturnType<type
 
 
 /**
- * A collection's review trail, newest first: each submit, approve, reject and withdraw.
- * @summary List Data Product Review Events
+ * A collection's history, newest first: created, edits, and each submit, approve, reject and withdraw.
+ * @summary List Data Product History
  */
-export const listDataProductReviewEvents = (
+export const listDataProductHistory = (
     productId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<ReviewEventOut[]>> => {
+ ): Promise<AxiosResponse<HistoryEventOut[]>> => {
     
     
     return axios.default.get(
-      `/api/v1/data-products/${productId}/review-events`,options
+      `/api/v1/data-products/${productId}/history`,options
     );
   }
 
 
 
 
-export const getListDataProductReviewEventsQueryKey = (productId?: string,) => {
+export const getListDataProductHistoryQueryKey = (productId?: string,) => {
     return [
-    `/api/v1/data-products/${productId}/review-events`
+    `/api/v1/data-products/${productId}/history`
     ] as const;
     }
 
     
-export const getListDataProductReviewEventsQueryOptions = <TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListDataProductHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListDataProductReviewEventsQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getListDataProductHistoryQueryKey(productId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProductReviewEvents>>> = ({ signal }) => listDataProductReviewEvents(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProductHistory>>> = ({ signal }) => listDataProductHistory(productId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, enabled: !!(productId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListDataProductReviewEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProductReviewEvents>>>
-export type ListDataProductReviewEventsQueryError = AxiosError<HTTPValidationError>
+export type ListDataProductHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProductHistory>>>
+export type ListDataProductHistoryQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListDataProductReviewEvents<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>> & Pick<
+export function useListDataProductHistory<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listDataProductReviewEvents>>,
+          Awaited<ReturnType<typeof listDataProductHistory>>,
           TError,
-          Awaited<ReturnType<typeof listDataProductReviewEvents>>
+          Awaited<ReturnType<typeof listDataProductHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDataProductReviewEvents<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>> & Pick<
+export function useListDataProductHistory<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listDataProductReviewEvents>>,
+          Awaited<ReturnType<typeof listDataProductHistory>>,
           TError,
-          Awaited<ReturnType<typeof listDataProductReviewEvents>>
+          Awaited<ReturnType<typeof listDataProductHistory>>
         > , 'initialData'
       >, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDataProductReviewEvents<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistory<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Data Product Review Events
+ * @summary List Data Product History
  */
 
-export function useListDataProductReviewEvents<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistory<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListDataProductReviewEventsQueryOptions(productId,options)
+  const queryOptions = getListDataProductHistoryQueryOptions(productId,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -27006,50 +27006,50 @@ export function useListDataProductReviewEvents<TData = Awaited<ReturnType<typeof
 
 
 
-export const getListDataProductReviewEventsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListDataProductHistorySuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListDataProductReviewEventsQueryKey(productId);
+  const queryKey =  queryOptions?.queryKey ?? getListDataProductHistoryQueryKey(productId);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProductReviewEvents>>> = ({ signal }) => listDataProductReviewEvents(productId, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataProductHistory>>> = ({ signal }) => listDataProductHistory(productId, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type ListDataProductReviewEventsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProductReviewEvents>>>
-export type ListDataProductReviewEventsSuspenseQueryError = AxiosError<HTTPValidationError>
+export type ListDataProductHistorySuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listDataProductHistory>>>
+export type ListDataProductHistorySuspenseQueryError = AxiosError<HTTPValidationError>
 
 
-export function useListDataProductReviewEventsSuspense<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistorySuspense<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDataProductReviewEventsSuspense<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistorySuspense<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDataProductReviewEventsSuspense<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistorySuspense<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient
   ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary List Data Product Review Events
+ * @summary List Data Product History
  */
 
-export function useListDataProductReviewEventsSuspense<TData = Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError = AxiosError<HTTPValidationError>>(
- productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductReviewEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
+export function useListDataProductHistorySuspense<TData = Awaited<ReturnType<typeof listDataProductHistory>>, TError = AxiosError<HTTPValidationError>>(
+ productId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listDataProductHistory>>, TError, TData>>, axios?: AxiosRequestConfig}
  , queryClient?: QueryClient 
  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getListDataProductReviewEventsSuspenseQueryOptions(productId,options)
+  const queryOptions = getListDataProductHistorySuspenseQueryOptions(productId,options)
 
   const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

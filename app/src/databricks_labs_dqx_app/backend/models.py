@@ -799,10 +799,10 @@ class UpdateMonitoredTableOwnerIn(BaseModel):
     owner: str = Field(min_length=1, description="Owner's email/username")
 
 
-class ReviewEventOut(BaseModel):
-    """One step of a table's, collection's or rule's review trail — backs the History tab."""
+class HistoryEventOut(BaseModel):
+    """One step of a table's, collection's or rule's history — backs the History tab."""
 
-    action: str = Field(description="submitted | approved | rejected | withdrawn")
+    action: str = Field(description="created | edited | submitted | approved | rejected | withdrawn")
     actor: str | None = Field(default=None, description="Who did it; an automatic approval carries an (auto) marker")
     created_at: str | None = None
     rationale: str | None = Field(default=None, description="The note left with it")

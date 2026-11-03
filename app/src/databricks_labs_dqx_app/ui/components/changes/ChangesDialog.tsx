@@ -208,7 +208,7 @@ export interface ChangesVersion {
   note?: string | null;
 }
 
-/** One review step (submitted, approved, rejected, withdrawn), for the History timeline. */
+/** One history step (created, edited, submitted, approved, rejected, withdrawn), for the History timeline. */
 export interface ChangesEvent {
   action: string;
   actor?: string | null;
@@ -224,7 +224,7 @@ export interface ChangesViewProps {
   approvedVersion: number;
   /** Approved versions, for the picker and the History timeline. */
   versions: ChangesVersion[];
-  /** The review trail, shown in the History timeline. */
+  /** The history, shown in the History timeline. */
   events?: ChangesEvent[];
   items: ChangeItem[];
   /** Hide the per-status counts and the unchanged toggle (a single item). */
@@ -450,6 +450,8 @@ type TimelineEntry =
   | { kind: "event"; at?: string | null; event: ChangesEvent };
 
 const EVENT_STYLE: Record<string, string> = {
+  created: "text-muted-foreground",
+  edited: "text-muted-foreground",
   submitted: "text-sky-700 dark:text-sky-400",
   approved: "text-green-700 dark:text-green-400",
   rejected: "text-red-700 dark:text-red-400",
@@ -464,7 +466,7 @@ function timeOf(at: string | null | undefined): number {
 /**
  * View changes inside a History tab: the timeline (pending changes on top, then
  * each approved version with who approved it, when and their note, between the
- * other review steps — submitted, rejected, withdrawn — newest first) beside
+ * other steps — created, edited, submitted, rejected, withdrawn — newest first) beside
  * the comparison. Picking a version shows it against the version before it.
  */
 export function ChangesPanel({ resetKey, ...view }: ChangesViewProps & { resetKey: string }) {

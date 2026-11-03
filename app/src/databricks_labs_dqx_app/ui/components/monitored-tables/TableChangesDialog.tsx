@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import {
   useGetMonitoredTableChanges,
-  useListMonitoredTableReviewEvents,
+  useListMonitoredTableHistory,
   useListMonitoredTableVersions,
 } from "@/lib/api";
 import {
@@ -39,7 +39,7 @@ function useTableChanges(bindingId: string, enabled: boolean, withEvents = false
     query: { enabled: enabled && !!info && (sides.mode === "pending" || sides.target > 0) },
   });
   const versions = useListMonitoredTableVersions(bindingId, { query: { enabled } });
-  const reviewEvents = useListMonitoredTableReviewEvents(bindingId, { query: { enabled: enabled && withEvents } });
+  const reviewEvents = useListMonitoredTableHistory(bindingId, { query: { enabled: enabled && withEvents } });
 
   const items: ChangeItem[] = (query.data?.data?.changes ?? []).map((c) => ({
     key: c.key,

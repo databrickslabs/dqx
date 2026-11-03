@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useGetDataProductChanges, useListDataProductReviewEvents } from "@/lib/api";
+import { useGetDataProductChanges, useListDataProductHistory } from "@/lib/api";
 import {
   ChangesDialog,
   ChangesPanel,
@@ -37,7 +37,7 @@ function useCollectionChanges(productId: string, enabled: boolean, withEvents = 
     query: { enabled: enabled && !!info && (sides.mode === "pending" || sides.target > 0) },
   });
 
-  const reviewEvents = useListDataProductReviewEvents(productId, { query: { enabled: enabled && withEvents } });
+  const reviewEvents = useListDataProductHistory(productId, { query: { enabled: enabled && withEvents } });
   const data = query.data?.data;
   const items: ChangeItem[] = (data?.changes ?? []).map((c) => ({
     key: c.key,

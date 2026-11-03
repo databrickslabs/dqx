@@ -122,23 +122,26 @@ _DATA_PRODUCT_VERSIONS_DDL = (
     f"  ON {_S}.dq_data_product_versions (product_id);"
 )
 
-# dq_review_events — the review trail of monitored tables and collections:
-# each submit, approve, reject and withdraw, with who, when, the note and the
-# version approved. Registry rules keep theirs in dq_rules_history. Shared by
-# the baseline and v6.
-_REVIEW_EVENTS_DDL = (
-    f"CREATE TABLE IF NOT EXISTS {_S}.dq_review_events ("
-    "  id           TEXT PRIMARY KEY,"
-    "  object_type  TEXT NOT NULL,"
-    "  object_id    TEXT NOT NULL,"
+# dq_monitored_tables_history / dq_data_products_history — append-only audit
+# trails of the monitored-table and collection lifecycles (create, edits,
+# submit / approve / reject / withdraw, delete), shaped like dq_rules_history so
+# all three are read the same way. Shared by the baseline and v6.
+_LIFECYCLE_HISTORY_DDL = "".join(
+    f"CREATE TABLE IF NOT EXISTS {_S}.{table} ("
+    "  history_id   BIGSERIAL PRIMARY KEY,"
+    f"  {key}  TEXT NOT NULL,"
     "  action       TEXT NOT NULL,"
+    "  prev_status  TEXT,"
+    "  new_status   TEXT,"
     "  version      INTEGER,"
+    "  state        JSONB,"
     "  rationale    TEXT,"
-    "  actor        TEXT,"
-    "  created_at   TIMESTAMPTZ"
+    "  changed_by   TEXT,"
+    "  changed_at   TIMESTAMPTZ"
     ");"
-    "CREATE INDEX IF NOT EXISTS idx_dq_review_events_object "
-    f"  ON {_S}.dq_review_events (object_type, object_id, created_at);"
+    f"CREATE INDEX IF NOT EXISTS idx_{table}_{key}_changed_at "
+    f"  ON {_S}.{table} ({key}, changed_at DESC);"
+    for table, key in (("dq_monitored_tables_history", "binding_id"), ("dq_data_products_history", "product_id"))
 )
 
 
@@ -602,7 +605,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "    UNIQUE (product_id, binding_id)"
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_data_product_members_product_id "
-            f"  ON {_S}.dq_data_product_members (product_id);" + _DATA_PRODUCT_VERSIONS_DDL + _REVIEW_EVENTS_DDL +
+            f"  ON {_S}.dq_data_product_members (product_id);" + _DATA_PRODUCT_VERSIONS_DDL + _LIFECYCLE_HISTORY_DDL +
             # ----------------------------------------------------------
             # dq_run_sets — one row per product-level run, grouping the
             # per-binding runs it fanned out into (``dq_run_set_members``).
@@ -859,8 +862,8 @@ PG_MIGRATIONS: list[PgMigration] = [
     ),
     PgMigration(
         version=6,
-        description="Review trail of monitored tables and collections",
-        sql=_REVIEW_EVENTS_DDL,
+        description="Lifecycle history of monitored tables and collections",
+        sql=_LIFECYCLE_HISTORY_DDL,
     ),
 ]
 

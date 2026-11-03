@@ -16,7 +16,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
-    get_review_event_service,
+    get_lifecycle_history_service,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -33,7 +33,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
-from databricks_labs_dqx_app.backend.services.review_events import ReviewEventService
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.models import (
     BackfillRuleEmbeddingsOut,
     BatchImportRegistryRulesFailure,
@@ -45,7 +45,7 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleDetailOut,
     RegistryRuleOut,
     RegistryRuleVersionOut,
-    ReviewEventOut,
+    HistoryEventOut,
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
@@ -185,22 +185,22 @@ def list_registry_rule_versions(
 
 
 @router.get(
-    "/{rule_id}/review-events",
-    response_model=list[ReviewEventOut],
-    operation_id="listRegistryRuleReviewEvents",
+    "/{rule_id}/history",
+    response_model=list[HistoryEventOut],
+    operation_id="listRegistryRuleHistory",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-def list_registry_rule_review_events(
+def list_registry_rule_history(
     rule_id: str,
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
-) -> list[ReviewEventOut]:
-    """A registry rule's review trail, newest first: each submit, approve, reject and withdraw."""
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
+) -> list[HistoryEventOut]:
+    """A registry rule's history, newest first: created, edits, and each submit, approve, reject and withdraw."""
     try:
-        events = review_events.list_rule_events(rule_id)
+        events = history.list_rule_events(rule_id)
     except Exception as e:
         logger.error(f"Failed to list review events for registry rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
-    return [ReviewEventOut(**vars(e)) for e in events]
+    return [HistoryEventOut(**vars(e)) for e in events]
 
 
 # ------------------------------------------------------------------

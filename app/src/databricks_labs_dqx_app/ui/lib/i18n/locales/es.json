@@ -3286,6 +3286,8 @@
     "notApprovedYet": "Aún no aprobado",
     "approvedBy": "Aprobado por",
     "event": {
+      "created": "Creado",
+      "edited": "Editado",
       "submitted": "Enviado",
       "approved": "Aprobado",
       "rejected": "Rechazado",

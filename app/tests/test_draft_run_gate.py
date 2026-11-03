@@ -333,7 +333,9 @@ def _call_mt_submit(*, require_draft_run, has_run, mode=ApprovalMode.ENABLED):
     from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt
 
     mt_svc = MagicMock()
-    mt_svc.get.return_value = SimpleNamespace(table=SimpleNamespace(table_fqn="cat.schema.tbl", updated_at=None))
+    mt_svc.get.return_value = SimpleNamespace(
+        table=SimpleNamespace(table_fqn="cat.schema.tbl", status="draft", updated_at=None)
+    )
     mt_svc.list_materialized_rule_statuses.side_effect = _statuses_sequence()
     mt_svc.set_status.return_value = MonitoredTable(
         binding_id="b1", table_fqn="cat.schema.tbl", status="pending_approval"
@@ -351,7 +353,7 @@ def _call_mt_submit(*, require_draft_run, has_run, mode=ApprovalMode.ENABLED):
         role=UserRole.RULE_APPROVER,
         principal_ids=frozenset({"me"}),
         obo_ws=_mock_obo_ws("alice@x"),
-        review_events=MagicMock(),
+        history=MagicMock(),
     )
     return materializer
 
@@ -361,7 +363,9 @@ class TestMonitoredTableSubmitGate:
         from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt
 
         mt_svc = MagicMock()
-        mt_svc.get.return_value = SimpleNamespace(table=SimpleNamespace(table_fqn="cat.schema.tbl", updated_at=None))
+        mt_svc.get.return_value = SimpleNamespace(
+            table=SimpleNamespace(table_fqn="cat.schema.tbl", status="draft", updated_at=None)
+        )
         materializer = MagicMock()
         with pytest.raises(HTTPException) as exc:
             mt.submit_monitored_table(
@@ -376,7 +380,7 @@ class TestMonitoredTableSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert exc.value.status_code == 409
         # Gate fired before any materialization / state change.
@@ -397,7 +401,9 @@ class TestMonitoredTableSubmitGate:
 
         mt_svc = MagicMock()
         mt_svc.get.return_value = SimpleNamespace(
-            table=SimpleNamespace(table_fqn="cat.schema.tbl", updated_at=datetime(2026, 7, 13, tzinfo=timezone.utc))
+            table=SimpleNamespace(
+                table_fqn="cat.schema.tbl", status="draft", updated_at=datetime(2026, 7, 13, tzinfo=timezone.utc)
+            )
         )
         materializer = MagicMock()
         with pytest.raises(HTTPException) as exc:
@@ -413,7 +419,7 @@ class TestMonitoredTableSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert exc.value.status_code == 409
         assert exc.value.detail == DRAFT_RUN_STALE_MESSAGE
@@ -431,7 +437,7 @@ class TestDataProductSubmitGate:
 
         svc = MagicMock()
         svc.get.return_value = SimpleNamespace(
-            members=[SimpleNamespace(table_fqn="c.s.t")], product=SimpleNamespace(updated_at=None)
+            members=[SimpleNamespace(table_fqn="c.s.t")], product=SimpleNamespace(status="draft", updated_at=None)
         )
         with pytest.raises(HTTPException) as exc:
             submit_data_product(
@@ -443,7 +449,7 @@ class TestDataProductSubmitGate:
                 role=UserRole.RULE_APPROVER,
                 principal_ids=frozenset({"me"}),
                 obo_ws=_mock_obo_ws("alice@x"),
-                review_events=MagicMock(),
+                history=MagicMock(),
             )
         assert exc.value.status_code == 409
         svc.submit.assert_not_called()
@@ -459,7 +465,9 @@ class TestDataProductSubmitGate:
         # First get() (gate) returns a members-bearing namespace; the final
         # get() (response build) returns a real detail for from_domain.
         svc.get.side_effect = [
-            SimpleNamespace(members=[SimpleNamespace(table_fqn="c.s.t")], product=SimpleNamespace(updated_at=None)),
+            SimpleNamespace(
+                members=[SimpleNamespace(table_fqn="c.s.t")], product=SimpleNamespace(status="draft", updated_at=None)
+            ),
             detail,
         ]
         submit_data_product(
@@ -471,7 +479,7 @@ class TestDataProductSubmitGate:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         svc.submit.assert_called_once()
 
@@ -484,7 +492,7 @@ class TestDataProductSubmitGate:
             members=[],
         )
         svc.get.side_effect = [
-            SimpleNamespace(members=[], product=SimpleNamespace(updated_at=None)),
+            SimpleNamespace(members=[], product=SimpleNamespace(status="draft", updated_at=None)),
             detail,
         ]
         submit_data_product(
@@ -496,6 +504,6 @@ class TestDataProductSubmitGate:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         svc.submit.assert_called_once()

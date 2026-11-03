@@ -29,7 +29,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_materializer,
     get_monitored_table_service,
     get_monitored_table_version_service,
-    get_review_event_service,
+    get_lifecycle_history_service,
     get_obo_ws,
     get_pending_application_service,
     get_permissions_service,
@@ -89,7 +89,7 @@ from databricks_labs_dqx_app.backend.models import (
     MatchRulesOut,
     SuggestRulesOut,
     TagSuggestionsOut,
-    ReviewEventOut,
+    HistoryEventOut,
     RuleChangeOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -126,7 +126,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
-from databricks_labs_dqx_app.backend.services.review_events import ReviewEventService
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.profiling_suggestion_service import (
@@ -350,6 +350,7 @@ def register_monitored_table(
     body: RegisterMonitoredTableIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
     tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
 ) -> MonitoredTableSummaryOut:
@@ -379,6 +380,14 @@ def register_monitored_table(
             tag_suggestions.apply_matches(table.binding_id, user_email)
         except Exception:
             logger.warning("Tag auto-apply after register failed (non-fatal)", exc_info=True)
+        history.record(
+            "monitored_table",
+            table.binding_id,
+            "create",
+            user_email,
+            new_status=table.status,
+            state={"table_fqn": table.table_fqn},
+        )
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -450,6 +459,7 @@ def bulk_register_monitored_tables(
     body: BulkRegisterMonitoredTablesIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
 ) -> BulkRegisterMonitoredTablesOut:
     """Register many tables under Rules Registry governance in one call.
@@ -485,6 +495,14 @@ def bulk_register_monitored_tables(
             try:
                 detail = svc.get_by_table_fqn(fqn)
                 if detail is not None:
+                    history.record(
+                        "monitored_table",
+                        detail.table.binding_id,
+                        "create",
+                        user_email,
+                        new_status=detail.table.status,
+                        state={"table_fqn": fqn},
+                    )
                     tag_suggestions.apply_matches(detail.table.binding_id, user_email)
             except Exception:
                 logger.warning("Tag auto-apply after bulk-register failed (non-fatal)", exc_info=True)
@@ -505,6 +523,7 @@ def delete_monitored_table(
     binding_id: str,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -529,6 +548,7 @@ def delete_monitored_table(
     )
     try:
         svc.delete(binding_id, user_email)
+        history.record("monitored_table", binding_id, "delete", user_email)
         return {"status": "deleted", "binding_id": binding_id}
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -548,6 +568,7 @@ def update_monitored_table_owner(
     body: UpdateMonitoredTableOwnerIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -568,6 +589,7 @@ def update_monitored_table_owner(
     )
     try:
         table = svc.update_owner(binding_id, body.owner, user_email)
+        history.record("monitored_table", binding_id, "update", user_email, state={"owner": body.owner})
         return MonitoredTableOut.from_domain(table)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -806,20 +828,20 @@ def get_monitored_table_changes(
 
 
 @router.get(
-    "/{binding_id}/review-events",
-    response_model=list[ReviewEventOut],
-    operation_id="listMonitoredTableReviewEvents",
+    "/{binding_id}/history",
+    response_model=list[HistoryEventOut],
+    operation_id="listMonitoredTableHistory",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-def list_monitored_table_review_events(
+def list_monitored_table_history(
     binding_id: str,
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
-) -> list[ReviewEventOut]:
-    """A monitored table's review trail, newest first: each submit, approve, reject and withdraw."""
+) -> list[HistoryEventOut]:
+    """A monitored table's history, newest first: created, edits, and each submit, approve, reject and withdraw."""
     perms.require_object(
         ObjectType.MONITORED_TABLE.value,
         binding_id,
@@ -829,11 +851,11 @@ def list_monitored_table_review_events(
         principal_email=_current_user_email(obo_ws),
     )
     try:
-        events = review_events.list_events("monitored_table", binding_id)
+        events = history.list_events("monitored_table", binding_id)
     except Exception as e:
         logger.error(f"Failed to list review events for monitored table {binding_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
-    return [ReviewEventOut(**vars(e)) for e in events]
+    return [HistoryEventOut(**vars(e)) for e in events]
 
 
 @router.get(
@@ -970,6 +992,7 @@ def apply_rule_to_table(
     body: ApplyRuleIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1000,6 +1023,13 @@ def apply_rule_to_table(
             row_filter=body.row_filter,
             pass_threshold=body.pass_threshold,
             tags=body.tags,
+        )
+        history.record(
+            "monitored_table",
+            binding_id,
+            "update",
+            user_email,
+            state={"applied_rule": applied.id, "rule_id": applied.rule_id},
         )
         return AppliedRuleOut.from_domain(applied)
     except UnsafeRowFilterError as e:
@@ -1143,6 +1173,7 @@ def save_applied_rules(
     body: SaveAppliedRulesIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1190,6 +1221,9 @@ def save_applied_rules(
                 )
             )
         applied = svc.save_applied_rules(binding_id, desired, user_email)
+        history.record(
+            "monitored_table", binding_id, "update", user_email, state={"applied_rules": [a.rule_id for a in applied]}
+        )
         # Return the ENRICHED shape (rule_name/dimension/severity populated),
         # matching how the GET builds ``applied_rules`` via
         # ``AppliedRuleOut.from_summary`` (B2-26). The lean ``from_domain``
@@ -1233,6 +1267,7 @@ def remove_applied_rule(
     applied_rule_id: str,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1250,7 +1285,11 @@ def remove_applied_rule(
         principal_email=_current_user_email(obo_ws),
     )
     try:
-        svc.remove_applied(applied_rule_id, _current_user_email(obo_ws))
+        user_email = _current_user_email(obo_ws)
+        svc.remove_applied(applied_rule_id, user_email)
+        history.record(
+            "monitored_table", binding_id, "update", user_email, state={"removed_applied_rule": applied_rule_id}
+        )
         return {"status": "removed", "binding_id": binding_id, "applied_rule_id": applied_rule_id}
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1271,6 +1310,7 @@ def set_applied_rule_pin(
     body: SetAppliedRulePinIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1289,6 +1329,13 @@ def set_applied_rule_pin(
     )
     try:
         applied = svc.set_pin(applied_rule_id, body.pinned_version)
+        history.record(
+            "monitored_table",
+            binding_id,
+            "update",
+            _current_user_email(obo_ws),
+            state={"applied_rule": applied_rule_id, "pinned_version": body.pinned_version},
+        )
         return AppliedRuleOut.from_domain(applied)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1309,6 +1356,7 @@ def set_applied_rule_severity_override(
     body: SetAppliedRuleSeverityOverrideIn,
     svc: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1327,6 +1375,13 @@ def set_applied_rule_severity_override(
     )
     try:
         applied = svc.set_severity_override(applied_rule_id, body.severity)
+        history.record(
+            "monitored_table",
+            binding_id,
+            "update",
+            _current_user_email(obo_ws),
+            state={"applied_rule": applied_rule_id, "severity_override": body.severity},
+        )
         return AppliedRuleOut.from_domain(applied)
     except RuntimeError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1474,7 +1529,7 @@ def submit_monitored_table(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Submit a monitored table for review.
@@ -1545,6 +1600,16 @@ def submit_monitored_table(
             rationale=rationale,
             set_rationale=True,
         )
+        if status == "pending_approval":
+            history.record(
+                "monitored_table",
+                binding_id,
+                "submit",
+                user_email,
+                prev_status=gate_detail.table.status,
+                new_status=status,
+                rationale=rationale,
+            )
         # Approvals mode (issue #94): in ``disabled`` mode, or ``auto_bypass``
         # when the caller can edit AND approve this binding, publish in the same
         # call — the caller is recorded as the approver with an ``(auto)`` marker.
@@ -1568,21 +1633,21 @@ def submit_monitored_table(
                 mark_auto_approver(user_email),
                 rationale=rationale,
             )
-            review_events.record(
+            history.record(
                 "monitored_table",
                 binding_id,
-                "approved",
+                "approve",
                 mark_auto_approver(user_email),
-                rationale=rationale,
+                prev_status=status,
+                new_status="approved",
                 version=new_version,
+                rationale=rationale,
             )
             return MonitoredTableReviewOut(
                 table=MonitoredTableOut.from_domain(table),
                 affected_check_count=approved,
                 new_version=new_version,
             )
-        if status == "pending_approval":
-            review_events.record("monitored_table", binding_id, "submitted", user_email, rationale=rationale)
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=submitted)
     except HTTPException:
         raise
@@ -1609,7 +1674,7 @@ def approve_monitored_table(
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Approve a monitored table — approving every ``pending_approval`` check mapped to it.
@@ -1652,8 +1717,15 @@ def approve_monitored_table(
             user_email,
             rationale=rationale,
         )
-        review_events.record(
-            "monitored_table", binding_id, "approved", user_email, rationale=rationale, version=new_version
+        history.record(
+            "monitored_table",
+            binding_id,
+            "approve",
+            user_email,
+            prev_status="pending_approval",
+            new_status="approved",
+            version=new_version,
+            rationale=rationale,
         )
         return MonitoredTableReviewOut(
             table=MonitoredTableOut.from_domain(table),
@@ -1680,7 +1752,7 @@ def reject_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> MonitoredTableReviewOut:
     """Reject a monitored table — rejecting every ``pending_approval`` check mapped to it.
@@ -1727,7 +1799,15 @@ def reject_monitored_table(
             rationale=rationale,
             set_rationale=True,
         )
-        review_events.record("monitored_table", binding_id, "rejected", user_email, rationale=rationale)
+        history.record(
+            "monitored_table",
+            binding_id,
+            "reject",
+            user_email,
+            prev_status="pending_approval",
+            new_status="rejected",
+            rationale=rationale,
+        )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=rejected)
     except HTTPException:
         raise
@@ -1749,7 +1829,7 @@ def revert_monitored_table(
     monitored_tables_svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     rules_catalog: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    review_events: Annotated[ReviewEventService, Depends(get_review_event_service)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
 ) -> MonitoredTableReviewOut:
     """Withdraw a pending submission — walk the binding back to ``draft``.
 
@@ -1786,7 +1866,9 @@ def revert_monitored_table(
             user_email=user_email,
         )
         table = monitored_tables_svc.set_status(binding_id, "draft", user_email, set_rationale=True)
-        review_events.record("monitored_table", binding_id, "withdrawn", user_email)
+        history.record(
+            "monitored_table", binding_id, "withdraw", user_email, prev_status="pending_approval", new_status="draft"
+        )
         return MonitoredTableReviewOut(table=MonitoredTableOut.from_domain(table), affected_check_count=reverted)
     except HTTPException:
         raise
@@ -1926,6 +2008,7 @@ def apply_profiling_suggestions(
     body: ApplyProfilingSuggestionsIn,
     svc: Annotated[ProfilingSuggestionService, Depends(get_profiling_suggestion_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -1951,6 +2034,9 @@ def apply_profiling_suggestions(
     )
     try:
         result = svc.apply_suggestions(binding_id, body.indices, user_email)
+        history.record(
+            "monitored_table", binding_id, "update", user_email, state={"profiling_suggestions": list(body.indices)}
+        )
         return ApplyProfilingSuggestionsOut.from_domain(result)
     except ProfilingBindingNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

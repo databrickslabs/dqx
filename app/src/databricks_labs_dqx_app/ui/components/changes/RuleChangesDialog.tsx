@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useListRegistryRuleReviewEvents, useListRegistryRuleVersions, type RegistryRuleVersionOut } from "@/lib/api";
+import { useListRegistryRuleHistory, useListRegistryRuleVersions, type RegistryRuleVersionOut } from "@/lib/api";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import { buildDqxCheckJson, severityValueCriticality, type MaterializableRule } from "@/lib/registry-rule-conversion";
 import {
@@ -32,7 +32,7 @@ function useRuleChanges(target: RuleChangesTarget | null, withEvents = false): C
   const ruleId = target?.ruleId ?? "";
   const { data, isLoading, isError } = useListRegistryRuleVersions(ruleId, { query: { enabled: !!target } });
   const enabled = !!target;
-  const reviewEvents = useListRegistryRuleReviewEvents(ruleId, { query: { enabled: enabled && withEvents } });
+  const reviewEvents = useListRegistryRuleHistory(ruleId, { query: { enabled: enabled && withEvents } });
   // The rendered criticality honours the admin-edited severity -> criticality
   // mapping, matching the "View JSON" dialog and the materializer.
   const { data: labelDefsData } = useLabelDefinitions();

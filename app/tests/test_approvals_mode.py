@@ -394,7 +394,7 @@ class TestMonitoredTableSubmitWiring:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         return version_svc, rules_catalog
 
@@ -444,7 +444,7 @@ class TestMonitoredTableRemovalOnlyAutoApprove:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         assert [c.args[1] for c in mt_svc.set_status.call_args_list] == ["pending_approval", "approved"]
         version_svc.freeze_new_version.assert_called_once()
@@ -496,7 +496,7 @@ class TestDataProductSubmitWiring:
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
-            review_events=MagicMock(),
+            history=MagicMock(),
         )
         return svc
 
