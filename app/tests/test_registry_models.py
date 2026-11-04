@@ -285,6 +285,7 @@ class TestReservedTagHelpers:
             "severity",
             "slot_tags",
             "pass_threshold",
+            "overridable_parameters",
         }
 
     def test_getters_return_none_when_absent(self, module):
@@ -318,6 +319,24 @@ class TestReservedTagHelpers:
 def test_slot_tags_key_is_reserved():
     assert RESERVED_SLOT_TAGS_KEY == "slot_tags"
     assert RESERVED_SLOT_TAGS_KEY in RESERVED_RULE_METADATA_KEYS
+
+
+def test_overridable_parameters_default_fixed_and_roundtrip():
+    from databricks_labs_dqx_app.backend.registry_models import (
+        RESERVED_OVERRIDABLE_PARAMETERS_KEY,
+        get_overridable_parameters,
+        set_overridable_parameters,
+    )
+
+    assert RESERVED_OVERRIDABLE_PARAMETERS_KEY == "overridable_parameters"
+    assert get_overridable_parameters({}) == []
+    assert get_overridable_parameters({"overridable_parameters": ["limit", "limit", 3, ""]}) == ["limit"]
+    written = set_overridable_parameters({}, ["allowed", "limit"], valid_names=["limit", "scale"], persist_empty=True)
+    assert written["overridable_parameters"] == ["limit"]
+    all_fixed = set_overridable_parameters({"name": "x"}, [], valid_names=["limit"], persist_empty=True)
+    assert all_fixed["overridable_parameters"] == []
+    omitted = set_overridable_parameters({"name": "x"}, [], valid_names=[], persist_empty=False)
+    assert "overridable_parameters" not in omitted
 
 
 def test_reserved_mapped_columns_key_value():

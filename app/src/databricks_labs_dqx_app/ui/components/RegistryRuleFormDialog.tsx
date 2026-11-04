@@ -183,7 +183,9 @@ import {
   parseParamValue,
   paramValueToRaw,
   severityValueCriticality,
+  overridableParametersFromUserMetadata,
   slotTagsFromUserMetadata,
+  userMetadataWithOverridableParameters,
   userMetadataWithSlotTags,
   type ParsedCheckDefinition,
 } from "@/lib/registry-rule-conversion";
@@ -1659,8 +1661,8 @@ function SlotsPanel({
 }
 
 /**
- * "Variable Parameters" — typed `{{name}}` values filled in per mapped column
- * when the rule is applied. Values never live on the marketplace rule itself.
+ * "Variable Parameters" — typed `{{name}}` values. Locked by default so the
+ * registry value is used as-is; unlocking lets Apply Rules override per check.
  */
 function ParametersPanel({
   value,
@@ -1671,6 +1673,8 @@ function ParametersPanel({
   lockStructure = false,
   colorPlaceholders = false,
   addDisabledReason,
+  overridableNames,
+  onOverridableNamesChange,
 }: {
   value: RuleParameter[];
   onChange: (next: RuleParameter[]) => void;
@@ -1682,6 +1686,8 @@ function ParametersPanel({
   colorPlaceholders?: boolean;
   /** When set, "+ Add parameter" is disabled with the same tooltip as "+ Add column". */
   addDisabledReason?: string;
+  overridableNames?: string[];
+  onOverridableNamesChange?: (names: string[]) => void;
 }) {
   const { t } = useTranslation();
   const [dropActive, setDropActive] = useState(false);
@@ -1691,12 +1697,20 @@ function ParametersPanel({
   const canDrag = Boolean(!disabled && !lockStructure && onAcceptSlot);
   const canDrop = Boolean(!disabled && !lockStructure && onAcceptSlot);
 
+  const unlocked = overridableNames ?? [];
+  const setUnlocked = (names: string[]) => onOverridableNamesChange?.(names);
   const setAt = (i: number, patch: Partial<RuleParameter>) => {
+    if (typeof patch.name === "string" && patch.name !== value[i].name) {
+      setUnlocked(unlocked.map((name) => (name === value[i].name ? patch.name! : name)));
+    }
     const next = value.slice();
     next[i] = { ...next[i], ...patch };
     onChange(next);
   };
-  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const removeAt = (i: number) => {
+    setUnlocked(unlocked.filter((name) => name !== value[i].name));
+    onChange(value.filter((_, idx) => idx !== i));
+  };
   const add = () =>
     onChange([
       ...value,
@@ -1846,16 +1860,24 @@ function ParametersPanel({
                     <span className="select-none">{"}}"}</span>
                   </label>
                 )}
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>{t("rulesRegistry.parametersPanelDefaultLabel")}</span>
-                  <ParameterValueInput
-                    type={param.type}
-                    value={defaultRaw}
-                    disabled={disabled}
-                    onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
-                    aria-label={t("rulesRegistry.parametersPanelDefaultLabel")}
-                  />
-                </span>
+                <ParameterValueInput
+                  type={param.type}
+                  value={defaultRaw}
+                  disabled={disabled}
+                  onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
+                  aria-label={param.name}
+                  lock={{
+                    locked: !unlocked.includes(param.name),
+                    onToggle: disabled
+                      ? undefined
+                      : (locked) =>
+                          setUnlocked(
+                            locked
+                              ? unlocked.filter((name) => name !== param.name)
+                              : [...unlocked.filter((name) => name !== param.name), param.name],
+                          ),
+                  }}
+                />
               </div>
               {disabled || lockStructure ? (
                 <Badge variant="outline" className="text-[10px] font-medium">
@@ -2018,6 +2040,8 @@ interface RuleEditSnapshot {
   /** apply-on-tag: per-slot `class.*` tag map (slot name -> tags). Hydrated
    * from / persisted to `user_metadata.slot_tags`. */
   slotTags: Record<string, string[]>;
+  /** Parameter names that may be overridden at apply time. Empty = all fixed. */
+  overridableParameters: string[];
   lowcodeAst: LowcodeAstV2;
   groupBy: string;
   authorKind: CreateRegistryRuleInAuthorKind | undefined;
@@ -2089,6 +2113,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     sqlParameters: isNative ? [] : sqlSlotsAndParameters(rule).parameters,
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     slotTags: slotTagsFromUserMetadata(md),
+    overridableParameters: [...overridableParametersFromUserMetadata(md)].sort(),
     lowcodeAst: rule.mode === "lowcode" && isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST,
     groupBy: rule.mode === "lowcode" && typeof body.group_by === "string" ? body.group_by : "",
     authorKind: rule.author_kind ?? undefined,
@@ -2134,6 +2159,7 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   sqlParameters: [],
   nativeSlots: [],
   slotTags: {},
+  overridableParameters: [],
   lowcodeAst: EMPTY_LOWCODE_AST,
   groupBy: "",
   authorKind: "human",
@@ -2277,6 +2303,7 @@ export function RegistryRuleFormDialog({
   // all authoring modes' "Columns used" panel. Round-trips through
   // `user_metadata.slot_tags` (see buildUserMetadata / snapshotFromRule).
   const [slotTags, setSlotTags] = useState<Record<string, string[]>>({});
+  const [overridableParameters, setOverridableParameters] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   // The row filter's compiled SQL (persisted as definition.filter). For
   // native / low-code modes it's built visually (filterAst below) and this
@@ -2409,6 +2436,7 @@ export function RegistryRuleFormDialog({
     // apply-on-tag: hydrate the slot -> tags map (nested object, ignored by the
     // string-only `freeTags` loop above). Empty for a brand-new rule.
     setSlotTags(sourceRule ? slotTagsFromUserMetadata(md) : {});
+    setOverridableParameters(sourceRule ? overridableParametersFromUserMetadata(md) : []);
 
     if (sourceRule) {
       setDecisionPointChosen(true);
@@ -2675,6 +2703,7 @@ export function RegistryRuleFormDialog({
     sqlParameters,
     nativeSlots,
     slotTags,
+    overridableParameters: [...overridableParameters].sort(),
     lowcodeAst,
     groupBy,
     authorKind,
@@ -3049,7 +3078,9 @@ export function RegistryRuleFormDialog({
     for (const [slot, slotTagList] of Object.entries(slotTags)) {
       if (currentSlotNames.has(slot)) prunedSlotTags[slot] = slotTagList;
     }
-    return userMetadataWithSlotTags(md, prunedSlotTags);
+    const withSlots = userMetadataWithSlotTags(md, prunedSlotTags);
+    const paramNames = (mode === "dqx_native" ? derivedParams : sqlParameters).map((p) => p.name);
+    return userMetadataWithOverridableParameters(withSlots, overridableParameters, paramNames);
   };
 
   // Write a parsed "As JSON" edit (item 11) back into the form state. Mirrors
@@ -3115,6 +3146,7 @@ export function RegistryRuleFormDialog({
     // values), so a JSON round-trip that omits `slot_tags` clears the map —
     // consistent with how the JSON surface treats any non-string metadata.
     setSlotTags(slotTagsFromUserMetadata(parsed.userMetadata));
+    setOverridableParameters(overridableParametersFromUserMetadata(parsed.userMetadata));
     // JSON is mostly the implementation body — land the owner there to review.
     setPageTab("implementation");
     toast.success(t("rulesRegistry.jsonAppliedToForm"));
@@ -4532,6 +4564,8 @@ export function RegistryRuleFormDialog({
           onAcceptSlot={moveSlotToParameters}
           colorPlaceholders={colorPlaceholders}
           addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
+          overridableNames={overridableParameters}
+          onOverridableNamesChange={setOverridableParameters}
         />
       )}
       {mode === "dqx_native" && (
@@ -4551,6 +4585,8 @@ export function RegistryRuleFormDialog({
           takenNames={currentSlots.map((s) => s.name)}
           lockStructure
           colorPlaceholders={colorPlaceholders}
+          overridableNames={overridableParameters}
+          onOverridableNamesChange={setOverridableParameters}
         />
       )}
 

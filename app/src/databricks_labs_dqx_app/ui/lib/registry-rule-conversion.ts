@@ -43,6 +43,8 @@ export const COLUMN_KINDS = new Set(["column", "columns"]);
  * Mirrors the backend's `registry_models.RESERVED_SLOT_TAGS_KEY`.
  */
 export const SLOT_TAGS_KEY = "slot_tags";
+/** Parameter names that may be overridden at apply time. Missing/empty = all fixed. */
+export const OVERRIDABLE_PARAMETERS_KEY = "overridable_parameters";
 
 /**
  * Read the reserved `slot_tags` map from a rule's `user_metadata`. Mirrors the
@@ -77,6 +79,46 @@ export function userMetadataWithSlotTags(
   const next = { ...md };
   if (Object.keys(cleaned).length > 0) next[SLOT_TAGS_KEY] = cleaned;
   else delete next[SLOT_TAGS_KEY];
+  return next;
+}
+
+/** Names listed in `user_metadata.overridable_parameters`. Missing/malformed → none (fixed). */
+export function overridableParametersFromUserMetadata(md: Record<string, unknown> | undefined): string[] {
+  const raw = md?.[OVERRIDABLE_PARAMETERS_KEY];
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of raw) {
+    if (typeof name === "string" && name.length > 0 && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+export function isParameterOverridable(md: Record<string, unknown> | undefined, name: string): boolean {
+  return overridableParametersFromUserMetadata(md).includes(name);
+}
+
+/** Persist unlocked parameter names. Empty list is stored when the rule has parameters so "all fixed" is explicit. */
+export function userMetadataWithOverridableParameters(
+  md: Record<string, unknown>,
+  names: string[],
+  validNames: string[],
+): Record<string, unknown> {
+  const allowed = new Set(validNames);
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const name of names) {
+    if (!allowed.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    cleaned.push(name);
+  }
+  const next = { ...md };
+  if (cleaned.length > 0) next[OVERRIDABLE_PARAMETERS_KEY] = cleaned;
+  else if (validNames.length > 0) next[OVERRIDABLE_PARAMETERS_KEY] = [];
+  else delete next[OVERRIDABLE_PARAMETERS_KEY];
   return next;
 }
 

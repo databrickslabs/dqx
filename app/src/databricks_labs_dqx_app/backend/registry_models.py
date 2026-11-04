@@ -598,6 +598,10 @@ RESERVED_DESCRIPTION_KEY = "description"
 RESERVED_DIMENSION_KEY = "dimension"
 RESERVED_SEVERITY_KEY = "severity"
 RESERVED_SLOT_TAGS_KEY = "slot_tags"
+# Parameter names that may be overridden when the rule is applied to a table.
+# Absence (or an empty list) means every parameter is fixed at the registry
+# value — no new DB column; this is part of the rule definition in JSON.
+RESERVED_OVERRIDABLE_PARAMETERS_KEY = "overridable_parameters"
 
 # The reserved user_metadata key holding a materialized check's mapped columns
 # as a JSON-encoded array string (e.g. '["city"]'). Populated by the
@@ -628,6 +632,7 @@ RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
         # as a free-text tag. (``column_pass_thresholds`` is an APPLIED-rule key,
         # not a registry-rule key, so it deliberately does NOT belong here.)
         RESERVED_PASS_THRESHOLD_KEY,
+        RESERVED_OVERRIDABLE_PARAMETERS_KEY,
     }
 )
 
@@ -699,6 +704,58 @@ def set_slot_tags(user_metadata: dict[str, Any], mapping: dict[str, list[str]]) 
         updated[RESERVED_SLOT_TAGS_KEY] = cleaned
     else:
         updated.pop(RESERVED_SLOT_TAGS_KEY, None)
+    return updated
+
+
+def get_overridable_parameters(user_metadata: dict[str, Any] | None) -> list[str]:
+    """Parameter names that may be overridden at apply time.
+
+    Missing or malformed ``overridable_parameters`` means none — every
+    parameter is fixed to the registry default. Default-locked matches the
+    authoring UI (unlock per parameter to allow apply-time values).
+    """
+    raw = (user_metadata or {}).get(RESERVED_OVERRIDABLE_PARAMETERS_KEY)
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in raw:
+        if isinstance(name, str) and name and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def set_overridable_parameters(
+    user_metadata: dict[str, Any],
+    names: list[str],
+    *,
+    valid_names: list[str] | None = None,
+    persist_empty: bool = False,
+) -> dict[str, Any]:
+    """Return a *new* ``user_metadata`` with ``overridable_parameters`` set.
+
+    Names not in *valid_names* (when given) are dropped. An empty list is
+    stored when *persist_empty* is true so "all parameters are fixed" is
+    explicit; otherwise the key is removed.
+    """
+    allowed = set(valid_names) if valid_names is not None else None
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for name in names:
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        if allowed is not None and name not in allowed:
+            continue
+        seen.add(name)
+        cleaned.append(name)
+    updated = dict(user_metadata)
+    if cleaned:
+        updated[RESERVED_OVERRIDABLE_PARAMETERS_KEY] = cleaned
+    elif persist_empty:
+        updated[RESERVED_OVERRIDABLE_PARAMETERS_KEY] = []
+    else:
+        updated.pop(RESERVED_OVERRIDABLE_PARAMETERS_KEY, None)
     return updated
 
 

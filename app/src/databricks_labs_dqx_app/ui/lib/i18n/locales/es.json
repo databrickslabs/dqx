@@ -2042,6 +2042,8 @@
     "parametersPanelDefaultPlaceholder": "Ninguno",
     "parametersPanelListPlaceholder": "valor, valor",
     "parametersPanelLockedTooltip": "Los parámetros no se pueden ajustar para las reglas integradas",
+    "parametersPanelCanOverrideTooltip": "Se puede anular al aplicar a los datos",
+    "parametersPanelCannotOverrideTooltip": "No se puede anular al aplicar a los datos",
     "swapColumnToParameter": "Convertir esta columna variable en un parámetro",
     "swapParameterToColumn": "Convertir este parámetro variable en una columna",
     "parametersPanelNameLabel": "Nombre del parámetro",

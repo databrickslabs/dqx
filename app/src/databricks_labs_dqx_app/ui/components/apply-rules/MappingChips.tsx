@@ -502,6 +502,8 @@ interface MappingChipsProps {
   canEditParameters?: boolean;
   bindAllParameters?: boolean;
   onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
+  /** Unlocked parameter names from the registry rule's user_metadata. Missing/empty = all fixed. */
+  overridableParameters?: string[];
 }
 
 function GroupParamCell({
@@ -512,6 +514,7 @@ function GroupParamCell({
   stored,
   canEdit,
   bindAll,
+  overridable,
   onChange,
 }: {
   group: Record<string, string>;
@@ -521,14 +524,18 @@ function GroupParamCell({
   stored?: Record<string, Record<string, unknown>>;
   canEdit: boolean;
   bindAll: boolean;
+  overridable: readonly string[];
   onChange?: (groupIdx: number, values: Record<string, unknown>) => void;
 }) {
   const key = mappingGroupKey(group);
   const values = stored?.[key] ?? {};
-  const { error } = validateGroupParameterValues(parameters, values, bindAll);
+  const { error } = validateGroupParameterValues(parameters, values, bindAll, overridable);
+  const locked = !overridable.includes(param.name);
   const raw = displayParameterValue(
-    (values[param.name] as RuleParameter["value"]) ??
-      (isUnboundParameterValue(param.value) ? undefined : param.value),
+    locked
+      ? (isUnboundParameterValue(param.value) ? undefined : param.value)
+      : ((values[param.name] as RuleParameter["value"]) ??
+        (isUnboundParameterValue(param.value) ? undefined : param.value)),
   );
   const invalid = error?.startsWith(`${param.name} `);
   return (
@@ -540,10 +547,11 @@ function GroupParamCell({
       <ParameterValueInput
         type={param.type}
         value={raw}
-        disabled={!canEdit}
+        disabled={!canEdit || locked}
         invalid={invalid}
         onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
         aria-label={param.name}
+        lock={{ locked }}
       />
       {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
     </span>
@@ -569,6 +577,7 @@ export function MappingChips({
   storedParameterValues,
   canEditParameters = false,
   bindAllParameters = false,
+  overridableParameters,
   onParameterValuesChange,
 }: MappingChipsProps) {
   const { t } = useTranslation();
@@ -606,6 +615,7 @@ export function MappingChips({
                       stored={storedParameterValues}
                       canEdit={canEditParameters}
                       bindAll={bindAllParameters}
+                      overridable={overridableParameters ?? []}
                       onChange={onParameterValuesChange}
                     />
                   </div>
@@ -853,6 +863,7 @@ export function MappingChips({
                 stored={storedParameterValues}
                 canEdit={canEditParameters}
                 bindAll={bindAllParameters}
+                overridable={overridableParameters ?? []}
                 onChange={onParameterValuesChange}
               />
             ))}

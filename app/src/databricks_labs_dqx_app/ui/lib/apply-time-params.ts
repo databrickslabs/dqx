@@ -184,12 +184,16 @@ export function validateGroupParameterValues(
   parameters: RuleParameter[],
   rawValues: Record<string, unknown> | undefined,
   bindAll = false,
+  overridableNames?: readonly string[] | null,
 ): { values: Record<string, RuleParameterValue>; error: string | null } {
   if (parameters.length === 0) return { values: {}, error: null };
   const coerced: Record<string, RuleParameterValue> = {};
   try {
     for (const param of parameters) {
-      const raw = rawValues?.[param.name] ?? (isUnboundParameterValue(param.value) ? undefined : param.value);
+      const canOverride = overridableNames == null || overridableNames.includes(param.name);
+      const raw = canOverride
+        ? (rawValues?.[param.name] ?? (isUnboundParameterValue(param.value) ? undefined : param.value))
+        : (isUnboundParameterValue(param.value) ? undefined : param.value);
       if (isUnboundParameterValue(raw) && !mustBindParameter(param, bindAll)) continue;
       coerced[param.name] = coerceParameterValue(param, raw);
     }

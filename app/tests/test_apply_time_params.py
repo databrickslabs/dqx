@@ -58,6 +58,13 @@ class TestOverlayAndSubstitute:
         overlaid = overlay_parameters(params, {"limit": 40})
         assert overlaid[0].value == 40
 
+    def test_overlay_ignores_apply_time_value_when_fixed(self):
+        params = [_param("limit", "number", 12)]
+        overlaid = overlay_parameters(params, {"limit": 40}, overridable=set())
+        assert overlaid[0].value == 12
+        unlocked = overlay_parameters(params, {"limit": 40}, overridable={"limit"})
+        assert unlocked[0].value == 40
+
     def test_substitute_replaces_whole_placeholder_with_number(self):
         assert substitute_param_placeholders("{{column_max_length}}", {"column_max_length": 12}) == 12
         assert (
@@ -157,7 +164,12 @@ class TestLegacySqlParameterSlots:
         from databricks_labs_dqx_app.backend.services.materializer import render_check
 
         definition = promote_sql_parameter_slots(RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION))
-        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"overridable_parameters": ["allowed_scale"]},
+        )
         check, _ = render_check(
             mode="sql",
             version=version,
@@ -202,7 +214,12 @@ class TestRenderCheckApplyTimeParams:
                 "parameters": [{"name": "limit", "type": "number", "value": "{{column_max_length}}"}],
             }
         )
-        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"overridable_parameters": ["limit"]},
+        )
         check, _ = render_check(
             mode="dqx_native",
             version=version,
