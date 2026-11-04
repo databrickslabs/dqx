@@ -425,9 +425,16 @@ class TestDataContractIntegration:
             "shipped_text string",
         )
 
-        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+        # Under ANSI a malformed text value would fail the whole run without try_cast, so force it on
+        original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+        try:
+            spark.conf.set("spark.sql.ansi.enabled", "true")
+            checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+            rows = checked.select("row_id", "_errors").collect()
+        finally:
+            spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
 
-        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.select("row_id", "_errors").collect()}
+        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in rows}
         assert flagged_by_row == {
             1: set(),
             2: set(),

@@ -10,6 +10,7 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 import datetime
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from importlib.metadata import version as package_version
@@ -48,31 +49,63 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
 _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
 # Type a range check casts a column stored as text to, by ODCS logical type.
 _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {"date": "DATE", "timestamp": "TIMESTAMP", "integer": "DOUBLE", "number": "DOUBLE"}
+_NUMBER_BOUND = "number"
+_TEMPORAL_BOUND = "date or timestamp"
+# Kind of minimum/maximum ODCS defines, by logical type. A field without a logical type accepts either kind.
+_BOUND_KIND_BY_LOGICAL_TYPE = {
+    "integer": _NUMBER_BOUND,
+    "number": _NUMBER_BOUND,
+    "date": _TEMPORAL_BOUND,
+    "timestamp": _TEMPORAL_BOUND,
+}
 
 
-def _is_range_bound(value: object) -> bool:
-    """Whether a logicalTypeOptions bound can be passed to a range check as a value.
+def _range_bound_kind(value: object) -> str | None:
+    """Return the kind of a logicalTypeOptions bound that can be passed to a range check as a value, or None.
 
     Range checks treat any other string limit as a column name or SQL expression, which a contract value must not
-    become. Numbers, dates and timestamps (or ISO strings of them) are passed to the check as written.
+    become. A bound is a finite number, or a date or timestamp: an ISO string, or a date YAML loaded from an
+    unquoted value.
     """
     if isinstance(value, bool):
-        return False
-    if isinstance(value, (int, float, datetime.date)):  # datetime.date also covers datetime.datetime
-        return True
+        return None
+    if isinstance(value, (int, float)):
+        return _NUMBER_BOUND if math.isfinite(value) else None
+    if isinstance(value, datetime.date):  # also covers datetime.datetime
+        return _TEMPORAL_BOUND
     if not isinstance(value, str):
-        return False
-    if _NUMBER_TEXT.match(value):
-        return True
+        return None
     try:
         datetime.datetime.fromisoformat(value)  # how get_limit_expr reads a date or timestamp string
     except ValueError:
-        return False
-    return True
+        return None
+    return _TEMPORAL_BOUND
+
+
+def _as_datetime(bound: Any) -> datetime.datetime:
+    """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
+    if isinstance(bound, datetime.datetime):
+        return bound
+    if isinstance(bound, datetime.date):
+        return datetime.datetime.combine(bound, datetime.time.min)
+    return datetime.datetime.fromisoformat(bound)
+
+
+def _unusable_range_reason(minimum: Any, maximum: Any) -> str | None:
+    """Return why a minimum and a maximum can't form a range that passes, or None if they can."""
+    kind = _range_bound_kind(minimum)
+    if kind != _range_bound_kind(maximum):
+        return "one is a number and the other a date or timestamp"
+    try:
+        reversed_range = minimum > maximum if kind == _NUMBER_BOUND else _as_datetime(minimum) > _as_datetime(maximum)
+    except TypeError:  # a timezone-aware and a naive timestamp, which Spark still compares
+        return None
+    if reversed_range:
+        return f"minimum {minimum} is greater than maximum {maximum}"
+    return None
 
 
 def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str | None:
@@ -817,23 +850,33 @@ class DataContractRulesGenerator(DQEngineBase):
         Generate a range rule from logicalTypeOptions minimum/maximum.
 
         ODCS defines both bounds per value, so the rule is a row-level check that flags only the rows out of range.
-        The bounds are passed to the check as written. A string bound that is not a number, date or timestamp is
-        skipped with a warning, and a column stored as text is compared through *try_cast*.
+        The bounds are passed to the check as written. A bound of the wrong kind for the logical type (a number for
+        integer/number, a date or timestamp for date/timestamp) is skipped with a warning, as is a minimum and
+        maximum pair that no value could satisfy. A column stored as text is compared through *try_cast*.
         """
+        expected_kind = _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type or "")
         bounds = {}
         for option in ("minimum", "maximum"):
             value = opts.get(option)
             if value is None:
                 continue
-            if _is_range_bound(value):
+            kind = _range_bound_kind(value)
+            if kind is not None and kind == (expected_kind or kind):
                 bounds[option] = value
             else:
                 logger.warning(
                     f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
-                    f"'{sanitize_for_logging(str(value))}' is not a number, date or timestamp."
+                    f"'{sanitize_for_logging(str(value))}' is not a {expected_kind or 'number, date or timestamp'}."
                 )
 
         if "minimum" in bounds and "maximum" in bounds:
+            reason = _unusable_range_reason(bounds["minimum"], bounds["maximum"])
+            if reason:
+                logger.warning(
+                    f"Skipping minimum and maximum on '{sanitize_for_logging(column_path)}': "
+                    f"{sanitize_for_logging(reason)}."
+                )
+                return []
             function, name_suffix = "is_in_range", "out_of_range"
             limits = {"min_limit": bounds["minimum"], "max_limit": bounds["maximum"]}
         elif "minimum" in bounds:
