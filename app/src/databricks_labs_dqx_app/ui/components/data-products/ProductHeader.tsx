@@ -55,7 +55,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckCircle2, Clock, Download, GitCompare, History, Loader2, MoreVertical, Play, Save, Send, Trash2, Undo2, XCircle } from "lucide-react";
-import { TableSpaceDiffDialog, type TableSpaceDiffTarget } from "@/components/drafts/ChangeDiffDialog";
+import { CollectionChangesDialog, type CollectionChangesTarget } from "@/components/changes/CollectionChangesDialog";
 import { ExportDialog } from "@/components/ExportDialog";
 import {
   LifecycleDecisionNote,
@@ -327,7 +327,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
   // Reject discards the author's pending submission, so it keeps a plain
   // yes/no confirm (no rationale textarea). Submit and approve fire directly.
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
-  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<CollectionChangesTarget | null>(null);
   const [busyRun, setBusyRun] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // Bridges the gap between a successful submit and the next 4s poll
@@ -810,7 +810,7 @@ export function ProductHeader({ product, canEdit, editState }: Props) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <CollectionChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
     </div>
   );
 }

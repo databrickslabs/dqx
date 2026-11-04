@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
 import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -50,10 +51,6 @@ import {
   useRunMonitoredTable,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
-import {
-  MonitoredTableDiffDialog,
-  type MonitoredTableDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useLabelDefinitions } from "@/lib/api-custom";
@@ -178,7 +175,7 @@ function MonitoredTablesPage() {
   const [groupBy, setGroupBy] = useState<TableGroupBy>("none");
   const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
@@ -947,7 +944,7 @@ function MonitoredTablesPage() {
 
       <AddMonitoredTableModal open={addOpen} onOpenChange={setAddOpen} />
 
-      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
         <AlertDialogContent>

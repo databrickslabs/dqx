@@ -7,7 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -21,6 +21,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
+from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryEvent, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     approve_registry_rule,
     backfill_rule_embeddings,
@@ -29,6 +30,7 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     delete_registry_rule,
     deprecate_registry_rule,
     get_registry_rule,
+    list_registry_rule_history,
     list_registry_rule_versions,
     list_registry_rules,
     reject_registry_rule,
@@ -1183,3 +1185,18 @@ class TestBackfillRuleEmbeddings:
 
         assert result.total_published == 1
         assert result.embedded == 0
+
+
+class TestListRegistryRuleHistory:
+    def test_returns_the_rule_review_trail(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.list_rule_events.return_value = [
+            HistoryEvent(action="approved", actor="bob@x", created_at="2026-10-02", rationale="ok", version=2),
+            HistoryEvent(action="submitted", actor="alice@x", created_at="2026-10-01", rationale="ready"),
+        ]
+        out = list_registry_rule_history("r1", history=history)
+        history.list_rule_events.assert_called_once_with("r1")
+        assert [(e.action, e.actor, e.version) for e in out] == [
+            ("approved", "bob@x", 2),
+            ("submitted", "alice@x", None),
+        ]

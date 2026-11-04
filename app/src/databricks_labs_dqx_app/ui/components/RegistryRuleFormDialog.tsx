@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { RuleChangesPanel, type RuleChangesTarget } from "@/components/changes/RuleChangesDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,7 +129,6 @@ import { useSubmitRegistryRuleWithRationale, type LabelDefinition } from "@/lib/
 import {
   useCreateRegistryRule,
   useUpdateRegistryRule,
-  useListRegistryRuleVersions,
   useGetRuleScore,
   useListMonitoredTables,
   useListCheckFunctions,
@@ -2195,14 +2195,20 @@ export function RegistryRuleFormDialog({
   const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
 
-  // Published version lineage for the History tab. Only queried for a rule
-  // that has been published at least once (version > 0) and while the dialog
-  // is open — a fresh create form or an unpublished draft has no snapshots.
   const versionsRuleId = sourceRule?.rule_id ?? "";
-  const versionsQuery = useListRegistryRuleVersions(versionsRuleId, {
-    query: { enabled: open && Boolean(sourceRule && sourceRule.version > 0) },
-  });
-  const publishedVersions = useMemo(() => versionsQuery.data?.data ?? [], [versionsQuery.data]);
+  // The History tab compares the saved rule with its approved versions.
+  const changesTarget = useMemo<RuleChangesTarget | null>(
+    () =>
+      sourceRule
+        ? {
+            ruleId: sourceRule.rule_id,
+            name: String(sourceRule.user_metadata?.[RESERVED_NAME_KEY] ?? "") || sourceRule.rule_id,
+            version: sourceRule.version,
+            proposed: sourceRule,
+          }
+        : null,
+    [sourceRule],
+  );
 
   // Rule-level DQ score, fetched here (non-suspending) only to decide the
   // Results tab trigger's enabled state: a rule with zero current
@@ -4602,46 +4608,11 @@ export function RegistryRuleFormDialog({
     </div>
   );
 
-  const historyTabContent = (
-    <div className="space-y-4 pt-2">
-      {sourceRule ? (
-        /* Published version lineage (frozen dq_rule_versions snapshots),
-           newest first. Only fetched for a rule that has been published at
-           least once; a never-published draft shows the empty state. The
-           rule's own audit fields live on About's Details list. */
-        <div className="space-y-2">
-          <SectionHeader tooltip={t("rulesRegistry.historyVersionsTooltip")}>
-            {t("rulesRegistry.historyVersionsTitle")}
-          </SectionHeader>
-          {sourceRule.version > 0 ? (
-            versionsQuery.isLoading ? (
-              <p className="text-xs text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t("common.loading")}
-              </p>
-            ) : publishedVersions.length > 0 ? (
-              <div className="rounded-lg border divide-y text-xs">
-                {publishedVersions.map((v) => (
-                  <div key={v.version} className="flex items-center justify-between gap-3 p-3">
-                    <span className="font-mono font-medium">
-                      {t("rulesRegistry.historyVersionLabel", { version: v.version })}
-                    </span>
-                    <span className="text-muted-foreground">{v.created_by ?? "—"}</span>
-                    <span className="text-muted-foreground">{v.created_at ?? "—"}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
-            )
-          ) : (
-            <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoVersionsYet")}</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
-      )}
-    </div>
+  const historyTabContent = changesTarget ? (
+    /* The saved rule against its approved versions, with the version timeline. */
+    <RuleChangesPanel target={changesTarget} />
+  ) : (
+    <p className="text-xs text-muted-foreground italic pt-2">{t("rulesRegistry.historyNoData")}</p>
   );
 
   // Two-group tab strip, matching dqlake's RuleTabs: editing tabs (About /

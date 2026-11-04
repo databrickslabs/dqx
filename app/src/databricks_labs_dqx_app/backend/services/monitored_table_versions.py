@@ -51,17 +51,94 @@ them would make vN reflect state the table-approval never governed.
 
 import json
 import logging
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTableVersion
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    MonitoredTableDetail,
+    MonitoredTableService,
+)
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+RuleChangeStatus = Literal["added", "removed", "modified", "unchanged"]
+
+# Stamped onto checks per run, not part of what was approved.
+_RUN_STAMPED_KEYS = frozenset({"run_mode", "binding_version"})
+
+
+@dataclass
+class RuleChange:
+    """One applied rule compared between two sides (a frozen version, or the proposed rules)."""
+
+    key: str
+    rule_name: str
+    status: RuleChangeStatus
+    before: list[dict[str, Any]] = field(default_factory=list)
+    after: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _rule_key(check: dict[str, Any]) -> str:
+    meta = check.get("user_metadata") or {}
+    return str(meta.get("applied_rule_id") or meta.get("registry_rule_id") or check.get("name") or "")
+
+
+def _rule_name(checks: list[dict[str, Any]]) -> str:
+    for check in checks:
+        meta = check.get("user_metadata") or {}
+        name = meta.get("name") or check.get("name")
+        if name:
+            return str(name)
+    return ""
+
+
+def _without_run_stamps(check: dict[str, Any]) -> dict[str, Any]:
+    meta = check.get("user_metadata")
+    if not isinstance(meta, dict):
+        return check
+    return {**check, "user_metadata": {k: v for k, v in meta.items() if k not in _RUN_STAMPED_KEYS}}
+
+
+def compare_checks(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[RuleChange]:
+    """Pair two check lists by applied rule and classify each, like files in a git diff.
+
+    A rule's checks are matched across the sides by its applied-rule id, so a
+    reordered or renamed check reads as one change, not scattered lines. Order:
+    the *after* side's rules as they appear, then rules only *before* had.
+    """
+    grouped_before: dict[str, list[dict[str, Any]]] = {}
+    grouped_after: dict[str, list[dict[str, Any]]] = {}
+    for checks, grouped in ((before, grouped_before), (after, grouped_after)):
+        for check in checks:
+            if isinstance(check, dict):
+                grouped.setdefault(_rule_key(check), []).append(_without_run_stamps(check))
+    changes: list[RuleChange] = []
+    for key in [*grouped_after, *(k for k in grouped_before if k not in grouped_after)]:
+        old, new = grouped_before.get(key, []), grouped_after.get(key, [])
+        if not old:
+            status: RuleChangeStatus = "added"
+        elif not new:
+            status = "removed"
+        elif _canonical(old) != _canonical(new):
+            status = "modified"
+        else:
+            status = "unchanged"
+        changes.append(RuleChange(key, _rule_name(new or old), status, old, new))
+    return changes
+
+
+def _canonical(value: Any) -> str:
+    """A comparable form of a frozen or live field: JSON with sorted keys (empty mapping/tags = none)."""
+    if value in ({}, []):
+        value = None
+    return json.dumps(value, sort_keys=True, default=str)
 
 
 class MonitoredTableVersionService:
@@ -282,6 +359,77 @@ class MonitoredTableVersionService:
             return []
         applied = [self._ref_to_applied(binding_id, ref) for ref in refs if isinstance(ref, dict)]
         return self._materializer.render_applied_checks(table_fqn, applied)
+
+    def changed_since_version(self, binding_id: str, version: int, detail: MonitoredTableDetail | None = None) -> bool:
+        """Whether *binding_id*'s applied rules differ from its frozen *version*.
+
+        Save-as-draft only persists the applied rules: it neither materializes
+        nor changes the table's status, which rolls up from its checks. So an
+        approved table with a saved edit still reads ``approved`` and the frozen
+        version keeps running — and a removal leaves no check to review at all.
+        This compares what a run would use: the set of applied rules and, per
+        rule, its rule, column mapping, severity override, pass threshold, tags
+        and version pin. A field a legacy snapshot didn't record isn't compared.
+        False when there is no frozen *version*. Pass *detail* when the caller has
+        already loaded the table, to skip reading it again. (A newer approved
+        version of a rule reaches the table through
+        :meth:`Materializer.rematerialize_for_rule`.)
+        """
+        if version <= 0:
+            return False
+        e = escape_sql_string(binding_id)
+        state_text = self._sql.select_json_text("state_json")
+        rows = self._sql.query(
+            f"SELECT {state_text} FROM {self._versions_table} "  # noqa: S608
+            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+        )
+        if detail is None:
+            detail = self._monitored_tables.get(binding_id)
+        if not rows or detail is None:
+            return False
+        state = self._parse_state(rows[0][0])
+        refs = {str(ref.get("applied_rule_id")): ref for ref in state.get("rule_refs") or [] if isinstance(ref, dict)}
+        pins = {str(a.get("applied_rule_id")): a for a in state.get("applied_rules") or [] if isinstance(a, dict)}
+        current = {str(s.applied_rule.id): s.applied_rule for s in detail.applied_rules}
+        if set(refs) != set(current):
+            return True
+        for applied_id, applied in current.items():
+            ref = refs[applied_id]
+            live = {
+                "rule_id": applied.rule_id,
+                "column_mapping": applied.column_mapping,
+                "severity_override": applied.severity_override,
+                "pass_threshold": applied.pass_threshold,
+                "user_metadata": applied.user_metadata,
+            }
+            for key, value in live.items():
+                if key in ref and _canonical(ref[key]) != _canonical(value):
+                    return True
+            frozen_pin = pins.get(applied_id, {})
+            if "pinned_version" in frozen_pin and frozen_pin["pinned_version"] != applied.pinned_version:
+                return True
+        return False
+
+    def compare(self, binding_id: str, base_version: int, target_version: int | None) -> list[RuleChange]:
+        """Compare *base_version* (0 = nothing approved yet) with *target_version*, per rule.
+
+        *target_version* None means the proposed rules: the table's current
+        applied rules, rendered the way a run would render them.
+        """
+        before = self._checks_or_empty(binding_id, base_version)
+        if target_version is None:
+            after = self._materializer.render_binding_checks(binding_id)
+        else:
+            after = self._checks_or_empty(binding_id, target_version)
+        return compare_checks(before, after)
+
+    def _checks_or_empty(self, binding_id: str, version: int) -> list[dict[str, Any]]:
+        if version <= 0:
+            return []
+        try:
+            return self.get_checks(binding_id, version)
+        except LookupError:
+            return []
 
     def snapshot_counts_many(self, pins: list[tuple[str, int]]) -> dict[tuple[str, int], tuple[int, int]]:
         """Return ``(applied_rule_count, check_count)`` per frozen *(binding_id, version)* pin.

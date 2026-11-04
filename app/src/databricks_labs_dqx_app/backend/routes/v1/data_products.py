@@ -11,19 +11,19 @@ approve/reject routes); run is gated on CAN_RUN_ROLES (ADMIN + RULE_AUTHOR).
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_lifecycle_history_service,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
     get_data_product_service,
     get_draft_run_gate_service,
-    get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
     get_schedule_grant_service,
@@ -38,16 +38,17 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
+    CollectionChangeOut,
     CreateDataProductIn,
+    DataProductChangesOut,
     DataProductOut,
-    DataProductReviewChangesOut,
-    DataProductReviewMemberOut,
+    DataProductVersionOut,
+    HistoryEventOut,
     LifecycleRationaleIn,
     RunDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     WarehouseUnavailableError,
@@ -55,6 +56,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     ScheduleGrantService,
     manage_block_detail,
 )
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
     DataProductService,
@@ -121,58 +123,71 @@ def get_data_product(
 
 
 @router.get(
-    "/{product_id}/review-changes",
-    response_model=DataProductReviewChangesOut,
-    operation_id="getDataProductReviewChanges",
+    "/{product_id}/changes",
+    response_model=DataProductChangesOut,
+    operation_id="getDataProductChanges",
     dependencies=[require_role(*_VIEWERS_PLUS)],
 )
-def get_data_product_review_changes(
+def get_data_product_changes(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
-    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
-) -> DataProductReviewChangesOut:
-    """Return the recoverable prior/proposed state for a Table Space under review.
+    base: Annotated[int | None, Query(ge=0, description="Base version (0 = nothing approved)")] = None,
+    target: Annotated[int | None, Query(ge=1, description="Target version; omit for the current members")] = None,
+) -> DataProductChangesOut:
+    """Compare a collection between two sides: its settings, then each member (added / removed / modified / unchanged).
 
-    Table Spaces have no per-version snapshot store, so there is no true
-    "previous product version" to diff against (documented limitation). What
-    is recoverable is the CURRENT proposed definition — the members being
-    approved and each member's frozen (pinned, else latest-approved) checks.
-    The Drafts & Review popout shows this with a note that no prior product
-    snapshot exists, rather than fabricating a diff.
+    With no *base* or *target*: a collection with changes not yet approved
+    compares its approved version with its current members; otherwise its
+    latest version with the one before it.
     """
     try:
-        detail = svc.get(product_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
-        members: list[DataProductReviewMemberOut] = []
-        for member in detail.members:
-            effective_version = member.pinned_version or member.binding_version
-            checks: list[dict[str, object]] = []
-            if effective_version and effective_version > 0:
-                try:
-                    checks = version_svc.get_checks(member.binding_id, effective_version)
-                except LookupError:
-                    checks = []
-            members.append(
-                DataProductReviewMemberOut(
-                    binding_id=member.binding_id,
-                    table_fqn=member.table_fqn,
-                    pinned_version=member.pinned_version,
-                    binding_version=member.binding_version,
-                    checks=checks,
-                )
-            )
-        return DataProductReviewChangesOut(
-            product_id=detail.product.product_id,
-            name=detail.product.name,
-            version=detail.product.version,
-            members=members,
-        )
-    except HTTPException:
-        raise
+        result = svc.changes(product_id, base, target)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to get review changes for data product {product_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get data product review changes: {e}")
+        logger.error(f"Failed to compare data product {product_id} changes: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compare data product changes: {e}")
+    counts = {status: 0 for status in ("added", "removed", "modified", "unchanged")}
+    for change in result.changes:
+        counts[change.status] += 1
+    return DataProductChangesOut(
+        product_id=product_id,
+        approved_version=result.approved_version,
+        has_pending_changes=result.has_pending_changes,
+        base_version=result.base_version,
+        target_version=result.target_version,
+        base_recorded=result.base_recorded,
+        counts=counts,
+        versions=[
+            DataProductVersionOut(version=v.version, created_by=v.created_by, created_at=v.created_at)
+            for v in result.versions
+        ],
+        changes=[
+            CollectionChangeOut(key=c.key, name=c.name, status=c.status, before=c.before, after=c.after)
+            for c in result.changes
+        ],
+    )
+
+
+@router.get(
+    "/{product_id}/history",
+    response_model=list[HistoryEventOut],
+    operation_id="listDataProductHistory",
+    dependencies=[require_role(*_VIEWERS_PLUS)],
+)
+def list_data_product_history(
+    product_id: str,
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
+) -> list[HistoryEventOut]:
+    """A collection's history, newest first: created, edits, and each submit, approve, reject and withdraw."""
+    try:
+        events = history.list_events("data_product", product_id)
+    except Exception as e:
+        logger.error(f"Failed to list review events for data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
+    return [HistoryEventOut(**vars(e)) for e in events]
 
 
 # ------------------------------------------------------------------
@@ -190,6 +205,7 @@ def create_data_product(
     body: CreateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
     """Create a new data product (status ``draft``, no approver gate)."""
@@ -201,6 +217,14 @@ def create_data_product(
             body.owner,
             user_email,
             owner_display_name=body.owner_display_name,
+        )
+        history.record(
+            "data_product",
+            product.product_id,
+            "create",
+            user_email,
+            new_status=product.status,
+            state={"name": product.name},
         )
         detail = svc.get(product.product_id)
         assert detail is not None  # just created
@@ -225,6 +249,7 @@ def update_data_product(
     body: UpdateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -289,7 +314,15 @@ def update_data_product(
             )
 
     try:
-        svc.update(product_id, updates, user_email)
+        updated = svc.update(product_id, updates, user_email)
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status=updated.status,
+            state={"fields": sorted(updates)},
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just updated
         return DataProductOut.from_domain(detail)
@@ -313,6 +346,7 @@ def delete_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -331,6 +365,7 @@ def delete_data_product(
     )
     try:
         svc.delete(product_id)
+        history.record("data_product", product_id, "delete", _current_user_email(obo_ws))
         return {"status": "deleted", "product_id": product_id}
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -355,6 +390,7 @@ def add_data_product_member(
     body: AddDataProductMemberIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -379,6 +415,14 @@ def add_data_product_member(
     )
     try:
         svc.add_member(product_id, body.binding_id, body.pinned_version, user_email)
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status="draft",
+            state={"member": body.binding_id, "pinned_version": body.pinned_version},
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just added a member to it
         return DataProductOut.from_domain(detail)
@@ -402,6 +446,7 @@ def remove_data_product_member(
     member_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -421,6 +466,9 @@ def remove_data_product_member(
     )
     try:
         svc.remove_member(product_id, member_id, user_email)
+        history.record(
+            "data_product", product_id, "update", user_email, new_status="draft", state={"removed_member": member_id}
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just removed a member from it
         return DataProductOut.from_domain(detail)
@@ -456,6 +504,7 @@ def submit_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
@@ -489,6 +538,17 @@ def submit_data_product(
             last_change_time=gate_detail.product.updated_at,
         )
         svc.submit(product_id, user_email, rationale=rationale)
+        # A re-submit of a collection already in review only counts when it adds a note.
+        if gate_detail.product.status != "pending_approval" or rationale:
+            history.record(
+                "data_product",
+                product_id,
+                "submit",
+                user_email,
+                prev_status=gate_detail.product.status,
+                new_status="pending_approval",
+                rationale=rationale,
+            )
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
@@ -502,7 +562,17 @@ def submit_data_product(
             principal_email=user_email,
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
-            svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            approved = svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            history.record(
+                "data_product",
+                product_id,
+                "approve",
+                mark_auto_approver(user_email),
+                prev_status="pending_approval",
+                new_status="approved",
+                version=approved.version,
+                rationale=rationale,
+            )
             # Auto-approve activates any cron on the space — wake the scheduler.
             scheduler_registry.notify_scheduler()
         detail = svc.get(product_id)
@@ -531,6 +601,7 @@ def approve_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
@@ -539,7 +610,18 @@ def approve_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.approve(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        approved = svc.approve(product_id, user_email, rationale=rationale)
+        history.record(
+            "data_product",
+            product_id,
+            "approve",
+            user_email,
+            prev_status="pending_approval",
+            new_status="approved",
+            version=approved.version,
+            rationale=rationale,
+        )
         # Approval activates any cron on the space — wake the scheduler so its
         # first run does not wait out the idle poll interval.
         scheduler_registry.notify_scheduler()
@@ -565,6 +647,7 @@ def reject_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Reject a Table Space — sets ``status='rejected'``.
@@ -573,7 +656,17 @@ def reject_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.reject(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        svc.reject(product_id, user_email, rationale=rationale)
+        history.record(
+            "data_product",
+            product_id,
+            "reject",
+            user_email,
+            prev_status="pending_approval",
+            new_status="rejected",
+            rationale=rationale,
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just rejected it
         return DataProductOut.from_domain(detail)
@@ -597,6 +690,7 @@ def revert_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
 ) -> DataProductOut:
     """Withdraw a pending submission — ``pending_approval`` -> ``draft``.
 
@@ -606,6 +700,9 @@ def revert_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.revert(product_id, user_email)
+        history.record(
+            "data_product", product_id, "withdraw", user_email, prev_status="pending_approval", new_status="draft"
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just reverted it
         return DataProductOut.from_domain(detail)

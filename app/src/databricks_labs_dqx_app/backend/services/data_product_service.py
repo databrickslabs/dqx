@@ -38,10 +38,11 @@ raises — see the docstring on ``BindingRunService.run_binding`` — that
 member is treated as failed here too, even though its job is live.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast, get_args
 from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
@@ -163,6 +164,109 @@ class DataProductDetail:
     score_computed_at: str | None = None
 
 
+CollectionChangeStatus = Literal["added", "removed", "modified", "unchanged"]
+
+# The key of the collection's own settings in a comparison; members are keyed
+# by their binding id.
+SETTINGS_CHANGE_KEY = "settings"
+
+
+@dataclass
+class DataProductVersion:
+    """A collection as approved at one version (a ``dq_data_product_versions`` row)."""
+
+    version: int
+    state: dict[str, Any]
+    created_by: str | None = None
+    created_at: str | None = None
+
+
+@dataclass
+class CollectionChange:
+    """The collection's settings, or one member, compared between two sides."""
+
+    key: str
+    name: str
+    status: CollectionChangeStatus
+    before: list[dict[str, Any]] = field(default_factory=list)
+    after: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class DataProductChanges:
+    """A collection compared between a base version and a target (None = the current, proposed state)."""
+
+    approved_version: int
+    has_pending_changes: bool
+    base_version: int
+    target_version: int | None
+    base_recorded: bool
+    versions: list[DataProductVersion]
+    changes: list[CollectionChange]
+
+
+def collection_state(product: DataProduct, members: list[tuple[str, str, int | None]]) -> dict[str, Any]:
+    """The part of a collection a review approves: its settings and its members' tables and pins.
+
+    *members* holds ``(binding_id, table_fqn, pinned_version)``. Schedules are
+    operational (editing one doesn't need approval), so they're left out.
+    """
+    return {
+        "name": product.name,
+        "description": product.description,
+        "owner": product.owner,
+        "members": [
+            {"binding_id": binding_id, "table": table_fqn, "pinned_version": pinned}
+            for binding_id, table_fqn, pinned in sorted(members, key=lambda m: (m[1], m[0]))
+        ],
+    }
+
+
+def compare_collection_states(before: dict[str, Any] | None, after: dict[str, Any] | None) -> list[CollectionChange]:
+    """Compare two collection states: the settings first, then each member matched by its table.
+
+    A member's version reads ``latest`` when it follows the table's latest
+    approved version. Members on the *after* side come in its order, then the
+    removed ones.
+    """
+
+    def settings(state: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if state is None:
+            return []
+        return [{key: state.get(key) for key in ("name", "description", "owner")}]
+
+    def members(state: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        rows = (state or {}).get("members") or []
+        return {
+            str(m["binding_id"]): {
+                "table": m.get("table") or m["binding_id"],
+                "version": m["pinned_version"] if m.get("pinned_version") is not None else "latest",
+            }
+            for m in rows
+            if isinstance(m, dict) and m.get("binding_id")
+        }
+
+    def change(key: str, name: str, old: list[dict[str, Any]], new: list[dict[str, Any]]) -> CollectionChange:
+        status: CollectionChangeStatus
+        if not old:
+            status = "added"
+        elif not new:
+            status = "removed"
+        else:
+            status = "unchanged" if old == new else "modified"
+        return CollectionChange(key=key, name=name, status=status, before=old, after=new)
+
+    out = [change(SETTINGS_CHANGE_KEY, "", settings(before), settings(after))] if before or after else []
+    old_members, new_members = members(before), members(after)
+    for key, row in new_members.items():
+        old = old_members.get(key)
+        out.append(change(key, str(row["table"]), [old] if old else [], [row]))
+    for key, row in old_members.items():
+        if key not in new_members:
+            out.append(change(key, str(row["table"]), [row], []))
+    return out
+
+
 @dataclass
 class DataProductRunSubmission:
     """One successfully submitted member run inside a product run fan-out."""
@@ -237,6 +341,7 @@ class DataProductService:
         self._materializer = materializer
         self._products_table = sql.fqn("dq_data_products")
         self._members_table = sql.fqn("dq_data_product_members")
+        self._versions_table = sql.fqn("dq_data_product_versions")
         self._score_cache_table = sql.fqn("dq_score_cache")
 
     # ------------------------------------------------------------------
@@ -412,6 +517,7 @@ class DataProductService:
         }
         if not schedule_only:
             update_cols["status"] = "draft"
+            self._record_approved_version(product)
         for col in _UPDATABLE_FIELDS:
             if col in updates:
                 update_cols[col] = updates[col]
@@ -446,9 +552,9 @@ class DataProductService:
         )
 
     def delete(self, product_id: str) -> None:
-        """Delete a data product and its members.
+        """Delete a data product, its members and its recorded versions.
 
-        Members are deleted first, then the product, inside one transaction when
+        Members and versions are deleted first, then the product, inside one transaction when
         the OLTP backend supports it (Lakebase/Postgres) so a mid-flight crash
         cannot leave orphan member rows.
 
@@ -473,16 +579,21 @@ class DataProductService:
             delete_members = _build_delete(
                 self._members_table, {"product_id": product_id}, self._sql.q, _pg_render_value
             )
+            delete_versions = _build_delete(
+                self._versions_table, {"product_id": product_id}, self._sql.q, _pg_render_value
+            )
             delete_product = _build_delete(
                 self._products_table, {"product_id": product_id}, self._sql.q, _pg_render_value
             )
             with connection() as conn:
                 with conn.cursor() as cur:
                     run_trusted_sql(cur, delete_members)
+                    run_trusted_sql(cur, delete_versions)
                     run_trusted_sql(cur, delete_product)
                 conn.commit()
         else:
             self._sql.delete(self._members_table, where={"product_id": product_id})
+            self._sql.delete(self._versions_table, where={"product_id": product_id})
             self._sql.delete(self._products_table, where={"product_id": product_id})
         logger.info("Deleted data product %s", product_id)
 
@@ -524,7 +635,8 @@ class DataProductService:
             BindingNotApprovedError: the binding is not approved (when adding
                 a new member) — maps to HTTP 400 at the route.
         """
-        if self._fetch_product(product_id) is None:
+        product = self._fetch_product(product_id)
+        if product is None:
             raise LookupError(f"Data product not found: {product_id}")
         rows = self._sql.select_rows(
             self._members_table,
@@ -533,6 +645,7 @@ class DataProductService:
         )
         if rows:
             member_id = rows[0][0]
+            self._record_approved_version(product)
             self._sql.update(
                 self._members_table,
                 updates={"pinned_version": pinned_version},
@@ -544,6 +657,7 @@ class DataProductService:
             # and the deliberate no-retroactive-eviction asymmetry with the
             # UPDATE branch above.
             table = self._require_approved_binding(binding_id)
+            self._record_approved_version(product)
             member_id = uuid4().hex
             if pinned_version is None:
                 pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
@@ -588,7 +702,8 @@ class DataProductService:
             LookupError: *product_id* or *member_id* does not exist (or the
                 member belongs to a different product).
         """
-        if self._fetch_product(product_id) is None:
+        product = self._fetch_product(product_id)
+        if product is None:
             raise LookupError(f"Data product not found: {product_id}")
         rows = self._sql.select_rows(
             self._members_table,
@@ -597,6 +712,7 @@ class DataProductService:
         )
         if not rows:
             raise LookupError(f"Data product member not found: {member_id}")
+        self._record_approved_version(product)
         self._sql.delete(self._members_table, where={"id": member_id})
         self._flip_to_draft(product_id, updated_by)
 
@@ -660,6 +776,7 @@ class DataProductService:
                 f"Cannot approve Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
             )
         new_version = product.version + 1
+        state = self._current_state(product)
         self._sql.update(
             self._products_table,
             updates={
@@ -672,6 +789,7 @@ class DataProductService:
             },
             where={"product_id": product_id},
         )
+        self._insert_version(product_id, new_version, state, updated_by)
         logger.info("Approved data product %s at version %d", product_id, new_version)
         return product.model_copy(
             update={
@@ -738,6 +856,136 @@ class DataProductService:
             set_pending_rationale=True,
             pending_rationale=None,
         )
+
+    # ------------------------------------------------------------------
+    # Versions (View changes)
+    # ------------------------------------------------------------------
+
+    def list_versions(self, product_id: str) -> list[DataProductVersion]:
+        """Return the collection's recorded versions, newest first."""
+        rows = self._sql.select_rows(
+            self._versions_table,
+            ["version", "state_json", "created_by", "created_at"],
+            where={"product_id": product_id},
+        )
+        versions = [
+            DataProductVersion(
+                version=int(row[0]),
+                state=self._parse_state(row[1]),
+                created_by=row[2],
+                created_at=None if row[3] is None else str(row[3]),
+            )
+            for row in rows
+        ]
+        return sorted(versions, key=lambda v: v.version, reverse=True)
+
+    def changes(self, product_id: str, base: int | None = None, target: int | None = None) -> DataProductChanges:
+        """Compare the collection between two sides: settings plus each member's table and pin.
+
+        With no *base* or *target*: an unapproved collection (draft, pending or
+        rejected) compares its approved version with its current members; an
+        approved one compares its latest version with the one before it. A
+        *target* alone compares it with the version before it; a *base* alone
+        compares it with the current members.
+
+        Versions are recorded from the first approval or edit after this was
+        added. An approved collection that hasn't been edited since is its
+        latest version, so that version is read from its current state.
+        ``base_recorded`` is False when a side predates the recording; the
+        comparison then shows the current members as added, or nothing for
+        two past versions.
+
+        Raises:
+            LookupError: *product_id* does not exist.
+            ValueError: *target* is above the approved version, or *base* isn't below *target*.
+        """
+        product = self._fetch_product(product_id)
+        if product is None:
+            raise LookupError(f"Data product not found: {product_id}")
+        approved = product.version
+        pending = product.status != "approved"
+        if target is not None and target > approved:
+            raise ValueError(f"Version {target} doesn't exist (latest is {approved})")
+        if base is None and target is None:
+            base, target = (approved, None) if pending or approved == 0 else (approved - 1, approved)
+        elif base is None:
+            base = max((target or approved) - 1, 0)
+        if target is not None and base >= target:
+            raise ValueError(f"Base version {base} must be below target version {target}")
+
+        versions = self.list_versions(product_id)
+        states: dict[int, dict[str, Any]] = {v.version: v.state for v in versions}
+        current = self._current_state(product)
+        if not pending and approved > 0 and approved not in states:
+            states[approved] = current
+            versions.insert(0, DataProductVersion(version=approved, state=current, created_by=product.updated_by))
+        before = None if base == 0 else states.get(base)
+        after = current if target is None else states.get(target)
+        recorded = (base == 0 or before is not None) and after is not None
+        if recorded or target is None:
+            changes = compare_collection_states(before, after)
+        else:
+            changes = []
+        return DataProductChanges(
+            approved_version=approved,
+            has_pending_changes=pending,
+            base_version=base,
+            target_version=target,
+            base_recorded=recorded,
+            versions=versions,
+            changes=changes,
+        )
+
+    def _current_state(self, product: DataProduct) -> dict[str, Any]:
+        rows = self._fetch_members(product.product_id)
+        tables = self._table_summary_map()
+        members = [
+            (
+                row.binding_id,
+                tables[row.binding_id].table.table_fqn if row.binding_id in tables else row.binding_id,
+                row.pinned_version,
+            )
+            for row in rows
+        ]
+        return collection_state(product, members)
+
+    def _record_approved_version(self, product: DataProduct) -> None:
+        """Before the first edit to an approved collection, record its approved version if it isn't yet.
+
+        An approved collection is unchanged since its approval (every edit
+        flips it to draft), so its current state is exactly that version.
+        This fills in versions approved before they were recorded.
+        """
+        if product.status != "approved" or product.version == 0:
+            return
+        if self._sql.count(self._versions_table, where={"product_id": product.product_id, "version": product.version}):
+            return
+        self._insert_version(product.product_id, product.version, self._current_state(product), product.updated_by)
+
+    def _insert_version(self, product_id: str, version: int, state: dict[str, Any], created_by: str | None) -> None:
+        self._sql.insert(
+            self._versions_table,
+            values={
+                "id": uuid4().hex,
+                "product_id": product_id,
+                "version": version,
+                "state_json": RawSql(self._sql.json_literal_expr(json.dumps(state))),
+                "created_by": created_by,
+                "created_at": RawSql("now()"),
+            },
+        )
+
+    @staticmethod
+    def _parse_state(value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
 
     def _set_status(
         self,

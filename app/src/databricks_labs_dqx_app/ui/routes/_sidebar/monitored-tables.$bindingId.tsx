@@ -1,4 +1,9 @@
 import { createFileRoute, Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  TableChangesDialog,
+  TableChangesPanel,
+  type TableChangesTarget,
+} from "@/components/monitored-tables/TableChangesDialog";
 import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -153,10 +158,6 @@ import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-r
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
-import {
-  MonitoredTableDiffDialog,
-  type MonitoredTableDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
 import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import {
   RESERVED_SEVERITY_KEY,
@@ -175,7 +176,6 @@ import { ProfileColumnList } from "@/components/bindings/ProfileColumnList";
 import { ProfileSuggestionsCard } from "@/components/bindings/ProfileSuggestionsCard";
 import { BindingResultsTab } from "@/components/monitored-tables/BindingResultsTab";
 import { MonitoredTableSchedulingTab } from "@/components/monitored-tables/MonitoredTableSchedulingTab";
-import { MonitoredTableHistoryTab } from "@/components/monitored-tables/MonitoredTableHistoryTab";
 
 // Schedule is its own tab again (P25 item 1 reverted P23 item 13's move into
 // the header ⋮ menu), matching dqlake's binding detail tab strip. Schedule
@@ -461,7 +461,7 @@ function MonitoredTableDetailPage() {
   const [exportOpen, setExportOpen] = useState(false);
   // View-changes diff dialog target — mirrors the overview row's GitCompare
   // action so the same review affordance is available on the detail banner.
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
   const persistStagedRows = useCallback(
     () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
     [saveMutation, bindingId, stagedRows],
@@ -599,7 +599,10 @@ function MonitoredTableDetailPage() {
   // Nothing to resubmit: Save-as-draft is already disabled (no staged
   // edits) and this version is already approved, so "Submit for review"
   // would just be a no-op re-approval request (item 11).
-  const submitDisabledNoChanges = !isDirty && table.status === "approved";
+  // A removal-only edit leaves every remaining check approved, so the status alone
+  // can't tell it apart from "nothing to submit" — the backend compares the rule set
+  // with the approved version (unapproved_rule_changes).
+  const submitDisabledNoChanges = !isDirty && table.status === "approved" && !detail.unapproved_rule_changes;
 
   // Require-draft-run gate (issues B2-12 / B2-118): when the admin setting is
   // on, block submit until a draft run has been recorded for this table AND
@@ -884,7 +887,7 @@ function MonitoredTableDetailPage() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+        <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           {/* Tab order (P23 item 14): About, Permissions first (View Data
@@ -982,7 +985,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="history">
-            <MonitoredTableHistoryTab bindingId={bindingId} />
+            <TableChangesPanel bindingId={bindingId} />
           </TabsContent>
         </Tabs>
       </div>

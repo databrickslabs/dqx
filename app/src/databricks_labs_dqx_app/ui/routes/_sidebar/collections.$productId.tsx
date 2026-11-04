@@ -30,7 +30,7 @@ import { ProductTablesTab } from "@/components/data-products/ProductTablesTab";
 import { ProductResultsTab } from "@/components/data-products/ProductResultsTab";
 import { ProductRunsTab } from "@/components/data-products/ProductRunsTab";
 import { ProductSchedulingTab } from "@/components/data-products/ProductSchedulingTab";
-import { ProductHistoryTab } from "@/components/data-products/ProductHistoryTab";
+import { CollectionChangesPanel } from "@/components/changes/CollectionChangesDialog";
 import { useEditProductState } from "@/components/data-products/useEditProductState";
 import { useScrollToTop } from "@/hooks/use-scroll-to-top";
 
@@ -195,7 +195,7 @@ function DataProductDetailPage() {
             ),
             history: (
               <TabBoundary label={t("dataProducts.tabHistory")}>
-                <ProductHistoryTab product={product} />
+                <CollectionChangesPanel productId={product.product_id} />
               </TabBoundary>
             ),
           }}

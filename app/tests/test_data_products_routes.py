@@ -8,8 +8,7 @@ writes, `run_rules` / Admin+Author gate for run) without going through
 middleware.
 """
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
@@ -18,11 +17,13 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
     CreateDataProductIn,
+    LifecycleRationaleIn,
     RunDataProductIn,
     UpdateDataProductIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import DataProduct, DataProductMember
 from databricks_labs_dqx_app.backend.routes.v1 import data_products as dp_routes
+from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryEvent, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     add_data_product_member,
     approve_data_product,
@@ -31,6 +32,7 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     get_data_product,
     list_data_products,
     reject_data_product,
+    revert_data_product,
     remove_data_product_member,
     run_data_product,
     submit_data_product,
@@ -38,8 +40,11 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
     BindingNotApprovedError,
+    CollectionChange,
+    DataProductChanges,
     DataProductDetail,
     DataProductRunResult,
+    DataProductVersion,
     DuplicateDataProductNameError,
     InvalidStatusTransitionError,
     NoRunnableMembersError,
@@ -180,6 +185,7 @@ class TestCreate:
             svc=svc,
             obo_ws=_mock_obo_ws(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.product_id == "p1"
         svc.create.assert_called_once_with("Orders", None, None, "alice@x", owner_display_name=None)
@@ -198,6 +204,7 @@ class TestCreate:
             svc=svc,
             obo_ws=_mock_obo_ws(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         svc.create.assert_called_once()
 
@@ -210,6 +217,7 @@ class TestCreate:
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -222,6 +230,7 @@ class TestCreate:
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 400
 
@@ -239,6 +248,7 @@ class TestUpdate:
             principal_ids=frozenset(),
             perms=MagicMock(),
             grant_svc=MagicMock(),
+            history=MagicMock(),
         )
         svc.update.assert_called_once_with("p1", {"description": "new desc"}, "alice@x")
 
@@ -255,6 +265,7 @@ class TestUpdate:
                 principal_ids=frozenset(),
                 perms=MagicMock(),
                 grant_svc=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -271,6 +282,7 @@ class TestUpdate:
                 principal_ids=frozenset(),
                 perms=MagicMock(),
                 grant_svc=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -279,7 +291,13 @@ class TestDelete:
     def test_delete_success(self):
         svc = MagicMock()
         result = delete_data_product(
-            "p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+            "p1",
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result["status"] == "deleted"
         svc.delete.assert_called_once_with("p1")
@@ -289,7 +307,13 @@ class TestDelete:
         svc.delete.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
             delete_data_product(
-                "p1", svc=svc, obo_ws=_mock_obo_ws(), role=UserRole.ADMIN, principal_ids=frozenset(), perms=MagicMock()
+                "p1",
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -307,6 +331,7 @@ class TestMembers:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.product_id == "p1"
         svc.add_member.assert_called_once_with("p1", "b1", 2, "alice@x")
@@ -323,6 +348,7 @@ class TestMembers:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -338,6 +364,7 @@ class TestMembers:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -358,6 +385,7 @@ class TestMembers:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 400
         assert "cat.schema.tbl" in excinfo.value.detail
@@ -374,6 +402,7 @@ class TestMembers:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            history=MagicMock(),
         )
         assert result.product_id == "p1"
         svc.remove_member.assert_called_once_with("p1", "m1", "alice@x")
@@ -390,6 +419,7 @@ class TestMembers:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -407,6 +437,7 @@ class TestSubmit:
             role=UserRole.RULE_AUTHOR,
             principal_ids=frozenset(),
             obo_ws=_mock_obo_ws(),
+            history=MagicMock(),
         )
         assert result.status == "pending_approval"
         svc.submit.assert_called_once_with("p1", "alice@x", rationale=None)
@@ -425,6 +456,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 404
 
@@ -443,6 +475,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                history=MagicMock(),
             )
         svc.approve.assert_called_once()
         notify.assert_called_once()
@@ -462,6 +495,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                history=MagicMock(),
             )
         svc.approve.assert_not_called()
         notify.assert_not_called()
@@ -485,6 +519,7 @@ class TestSubmit:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 obo_ws=_mock_obo_ws(),
+                history=MagicMock(),
             )
         assert excinfo.value.status_code == 409
 
@@ -493,7 +528,7 @@ class TestApprove:
     def test_approve_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
-        result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         assert result.status == "approved"
         svc.approve.assert_called_once_with("p1", "alice@x", rationale=None)
 
@@ -501,14 +536,14 @@ class TestApprove:
         svc = MagicMock()
         svc.approve.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         assert excinfo.value.status_code == 409
 
     def test_approve_missing_raises_404(self):
         svc = MagicMock()
         svc.approve.side_effect = LookupError("Data product not found: p1")
         with pytest.raises(HTTPException) as excinfo:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         assert excinfo.value.status_code == 404
 
     def test_approve_notifies_scheduler(self):
@@ -517,7 +552,7 @@ class TestApprove:
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="approved", version=1)
         with patch("databricks_labs_dqx_app.backend._scheduler_registry.notify_scheduler") as notify:
-            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         notify.assert_called_once()
 
 
@@ -525,7 +560,7 @@ class TestReject:
     def test_reject_success(self):
         svc = MagicMock()
         svc.get.return_value = _detail(product_id="p1", status="rejected", version=0)
-        result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+        result = reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         assert result.status == "rejected"
         svc.reject.assert_called_once_with("p1", "alice@x", rationale=None)
 
@@ -533,7 +568,7 @@ class TestReject:
         svc = MagicMock()
         svc.reject.side_effect = InvalidStatusTransitionError("boom")
         with pytest.raises(HTTPException) as excinfo:
-            reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws())
+            reject_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=MagicMock())
         assert excinfo.value.status_code == 409
 
 
@@ -633,46 +668,217 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
-# getDataProductReviewChanges — Table Space change-diff backing
+# getDataProductChanges — View changes for a collection
 # ---------------------------------------------------------------------------
 
 
-class TestReviewChanges:
-    def test_review_changes_is_viewer_plus(self):
-        roles = _route_required_roles("getDataProductReviewChanges")
-        assert UserRole.VIEWER in roles
+class TestChanges:
+    @staticmethod
+    def _result(**overrides):
+        values = {
+            "approved_version": 2,
+            "has_pending_changes": True,
+            "base_version": 2,
+            "target_version": None,
+            "base_recorded": True,
+            "versions": [DataProductVersion(version=2, state={}, created_by="bob@x", created_at="2026-10-01")],
+            "changes": [
+                CollectionChange(
+                    key="settings", name="", status="unchanged", before=[{"name": "x"}], after=[{"name": "x"}]
+                ),
+                CollectionChange(
+                    key="b2", name="c.s.items", status="added", after=[{"table": "c.s.items", "version": "latest"}]
+                ),
+            ],
+        }
+        values.update(overrides)
+        return DataProductChanges(**values)
+
+    def test_changes_is_viewer_plus(self):
+        assert UserRole.VIEWER in _route_required_roles("getDataProductChanges")
+
+    def test_returns_counts_versions_and_changes(self):
+        svc = MagicMock()
+        svc.changes.return_value = self._result()
+        out = dp_routes.get_data_product_changes("p1", svc, base=None, target=None)
+        svc.changes.assert_called_once_with("p1", None, None)
+        assert out.counts == {"added": 1, "removed": 0, "modified": 0, "unchanged": 1}
+        assert [v.version for v in out.versions] == [2]
+        assert out.changes[1].key == "b2" and out.changes[1].status == "added"
+        assert out.has_pending_changes and out.base_recorded
 
     def test_404_when_missing(self):
         svc = MagicMock()
-        svc.get.return_value = None
-        version_svc = MagicMock()
+        svc.changes.side_effect = LookupError("nope")
         with pytest.raises(HTTPException) as exc:
-            dp_routes.get_data_product_review_changes("nope", svc, version_svc)
+            dp_routes.get_data_product_changes("nope", svc, base=None, target=None)
         assert exc.value.status_code == 404
 
-    def test_resolves_frozen_checks_per_member(self):
-        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=2)
-        detail = DataProductDetail(product=_product(product_id="p1", name="Orders", version=3))
-        detail.members = [member]  # type: ignore[attr-defined]
+    def test_400_for_a_version_that_does_not_exist(self):
         svc = MagicMock()
-        svc.get.return_value = detail
-        version_svc = MagicMock()
-        version_svc.get_checks.return_value = [{"check": {"function": "is_not_null"}}]
-        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
-        assert out.product_id == "p1"
-        assert out.version == 3
-        assert len(out.members) == 1
-        assert out.members[0].checks == [{"check": {"function": "is_not_null"}}]
-        # pinned_version None -> effective = binding_version (2)
-        version_svc.get_checks.assert_called_once_with("b1", 2)
+        svc.changes.side_effect = ValueError("Version 9 doesn't exist (latest is 2)")
+        with pytest.raises(HTTPException) as exc:
+            dp_routes.get_data_product_changes("p1", svc, base=None, target=9)
+        assert exc.value.status_code == 400
 
-    def test_no_prior_snapshot_when_binding_never_approved(self):
-        member = SimpleNamespace(binding_id="b1", table_fqn="c.s.t", pinned_version=None, binding_version=0)
-        detail = DataProductDetail(product=_product(product_id="p1"))
-        detail.members = [member]  # type: ignore[attr-defined]
+
+# ---------------------------------------------------------------------------
+# Review trail — each review step on a collection is recorded
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleHistory:
+    @staticmethod
+    def _history() -> MagicMock:
+        return create_autospec(LifecycleHistoryService, instance=True)
+
+    @staticmethod
+    def _submit(svc: MagicMock, history: MagicMock, app_settings: MagicMock, **kwargs) -> None:
+        submit_data_product(
+            "p1",
+            svc=svc,
+            app_settings=app_settings,
+            draft_run_gate=MagicMock(),
+            perms=MagicMock(),
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset(),
+            obo_ws=_mock_obo_ws(),
+            history=history,
+            **kwargs,
+        )
+
+    def test_submit_is_recorded_with_its_note(self):
         svc = MagicMock()
-        svc.get.return_value = detail
-        version_svc = MagicMock()
-        out = dp_routes.get_data_product_review_changes("p1", svc, version_svc)
-        assert out.members[0].checks == []
-        version_svc.get_checks.assert_not_called()
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=1)
+        history = self._history()
+        self._submit(svc, history, _enabled_settings(), body=LifecycleRationaleIn(rationale="adds orders"))
+        history.record.assert_called_once_with(
+            "data_product",
+            "p1",
+            "submit",
+            "alice@x",
+            prev_status="pending_approval",
+            new_status="pending_approval",
+            rationale="adds orders",
+        )
+
+    def test_an_auto_approved_submit_records_the_approval_and_its_version(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=2)
+        svc.approve.return_value = _product(product_id="p1", status="approved", version=2)
+        settings = MagicMock()
+        settings.get_approvals_mode.return_value = "disabled"
+        history = self._history()
+        self._submit(svc, history, settings)
+        actions = [c.args[2] for c in history.record.call_args_list]
+        assert actions == ["submit", "approve"]
+        assert history.record.call_args.kwargs["version"] == 2
+
+    def test_approve_records_the_approver_note_and_version(self):
+        svc = MagicMock()
+        svc.approve.return_value = _product(product_id="p1", status="approved", version=3)
+        svc.get.return_value = _detail(product_id="p1", status="approved", version=3)
+        history = self._history()
+        approve_data_product(
+            "p1", svc=svc, obo_ws=_mock_obo_ws(), history=history, body=LifecycleRationaleIn(rationale="ok")
+        )
+        history.record.assert_called_once_with(
+            "data_product",
+            "p1",
+            "approve",
+            "alice@x",
+            prev_status="pending_approval",
+            new_status="approved",
+            version=3,
+            rationale="ok",
+        )
+
+    def test_reject_records_the_note(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="rejected", version=1)
+        history = self._history()
+        reject_data_product(
+            "p1", svc=svc, obo_ws=_mock_obo_ws(), history=history, body=LifecycleRationaleIn(rationale="no")
+        )
+        history.record.assert_called_once_with(
+            "data_product",
+            "p1",
+            "reject",
+            "alice@x",
+            prev_status="pending_approval",
+            new_status="rejected",
+            rationale="no",
+        )
+
+    def test_withdraw_is_recorded(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="draft", version=1)
+        history = self._history()
+        revert_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=history)
+        history.record.assert_called_once_with(
+            "data_product", "p1", "withdraw", "alice@x", prev_status="pending_approval", new_status="draft"
+        )
+
+    def test_a_refused_approval_records_nothing(self):
+        svc = MagicMock()
+        svc.approve.side_effect = InvalidStatusTransitionError("not pending")
+        history = self._history()
+        with pytest.raises(HTTPException):
+            approve_data_product("p1", svc=svc, obo_ws=_mock_obo_ws(), history=history)
+        history.record.assert_not_called()
+
+    def test_history_is_viewer_plus(self):
+        assert UserRole.VIEWER in _route_required_roles("listDataProductHistory")
+
+    def test_adding_a_member_records_an_edit(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1")
+        history = self._history()
+        add_data_product_member(
+            "p1",
+            body=AddDataProductMemberIn(binding_id="b1", pinned_version=2),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            history=history,
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        history.record.assert_called_once_with(
+            "data_product",
+            "p1",
+            "update",
+            "alice@x",
+            new_status="draft",
+            state={"member": "b1", "pinned_version": 2},
+        )
+
+    def test_deleting_a_collection_records_it(self):
+        svc = MagicMock()
+        history = self._history()
+        delete_data_product(
+            "p1",
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            history=history,
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        history.record.assert_called_once_with("data_product", "p1", "delete", "alice@x")
+
+    def test_resubmitting_a_collection_already_in_review_without_a_note_records_nothing(self):
+        svc = MagicMock()
+        svc.get.return_value = _detail(product_id="p1", status="pending_approval", version=1)
+        history = self._history()
+        self._submit(svc, history, _enabled_settings())
+        history.record.assert_not_called()
+
+    def test_the_trail_is_listed(self):
+        history = self._history()
+        history.list_events.return_value = [
+            HistoryEvent(action="submitted", actor="alice@x", created_at="2026-10-01", rationale="adds orders"),
+        ]
+        out = dp_routes.list_data_product_history("p1", history=history)
+        history.list_events.assert_called_once_with("data_product", "p1")
+        assert [(e.action, e.actor, e.rationale) for e in out] == [("submitted", "alice@x", "adds orders")]
