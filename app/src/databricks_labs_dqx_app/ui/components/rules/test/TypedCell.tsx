@@ -20,6 +20,7 @@ export function TypedCell({
   disabled,
   placeholder,
   className,
+  noMinWidth,
 }: {
   family: CellFamily;
   value: string | null;
@@ -29,6 +30,8 @@ export function TypedCell({
   disabled?: boolean;
   placeholder?: string;
   className?: string;
+  /** Skip the value-length minWidth so the cell can fill a parent column. */
+  noMinWidth?: boolean;
 }) {
   const { t } = useTranslation();
   const fam = (family || "any").toLowerCase();
@@ -42,7 +45,9 @@ export function TypedCell({
 
   const base =
     "h-8 w-full bg-transparent px-2 font-mono text-xs outline-none focus:bg-accent/40 placeholder:text-muted-foreground/40";
-  const widthStyle: React.CSSProperties = { minWidth: `${(value ?? "").length + 2}ch` };
+  const widthStyle: React.CSSProperties | undefined = noMinWidth
+    ? undefined
+    : { minWidth: `${(value ?? "").length + 2}ch` };
 
   if (fam === "numeric") {
     return (
