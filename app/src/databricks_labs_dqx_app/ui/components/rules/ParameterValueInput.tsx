@@ -64,12 +64,14 @@ function ListValueInput({
   disabled,
   placeholder,
   lock,
+  fill,
 }: {
   value: string;
   onChange: (raw: string) => void;
   disabled?: boolean;
   placeholder?: string;
   lock?: ParameterLock;
+  fill?: boolean;
 }) {
   const items = splitListItems(value);
   const [draft, setDraft] = useState("");
@@ -85,7 +87,8 @@ function ListValueInput({
   return (
     <div
       className={cn(
-        "flex min-h-6 min-w-[12rem] max-w-full flex-wrap items-center gap-1 rounded-md border bg-background px-1.5 py-0.5",
+        "flex min-h-6 flex-wrap items-center gap-1 rounded-md border bg-background px-1.5 py-0.5",
+        fill ? "w-full min-w-0" : "min-w-[12rem] max-w-full",
         disabled && "opacity-60",
       )}
     >
@@ -140,6 +143,7 @@ export function ParameterValueInput({
   placeholder,
   className,
   lock,
+  fill,
   "aria-label": ariaLabel,
 }: {
   type: RuleParameter["type"];
@@ -150,6 +154,8 @@ export function ParameterValueInput({
   placeholder?: string;
   className?: string;
   lock?: ParameterLock;
+  /** Stretch to the parent width instead of a fixed min-width (apply-rule mapping). */
+  fill?: boolean;
   "aria-label"?: string;
 }) {
   const { t } = useTranslation();
@@ -157,13 +163,14 @@ export function ParameterValueInput({
   const nonePlaceholder = placeholder ?? t("rulesRegistry.parametersPanelDefaultPlaceholder");
   if (type === "list" || type === "ref_column") {
     return (
-      <span className={cn("inline-flex min-w-[12rem] max-w-full", invalid && "[&>div]:border-destructive", className)} aria-label={ariaLabel}>
+      <span className={cn(fill ? "inline-flex w-full min-w-0" : "inline-flex min-w-[12rem] max-w-full", invalid && "[&>div]:border-destructive", className)} aria-label={ariaLabel}>
         <ListValueInput
           value={value}
           disabled={disabled}
           placeholder={t("rulesRegistry.parametersPanelListPlaceholder")}
           onChange={onChange}
           lock={lock}
+          fill={fill}
         />
       </span>
     );
@@ -171,7 +178,8 @@ export function ParameterValueInput({
   return (
     <span
       className={cn(
-        "inline-flex h-6 min-w-[6.5rem] shrink-0 items-center rounded-md border bg-background pr-0.5",
+        "inline-flex h-6 items-center rounded-md border bg-background pr-0.5",
+        fill ? "w-full min-w-0" : "min-w-[6.5rem] shrink-0",
         disabled && "opacity-60",
         invalid && "border-destructive",
         className,
@@ -183,7 +191,8 @@ export function ParameterValueInput({
         value={value === "" ? null : value}
         disabled={disabled}
         placeholder={nonePlaceholder}
-        className={CELL_CLASS}
+        className={cn(CELL_CLASS, fill && "min-w-0")}
+        noMinWidth={fill}
         onChange={(next) => onChange(next ?? "")}
       />
       {lock ? <LockAffordance {...lock} /> : null}

@@ -540,7 +540,7 @@ function GroupParamCell({
   const invalid = error?.startsWith(`${param.name} `);
   return (
     <span
-      className="inline-flex flex-col items-start gap-0.5"
+      className="flex min-w-0 w-0 flex-col items-stretch gap-0.5 justify-self-stretch"
       onMouseDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
@@ -551,7 +551,7 @@ function GroupParamCell({
         invalid={invalid}
         onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
         aria-label={param.name}
-        className="min-w-[4.75rem]"
+        fill
         lock={{ locked }}
       />
       {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
@@ -766,7 +766,7 @@ export function MappingChips({
                   return (
                     <span
                       key={groupIdx}
-                      className="inline-flex min-w-0 flex-col items-start gap-1 justify-self-start"
+                      className="inline-flex w-full min-w-0 flex-col items-start gap-1 justify-self-stretch"
                     >
                       {onChangeGroup && columns ? (
                         <EditableChip
