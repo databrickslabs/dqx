@@ -190,6 +190,7 @@ resources:
          provider: gitHub
       git_source:
          branch: "bcd-deploy-studio-v0.1.2"
+         source_code_path: .
   
       description: "Databricks DQX Studio for Data Quality Monitoring"
       #source_code_path: "${var.app_source_path}"
