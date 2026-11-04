@@ -184,6 +184,13 @@ resources:
   apps:
     dqx-studio:
       name: ${var.app_name}
+
+      git_repository:
+         url: https://github.com/bcd-apps/bcd-dqx-studio
+         provider: gitHub
+      git_source:
+         branch: "bcd-deploy-studio-v0.1.2"
+  
       description: "Databricks DQX Studio for Data Quality Monitoring"
       source_code_path: "${var.app_source_path}"
       config: ${var.app_config}
