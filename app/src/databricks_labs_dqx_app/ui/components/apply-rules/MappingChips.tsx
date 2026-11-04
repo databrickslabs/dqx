@@ -35,11 +35,9 @@ import {
   displayParameterValue,
   isUnboundParameterValue,
   mappingGroupKey,
-  parameterInputFamily,
   validateGroupParameterValues,
 } from "@/lib/apply-time-params";
-import { TypedCell } from "@/components/rules/test/TypedCell";
-import { Input } from "@/components/ui/input";
+import { ParameterValueInput } from "@/components/rules/ParameterValueInput";
 import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import {
   ColumnDropdownList,
@@ -506,9 +504,10 @@ interface MappingChipsProps {
   onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
 }
 
-function GroupParamInputs({
+function GroupParamCell({
   group,
   groupIdx,
+  param,
   parameters,
   stored,
   canEdit,
@@ -517,6 +516,7 @@ function GroupParamInputs({
 }: {
   group: Record<string, string>;
   groupIdx: number;
+  param: RuleParameter;
   parameters: RuleParameter[];
   stored?: Record<string, Record<string, unknown>>;
   canEdit: boolean;
@@ -526,62 +526,27 @@ function GroupParamInputs({
   const key = mappingGroupKey(group);
   const values = stored?.[key] ?? {};
   const { error } = validateGroupParameterValues(parameters, values, bindAll);
+  const raw = displayParameterValue(
+    (values[param.name] as RuleParameter["value"]) ??
+      (isUnboundParameterValue(param.value) ? undefined : param.value),
+  );
+  const invalid = error?.startsWith(`${param.name} `);
   return (
-    <div
-      className="flex flex-col items-start gap-0.5 shrink-0"
+    <span
+      className="inline-flex flex-col items-start gap-0.5"
       onMouseDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="flex flex-col items-start gap-1">
-        {parameters.map((param) => {
-          const raw = displayParameterValue(
-            (values[param.name] as RuleParameter["value"]) ??
-              (isUnboundParameterValue(param.value) ? undefined : param.value),
-          );
-          const family = parameterInputFamily(param.type);
-          const invalid = error?.startsWith(`${param.name} `);
-          return (
-            <label key={param.name} className="flex items-center gap-1.5 text-xs">
-              <code className={PARAM_PLACEHOLDER_CLASS}>{`{{${param.name}}}`}</code>
-              {family === "boolean" ? (
-                <span
-                  className={cn(
-                    "w-28 shrink-0 rounded-md border bg-background",
-                    !canEdit && "opacity-60",
-                    invalid && "border-destructive",
-                  )}
-                >
-                  <TypedCell
-                    family={family}
-                    disabled={!canEdit}
-                    value={raw === "" ? null : raw}
-                    onChange={(next) => {
-                      onChange?.(groupIdx, { ...values, [param.name]: next ?? "" });
-                    }}
-                  />
-                </span>
-              ) : (
-                <Input
-                  type={family === "numeric" ? "number" : family === "temporal" ? "date" : "text"}
-                  inputMode={family === "numeric" ? "decimal" : undefined}
-                  disabled={!canEdit}
-                  value={raw}
-                  aria-invalid={invalid || undefined}
-                  className={cn(
-                    "h-6 w-24 shrink-0 text-xs",
-                    invalid && "border-destructive",
-                  )}
-                  onChange={(event) =>
-                    onChange?.(groupIdx, { ...values, [param.name]: event.target.value })
-                  }
-                />
-              )}
-            </label>
-          );
-        })}
-      </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
+      <ParameterValueInput
+        type={param.type}
+        value={raw}
+        disabled={!canEdit}
+        invalid={invalid}
+        onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
+        aria-label={param.name}
+      />
+      {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
+    </span>
   );
 }
 
@@ -628,15 +593,24 @@ export function MappingChips({
               />
             ))}
             {parameters.length > 0 && Object.values(group).some(Boolean) && (
-              <GroupParamInputs
-                group={group}
-                groupIdx={groupIdx}
-                parameters={parameters}
-                stored={storedParameterValues}
-                canEdit={canEditParameters}
-                bindAll={bindAllParameters}
-                onChange={onParameterValuesChange}
-              />
+              <div className="w-full space-y-2">
+                {parameters.map((param) => (
+                  <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
+                    <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
+                    <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+                    <GroupParamCell
+                      group={group}
+                      groupIdx={groupIdx}
+                      param={param}
+                      parameters={parameters}
+                      stored={storedParameterValues}
+                      canEdit={canEditParameters}
+                      bindAll={bindAllParameters}
+                      onChange={onParameterValuesChange}
+                    />
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         ))}
@@ -819,19 +793,6 @@ export function MappingChips({
                             ))}
                           </span>
                         )}
-                        {isLastSlot && parameters.length > 0 && (
-                          <div className="w-full min-w-0">
-                            <GroupParamInputs
-                              group={columnMapping[groupIdx] ?? {}}
-                              groupIdx={groupIdx}
-                              parameters={parameters}
-                              stored={storedParameterValues}
-                              canEdit={canEditParameters}
-                              bindAll={bindAllParameters}
-                              onChange={onParameterValuesChange}
-                            />
-                          </div>
-                        )}
                       </span>
                     );
                   })
@@ -900,6 +861,29 @@ export function MappingChips({
             </div>
           );
         })}
+        {parameters.map((param) => (
+          <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
+            <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
+            <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+            <div className="flex flex-wrap items-start gap-1.5">
+              {columnMapping.map((group, groupIdx) =>
+                slotNames.some((s) => Boolean(group[s])) ? (
+                  <GroupParamCell
+                    key={groupIdx}
+                    group={group}
+                    groupIdx={groupIdx}
+                    param={param}
+                    parameters={parameters}
+                    stored={storedParameterValues}
+                    canEdit={canEditParameters}
+                    bindAll={bindAllParameters}
+                    onChange={onParameterValuesChange}
+                  />
+                ) : null,
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

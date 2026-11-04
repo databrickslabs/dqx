@@ -256,3 +256,74 @@ export function parameterInputFamily(type: RuleParameter["type"]): "numeric" | "
   if (type === "boolean") return "boolean";
   return "text";
 }
+
+function escapeSqlString(text: string): string {
+  return text.replaceAll("'", "''");
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sqlNumber(value: unknown): string {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(number) ? String(number) : String(number);
+}
+
+/** Render a bound parameter as a SQL literal, matching backend ``sql_literal``. */
+export function sqlLiteral(param: Pick<RuleParameter, "name" | "type">, value: unknown, quoted: boolean): string {
+  if (param.type === "boolean" || typeof value === "boolean") {
+    const flag = typeof value === "boolean" ? value : String(value).trim().toLowerCase() === "true";
+    if (quoted) return flag ? "true" : "false";
+    return flag ? "TRUE" : "FALSE";
+  }
+  if (param.type === "number" || param.type === "integer" || param.type === "decimal") {
+    return sqlNumber(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value.map((item) => escapeSqlString(String(item)));
+    return quoted ? items.join(", ") : items.map((item) => `'${item}'`).join(", ");
+  }
+  const text = escapeSqlString(String(value));
+  if (quoted) return text;
+  if (param.type === "date") return `DATE'${text}'`;
+  return `'${text}'`;
+}
+
+/** Replace bound ``{{param}}`` tokens in SQL text with typed literals. */
+export function substituteSqlParameters(text: string, parameters: RuleParameter[]): string {
+  let result = text;
+  for (const param of parameters) {
+    if (isUnboundParameterValue(param.value)) continue;
+    const token = new RegExp(`(')?\\{\\{\\s*${escapeRegExp(param.name)}\\s*\\}\\}(')?`, "g");
+    result = result.replace(token, (_match, before: string | undefined, after: string | undefined) => {
+      const open = before ?? "";
+      const close = after ?? "";
+      if (open && close) return `'${sqlLiteral(param, param.value, true)}'`;
+      return `${open}${sqlLiteral(param, param.value, false)}${close}`;
+    });
+  }
+  return result;
+}
+
+/** Replace ``{{param}}`` tokens inside native-argument trees with JSON scalars. */
+export function substituteParamPlaceholders(value: unknown, values: Record<string, unknown>): unknown {
+  if (Array.isArray(value)) return value.map((item) => substituteParamPlaceholders(item, values));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        substituteParamPlaceholders(item, values),
+      ]),
+    );
+  }
+  if (typeof value !== "string") return value;
+  const match = PLACEHOLDER_RE.exec(value.trim());
+  if (match && match[1] in values) return values[match[1]];
+  let result = value;
+  for (const [name, replacement] of Object.entries(values)) {
+    const token = `{{${name}}}`;
+    if (result.includes(token)) result = result.replaceAll(token, String(replacement));
+  }
+  return result;
+}

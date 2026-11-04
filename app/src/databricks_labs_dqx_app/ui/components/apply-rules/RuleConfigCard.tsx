@@ -13,7 +13,6 @@ import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -335,9 +334,12 @@ export function RuleLogicDisclosure({
             )}
             {filter && (
               <div className="space-y-1">
-                <Label htmlFor={filter.id} className="text-xs text-muted-foreground">
+                <label
+                  htmlFor={filter.id}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+                >
                   {t("monitoredTables.applyRowFilterLabel")}
-                </Label>
+                </label>
                 <Input
                   id={filter.id}
                   value={filter.value}

@@ -49,8 +49,18 @@ import { AI_GRADIENT_URL } from "@/lib/ai-style";
 import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availability";
 import { sqlEditorShape } from "@/lib/lowcodeCompile";
 import {
+  bindsEveryParameter,
+  PARAM_PLACEHOLDER_CLASS,
+  substituteParamPlaceholders,
+  substituteSqlParameters,
+  validateGroupParameterValues,
+} from "@/lib/apply-time-params";
+import { parseParamValue, paramValueToRaw } from "@/lib/registry-rule-conversion";
+import { ParameterValueInput } from "@/components/rules/ParameterValueInput";
+import {
   useRunRuleTest,
   useGenerateRuleTestData,
+  type RuleParameter,
   type RuleSlot,
   type RuleTestRunOut,
 } from "@/lib/api";
@@ -132,6 +142,38 @@ function buildInitialManual(slots: RuleSlot[], predicate: string, refTables: str
 
 const CACHE_KEY = "registry-rule-test";
 
+function TestParameterFields({
+  parameters,
+  values,
+  onChange,
+}: {
+  parameters: RuleParameter[];
+  values: Record<string, string>;
+  onChange: (name: string, raw: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (parameters.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h4 className="text-sm font-medium leading-none">{t("ruleTest.mapParameters")}</h4>
+      <div className="space-y-2">
+        {parameters.map((param) => (
+          <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
+            <span className={`${PARAM_PLACEHOLDER_CLASS} text-xs truncate`}>{`{{${param.name}}}`}</span>
+            <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+            <ParameterValueInput
+              type={param.type}
+              value={values[param.name] ?? paramValueToRaw(param.value)}
+              onChange={(raw) => onChange(param.name, raw)}
+              aria-label={param.name}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function RuleTestPanel({
   predicate,
   polarity,
@@ -141,6 +183,7 @@ export function RuleTestPanel({
   lowcodeAdvanced = false,
   nativeFunction,
   nativeArguments,
+  parameters = [],
 }: {
   /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. Unused for dqx_native. */
   predicate: string;
@@ -158,6 +201,8 @@ export function RuleTestPanel({
   nativeFunction?: string;
   /** Frozen native body.arguments with {{slot}} placeholders. */
   nativeArguments?: Record<string, unknown>;
+  /** Apply-time parameters to bind for this test (defaults pre-filled). */
+  parameters?: RuleParameter[];
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
@@ -193,7 +238,11 @@ export function RuleTestPanel({
     s: slots.map((s) => [s.name, s.family]),
     fn: nativeFunction,
     args: nativeArguments,
+    params: parameters.map((p) => [p.name, p.type, paramValueToRaw(p.value)]),
   });
+  const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(parameters.map((p) => [p.name, paramValueToRaw(p.value)])),
+  );
   const [manual, setManualState] = useState<ManualState>(
     () => getManual(CACHE_KEY, logicHash) ?? buildInitialManual(slots, predicate, refTables),
   );
@@ -218,6 +267,7 @@ export function RuleTestPanel({
     const fresh = buildInitialManual(slots, predicate, refTables);
     setManualState(fresh);
     setManual(CACHE_KEY, logicHash, fresh);
+    setParamValues(Object.fromEntries(parameters.map((p) => [p.name, paramValueToRaw(p.value)])));
     setResult(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logicHash]);
@@ -282,6 +332,32 @@ export function RuleTestPanel({
   const unfilledRefs = refTables.filter((tbl) => !(manual.refs[tbl]?.columns.length ?? 0));
   const adhocReady = manual.rows.length > 0 && unfilledRefs.length === 0;
   const canRun = mode === "adhoc" ? adhocReady : !!tablePayload;
+  const boundParameters = useMemo(
+    () =>
+      parameters.map((param) => ({
+        ...param,
+        value: parseParamValue(param.type, paramValues[param.name] ?? paramValueToRaw(param.value)),
+      })),
+    [parameters, paramValues],
+  );
+  const parameterError = validateGroupParameterValues(
+    parameters,
+    paramValues,
+    bindsEveryParameter(ruleMode),
+  ).error;
+  const testPredicate =
+    ruleMode === "dqx_native" ? "" : substituteSqlParameters(predicate, boundParameters);
+  const testNativeArguments =
+    ruleMode === "dqx_native"
+      ? (substituteParamPlaceholders(
+          nativeArguments ?? {},
+          Object.fromEntries(
+            boundParameters
+              .filter((param) => param.value !== null && param.value !== undefined)
+              .map((param) => [param.name, param.value]),
+          ),
+        ) as Record<string, unknown>)
+      : undefined;
 
   const onGenerate = () => {
     setGenerating(true);
@@ -293,13 +369,13 @@ export function RuleTestPanel({
       ruleMode === "dqx_native"
         ? {
             function: nativeFunction,
-            native_arguments: nativeArguments,
+            native_arguments: testNativeArguments,
             polarity,
             row_count: 8,
             columns,
             ref_tables: refTables,
           }
-        : { predicate, polarity, row_count: 8, columns, ref_tables: refTables };
+        : { predicate: testPredicate, polarity, row_count: 8, columns, ref_tables: refTables };
     generateMutation.mutate(
       {
         data: generateBody,
@@ -337,9 +413,9 @@ export function RuleTestPanel({
   const onRun = () => {
     const common = {
       mode: ruleMode,
-      predicate: ruleMode === "dqx_native" ? "" : predicate,
+      predicate: testPredicate,
       function: ruleMode === "dqx_native" ? nativeFunction : undefined,
-      native_arguments: ruleMode === "dqx_native" ? nativeArguments : undefined,
+      native_arguments: testNativeArguments,
       polarity,
       lowcode_advanced: lowcodeAdvanced,
     };
@@ -474,10 +550,20 @@ export function RuleTestPanel({
             );
           })}
           {isCrossTable && <p className="text-xs text-muted-foreground">{t("ruleTest.manualQueryResultNote")}</p>}
+          <TestParameterFields
+            parameters={parameters}
+            values={paramValues}
+            onChange={(name, raw) => setParamValues((prev) => ({ ...prev, [name]: raw }))}
+          />
         </div>
       ) : (
         <div className="space-y-3">
           <TableTestSource slots={slots} onReady={setTablePayload} />
+          <TestParameterFields
+            parameters={parameters}
+            values={paramValues}
+            onChange={(name, raw) => setParamValues((prev) => ({ ...prev, [name]: raw }))}
+          />
           {/* A cross-table rule runs as a query, so the grid shows the rows the
               QUERY returns rather than every sampled row — say so up front, or a
               rule that filters to violations looks like it lost rows. */}
@@ -508,10 +594,14 @@ export function RuleTestPanel({
       <div className="flex items-center justify-between">
         <WarehouseWaitTooltip show={!warehouseReady} label={t("ruleTest.waitingForWarehouse")}>
           <DisabledTooltip
-            disabled={mode === "adhoc" && unfilledRefs.length > 0}
-            label={t("ruleTest.refGridsIncomplete", { names: unfilledRefs.join(", ") })}
+            disabled={(mode === "adhoc" && unfilledRefs.length > 0) || Boolean(parameterError)}
+            label={
+              parameterError
+                ? t("ruleTest.unboundParameters")
+                : t("ruleTest.refGridsIncomplete", { names: unfilledRefs.join(", ") })
+            }
           >
-            <Button onClick={onRun} disabled={!canRun || isPending || !warehouseReady}>
+            <Button onClick={onRun} disabled={!canRun || isPending || !warehouseReady || Boolean(parameterError)}>
               {isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               {isPending ? t("ruleTest.running") : t("ruleTest.runTest")}
             </Button>
