@@ -171,7 +171,7 @@ export function ParameterValueInput({
   return (
     <span
       className={cn(
-        "inline-flex h-6 min-w-[8.5rem] shrink-0 items-center rounded-md border bg-background",
+        "inline-flex h-6 min-w-[6.5rem] shrink-0 items-center rounded-md border bg-background pr-0.5",
         disabled && "opacity-60",
         invalid && "border-destructive",
         className,
