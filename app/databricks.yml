@@ -193,7 +193,7 @@ resources:
          source_code_path: app
   
       description: "Databricks DQX Studio for Data Quality Monitoring"
-      source_code_path: "${var.app_source_path}"
+      #source_code_path: "${var.app_source_path}"
       config: ${var.app_config}
 
       user_api_scopes:
