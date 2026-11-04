@@ -152,6 +152,7 @@ app-build-marketplace: app-build ## Build the Databricks Marketplace source fold
 	cd app && $(UV_RUN) python scripts/build_marketplace.py
 
 app-check-marketplace: ## Validate Marketplace generation and signed-release tooling
+	@$(MAKE) app-build
 	cd app && $(UV_RUN) --group test pytest tests/test_build_marketplace.py tests/test_release_marketplace.py -v
 	@tracked="$$(git ls-files 'app/marketplace/**')"; \
 	deleted="$$(git diff --name-only --diff-filter=D -- 'app/marketplace/**')"; \

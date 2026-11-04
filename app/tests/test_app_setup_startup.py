@@ -1,13 +1,17 @@
 """Tests for the post-migration Studio activation boundary."""
 
 import asyncio
+import io
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
+from typing import BinaryIO
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend.config import AppConfig
@@ -27,6 +31,7 @@ from databricks_labs_dqx_app.backend.startup import (
     StartupContext,
     activate_studio,
     deactivate_studio,
+    publish_wheels_to_volume,
     start_studio_background,
 )
 
@@ -901,3 +906,60 @@ async def test_failed_rebind_leaves_no_stale_binding_and_recovers(
     with pytest.raises(RuntimeError, match="resources are not ready"):
         startup.application_runtime.require_resources()
     harness.pg_executor.close.assert_called_once_with()
+
+
+class FakeVolumeFiles:
+    """In-memory volume used to exercise wheel publishing."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = dict(files)
+        self.uploads: list[str] = []
+
+    def download(self, path: str) -> SimpleNamespace:
+        if path not in self.files:
+            raise NotFound(path)
+        return SimpleNamespace(contents=io.BytesIO(self.files[path]))
+
+    def get_metadata(self, path: str) -> SimpleNamespace:
+        if path not in self.files:
+            raise NotFound(path)
+        return SimpleNamespace()
+
+    def upload(self, path: str, contents: BinaryIO, *, overwrite: bool = False) -> None:
+        self.uploads.append(path)
+        self.files[path] = contents.read()
+
+
+def _published_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[FakeVolumeFiles, str]:
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    (tasks / "databricks_labs_dqx_task_runner-1.0-py3-none-any.whl").write_bytes(b"wheel")
+    monkeypatch.chdir(tmp_path)
+    files = FakeVolumeFiles({})
+    asyncio.run(publish_wheels_to_volume(SimpleNamespace(files=files), "/Volumes/main/studio/wheels"))
+    files.uploads.clear()
+    return files, "/Volumes/main/studio/wheels/databricks_labs_dqx_task_runner-1.0-py3-none-any.whl"
+
+
+def test_publish_wheels_skips_upload_when_hash_matches_and_wheels_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files, wheel_path = _published_volume(tmp_path, monkeypatch)
+
+    paths = asyncio.run(publish_wheels_to_volume(SimpleNamespace(files=files), "/Volumes/main/studio/wheels"))
+
+    assert paths == [wheel_path]
+    assert not files.uploads
+
+
+def test_publish_wheels_reuploads_missing_wheel_despite_matching_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files, wheel_path = _published_volume(tmp_path, monkeypatch)
+    del files.files[wheel_path]
+
+    paths = asyncio.run(publish_wheels_to_volume(SimpleNamespace(files=files), "/Volumes/main/studio/wheels"))
+
+    assert paths == [wheel_path]
+    assert files.files[wheel_path] == b"wheel"
+    assert wheel_path in files.uploads
