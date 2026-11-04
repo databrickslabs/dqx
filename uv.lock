@@ -1083,7 +1083,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cloudpickle", marker = "extra == 'anomaly'", specifier = ">=3.0,<4.0" },
     { name = "databricks-connect", marker = "extra == 'cli'", specifier = ">=15.4,<18" },
-    { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<=0.13" },
+    { name = "databricks-labs-blueprint", specifier = ">=0.10.2,<=0.13" },
     { name = "databricks-langchain", marker = "extra == 'llm'", specifier = ">=0.1.0,<1.0" },
     { name = "databricks-sdk", specifier = "~=0.73" },
     { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=1.2.0,<2.0" },
