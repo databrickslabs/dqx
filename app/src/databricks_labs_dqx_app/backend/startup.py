@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 
 from databricks_labs_dqx_app.backend._scheduler_registry import get_scheduler, set_scheduler
@@ -482,11 +483,10 @@ def _find_wheels() -> list[Path]:
     seen: set[Path] = set()
     wheels: list[Path] = []
     for root in search_roots:
-        for pattern in ("databricks_labs_dqx-*.whl", "tasks/databricks_labs_dqx_task_runner-*.whl"):
-            for wheel in sorted(root.glob(pattern)):
-                if wheel not in seen:
-                    seen.add(wheel)
-                    wheels.append(wheel)
+        for wheel in sorted(root.glob("tasks/databricks_labs_dqx_task_runner-*.whl")):
+            if wheel not in seen:
+                seen.add(wheel)
+                wheels.append(wheel)
     return wheels
 
 
@@ -511,6 +511,15 @@ def _read_remote_hash(workspace: WorkspaceClient, volume_path: str) -> str | Non
         return None
 
 
+def _wheels_exist(workspace: WorkspaceClient, paths: list[str]) -> bool:
+    try:
+        for path in paths:
+            workspace.files.get_metadata(path)
+    except NotFound:
+        return False
+    return True
+
+
 def _write_remote_hash(workspace: WorkspaceClient, volume_path: str, digest: str) -> None:
     workspace.files.upload(f"{volume_path}/.wheels_hash", io.BytesIO(digest.encode()), overwrite=True)
 
@@ -531,7 +540,7 @@ async def publish_wheels_to_volume(workspace: WorkspaceClient, volume_path: str)
     local_hash = _compute_wheels_hash(wheels)
     remote_hash = await asyncio.to_thread(_read_remote_hash, workspace, volume_path)
     paths = [f"{volume_path}/{wheel.name}" for wheel in wheels]
-    if local_hash == remote_hash:
+    if local_hash == remote_hash and await asyncio.to_thread(_wheels_exist, workspace, paths):
         return paths
 
     for wheel_path, destination in zip(wheels, paths, strict=True):
