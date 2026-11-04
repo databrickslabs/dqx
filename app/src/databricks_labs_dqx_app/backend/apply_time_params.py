@@ -166,16 +166,25 @@ def prune_parameter_mapping(
     return pruned_mapping, rekeyed
 
 
-def overlay_parameters(parameters: list[RuleParameter], apply_values: dict[str, object] | None) -> list[RuleParameter]:
+def overlay_parameters(
+    parameters: list[RuleParameter],
+    apply_values: dict[str, object] | None,
+    overridable: set[str] | None = None,
+) -> list[RuleParameter]:
     """Copy definition parameters with apply-time values taking precedence.
 
     Unbound definition values (``None`` / ``{{placeholder}}``) are replaced.
     A concrete authored default is kept when the apply map has no entry.
+    Names not in *overridable* keep the registry value even if the apply map
+    has an entry. ``overridable is None`` means every parameter may be
+    overridden (unit-test convenience); pass an explicit set from
+    ``user_metadata.overridable_parameters`` in production.
     """
     applied = apply_values or {}
     overlaid: list[RuleParameter] = []
     for param in parameters:
-        if param.name in applied:
+        can_override = overridable is None or param.name in overridable
+        if can_override and param.name in applied:
             overlaid.append(param.model_copy(update={"value": applied[param.name]}))
         elif is_unbound_parameter_value(param.value):
             overlaid.append(param.model_copy(update={"value": None}))
@@ -297,6 +306,7 @@ def validate_group_parameter_values(
     *,
     require_all: bool,
     bind_all: bool = False,
+    overridable: set[str] | None = None,
 ) -> dict[str, object]:
     """Validate apply-time values for one mapping group.
 
@@ -304,6 +314,8 @@ def validate_group_parameter_values(
     every declared parameter must be present and valid. Empty mapping groups
     (staged, not yet mapped) skip this. *bind_all* (SQL rules) makes every
     parameter required, not only the ones :func:`must_bind_parameter` flags.
+    Fixed (non-overridable) parameters ignore apply-time entries and use the
+    registry default.
     """
     if not parameters:
         return {}
@@ -312,14 +324,15 @@ def validate_group_parameter_values(
         return {}
     coerced: dict[str, object] = {}
     for param in parameters:
-        if param.name not in raw_values:
-            if not is_unbound_parameter_value(param.value):
-                coerced[param.name] = coerce_parameter_value(param, param.value)
-                continue
-            if require_all and must_bind_parameter(param, bind_all=bind_all):
-                raise InvalidParameterValueError(f"{param.name} is required.")
+        can_override = overridable is None or param.name in overridable
+        if can_override and param.name in raw_values:
+            coerced[param.name] = coerce_parameter_value(param, raw_values[param.name])
             continue
-        coerced[param.name] = coerce_parameter_value(param, raw_values[param.name])
+        if not is_unbound_parameter_value(param.value):
+            coerced[param.name] = coerce_parameter_value(param, param.value)
+            continue
+        if require_all and must_bind_parameter(param, bind_all=bind_all):
+            raise InvalidParameterValueError(f"{param.name} is required.")
     for min_name, max_name in _range_pairs(coerced):
         try:
             minimum = _as_number(min_name, coerced[min_name])
@@ -337,6 +350,7 @@ def validate_applied_parameter_values(
     stored: dict[str, dict[str, object]] | None,
     *,
     bind_all: bool = False,
+    overridable: set[str] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Validate every mapped group's apply-time parameters. Empty mapping is allowed."""
     stored = stored or {}
@@ -347,9 +361,17 @@ def validate_applied_parameter_values(
         if not group:
             continue
         key = mapping_group_key(group)
-        validated[key] = validate_group_parameter_values(
-            parameters, stored.get(key), require_all=True, bind_all=bind_all
+        group_values = validate_group_parameter_values(
+            parameters,
+            stored.get(key),
+            require_all=True,
+            bind_all=bind_all,
+            overridable=overridable,
         )
+        if overridable is not None:
+            group_values = {name: value for name, value in group_values.items() if name in overridable}
+        if group_values:
+            validated[key] = group_values
     return validated
 
 

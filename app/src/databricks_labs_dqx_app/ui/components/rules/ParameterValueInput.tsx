@@ -1,12 +1,55 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RuleParameter } from "@/lib/api";
 import { parameterInputFamily } from "@/lib/apply-time-params";
 import { TypedCell } from "@/components/rules/test/TypedCell";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const CELL_CLASS =
   "h-6 w-full bg-transparent px-2 font-mono text-xs outline-none focus:bg-accent/40 placeholder:text-muted-foreground/50 appearance-none border-0";
+
+export type ParameterLock = {
+  locked: boolean;
+  /** When set, the icon toggles lock state (registry authoring). Omit on apply-rules. */
+  onToggle?: (locked: boolean) => void;
+};
+
+function LockAffordance({ locked, onToggle }: ParameterLock) {
+  const { t } = useTranslation();
+  const label = locked
+    ? t("rulesRegistry.parametersPanelCannotOverrideTooltip")
+    : t("rulesRegistry.parametersPanelCanOverrideTooltip");
+  const icon = locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />;
+  const node = onToggle ? (
+    <button
+      type="button"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+      aria-label={label}
+      aria-pressed={locked}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle(!locked);
+      }}
+    >
+      {icon}
+    </button>
+  ) : (
+    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground" aria-label={label}>
+      {icon}
+    </span>
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{node}</TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function splitListItems(raw: string): string[] {
   return raw
@@ -20,11 +63,13 @@ function ListValueInput({
   onChange,
   disabled,
   placeholder,
+  lock,
 }: {
   value: string;
   onChange: (raw: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  lock?: ParameterLock;
 }) {
   const items = splitListItems(value);
   const [draft, setDraft] = useState("");
@@ -80,6 +125,7 @@ function ListValueInput({
           onBlur={() => commitDraft(draft)}
         />
       )}
+      {lock ? <span className="ml-auto"><LockAffordance {...lock} /></span> : null}
     </div>
   );
 }
@@ -93,6 +139,7 @@ export function ParameterValueInput({
   invalid,
   placeholder,
   className,
+  lock,
   "aria-label": ariaLabel,
 }: {
   type: RuleParameter["type"];
@@ -102,6 +149,7 @@ export function ParameterValueInput({
   invalid?: boolean;
   placeholder?: string;
   className?: string;
+  lock?: ParameterLock;
   "aria-label"?: string;
 }) {
   const { t } = useTranslation();
@@ -115,6 +163,7 @@ export function ParameterValueInput({
           disabled={disabled}
           placeholder={t("rulesRegistry.parametersPanelListPlaceholder")}
           onChange={onChange}
+          lock={lock}
         />
       </span>
     );
@@ -122,7 +171,7 @@ export function ParameterValueInput({
   return (
     <span
       className={cn(
-        "inline-flex h-6 w-28 shrink-0 items-center overflow-hidden rounded-md border bg-background",
+        "inline-flex h-6 min-w-[8.5rem] shrink-0 items-center rounded-md border bg-background",
         disabled && "opacity-60",
         invalid && "border-destructive",
         className,
@@ -137,6 +186,7 @@ export function ParameterValueInput({
         className={CELL_CLASS}
         onChange={(next) => onChange(next ?? "")}
       />
+      {lock ? <LockAffordance {...lock} /> : null}
     </span>
   );
 }

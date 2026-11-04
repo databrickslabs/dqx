@@ -27,6 +27,12 @@ describe("apply-time parameter validation", () => {
     ).toThrow("required");
   });
 
+  test("fixed parameters ignore apply-time values and use the registry default", () => {
+    const params = [{ name: "limit", type: "number" as const, value: 12 }];
+    expect(validateGroupParameterValues(params, { limit: 40 }, false, []).values.limit).toBe(12);
+    expect(validateGroupParameterValues(params, { limit: 40 }, false, ["limit"]).values.limit).toBe(40);
+  });
+
   test("range minimum cannot exceed maximum", () => {
     const params = [
       { name: "min_limit", type: "number" as const, value: null },

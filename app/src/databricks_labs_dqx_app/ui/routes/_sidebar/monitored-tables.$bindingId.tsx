@@ -157,7 +157,7 @@ import {
   MonitoredTableDiffDialog,
   type MonitoredTableDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
-import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { overridableParametersFromUserMetadata, slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import { mappingGroupKey } from "@/lib/apply-time-params";
 import {
   RESERVED_SEVERITY_KEY,
@@ -2372,6 +2372,7 @@ function ApplyRulesTab({
           columns,
           registry?.definition.parameters ?? [],
           registry?.mode === "sql" || registry?.mode === "lowcode",
+          overridableParametersFromUserMetadata(registry?.user_metadata as Record<string, unknown> | undefined),
         );
       }),
     [mergedRules, ruleById, columns],

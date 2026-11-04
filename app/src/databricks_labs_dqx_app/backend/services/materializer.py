@@ -86,6 +86,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleSlot,
     RuleVersion,
     get_applied_column_pass_thresholds,
+    get_overridable_parameters,
     get_rule_dimension,
     get_rule_name,
     get_rule_pass_threshold,
@@ -322,7 +323,11 @@ def render_check(
     definition = version.definition
     body = definition.body
     is_tableless = False
-    parameters = overlay_parameters(definition.parameters, apply_parameter_values)
+    parameters = overlay_parameters(
+        definition.parameters,
+        apply_parameter_values,
+        set(get_overridable_parameters(version.user_metadata)),
+    )
     unbound = [
         param.name
         for param in parameters

@@ -40,7 +40,7 @@ import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule, pickSlotForColumn } from "./shared";
 import type { ColumnRef } from "./RulesByColumn";
-import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { overridableParametersFromUserMetadata, slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import { computeRuleSchemaDrift, type RuleSchemaDrift } from "./schemaDrift";
 import {
   bindsEveryParameter,
@@ -69,6 +69,7 @@ export function computeStatus(
   columns: ColumnOut[] = [],
   parameters: RuleParameter[] = [],
   bindAll = false,
+  overridableNames?: readonly string[] | null,
 ): RuleStatus {
   const drift = computeRuleSchemaDrift(rule, slots, columns);
   const slotNames = slots.map((s) => s.name);
@@ -91,6 +92,7 @@ export function computeStatus(
         parameters,
         rule.parameter_values?.[mappingGroupKey(g)],
         bindAll,
+        overridableNames,
       );
       if (error) incomplete++;
     }
@@ -725,9 +727,12 @@ export function RuleConfigCard({
   const slots = registryRule?.definition.slots ?? [];
   const parameters = registryRule?.definition.parameters ?? [];
   const bindAllParameters = bindsEveryParameter(registryRule?.mode);
+  const overridableParameters = overridableParametersFromUserMetadata(
+    registryRule?.user_metadata as Record<string, unknown> | undefined,
+  );
   // Pass live columns so missing / type-mismatched mappings count as
   // needs-attention alongside incomplete slot fills (schema-drift P0).
-  const status = computeStatus(rule, slots, columns ?? [], parameters, bindAllParameters);
+  const status = computeStatus(rule, slots, columns ?? [], parameters, bindAllParameters, overridableParameters);
   const incomplete = status.kind === "incomplete";
   const hasDrift =
     status.drift.missingCount > 0 || status.drift.typeMismatchCount > 0;
@@ -1002,6 +1007,7 @@ export function RuleConfigCard({
               storedParameterValues={rule.parameter_values}
               canEditParameters={canEdit && Boolean(onParameterValuesChange)}
               bindAllParameters={bindAllParameters}
+              overridableParameters={overridableParameters}
               onParameterValuesChange={onParameterValuesChange}
             />
           </div>

@@ -39,6 +39,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ColumnMappingGroup,
     RegistryRule,
     compute_mapping_hash,
+    get_overridable_parameters,
     get_rule_dimension,
     get_rule_name,
     get_rule_severity,
@@ -669,6 +670,7 @@ class ApplyRulesService:
                     entry.column_mapping,
                     stored_params,
                     bind_all=binds_every_parameter(rule.mode),
+                    overridable=set(get_overridable_parameters(rule.user_metadata)),
                 )
             except InvalidParameterValueError as exc:
                 raise InvalidAppliedParameterError(str(exc)) from exc
