@@ -122,27 +122,27 @@ MULTI_SCHEMA_ODCS = {
     ],
 }
 
+@pytest.fixture
+def sample_contract_path():
+    """Path to sample data contract."""
+    tests_dir = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
+
+@pytest.fixture
+def multi_schema_contract_path():
+    """Path to a temporary contract file with two schemas."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(MULTI_SCHEMA_ODCS, f)
+        path = f.name
+    yield path
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
 
 class TestDataContractIntegration:
     """Integration tests for data contract processing."""
-
-    @pytest.fixture
-    def sample_contract_path(self):
-        """Path to sample data contract."""
-        tests_dir = os.path.dirname(os.path.dirname(__file__))
-        return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
-
-    @pytest.fixture
-    def multi_schema_contract_path(self):
-        """Path to a temporary contract file with two schemas."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.safe_dump(MULTI_SCHEMA_ODCS, f)
-            path = f.name
-        yield path
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
 
     def test_generate_rules_with_text_processing(self, ws, spark, sample_contract_path):
         """Full path: contract_file, predefined + text rules + schema validation; validates checks."""
@@ -157,51 +157,6 @@ class TestDataContractIntegration:
         explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
         assert len(predefined_rules) > 0
         assert len(explicit_rules) > 0
-        status = DQEngine.validate_checks(rules)
-        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
-
-    def test_generate_rules_includes_schema_validation(self, ws, spark, sample_contract_path):
-        """Full path: contract_file, schema validation on; one schema_validation rule, validate_checks."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=True,
-            process_text_rules=False,
-        )
-        schema_validation_rules = get_schema_validation_rules(rules)
-        assert len(schema_validation_rules) >= 1
-        assert schema_validation_rules[0]["check"]["arguments"].get("strict") is True
-        assert "expected_schema" in schema_validation_rules[0]["check"]["arguments"]
-        status = DQEngine.validate_checks(rules)
-        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
-
-    def test_generate_schema_validation_false_no_schema_rules(self, ws, spark, sample_contract_path):
-        """When generate_schema_validation=False, no schema_validation rules are generated; other rules remain."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=True,
-            process_text_rules=False,
-            generate_schema_validation=False,
-        )
-        schema_validation_rules = get_schema_validation_rules(rules)
-        assert len(schema_validation_rules) == 0
-        assert len(rules) > 0
-        status = DQEngine.validate_checks(rules)
-        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
-
-    def test_strict_schema_validation_false_integration(self, ws, spark, sample_contract_path):
-        """strict_schema_validation=False produces schema_validation rules with strict=False."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=False,
-            process_text_rules=False,
-            strict_schema_validation=False,
-        )
-        schema_validation_rules = get_schema_validation_rules(rules)
-        assert len(schema_validation_rules) >= 1
-        assert schema_validation_rules[0]["check"]["arguments"]["strict"] is False
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
 
@@ -278,21 +233,6 @@ class TestDataContractIntegration:
         assert "schema_b_schema_validation" in names
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
-
-    def test_schema_validation_expected_schema_parseable_by_spark(self, ws, spark, sample_contract_path):
-        """Generated expected_schema DDL string is parseable by Spark StructType.fromDDL (required at runtime)."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=False,
-            process_text_rules=False,
-        )
-        schema_validation_rules = get_schema_validation_rules(rules)
-        assert len(schema_validation_rules) >= 1
-        ddl = schema_validation_rules[0]["check"]["arguments"]["expected_schema"]
-        parsed = spark_types.StructType.fromDDL(ddl)
-        assert isinstance(parsed, spark_types.StructType)
-        assert len(parsed.fields) > 0
 
     def test_generate_rules_complex_nested_types_valid(self, ws, spark):
         """Contract with nested ARRAY, MAP, STRUCT generates valid rules and DDL parseable by Spark."""
@@ -626,14 +566,103 @@ class TestDataContractIntegration:
         assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
 
 
+class TestDataContractSchemaValidation:
+    """Integration tests for schema validation rules generated from data contractss."""
+
+    def test_generate_rules_includes_schema_validation(self, ws, spark, sample_contract_path):
+        """Full path: contract_file, schema validation on; one schema_validation rule, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        assert schema_validation_rules[0]["check"]["arguments"].get("strict") is True
+        assert "expected_schema" in schema_validation_rules[0]["check"]["arguments"]
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_schema_validation_false_no_schema_rules(self, ws, spark, sample_contract_path):
+        """When generate_schema_validation=False, no schema_validation rules are generated; other rules remain."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) == 0
+        assert len(rules) > 0
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_strict_schema_validation_false_integration(self, ws, spark, sample_contract_path):
+        """strict_schema_validation=False produces schema_validation rules with strict=False."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+            strict_schema_validation=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        assert schema_validation_rules[0]["check"]["arguments"]["strict"] is False
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_required_non_nullable_column_passes_strict_schema_validation(self, ws, spark):
+        """A required contract property matches a non-nullable DataFrame column in strict mode."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:required",
+            "name": "Required",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "required_schema",
+                    "physicalType": "table",
+                    "properties": [{"name": "id", "physicalType": "STRING", "required": True}],
+                }
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+        )
+        test_df = spark.createDataFrame(
+            [("id-1",)], spark_types.StructType([spark_types.StructField("id", spark_types.StringType(), False)])
+        )
+
+        checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+        assert _flagged_names(checked_df.collect()[0]) == set()
+
+    def test_schema_validation_expected_schema_parseable_by_spark(self, ws, spark, sample_contract_path):
+        """Generated expected_schema DDL string is parseable by Spark StructType.fromDDL (required at runtime)."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        ddl = schema_validation_rules[0]["check"]["arguments"]["expected_schema"]
+        parsed = spark_types.StructType.fromDDL(ddl)
+        assert isinstance(parsed, spark_types.StructType)
+        assert len(parsed.fields) > 0
+
+
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
-
-    @pytest.fixture
-    def sample_contract_path(self):
-        """Path to sample data contract."""
-        tests_dir = os.path.dirname(os.path.dirname(__file__))
-        return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
 
     def test_error_neither_contract_nor_file(self, ws, spark):
         """Error path: neither contract nor contract_file; raises ParameterError."""

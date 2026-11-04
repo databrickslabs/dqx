@@ -550,7 +550,8 @@ class DataContractRulesGenerator(DQEngineBase):
             # We do not check reserved keywords; Databricks handles that when parsing the DDL.
             if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col_name):
                 col_name = f"`{col_name}`"
-            parts.append(f"{col_name} {unity_type}")
+            nullability = " NOT NULL" if prop.required else ""
+            parts.append(f"{col_name} {unity_type}{nullability}")
         return ", ".join(parts)
 
     def _generate_schema_validation_rules_for_schema(

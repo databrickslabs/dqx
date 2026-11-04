@@ -47,10 +47,12 @@ class DataContractGeneratorTestBase:
                     'function': 'has_valid_schema',
                     'arguments': {
                         'expected_schema': (
-                            'sensor_id STRING, machine_id STRING, reading_timestamp TIMESTAMP, '
-                            'calibration_date DATE, temperature_celsius DECIMAL(5,2), humidity_percentage DECIMAL(5,2), '
-                            'pressure_bar DECIMAL(4,2), vibration_level INT, sensor_status STRING, alert_level STRING, '
-                            'location STRING, device_model STRING, notes STRING, technician_id STRING, '
+                            'sensor_id STRING NOT NULL, machine_id STRING NOT NULL, '
+                            'reading_timestamp TIMESTAMP NOT NULL, calibration_date DATE NOT NULL, '
+                            'temperature_celsius DECIMAL(5,2) NOT NULL, '
+                            'humidity_percentage DECIMAL(5,2) NOT NULL, pressure_bar DECIMAL(4,2), '
+                            'vibration_level INT NOT NULL, sensor_status STRING NOT NULL, alert_level STRING, '
+                            'location STRING NOT NULL, device_model STRING NOT NULL, notes STRING, technician_id STRING, '
                             'is_anomaly BOOLEAN, alert_email STRING'
                         ),
                         'strict': True,
@@ -1440,9 +1442,7 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
             schema_rules = get_schema_validation_rules(rules)
             assert len(schema_rules) == 1
             ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
-            assert "id STRING" in ddl
-            assert "amount DOUBLE" in ddl
-            assert "created_at TIMESTAMP" in ddl  # physicalType used as-is (Unity Catalog)
+            assert ddl == "id STRING NOT NULL, amount DOUBLE, created_at TIMESTAMP"
         finally:
             os.unlink(temp_path)
 
