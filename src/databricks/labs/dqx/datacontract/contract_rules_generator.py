@@ -13,13 +13,15 @@ import logging
 import math
 import re
 from collections.abc import Callable
+from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
+from datacontract.model.exceptions import DataContractException  # type: ignore
 from open_data_contract_standard.model import (  # type: ignore
     DataQuality,
     OpenDataContractStandard,
@@ -47,33 +49,63 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
 _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
 # Type a range check casts a column stored as text to, by ODCS logical type.
 _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {"date": "DATE", "timestamp": "TIMESTAMP", "integer": "DOUBLE", "number": "DOUBLE"}
+_NUMBER_BOUND = "number"
+_TEMPORAL_BOUND = "date or timestamp"
+# Kind of minimum/maximum ODCS defines, by logical type. A field without a logical type accepts either kind.
+_BOUND_KIND_BY_LOGICAL_TYPE = {
+    "integer": _NUMBER_BOUND,
+    "number": _NUMBER_BOUND,
+    "date": _TEMPORAL_BOUND,
+    "timestamp": _TEMPORAL_BOUND,
+}
 
 
-def _is_range_bound(value: object) -> bool:
-    """Whether a logicalTypeOptions bound can be passed to a range check as a value.
+def _range_bound_kind(value: object) -> str | None:
+    """Return the kind of a logicalTypeOptions bound that can be passed to a range check as a value, or None.
 
     Range checks treat any other string limit as a column name or SQL expression, which a contract value must not
-    become. Numbers, dates and timestamps (or ISO strings of them) are passed to the check as written.
+    become. A bound is a finite number, or a date or timestamp: an ISO string, or a date YAML loaded from an
+    unquoted value.
     """
     if isinstance(value, bool):
-        return False
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, (int, datetime.date)):  # datetime.date also covers datetime.datetime
-        return True
+        return None
+    if isinstance(value, (int, float)):
+        return _NUMBER_BOUND if math.isfinite(value) else None
+    if isinstance(value, datetime.date):  # also covers datetime.datetime
+        return _TEMPORAL_BOUND
     if not isinstance(value, str):
-        return False
-    if _NUMBER_TEXT.match(value):
-        return True
+        return None
     try:
         datetime.datetime.fromisoformat(value)  # how get_limit_expr reads a date or timestamp string
     except ValueError:
-        return False
-    return True
+        return None
+    return _TEMPORAL_BOUND
+
+
+def _as_datetime(bound: Any) -> datetime.datetime:
+    """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
+    if isinstance(bound, datetime.datetime):
+        return bound
+    if isinstance(bound, datetime.date):
+        return datetime.datetime.combine(bound, datetime.time.min)
+    return datetime.datetime.fromisoformat(bound)
+
+
+def _unusable_range_reason(minimum: Any, maximum: Any) -> str | None:
+    """Return why a minimum and a maximum can't form a range that passes, or None if they can."""
+    kind = _range_bound_kind(minimum)
+    if kind != _range_bound_kind(maximum):
+        return "one is a number and the other a date or timestamp"
+    try:
+        reversed_range = minimum > maximum if kind == _NUMBER_BOUND else _as_datetime(minimum) > _as_datetime(maximum)
+    except TypeError:  # a timezone-aware and a naive timestamp, which Spark still compares
+        return None
+    if reversed_range:
+        return f"minimum {minimum} is greater than maximum {maximum}"
+    return None
 
 
 def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str | None:
@@ -88,24 +120,6 @@ def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str 
     return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type or "")
 
 
-def _sql_bound_literal(bound: object) -> str:
-    """Render a range bound accepted by *_is_range_bound* as a typed Spark SQL literal for a strict comparison.
-
-    Numbers stay unquoted. Dates and timestamps (or ISO strings of them) become *DATE* or *TIMESTAMP* literals, so
-    Spark compares them as dates and times, never as text, and doesn't re-parse the contract's string.
-    """
-    if isinstance(bound, (int, float)) or (isinstance(bound, str) and _NUMBER_TEXT.match(bound)):
-        return str(bound)
-    if isinstance(bound, datetime.datetime):
-        return f"TIMESTAMP '{bound.isoformat(sep=' ')}'"
-    if isinstance(bound, datetime.date):
-        return f"DATE '{bound.isoformat()}'"
-    try:
-        return f"DATE '{datetime.date.fromisoformat(str(bound)).isoformat()}'"
-    except ValueError:
-        return f"TIMESTAMP '{datetime.datetime.fromisoformat(str(bound)).isoformat(sep=' ')}'"
-
-
 def _inclusive_range_check(column: str, minimum: object, maximum: object) -> tuple[dict, str] | None:
     """Return the row-level check and rule name suffix for minimum/maximum, or None when neither is set."""
     if minimum is not None and maximum is not None:
@@ -118,35 +132,26 @@ def _inclusive_range_check(column: str, minimum: object, maximum: object) -> tup
     return None
 
 
-def _exclusive_range_check(
-    sql_column: str, column_path: str, exclusive_minimum: object, exclusive_maximum: object
-) -> tuple[dict, str] | None:
-    """Return the strict *sql_expression* check and rule name suffix for exclusive bounds, or None when neither is set.
-
-    Both bounds go into one rule, like *is_in_range* for minimum/maximum, so a column never carries two
-    *sql_expression* range rules that the semantic validator would report as conflicting.
-    """
-    conditions, comparisons = [], []
-    if exclusive_minimum is not None:
-        conditions.append(f"{sql_column} > {_sql_bound_literal(exclusive_minimum)}")
-        comparisons.append(f"greater than {exclusive_minimum}")
-    if exclusive_maximum is not None:
-        conditions.append(f"{sql_column} < {_sql_bound_literal(exclusive_maximum)}")
-        comparisons.append(f"less than {exclusive_maximum}")
-    if not conditions:
+def _strict_range_check(column: str, function: str, limit: object, name_suffix: str) -> tuple[dict, str] | None:
+    """Return the strict comparison check and rule name suffix for an exclusive bound, or None when it isn't set."""
+    if limit is None:
         return None
-    if exclusive_minimum is not None and exclusive_maximum is not None:
-        name_suffix = "out_of_exclusive_range"
-    else:
-        name_suffix = (
-            "at_or_below_exclusive_minimum" if exclusive_minimum is not None else "at_or_above_exclusive_maximum"
-        )
-    arguments = {
-        "expression": " AND ".join(conditions),
-        "msg": f"Value in column '{column_path}' is not {' and '.join(comparisons)}",
-        "columns": [column_path],
-    }
-    return {"function": "sql_expression", "arguments": arguments}, name_suffix
+    return {"function": function, "arguments": {"column": column, "limit": limit}}, name_suffix
+
+
+class _FormatCheck(NamedTuple):
+    """Check generated for a logicalTypeOptions format."""
+
+    function: str
+    format_argument: str
+    rule_name_suffix: str
+
+
+_FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
+    "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
+    "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+}
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -220,6 +225,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
                 - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                - DataContract(data_contract=odcs_model) - from a parsed ODCS model
                 Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
@@ -276,28 +282,26 @@ class DataContractRulesGenerator(DQEngineBase):
             return self._load_contract_from_file(contract_file)
 
         if contract is not None:
-            # Try to load from file path if available
-            contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
-                contract, 'data_contract_file', None
-            )
-
+            contract_file_path = contract.get_data_contract_file()
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
-            # Try to load from data_contract attribute (pre-parsed dict)
-            contract_data = getattr(contract, 'data_contract', None)
-            if contract_data:
-                return OpenDataContractStandard.model_validate(contract_data)
-
-            # Try to load from data_contract_str attribute (YAML/JSON string)
-            contract_str = getattr(contract, '_data_contract_str', None) or getattr(contract, 'data_contract_str', None)
+            if not hasattr(contract, "_data_contract_str"):
+                version = package_version("datacontract-cli")
+                raise ParameterError(
+                    f"datacontract-cli version {version} does not support '_data_contract_str'. Install a datacontract-cli version >=1.2.0 and <2.0."
+                )
+            contract_str = getattr(contract, "_data_contract_str", None)
             if contract_str:
-                contract_dict = yaml.safe_load(contract_str)
-                return OpenDataContractStandard.model_validate(contract_dict)
+                return OpenDataContractStandard.model_validate(yaml.safe_load(contract_str))
 
-            raise ParameterError(
-                "DataContract object must have either a file path, data_contract dict, or data_contract_str attribute"
-            )
+            try:
+                return contract.get_data_contract()
+            except DataContractException as e:
+                raise ParameterError(
+                    "DataContract has no contract: pass data_contract_file, data_contract_str or "
+                    "data_contract (a parsed ODCS model)"
+                ) from e
 
         raise ParameterError("Either contract or contract_file must be provided")
 
@@ -787,7 +791,7 @@ class DataContractRulesGenerator(DQEngineBase):
             )
 
         # Handle date and timestamp format constraints
-        if prop.logicalType in {'date', 'timestamp', 'datetime'} and opts.get('format'):
+        if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
                 self._generate_format_rules_from_options(
                     column_path, prop.logicalType, field_metadata, default_criticality, opts
@@ -864,25 +868,38 @@ class DataContractRulesGenerator(DQEngineBase):
         Generate range rules from logicalTypeOptions minimum/maximum and exclusiveMinimum/exclusiveMaximum.
 
         ODCS defines every bound per value, so each becomes a row-level check that flags only the rows out of range.
-        minimum/maximum use *is_in_range*, *is_not_less_than* or *is_not_greater_than*. Exclusive bounds add one
-        *sql_expression* rule (DQX has no strict comparison checks), in either ODCS form: a flag that makes
+        minimum/maximum use *is_in_range*, *is_not_less_than* or *is_not_greater_than*, and exclusive bounds use
+        *is_greater_than* or *is_less_than*. An exclusive bound comes in either ODCS form: a flag that makes
         minimum/maximum exclusive (v3.0.x) or a bound of its own (v3.1.0+).
 
-        The bounds are passed to the checks as written. A bound that is not a finite number, a date or a timestamp
-        is skipped with a warning, and a column stored as text is compared through *try_cast*.
+        The bounds are passed to the checks as written. A bound of the wrong kind for the logical type (a number for
+        integer/number, a date or timestamp for date/timestamp) is skipped with a warning, as is a minimum and
+        maximum pair that no value could satisfy. A column stored as text is compared through *try_cast*.
         """
-        minimum = self._range_bound(column_path, "minimum", opts.get("minimum"))
-        maximum = self._range_bound(column_path, "maximum", opts.get("maximum"))
-        exclusive_minimum = self._exclusive_bound(column_path, "exclusiveMinimum", "minimum", minimum, opts)
-        exclusive_maximum = self._exclusive_bound(column_path, "exclusiveMaximum", "maximum", maximum, opts)
+        expected_kind = _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type or "")
+        minimum = self._range_bound(column_path, "minimum", opts.get("minimum"), expected_kind)
+        maximum = self._range_bound(column_path, "maximum", opts.get("maximum"), expected_kind)
+        if minimum is not None and maximum is not None:
+            reason = _unusable_range_reason(minimum, maximum)
+            if reason:
+                logger.warning(
+                    f"Skipping minimum and maximum on '{sanitize_for_logging(column_path)}': "
+                    f"{sanitize_for_logging(reason)}."
+                )
+                minimum = maximum = None
+        exclusive_minimum = self._exclusive_bound(
+            column_path, "exclusiveMinimum", "minimum", minimum, opts, expected_kind
+        )
+        exclusive_maximum = self._exclusive_bound(
+            column_path, "exclusiveMaximum", "maximum", maximum, opts, expected_kind
+        )
 
         cast_type = _text_cast_type(logical_type, physical_type)
-        sql_column = normalize_column_expr(column_path)
-        if cast_type:
-            sql_column = f"try_cast({sql_column} AS {cast_type})"
+        column = f"try_cast({normalize_column_expr(column_path)} AS {cast_type})" if cast_type else column_path
         checks = [
-            _inclusive_range_check(sql_column if cast_type else column_path, minimum, maximum),
-            _exclusive_range_check(sql_column, column_path, exclusive_minimum, exclusive_maximum),
+            _inclusive_range_check(column, minimum, maximum),
+            _strict_range_check(column, "is_greater_than", exclusive_minimum, "at_or_below_exclusive_minimum"),
+            _strict_range_check(column, "is_less_than", exclusive_maximum, "at_or_above_exclusive_maximum"),
         ]
         return [
             {
@@ -899,19 +916,28 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     @staticmethod
-    def _range_bound(column_path: str, option: str, value: object) -> object:
-        """Return the bound, or None (with a warning when it is not a number, date or timestamp)."""
-        if value is None or _is_range_bound(value):
+    def _range_bound(column_path: str, option: str, value: object, expected_kind: str | None) -> object:
+        """Return the bound, or None (with a warning when it is not of the kind the logical type expects)."""
+        if value is None:
+            return None
+        kind = _range_bound_kind(value)
+        if kind is not None and kind == (expected_kind or kind):
             return value
         logger.warning(
             f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
-            f"'{sanitize_for_logging(str(value))}' is not a number, date or timestamp."
+            f"'{sanitize_for_logging(str(value))}' is not a {expected_kind or 'number, date or timestamp'}."
         )
         return None
 
     @classmethod
     def _exclusive_bound(
-        cls, column_path: str, option: str, inclusive_option: str, inclusive_bound: object, opts: dict
+        cls,
+        column_path: str,
+        option: str,
+        inclusive_option: str,
+        inclusive_bound: object,
+        opts: dict,
+        expected_kind: str | None,
     ) -> object:
         """Return the bound an exclusiveMinimum/exclusiveMaximum sets, in either ODCS form, or None.
 
@@ -921,7 +947,7 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         value = opts.get(option)
         if not isinstance(value, bool):  # checked first: bool is a subclass of int
-            return cls._range_bound(column_path, option, value)
+            return cls._range_bound(column_path, option, value, expected_kind)
         if not value:
             return None
         if opts.get(inclusive_option) is None:
@@ -1029,91 +1055,40 @@ class DataContractRulesGenerator(DQEngineBase):
     def _generate_format_rules_from_options(
         self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate format validation rules from logicalTypeOptions format (for date/timestamp fields)."""
-        format_str = opts.get('format')
-        if not format_str:
+        """
+        Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
+
+        ODCS defines the format as a Java DateTimeFormatter pattern (e.g. *'yyyy-MM-dd'*), the syntax Spark datetime
+        patterns are based on. The contract format is passed to the check unchanged. Any pattern containing '%' is
+        skipped with a warning.
+        """
+        format_value = opts['format']
+        if isinstance(format_value, str) and "%" in format_value:
+            logger.warning(
+                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}'; "
+                "use a Spark datetime pattern such as 'yyyy-MM-dd'."
+            )
             return []
 
-        python_format = self._convert_to_python_format(format_str)
-
-        if logical_type == 'date':
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_date",
-                        "arguments": {
-                            "column": column_path,
-                            "date_format": python_format,
-                        },
+        format_check = _FORMAT_CHECKS_BY_LOGICAL_TYPE[logical_type]
+        return [
+            {
+                "check": {
+                    "function": format_check.function,
+                    "arguments": {
+                        "column": column_path,
+                        format_check.format_argument: format_value,
                     },
-                    "name": f"{column_path}_valid_date_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        if logical_type in {'timestamp', 'datetime'}:
-            return [
-                {
-                    "check": {
-                        "function": "is_valid_timestamp",
-                        "arguments": {
-                            "column": column_path,
-                            "timestamp_format": python_format,
-                        },
-                    },
-                    "name": f"{column_path}_valid_timestamp_format",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **contract_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-        logger.warning(
-            f"Format '{format_str}' specified for non-date/timestamp type '{logical_type}' on '{column_path}'"
-        )
-        return []
-
-    def _convert_to_python_format(self, format_str: str) -> str:
-        """
-        Convert Java SimpleDateFormat or ISO 8601 format to Python strftime format.
-
-        Common mappings:
-        - yyyy -> %Y (4-digit year)
-        - MM -> %m (2-digit month)
-        - dd -> %d (2-digit day)
-        - HH -> %H (24-hour format)
-        - mm -> %M (minutes)
-        - ss -> %S (seconds)
-        """
-        # If it's already in Python format (starts with %), return as-is
-        if '%' in format_str:
-            return format_str
-
-        # Common Java SimpleDateFormat to Python strftime conversions
-        conversions = {
-            'yyyy': '%Y',
-            'yy': '%y',
-            'MM': '%m',
-            'dd': '%d',
-            'HH': '%H',
-            'hh': '%I',
-            'mm': '%M',
-            'ss': '%S',
-            'SSS': '%f',  # Milliseconds
-            'a': '%p',  # AM/PM
-        }
-
-        result = format_str
-        for java_fmt, python_fmt in conversions.items():
-            result = result.replace(java_fmt, python_fmt)
-
-        return result
+                },
+                "name": f"{column_path}_{format_check.rule_name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
 
     def _process_text_rules_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard

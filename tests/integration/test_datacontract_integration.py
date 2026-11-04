@@ -55,6 +55,18 @@ def _flagged_names(row: Row) -> set[str]:
     return {e["name"] for e in errors} if errors else set()
 
 
+def _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) -> dict[int, set[str]]:
+    """Apply the rules with ANSI on, where a malformed text value would fail the run without try_cast."""
+    original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+    try:
+        spark.conf.set("spark.sql.ansi.enabled", "true")
+        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+        rows = checked.select("row_id", "_errors").collect()
+    finally:
+        spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
+    return {row["row_id"]: _flagged_names(row) for row in rows}
+
+
 def _assert_flagged_only(flagged_by_row: dict[int, set[str]], check_name: str, expected_row_ids: set[int]) -> None:
     """Assert check_name is flagged for exactly expected_row_ids among flagged_by_row's rows."""
     for row_id, names in flagged_by_row.items():
@@ -404,6 +416,71 @@ class TestDataContractIntegration:
             status = DQEngine.validate_checks(rules)
             assert not status.has_errors
 
+    def test_generated_format_rules_apply_on_spark(self, ws, spark):
+        """Rules generated from logicalTypeOptions format pass valid values and fail invalid ones on Spark."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:formats",
+            "name": "Formats",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "event_date",
+                            "physicalType": "STRING",
+                            "logicalType": "date",
+                            "logicalTypeOptions": {"format": "yyyy-MM-dd"},
+                        },
+                        {
+                            "name": "short_date",
+                            "physicalType": "STRING",
+                            "logicalType": "date",
+                            "logicalTypeOptions": {"format": "dd/MM/yy"},
+                        },
+                        {
+                            "name": "event_ts",
+                            "physicalType": "STRING",
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        test_df = spark.createDataFrame(
+            [
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
+                ["null", None, None, None],
+            ],
+            "case: string, event_date: string, short_date: string, event_ts: string",
+        )
+
+        checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+
+        flagged_by_case = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+        assert flagged_by_case == {
+            "valid": set(),
+            "invalid": {
+                "event_date_valid_date_format",
+                "event_ts_valid_timestamp_format",
+                "short_date_valid_date_format",
+            },
+            "null": set(),
+        }
+
     def test_schema_with_empty_properties_no_crash(self, ws, spark, caplog):
         """Schema with properties: [] produces no schema_validation rule for that schema; no exception."""
         contract = {
@@ -621,9 +698,7 @@ class TestDataContractRangeRulesIntegration:
             "shipped_text string",
         )
 
-        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
-
-        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.select("row_id", "_errors").collect()}
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
         assert flagged_by_row == {
             1: set(),
             2: set(),
@@ -644,7 +719,7 @@ class TestDataContractRangeRulesIntegration:
         properties = [
             ("qty", "INT", "integer", {"minimum": 0, "exclusiveMinimum": True}),  # ODCS v3.0.x form
             ("ratio", "DOUBLE", "number", {"exclusiveMinimum": 0, "exclusiveMaximum": 1.0}),  # ODCS v3.1.0+ form
-            ("price", "INT", "integer", {"exclusiveMaximum": "5.5"}),  # a numeric string compares as a number
+            ("price", "INT", "integer", {"exclusiveMaximum": 5.5}),  # a decimal bound on an integer column
             ("shipped", "DATE", "date", {"exclusiveMinimum": "2020-01-01"}),
             ("created", "TIMESTAMP", "timestamp", {"exclusiveMaximum": "2030-01-01T00:00:00"}),
             ("shipped_text", "STRING", "date", {"exclusiveMinimum": "2020-01-01"}),
@@ -683,12 +758,10 @@ class TestDataContractRangeRulesIntegration:
             "row_id int, qty int, ratio double, price int, shipped date, created timestamp, shipped_text string",
         )
 
-        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
-
-        flagged_by_row = {row["row_id"]: _flagged_names(row) for row in checked.select("row_id", "_errors").collect()}
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
         strict_rules = {
             "qty_at_or_below_exclusive_minimum",
-            "ratio_out_of_exclusive_range",
+            "ratio_at_or_above_exclusive_maximum",
             "shipped_at_or_below_exclusive_minimum",
             "created_at_or_above_exclusive_maximum",
             "shipped_text_at_or_below_exclusive_minimum",
@@ -720,7 +793,7 @@ class TestDataContractIntegrationErrors:
         """Error path: DataContract() with no file path, data_contract, or data_contract_str; ParameterError."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
         empty_contract = DataContract()
-        with pytest.raises(ParameterError, match="DataContract object must have either"):
+        with pytest.raises(ParameterError, match="DataContract has no contract"):
             generator.generate_rules_from_contract(contract=empty_contract)
 
     def test_error_both_contract_and_file(self, ws, spark, sample_contract_path):

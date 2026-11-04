@@ -10,6 +10,7 @@ import pyspark.sql.functions as F
 import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
@@ -34,7 +35,6 @@ _RANGE_RULE_NAME_SUFFIXES = (
     "_out_of_range",
     "_at_or_below_exclusive_minimum",
     "_at_or_above_exclusive_maximum",
-    "_out_of_exclusive_range",
 )
 
 
@@ -187,7 +187,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'reading_timestamp', 'date_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'date_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'reading_timestamp_valid_date_format',
                 'criticality': 'error',
@@ -218,7 +218,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_date',
-                    'arguments': {'column': 'calibration_date', 'date_format': '%Y-%m-%d'},
+                    'arguments': {'column': 'calibration_date', 'date_format': 'yyyy-MM-dd'},
                 },
                 'name': 'calibration_date_valid_date_format',
                 'criticality': 'error',
@@ -543,7 +543,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_valid_timestamp',
-                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': '%Y-%m-%d %H:%M:%S'},
+                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': 'yyyy-MM-dd HH:mm:ss'},
                 },
                 'name': 'valid_reading_timestamp',
                 'criticality': 'error',
@@ -886,10 +886,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_requires_either_valid_contract_object(self, generator):
         """Test that either contract or contract_file must be provided."""
-        with pytest.raises(
-            ParameterError,
-            match="DataContract object must have either a file path, data_contract dict, or data_contract_str attribute",
-        ):
+        with pytest.raises(ParameterError, match="DataContract has no contract"):
             generator.generate_rules_from_contract(DataContract())
 
     def test_cannot_provide_both_contract_and_file(self, generator, sample_contract_path):
@@ -1349,6 +1346,36 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 None,
             )
             assert match is not None, f"No matching rule for expected {exp} in {explicit_rules}"
+
+
+class TestDataContractGeneratorContractLoading(DataContractGeneratorTestBase):
+    """Tests for loading contracts from datacontract-cli DataContract objects."""
+
+    @pytest.mark.parametrize("source", ["data_contract_str", "data_contract"])
+    def test_generate_rules_from_datacontract_object_without_path(self, generator, sample_contract_path, source):
+        """Test generating rules from a DataContract built from a YAML string or a parsed ODCS model."""
+        with open(sample_contract_path, encoding="utf-8") as f:
+            contract_str = f.read()
+        if source == "data_contract_str":
+            contract = DataContract(data_contract_str=contract_str)
+        else:
+            contract = DataContract(data_contract=OpenDataContractStandard.model_validate(yaml.safe_load(contract_str)))
+        rules = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
+        assert rules == self.get_expected_contract_rules()
+
+    def test_unsupported_datacontract_cli_version_raises_clear_error(self, generator):
+        """Test that a DataContract without the string attribute DQX reads gives a version error."""
+        contract = DataContract()
+        delattr(contract, "_data_contract_str")
+        with pytest.raises(
+            ParameterError,
+            match=r"datacontract-cli version .* does not support '_data_contract_str'. Install a datacontract-cli version >=1\.2\.0 and <2\.0",
+        ):
+            generator.generate_rules_from_contract(contract)
+
+    def test_datacontract_still_stores_the_string_input(self):
+        """Fails when a datacontract-cli upgrade renames the attribute DQX reads for string contracts."""
+        assert "_data_contract_str" in vars(DataContract(data_contract_str="kind: DataContract"))
 
 
 class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
@@ -1926,13 +1953,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "event_date",
                     "physicalType": "DATE",
                     "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd"},
                 },
                 {
                     "name": "event_time",
                     "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d %H:%M:%S"},
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
                 },
             ]
         )
@@ -1946,7 +1973,12 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             timestamp_rules = [r for r in rules if r["check"]["function"] == "is_valid_timestamp"]
 
             assert len(date_rules) == 1
+            assert date_rules[0]["check"]["arguments"] == {"column": "event_date", "date_format": "yyyy-MM-dd"}
             assert len(timestamp_rules) == 1
+            assert timestamp_rules[0]["check"]["arguments"] == {
+                "column": "event_time",
+                "timestamp_format": "yyyy-MM-dd HH:mm:ss",
+            }
         finally:
             os.unlink(temp_path)
 
@@ -2408,7 +2440,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         "logical_type, physical_type, options, function, limits, name_suffix",
         [
             ("integer", "INT", {"minimum": 0}, "is_not_less_than", {"limit": 0}, "below_minimum"),
-            ("integer", "INT", {"maximum": "10"}, "is_not_greater_than", {"limit": "10"}, "above_maximum"),
+            ("integer", "INT", {"maximum": 10}, "is_not_greater_than", {"limit": 10}, "above_maximum"),
             ("number", "DOUBLE", {"maximum": 99.5}, "is_not_greater_than", {"limit": 99.5}, "above_maximum"),
             (
                 "number",
@@ -2451,6 +2483,14 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "below_minimum",
             ),
             (None, "INT", {"minimum": 1}, "is_not_less_than", {"limit": 1}, "below_minimum"),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T00:00:00", "maximum": "2024-12-31T00:00:00+00:00"},
+                "is_in_range",
+                {"min_limit": "2024-01-01T00:00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
+                "out_of_range",
+            ),
         ],
     )
     def test_range_bounds_generate_row_level_checks(
@@ -2485,29 +2525,30 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "logical_type, physical_type, options, warning",
         [
+            ("integer", "INT", {"minimum": "abc"}, "Skipping minimum on 'value': 'abc' is not a number."),
+            ("integer", "INT", {"minimum": "10"}, "Skipping minimum on 'value': '10' is not a number."),
+            ("integer", "INT", {"exclusiveMinimum": "5"}, "Skipping exclusiveMinimum on 'value': '5' is not a number."),
+            ("integer", "INT", {"minimum": True}, "Skipping minimum on 'value': 'True' is not a number."),
+            ("integer", "INT", {"minimum": [1, 2]}, "Skipping minimum on 'value': '[1, 2]' is not a number."),
+            ("number", "DOUBLE", {"maximum": float("inf")}, "Skipping maximum on 'value': 'inf' is not a number."),
             (
-                "integer",
-                "INT",
-                {"minimum": "abc"},
-                "Skipping minimum on 'value': 'abc' is not a number, date or timestamp.",
-            ),
-            (
-                "integer",
-                "INT",
-                {"minimum": True},
-                "Skipping minimum on 'value': 'True' is not a number, date or timestamp.",
-            ),
-            (
-                "integer",
-                "INT",
-                {"minimum": [1, 2]},
-                "Skipping minimum on 'value': '[1, 2]' is not a number, date or timestamp.",
+                "number",
+                "DOUBLE",
+                {"maximum": "2020-01-01"},
+                "Skipping maximum on 'value': '2020-01-01' is not a number.",
             ),
             (
                 "date",
                 "DATE",
                 {"maximum": "next week"},
-                "Skipping maximum on 'value': 'next week' is not a number, date or timestamp.",
+                "Skipping maximum on 'value': 'next week' is not a date or timestamp.",
+            ),
+            ("date", "DATE", {"minimum": 5}, "Skipping minimum on 'value': '5' is not a date or timestamp."),
+            (
+                None,
+                "INT",
+                {"minimum": float("nan")},
+                "Skipping minimum on 'value': 'nan' is not a number, date or timestamp.",
             ),
             (
                 "string",
@@ -2525,13 +2566,13 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "number",
                 "DOUBLE",
                 {"exclusiveMaximum": float("inf")},
-                "Skipping exclusiveMaximum on 'value': 'inf' is not a number, date or timestamp.",
+                "Skipping exclusiveMaximum on 'value': 'inf' is not a number.",
             ),
             (
                 "number",
                 "DOUBLE",
                 {"maximum": float("nan")},
-                "Skipping maximum on 'value': 'nan' is not a number, date or timestamp.",
+                "Skipping maximum on 'value': 'nan' is not a number.",
             ),
         ],
     )
@@ -2565,7 +2606,36 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         assert [r["check"] for r in rules] == [
             {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}
         ]
-        assert "Skipping maximum on 'value': 'abc' is not a number, date or timestamp." in caplog.messages
+        assert "Skipping maximum on 'value': 'abc' is not a number." in caplog.messages
+
+    @pytest.mark.parametrize(
+        "logical_type, options, reason",
+        [
+            ("integer", {"minimum": 10, "maximum": 1}, "minimum 10 is greater than maximum 1"),
+            (
+                "date",
+                {"minimum": "2030-01-01", "maximum": "2020-01-01"},
+                "minimum 2030-01-01 is greater than maximum 2020-01-01",
+            ),
+            (None, {"minimum": 1, "maximum": "2020-01-01"}, "one is a number and the other a date or timestamp"),
+            (
+                "integer",
+                {"minimum": 10, "maximum": 1, "exclusiveMinimum": True},
+                "minimum 10 is greater than maximum 1",
+            ),
+        ],
+    )
+    def test_unusable_range_is_skipped_with_warning(self, generator, caplog, logical_type, options, reason):
+        """Test that a minimum and maximum no value could satisfy generate no rule and log why."""
+        prop = {"name": "value", "physicalType": "STRING", "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert f"Skipping minimum and maximum on 'value': {reason}." in caplog.messages
 
     @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
     def test_range_bounds_are_the_same_in_every_odcs_version(self, generator, api_version):
@@ -2581,22 +2651,29 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         ]
 
     @pytest.mark.parametrize(
-        "logical_type, physical_type, options, column",
+        "name, logical_type, physical_type, options, column",
         [
-            ("date", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
-            ("date", "VARCHAR(10)", {"minimum": "2020-01-01", "maximum": "2030-12-31"}, "try_cast(value AS DATE)"),
-            ("timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
-            ("integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
-            ("number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
-            (None, "CHAR(8)", {"minimum": "2020-01-01"}, "value"),
-            ("date", "DATE", {"minimum": "2020-01-01"}, "value"),
+            ("value", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            (
+                "value",
+                "date",
+                "VARCHAR(10)",
+                {"minimum": "2020-01-01", "maximum": "2030-12-31"},
+                "try_cast(value AS DATE)",
+            ),
+            ("value", "timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
+            ("value", "integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
+            ("value", "number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
+            ("value", None, "CHAR(8)", {"minimum": "2020-01-01"}, "value"),
+            ("value", "date", "DATE", {"minimum": "2020-01-01"}, "value"),
+            ("Päivämäärä", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(`Päivämäärä` AS DATE)"),
         ],
     )
     def test_range_check_on_text_column_compares_try_cast(
-        self, generator, logical_type, physical_type, options, column
+        self, generator, name, logical_type, physical_type, options, column
     ):
         """Test that a column stored as text is compared through try_cast, so a malformed value can't fail the run."""
-        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+        prop = {"name": name, "physicalType": physical_type, "logicalTypeOptions": options}
         if logical_type:
             prop["logicalType"] = logical_type
 
@@ -2604,7 +2681,11 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         assert len(rules) == 1
         assert rules[0]["check"]["arguments"]["column"] == column
-        assert rules[0]["name"].startswith("value_")
+        assert rules[0]["name"].startswith(f"{name}_")
+
+
+class TestDataContractGeneratorQualityAndLengthConstraints(DataContractGeneratorTestBase):
+    """Test explicit quality checks and length constraints."""
 
     def test_explicit_dqx_quality_check_detection(self, generator):
         """Test that explicit DQX quality checks are correctly identified."""
@@ -3040,6 +3121,10 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
     """Test strict rules generated from exclusiveMinimum/exclusiveMaximum."""
 
+    @staticmethod
+    def _check(function: str, limit: object, column: str = "value") -> dict:
+        return {"function": function, "arguments": {"column": column, "limit": limit}}
+
     @pytest.mark.parametrize(
         "logical_type, physical_type, options, expected",
         [
@@ -3048,84 +3133,67 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 "integer",
                 "INT",
                 {"minimum": 0, "exclusiveMinimum": True},
-                [
-                    ("below_minimum", {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}),
-                    ("at_or_below_exclusive_minimum", "value > 0"),
-                ],
+                [("below_minimum", "is_not_less_than", 0), ("at_or_below_exclusive_minimum", "is_greater_than", 0)],
             ),
             (
                 "integer",
                 "INT",
                 {"maximum": 10, "exclusiveMaximum": True},
-                [
-                    (
-                        "above_maximum",
-                        {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 10}},
-                    ),
-                    ("at_or_above_exclusive_maximum", "value < 10"),
-                ],
+                [("above_maximum", "is_not_greater_than", 10), ("at_or_above_exclusive_maximum", "is_less_than", 10)],
             ),
             (
                 "integer",
                 "INT",
                 {"maximum": 10, "exclusiveMaximum": False},
-                [("above_maximum", {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 10}})],
+                [("above_maximum", "is_not_greater_than", 10)],
             ),
             # ODCS v3.1.0+: a bound of its own
-            ("number", "DOUBLE", {"exclusiveMinimum": 0.5}, [("at_or_below_exclusive_minimum", "value > 0.5")]),
-            ("integer", "INT", {"exclusiveMinimum": "5"}, [("at_or_below_exclusive_minimum", "value > 5")]),
-            ("integer", "INT", {"exclusiveMaximum": "5.5"}, [("at_or_above_exclusive_maximum", "value < 5.5")]),
+            (
+                "number",
+                "DOUBLE",
+                {"exclusiveMinimum": 0.5},
+                [("at_or_below_exclusive_minimum", "is_greater_than", 0.5)],
+            ),
+            ("integer", "INT", {"exclusiveMaximum": 5.5}, [("at_or_above_exclusive_maximum", "is_less_than", 5.5)]),
             (
                 "integer",
                 "INT",
                 {"minimum": 1, "exclusiveMaximum": 100},
-                [
-                    ("below_minimum", {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 1}}),
-                    ("at_or_above_exclusive_maximum", "value < 100"),
-                ],
+                [("below_minimum", "is_not_less_than", 1), ("at_or_above_exclusive_maximum", "is_less_than", 100)],
             ),
             (
                 "integer",
                 "INT",
                 {"exclusiveMinimum": 0, "exclusiveMaximum": 100},
-                [("out_of_exclusive_range", "value > 0 AND value < 100")],
+                [
+                    ("at_or_below_exclusive_minimum", "is_greater_than", 0),
+                    ("at_or_above_exclusive_maximum", "is_less_than", 100),
+                ],
             ),
             (
                 "date",
                 "DATE",
                 {"exclusiveMaximum": "2030-01-01"},
-                [("at_or_above_exclusive_maximum", "value < DATE '2030-01-01'")],
-            ),
-            (
-                "date",
-                "DATE",
-                {"exclusiveMaximum": "2030-01-01T10:00:00"},
-                [("at_or_above_exclusive_maximum", "value < TIMESTAMP '2030-01-01 10:00:00'")],
+                [("at_or_above_exclusive_maximum", "is_less_than", "2030-01-01")],
             ),
             (
                 "timestamp",
                 "TIMESTAMP",
                 {"exclusiveMinimum": datetime.datetime(2024, 1, 1, 10)},
-                [("at_or_below_exclusive_minimum", "value > TIMESTAMP '2024-01-01 10:00:00'")],
+                [("at_or_below_exclusive_minimum", "is_greater_than", datetime.datetime(2024, 1, 1, 10))],
             ),
             (
                 "timestamp",
                 "TIMESTAMP",
                 {"exclusiveMinimum": "2024-01-01T10:00:00+00:00"},
-                [("at_or_below_exclusive_minimum", "value > TIMESTAMP '2024-01-01 10:00:00+00:00'")],
-            ),
-            (
-                "timestamp",
-                "STRING",
-                {"exclusiveMinimum": "2024-01-01T00:00:00"},
-                [("at_or_below_exclusive_minimum", "try_cast(value AS TIMESTAMP) > TIMESTAMP '2024-01-01 00:00:00'")],
+                [("at_or_below_exclusive_minimum", "is_greater_than", "2024-01-01T10:00:00+00:00")],
             ),
         ],
     )
     def test_exclusive_bounds_generate_strict_checks(
         self, generator, caplog, logical_type, physical_type, options, expected
     ):
-        """Test that exclusive bounds in either ODCS form add a strict rule with a typed SQL literal."""
+        """Test that exclusive bounds in either ODCS form add a strict is_greater_than / is_less_than rule."""
         prop = {
             "name": "value",
             "physicalType": physical_type,
@@ -3136,18 +3204,29 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
         with caplog.at_level(logging.WARNING):
             rules = self._generate_range_rules(generator, prop)
 
-        assert [r["name"] for r in rules] == [f"value_{name_suffix}" for name_suffix, _ in expected]
-        for rule, (_, check) in zip(rules, expected):
-            if isinstance(check, dict):
-                assert rule["check"] == check
-            else:
-                assert rule["check"]["function"] == "sql_expression"
-                assert rule["check"]["arguments"]["expression"] == check
-                assert rule["check"]["arguments"]["columns"] == ["value"]
+        assert [(r["name"], r["check"]) for r in rules] == [
+            (f"value_{name_suffix}", self._check(function, limit)) for name_suffix, function, limit in expected
+        ]
         assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
 
-    def test_exclusive_bound_rule_has_message_and_contract_metadata(self, generator):
-        """Test that a strict rule explains the bound and carries the same metadata as the other range rules."""
+    def test_exclusive_bound_on_text_column_compares_try_cast(self, generator):
+        """Test that a strict rule on a column stored as text compares it through try_cast, like the inclusive ones."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "STRING",
+                "logicalType": "timestamp",
+                "logicalTypeOptions": {"exclusiveMinimum": "2024-01-01T00:00:00"},
+            },
+        )
+
+        assert [r["check"] for r in rules] == [
+            self._check("is_greater_than", "2024-01-01T00:00:00", column="try_cast(value AS TIMESTAMP)")
+        ]
+
+    def test_exclusive_bound_rule_carries_contract_metadata(self, generator):
+        """Test that a strict rule carries the same metadata as the other range rules."""
         rules = self._generate_range_rules(
             generator,
             {
@@ -3160,14 +3239,7 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
 
         assert rules == [
             {
-                "check": {
-                    "function": "sql_expression",
-                    "arguments": {
-                        "expression": "qty > 0",
-                        "msg": "Value in column 'qty' is not greater than 0",
-                        "columns": ["qty"],
-                    },
-                },
+                "check": self._check("is_greater_than", 0, column="qty"),
                 "name": "qty_at_or_below_exclusive_minimum",
                 "criticality": "error",
                 "user_metadata": {
@@ -3194,10 +3266,11 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
             },
         )
 
-        assert [r["name"] for r in rules] == ["value_out_of_range", "value_out_of_exclusive_range"]
-        assert (
-            rules[1]["check"]["arguments"]["msg"] == "Value in column 'value' is not greater than 0 and less than 100"
-        )
+        assert [r["name"] for r in rules] == [
+            "value_out_of_range",
+            "value_at_or_below_exclusive_minimum",
+            "value_at_or_above_exclusive_maximum",
+        ]
         assert not DQEngine.validate_checks(rules, semantic_validation_mode=ChecksSemanticValidationMode.FAIL).errors
 
     @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
@@ -3214,8 +3287,11 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
             api_version=api_version,
         )
 
-        assert [r["name"] for r in rules] == ["value_below_minimum", "value_out_of_exclusive_range"]
-        assert rules[1]["check"]["arguments"]["expression"] == "value > 0 AND value < 100"
+        assert [(r["name"], r["check"]) for r in rules] == [
+            ("value_below_minimum", self._check("is_not_less_than", 0)),
+            ("value_at_or_below_exclusive_minimum", self._check("is_greater_than", 0)),
+            ("value_at_or_above_exclusive_maximum", self._check("is_less_than", 100)),
+        ]
 
     def test_flag_with_invalid_bound_warns_once(self, generator, caplog):
         """Test that exclusiveMinimum: true reuses the validated minimum, so an invalid one is reported once."""
@@ -3232,7 +3308,7 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
 
         assert not rules
         assert [r.getMessage() for r in caplog.records if r.name == contract_rules_generator_module.__name__] == [
-            "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp."
+            "Skipping minimum on 'value': 'other_column' is not a number."
         ]
 
 
@@ -3502,16 +3578,27 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     # Additional tests for coverage improvement
 
-    def test_format_generates_timestamp_validation(self, generator):
-        """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
+    @pytest.mark.parametrize(
+        "timestamp_format",
+        [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "dd/MM/yy hh:mm a",
+            "dd 'de' MMMM yyyy HH:mm",
+            "hh 'o''clock' a",
+        ],
+    )
+    @pytest.mark.parametrize("logical_type", ["timestamp", "datetime"])
+    def test_format_generates_timestamp_validation(self, generator, caplog, timestamp_format, logical_type):
+        """Test that format on a timestamp (or datetime) field generates is_valid_timestamp with the format unchanged."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "created_at",
                     "physicalType": "TIMESTAMP",
-                    "logicalType": "timestamp",
+                    "logicalType": logical_type,
                     "required": True,
-                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
+                    "logicalTypeOptions": {"format": timestamp_format},
                 }
             ]
         )
@@ -3519,14 +3606,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            # Should generate is_valid_timestamp rule
+            # Should generate is_valid_timestamp rule with the JDK DateTimeFormatter pattern Spark expects
             timestamp_rules = [r for r in rules if "is_valid_timestamp" in r["check"]["function"]]
             assert len(timestamp_rules) == 1
-            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == "%Y-%m-%d %H:%M:%S"
+            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == timestamp_format
+            assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
         finally:
             os.unlink(temp_path)
 
@@ -3562,15 +3651,22 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
-    def test_python_format_passthrough(self, generator):
-        """Test that Python format strings (with %) are passed through as-is."""
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, format_str",
+        [("date", "DATE", "%Y-%m-%d"), ("date", "DATE", "%d/%m/%y"), ("timestamp", "TIMESTAMP", "%H:%M")],
+    )
+    def test_python_strftime_format_is_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, format_str
+    ):
+        """Test that a Python strftime format generates no rule and logs a warning."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
-                    "name": "birth_date",
-                    "physicalType": "DATE",
-                    "logicalType": "date",
-                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
+                    "name": "event",
+                    "physicalType": physical_type,
+                    "logicalType": logical_type,
+                    "required": True,
+                    "logicalTypeOptions": {"format": format_str},
                 }
             ]
         )
@@ -3578,14 +3674,45 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
 
-            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
-            assert len(date_rules) == 1
-            # Should keep Python format as-is
-            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert [r["check"]["function"] for r in rules if r["check"]["arguments"].get("column") == "event"] == [
+                "is_not_null"
+            ]
+            assert (
+                f"Skipping format on 'event': '{format_str}'; use a Spark datetime pattern such as 'yyyy-MM-dd'."
+                in caplog.messages
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_non_string_format_is_not_treated_as_strftime(self, generator, caplog):
+        """Test that a non-string format is not treated as strftime."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "event",
+                    "physicalType": "DATE",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"format": ["%"]},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger=contract_rules_generator_module.__name__):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
+
+            assert not [r for r in rules if r["check"]["function"] in {"is_valid_date", "is_valid_timestamp"}]
+            assert not [message for message in caplog.messages if "is a Python strftime pattern" in message]
         finally:
             os.unlink(temp_path)
 
