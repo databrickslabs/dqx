@@ -5,6 +5,7 @@ All SQL string escaping MUST use these functions instead of inline
 """
 
 import re
+from zoneinfo import available_timezones
 
 # Unity Catalog does not restrict catalog/schema/table names to "simple"
 # identifiers — objects created via the REST API (bypassing the SQL parser)
@@ -367,3 +368,53 @@ def validate_entity_type(entity_type: str, valid_types: set[str]) -> str:
     if entity_type not in valid_types:
         raise ValueError(f"Invalid entity_type: '{entity_type}'. Must be one of {valid_types}")
     return entity_type
+
+
+# Built once: available_timezones() scans the whole tz database.
+_FIXED_OFFSET_ABBREVIATIONS = frozenset({"EST", "MST", "HST"})
+_NOT_ZONES = frozenset({"Factory", "localtime", "posixrules"})
+VALID_TIMEZONES: frozenset[str] = frozenset(available_timezones()) - _FIXED_OFFSET_ABBREVIATIONS - _NOT_ZONES
+
+
+def validate_timezone(name: str) -> str:
+    """Validate a Row Scope time zone. Raises ValueError; returns the name unchanged.
+
+    Any IANA zone name is accepted (``America/New_York``, ``Singapore``, ``UTC``)
+    except the fixed-offset abbreviations ``EST``, ``MST`` and ``HST``: they
+    silently ignore daylight saving time where the region observes it.
+
+    The task runner (a separate wheel the app can't import) applies the same
+    rule in ``dqx_task_runner.row_scope.validate_timezone``; a test checks that
+    both accept exactly the same names.
+    """
+    if name in VALID_TIMEZONES:
+        return name
+    raise ValueError(
+        f"Invalid time zone {name!r}: use a region name such as 'America/New_York' or 'UTC' "
+        "(abbreviations like 'EST' ignore daylight saving time)."
+    )
+
+
+def validate_row_scope(config: dict) -> None:
+    """Validate a schedule's Row Scope settings (``sample_interval_*``), when present.
+
+    The lookback must be a positive number of minutes (0 or unset turns the
+    window off; a negative one would put the cutoff in the future and match
+    nothing), the time zone a valid region name, the candidate columns a list
+    of names, and a pinned column a name. Schedules and "Run Now" both use
+    this, so they accept the same settings. Raises ValueError.
+    """
+    minutes = config.get("sample_interval_minutes")
+    if minutes not in (None, 0) and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1):
+        raise ValueError("sample_interval_minutes must be a positive whole number of minutes")
+    timezone = config.get("sample_interval_timezone")
+    if timezone:
+        validate_timezone(str(timezone))
+    columns = config.get("sample_interval_columns")
+    if columns is not None and (
+        not isinstance(columns, list) or not all(isinstance(c, str) and c.strip() for c in columns)
+    ):
+        raise ValueError("sample_interval_columns must be a list of column names")
+    selected = config.get("sample_interval_selected_column")
+    if selected is not None and not (isinstance(selected, str) and selected.strip()):
+        raise ValueError("sample_interval_selected_column must be a column name")
