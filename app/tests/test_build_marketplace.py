@@ -10,10 +10,14 @@ from pathlib import Path
 
 import pytest
 import yaml
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from scripts import build_app as build_app_module
 from scripts import build_marketplace as marketplace_builder
-from scripts.build_app import build_task_runner_wheel
+from scripts.build_app import EXTRA_PACKAGE_INDEX_ENV_VARS, build_task_runner_wheel
 
 build = marketplace_builder.build
 
@@ -240,6 +244,39 @@ def test_marketplace_template_lock_matches_the_app_dependency_specifiers() -> No
     assert direct_versions(TEMPLATE_LOCK, template) == direct_versions(APP_DIR / "uv.lock", app_lock)
 
 
+def test_app_locks_match_the_app_pyproject_dependencies() -> None:
+    """Both locks must still match *app/pyproject.toml*; *uv run --frozen* never checks this itself.
+
+    The tests above only compare the two locks, so a dependency bumped in the pyproject without
+    re-locking would leave both stale and still pass. Each lock pins DQX itself, so only DQX's
+    version specifier is skipped; its name, extras and markers are still compared.
+    """
+
+    def normalized(name: str, extras: list[str], specifier: str, marker: str) -> tuple:
+        name = canonicalize_name(name)
+        return (
+            name,
+            frozenset(canonicalize_name(extra) for extra in extras),
+            None if name == DQX_PACKAGE else SpecifierSet(specifier),
+            Marker(marker) if marker else None,
+        )
+
+    pyproject = tomllib.loads((APP_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = {
+        normalized(req.name, list(req.extras), str(req.specifier), str(req.marker or ""))
+        for req in map(Requirement, pyproject["project"]["dependencies"])
+    }
+
+    for lock_path in (APP_DIR / "uv.lock", TEMPLATE_LOCK):
+        locked = {
+            normalized(entry["name"], entry.get("extras", []), entry.get("specifier", ""), entry.get("marker", ""))
+            for entry in _app_package(lock_path)["metadata"]["requires-dist"]
+        }
+        assert (
+            locked == declared
+        ), f"{lock_path.relative_to(APP_DIR)} is stale vs app/pyproject.toml (see DEPLOYMENT.md)"
+
+
 def test_marketplace_template_lock_holds_exactly_its_runtime_closure() -> None:
     """The template, published DQX included, must be complete and carry nothing unreachable."""
     names = {package["name"] for package in tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))["package"]}
@@ -304,16 +341,16 @@ def test_marketplace_build_ignores_parent_uv_configuration(
     assert "options" not in lock
 
 
-def test_task_runner_build_uses_configured_primary_package_index(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _fake_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, exit_code: int = 0) -> Path:
+    """Put a fake *uv* on PATH that records its environment and fakes the wheel build."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    captured_index = tmp_path / "captured-index"
+    captured = tmp_path / "captured-env"
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
-        """#!/bin/sh
-printf '%s' "$UV_INDEX_URL" > "$CAPTURED_INDEX_FILE"
+        f"""#!/bin/sh
+env > "$CAPTURED_ENV_FILE"
+if [ {exit_code} -ne 0 ]; then echo "error: no index reachable"; exit {exit_code}; fi
 while [ "$1" != "--out-dir" ]; do shift; done
 mkdir -p "$2"
 touch "$2/databricks_labs_dqx_task_runner-0.1.0-py3-none-any.whl"
@@ -322,12 +359,62 @@ touch "$2/databricks_labs_dqx_task_runner-0.1.0-py3-none-any.whl"
     )
     fake_uv.chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
-    monkeypatch.setenv("CAPTURED_INDEX_FILE", str(captured_index))
-    monkeypatch.setenv("UV_INDEX_URL", "https://mirror.example/simple")
+    monkeypatch.setenv("CAPTURED_ENV_FILE", str(captured))
+    return captured
+
+
+PRIMARY_INDEX_ENV_VARS = ("UV_DEFAULT_INDEX", "UV_INDEX_URL")
+MIRROR = "https://mirror.example/simple"
+
+
+@pytest.mark.parametrize("name", EXTRA_PACKAGE_INDEX_ENV_VARS + PRIMARY_INDEX_ENV_VARS)
+def test_deploy_task_runner_build_keeps_every_package_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """DAB deploys run this build every time, so any configured mirror must reach uv."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
 
     build_task_runner_wheel(tmp_path / "wheel", "0.16.0")
 
-    assert captured_index.read_text(encoding="utf-8") == "https://mirror.example/simple"
+    assert f"{name}={MIRROR}" in captured.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("name", EXTRA_PACKAGE_INDEX_ENV_VARS)
+def test_marketplace_task_runner_build_drops_the_extra_package_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Marketplace builds must not pull from a deployer's extra package index."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
+
+    build_task_runner_wheel(tmp_path / "wheel", "0.16.0", isolate_indexes=True)
+
+    assert not any(line.startswith(f"{name}=") for line in captured.read_text(encoding="utf-8").splitlines())
+
+
+@pytest.mark.parametrize("name", PRIMARY_INDEX_ENV_VARS)
+def test_marketplace_task_runner_build_keeps_the_primary_package_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """*release_marketplace.sh* sets *UV_DEFAULT_INDEX* so this build can reach a proxy when PyPI is blocked."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
+
+    build_task_runner_wheel(tmp_path / "wheel", "0.16.0", isolate_indexes=True)
+
+    assert f"{name}={MIRROR}" in captured.read_text(encoding="utf-8").splitlines()
+
+
+def test_task_runner_build_failure_shows_the_uv_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_uv(tmp_path, monkeypatch, exit_code=2)
+
+    with pytest.raises(RuntimeError, match="Task-runner wheel build failed"):
+        build_task_runner_wheel(tmp_path / "wheel", "0.16.0")
+
+    assert "error: no index reachable" in capsys.readouterr().err
 
 
 def test_marketplace_check_accepts_generated_artifact(

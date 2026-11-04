@@ -74,9 +74,9 @@ def update_dqx_pins(version: str):
     var_replacement = rf"\g<1>{version}\g<2>"
 
     # Bundle files whose ``dqx_version`` variable is the single source the derived pin + wheel name
-    # hang off. The app/tasks + app pyproject.toml deps are deliberately NOT listed: the task runner's
-    # dep is provided by the job env spec (unpinned there), and the app's dep resolves from the parent
-    # checkout via [tool.uv.sources] (also unpinned) — so neither carries a version to rewrite.
+    # hang off. The app/tasks + app pyproject.toml deps are deliberately NOT listed: build_app.py pins
+    # the task runner wheel to ``databricks-labs-dqx==dqx_version`` at build time, and the app's dep
+    # resolves from the parent checkout via [tool.uv.sources] — so neither carries a version to rewrite.
     pin_files = [
         Path("mcp-server/databricks.yml"),
     ]

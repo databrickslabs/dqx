@@ -51,12 +51,10 @@ _APP_BUNDLE = """\
 variables:
   dqx_version:
     default: "0.15.0"
-  dqx_task_dependency:
-    default: "databricks-labs-dqx==${var.dqx_version}"
 """
 
-# The app + task-runner pyproject deps are UNPINNED (resolved from the checkout / job env spec), so
-# sync_versions must never rewrite them.
+# The app + task-runner pyproject deps are UNPINNED in source (build_app.py pins the task-runner wheel
+# to dqx_version at build time), so sync_versions must never rewrite them.
 _APP_PYPROJECT = """\
 [project]
 dependencies = [
@@ -115,8 +113,8 @@ class TestUpdateDqxPins:
         assert (repo / "app" / "databricks.yml").read_text() == before
 
     def test_leaves_the_unpinned_app_pyproject_untouched(self, repo):
-        """The app + task-runner deps are unpinned (resolved from the checkout / job env spec), so
-        sync_versions must not inject a version into them."""
+        """The app + task-runner deps are unpinned in source (build_app.py pins the task-runner wheel at
+        build time), so sync_versions must not inject a version into them."""
         before = (repo / "app" / "pyproject.toml").read_text()
         sync_versions.update_dqx_pins("0.16.0")
         assert (repo / "app" / "pyproject.toml").read_text() == before

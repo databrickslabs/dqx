@@ -56,10 +56,6 @@ variables:
   # marketplace_templates/uv.lock (see DEPLOYMENT.md).
   dqx_version:
     default: "0.17.0"
-  # The databricks-labs-dqx dependency the task-runner job installs: the pinned,
-  # published release, matching the app's locked DQX.
-  dqx_task_dependency:
-    default: "databricks-labs-dqx==${var.dqx_version}"
   dqx_service_principal_application_id:
     description: "Application ID of the service principal that runs the task-runner job"
     default: "00000000-0000-0000-0000-000000000000"
@@ -220,10 +216,10 @@ resources:
         # itself when it doesn't manage the catalog — without this binding the app SP
         # can't reach anything inside ``${var.catalog_name}`` even though its
         # schema/volume grants are ALL_PRIVILEGES. WRITE_VOLUME matches what the app
-        # actually does at startup (publishing the DQX wheel), and is a subset of the
+        # actually does at startup (publishing the task-runner wheel), and is a subset of the
         # ALL_PRIVILEGES the volume's own ``grants:`` block already gives the app SP.
         - name: "dqx-wheels-volume"
-          description: "UC volume for DQX wheels — bound so USE CATALOG / USE SCHEMA are auto-granted"
+          description: "UC volume for the task-runner wheel — bound so USE CATALOG / USE SCHEMA are auto-granted"
           uc_securable:
             securable_full_name: ${var.catalog_name}.${var.schema_name}.wheels
             securable_type: VOLUME
@@ -517,11 +513,10 @@ resources:
           spec:
             client: "5"
             dependencies:
-              # Local task-runner wheel (not published) + databricks-labs-dqx. The dqx
-              # entry is ${var.dqx_task_dependency}: the pinned published release from the
-              # registry, the same DQX the app installs. See the variable definition.
+              # The task-runner wheel is the job's only dependency: build_app.py pins it to
+              # databricks-labs-dqx==${var.dqx_version}, the same DQX the app installs, and
+              # the app republishes the same wheel as the only dependency at startup.
               - ${var.task_runner_wheel_path}
-              - ${var.dqx_task_dependency}
       parameters:
         - name: "task_type"
           default: "profile"

@@ -132,7 +132,7 @@ def _assemble_runtime_tree(staging: Path, dqx_version: str) -> None:
         newline="\n",
     )
 
-    build_task_runner_wheel(staging / "tasks", dqx_version)
+    build_task_runner_wheel(staging / "tasks", dqx_version, isolate_indexes=True)
 
 
 def _copy_tree(source: Path, destination: Path) -> None:

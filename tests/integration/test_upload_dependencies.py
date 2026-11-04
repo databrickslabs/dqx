@@ -178,7 +178,7 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
 
     # Mock package metadata to include extras dependencies
     mock_requires = [
-        "databricks-labs-blueprint>=0.9.1,<0.10",
+        "databricks-labs-blueprint>=0.9.1,<=0.13",
         "databricks-sdk~=0.71",
         "databricks-labs-lsql>=0.5,<=0.16",
         "sqlalchemy>=1.4,<3.0",
