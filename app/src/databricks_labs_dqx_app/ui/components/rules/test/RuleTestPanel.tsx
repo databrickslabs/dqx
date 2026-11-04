@@ -159,7 +159,12 @@ function TestParameterFields({
       <div className="space-y-2">
         {parameters.map((param) => (
           <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
-            <span className={`${PARAM_PLACEHOLDER_CLASS} text-xs truncate`}>{`{{${param.name}}}`}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`${PARAM_PLACEHOLDER_CLASS} text-xs truncate`}>{`{{${param.name}}}`}</span>
+              <span className="inline-block shrink-0 rounded border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {param.type}
+              </span>
+            </div>
             <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
             <ParameterValueInput
               type={param.type}
@@ -518,6 +523,9 @@ export function RuleTestPanel({
 
       {mode === "adhoc" ? (
         <div className="space-y-4">
+          {parameters.length > 0 && (
+            <h4 className="text-sm font-medium leading-none">{t("ruleTest.dataLabel")}</h4>
+          )}
           {/* Label the grids only when there is more than one, so a plain
               single-table rule keeps its uncluttered look. */}
           {refTables.length > 0 && (
@@ -558,6 +566,9 @@ export function RuleTestPanel({
         </div>
       ) : (
         <div className="space-y-3">
+          {parameters.length > 0 && (
+            <h4 className="text-sm font-medium leading-none">{t("ruleTest.dataLabel")}</h4>
+          )}
           <TableTestSource slots={slots} onReady={setTablePayload} />
           <TestParameterFields
             parameters={parameters}

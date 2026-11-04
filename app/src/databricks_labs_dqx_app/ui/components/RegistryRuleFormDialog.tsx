@@ -1456,7 +1456,7 @@ function SlotsPanel({
 
   return (
     <div
-      className={cn("space-y-2 rounded-md p-3", dropActive && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
+      className={cn("space-y-2 rounded-md", dropActive && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
@@ -1474,6 +1474,7 @@ function SlotsPanel({
       onDrop={(event) => handlePanelDrop(event)}
     >
       <SectionHeader
+        className="min-h-7"
         tooltip={t("rulesRegistry.slotsPanelTooltip")}
         action={
           // Always reserve the add-button's footprint when the panel isn't
@@ -1724,7 +1725,7 @@ function ParametersPanel({
 
   return (
     <div
-      className={cn("space-y-2 rounded-md p-3", dropActive && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
+      className={cn("space-y-2 rounded-md", dropActive && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
@@ -1742,11 +1743,18 @@ function ParametersPanel({
       onDrop={(event) => handlePanelDrop(event)}
     >
       <SectionHeader
+        className="min-h-7"
         tooltip={t("rulesRegistry.parametersPanelTooltip", { example: "{{limit}}" })}
         action={
-          !disabled && !lockStructure ? (
-            addDisabledReason ? (
-              <CursorTooltip text={addDisabledReason}>
+          !disabled ? (
+            lockStructure || addDisabledReason ? (
+              <CursorTooltip
+                text={
+                  lockStructure
+                    ? t("rulesRegistry.parametersPanelLockedTooltip")
+                    : (addDisabledReason ?? "")
+                }
+              >
                 <span className="inline-block">
                   <Button
                     type="button"
@@ -1856,7 +1864,9 @@ function ParametersPanel({
               ) : (
                 <Select
                   value={param.type}
-                  onValueChange={(v) => setAt(i, { type: v as RuleParameter["type"] })}
+                  onValueChange={(v) =>
+                    setAt(i, { type: v as RuleParameter["type"], value: null })
+                  }
                 >
                   <SelectTrigger
                     className="h-6 text-[11px] w-[7.5rem]"
