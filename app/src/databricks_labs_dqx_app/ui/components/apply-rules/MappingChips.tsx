@@ -12,7 +12,7 @@
 // preview list, which has no staged row to edit) to fall back to
 // non-interactive display chips.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -551,6 +551,7 @@ function GroupParamCell({
         invalid={invalid}
         onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
         aria-label={param.name}
+        className="min-w-[4.75rem]"
         lock={{ locked }}
       />
       {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
@@ -648,13 +649,17 @@ export function MappingChips({
   const filledGroups = columnMapping
     .map((group, groupIdx) => ({ group, groupIdx }))
     .filter(({ group }) => slotNames.some((s) => Boolean(group[s])));
-  const valueCols = Math.max(filledGroups.length + (addingGroup ? 1 : 0), 1);
+  const showEmptyMapping = filledGroups.length === 0 && !addingGroup && !onAddGroup;
+  const valueCols = filledGroups.length + (addingGroup ? 1 : 0) + (showEmptyMapping ? 1 : 0);
   const mappingGridStyle = {
     display: "grid",
-    gridTemplateColumns: `160px 24px repeat(${valueCols}, minmax(10rem, max-content)) minmax(8rem, auto)`,
-    columnGap: "0.75rem",
-    rowGap: "0.25rem",
-    alignItems: "start",
+    gridTemplateColumns: `max-content 24px${valueCols > 0 ? ` repeat(${valueCols}, max-content)` : ""} max-content`,
+    columnGap: "0.5rem",
+    rowGap: "0.5rem",
+    alignItems: "center",
+    justifyContent: "start",
+    width: "max-content",
+    maxWidth: "100%",
   } as const;
 
   const renderPendingChip = (slot: RuleSlot, isLastSlot: boolean) => {
@@ -694,7 +699,7 @@ export function MappingChips({
         </span>
       </div>
 
-      <div className="space-y-2">
+      <div style={mappingGridStyle}>
         {slots.map((slot, slotIdx) => {
           const isLastSlot = slotIdx === slots.length - 1;
           const filled = filledGroups
@@ -718,7 +723,7 @@ export function MappingChips({
               : [];
 
           return (
-            <div key={slot.name} style={mappingGridStyle}>
+            <Fragment key={slot.name}>
               <div className="flex flex-col items-start gap-1 min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={cn(slotTokenClass, "text-xs truncate")}>{`{{${slot.name}}}`}</span>
@@ -761,7 +766,7 @@ export function MappingChips({
                   return (
                     <span
                       key={groupIdx}
-                      className="inline-flex min-w-0 flex-col items-start gap-1"
+                      className="inline-flex min-w-0 flex-col items-start gap-1 justify-self-start"
                     >
                       {onChangeGroup && columns ? (
                         <EditableChip
@@ -843,11 +848,11 @@ export function MappingChips({
               ) : (
                 <span />
               )}
-            </div>
+            </Fragment>
           );
         })}
         {parameters.map((param) => (
-          <div key={param.name} style={mappingGridStyle}>
+          <Fragment key={param.name}>
             <div className="flex items-center gap-2 min-w-0">
               <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
               <FamilyBadge family={param.type} />
@@ -869,7 +874,7 @@ export function MappingChips({
             ))}
             {addingGroup ? <span /> : null}
             <span />
-          </div>
+          </Fragment>
         ))}
       </div>
     </div>
