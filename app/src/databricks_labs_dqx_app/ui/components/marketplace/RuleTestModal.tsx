@@ -81,6 +81,7 @@ export function RuleTestModal({
             nativeFunction={mode === "dqx_native" ? nativeFunction : undefined}
             nativeArguments={mode === "dqx_native" ? nativeArguments : undefined}
             canTest={canTest}
+            parameters={def?.parameters ?? []}
           />
         ) : (
           <p className="text-sm italic text-muted-foreground">

@@ -18,6 +18,8 @@ export function TypedCell({
   onChange,
   onEnter,
   disabled,
+  placeholder,
+  className,
 }: {
   family: CellFamily;
   value: string | null;
@@ -25,6 +27,8 @@ export function TypedCell({
   /** Called when Enter is pressed in the cell — used to add + focus a new row. */
   onEnter?: () => void;
   disabled?: boolean;
+  placeholder?: string;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const fam = (family || "any").toLowerCase();
@@ -45,9 +49,9 @@ export function TypedCell({
       <input
         type="number"
         inputMode="decimal"
-        className={base}
+        className={className ?? base}
         style={widthStyle}
-        placeholder={t("ruleTest.cellNumberPlaceholder")}
+        placeholder={placeholder ?? t("ruleTest.cellNumberPlaceholder")}
         value={value ?? ""}
         disabled={disabled}
         onChange={(e) => set(e.target.value)}
@@ -60,7 +64,7 @@ export function TypedCell({
     return (
       <input
         type="date"
-        className={base}
+        className={className ?? base}
         value={value ?? ""}
         disabled={disabled}
         onChange={(e) => set(e.target.value)}
@@ -73,14 +77,14 @@ export function TypedCell({
   if (fam === "boolean") {
     return (
       <select
-        className="appearance-none bg-transparent border-0 outline-none h-8 w-full px-2 text-xs focus:bg-accent/40"
+        className={className ?? "appearance-none bg-transparent border-0 outline-none h-8 w-full px-2 text-xs focus:bg-accent/40"}
         value={value ?? ""}
         disabled={disabled}
         onChange={(e) => set(e.target.value)}
         onKeyDown={onKeyDown}
         aria-label={t("ruleTest.cellBooleanLabel")}
       >
-        <option value="">—</option>
+        <option value="">{placeholder ?? "—"}</option>
         <option value="true">true</option>
         <option value="false">false</option>
       </select>
@@ -91,9 +95,9 @@ export function TypedCell({
   return (
     <input
       type="text"
-      className={base}
+      className={className ?? base}
       style={widthStyle}
-      placeholder={t("ruleTest.cellTextPlaceholder")}
+      placeholder={placeholder ?? t("ruleTest.cellTextPlaceholder")}
       value={value ?? ""}
       disabled={disabled}
       onChange={(e) => set(e.target.value)}

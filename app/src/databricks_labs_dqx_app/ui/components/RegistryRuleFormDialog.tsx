@@ -85,6 +85,7 @@ import {
   type ModeSwitchDirection,
 } from "@/components/rules/lowcode/ModeSwitchDialog";
 import { RuleTestPanel } from "@/components/rules/test/RuleTestPanel";
+import { ParameterValueInput } from "@/components/rules/ParameterValueInput";
 import { useJoinedColumns } from "@/hooks/useJoinedColumns";
 import {
   bodyGranularity,
@@ -1668,6 +1669,7 @@ function ParametersPanel({
   onAcceptSlot,
   lockStructure = false,
   colorPlaceholders = false,
+  addDisabledReason,
 }: {
   value: RuleParameter[];
   onChange: (next: RuleParameter[]) => void;
@@ -1677,6 +1679,8 @@ function ParametersPanel({
   /** Built-in DQX checks: names/types come from the function signature. */
   lockStructure?: boolean;
   colorPlaceholders?: boolean;
+  /** When set, "+ Add parameter" is disabled with the same tooltip as "+ Add column". */
+  addDisabledReason?: string;
 }) {
   const { t } = useTranslation();
   const [dropActive, setDropActive] = useState(false);
@@ -1741,15 +1745,31 @@ function ParametersPanel({
         tooltip={t("rulesRegistry.parametersPanelTooltip", { example: "{{limit}}" })}
         action={
           !disabled && !lockStructure ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={add}
-              className="h-7 px-2.5 text-xs gap-1.5"
-            >
-              {t("rulesRegistry.parametersPanelAddButton")}
-            </Button>
+            addDisabledReason ? (
+              <CursorTooltip text={addDisabledReason}>
+                <span className="inline-block">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled
+                    className="h-7 px-2.5 text-xs gap-1.5"
+                  >
+                    {t("rulesRegistry.parametersPanelAddButton")}
+                  </Button>
+                </span>
+              </CursorTooltip>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={add}
+                className="h-7 px-2.5 text-xs gap-1.5"
+              >
+                {t("rulesRegistry.parametersPanelAddButton")}
+              </Button>
+            )
           ) : undefined
         }
       >
@@ -1757,10 +1777,10 @@ function ParametersPanel({
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <div className="border rounded-md bg-muted/30 px-3 py-6">
+          <div className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] flex items-center">
             <p className="text-xs text-muted-foreground">{t("rulesRegistry.parametersPanelEmpty")}</p>
             {dropActive && canDrop ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">{t("rulesRegistry.swapColumnToParameter")}</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 ml-2">{t("rulesRegistry.swapColumnToParameter")}</p>
             ) : null}
           </div>
         )}
@@ -1789,11 +1809,11 @@ function ParametersPanel({
                 handlePanelDrop(event, i);
               }}
               className={cn(
-                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto_auto] items-center gap-3",
+                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
                 canDrag && "cursor-grab active:cursor-grabbing",
               )}
             >
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {disabled || lockStructure ? (
                   <code className={cn(paramTokenClass, "text-xs", !nameOk && "text-destructive")}>
                     {`{{${param.name}}}`}
@@ -1818,6 +1838,16 @@ function ParametersPanel({
                     <span className="select-none">{"}}"}</span>
                   </label>
                 )}
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{t("rulesRegistry.parametersPanelDefaultLabel")}</span>
+                  <ParameterValueInput
+                    type={param.type}
+                    value={defaultRaw}
+                    disabled={disabled}
+                    onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
+                    aria-label={t("rulesRegistry.parametersPanelDefaultLabel")}
+                  />
+                </span>
               </div>
               {disabled || lockStructure ? (
                 <Badge variant="outline" className="text-[10px] font-medium">
@@ -1850,14 +1880,6 @@ function ParametersPanel({
                   </SelectContent>
                 </Select>
               )}
-              <Input
-                disabled={disabled}
-                value={defaultRaw}
-                placeholder={t("rulesRegistry.parametersPanelDefaultLabel")}
-                aria-label={t("rulesRegistry.parametersPanelDefaultLabel")}
-                className="h-6 w-24 text-xs"
-                onChange={(event) => setAt(i, { value: parseParamValue(param.type, event.target.value) })}
-              />
               {!disabled && !lockStructure ? (
                 <button
                   type="button"
@@ -4499,6 +4521,7 @@ export function RegistryRuleFormDialog({
           takenNames={sqlSlots.map((s) => s.name)}
           onAcceptSlot={moveSlotToParameters}
           colorPlaceholders={colorPlaceholders}
+          addDisabledReason={conditionChosen ? undefined : t("rulesRegistry.advancedGatedTooltip")}
         />
       )}
       {mode === "dqx_native" && (
@@ -5029,6 +5052,14 @@ export function RegistryRuleFormDialog({
           nativeArguments={nativeTestArguments}
           lowcodeAdvanced={lowcodeAdvanced}
           canTest={testCanRun}
+          parameters={
+            mode === "dqx_native"
+              ? nativeScalarParams.map((p) => ({
+                  ...p,
+                  value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
+                }))
+              : sqlParameters
+          }
         />
       )}
     </div>

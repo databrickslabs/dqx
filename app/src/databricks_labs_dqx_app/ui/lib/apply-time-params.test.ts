@@ -8,6 +8,8 @@ import {
   mappingGroupKey,
   mustBindParameter,
   parameterInputFamily,
+  substituteParamPlaceholders,
+  substituteSqlParameters,
   validateGroupParameterValues,
 } from "./apply-time-params";
 
@@ -116,6 +118,25 @@ describe("typed parameters", () => {
     expect(inferSqlParamType("allowed")).toBe("list");
     expect(inferSqlParamType("pattern")).toBe("regex");
     expect(inferSqlParamType("label")).toBe("string");
+  });
+
+  test("SQL substitution quotes strings and dates", () => {
+    const parameters = [
+      { name: "limit", type: "integer" as const, value: 10 },
+      { name: "cutoff", type: "date" as const, value: "2026-02-01" },
+      { name: "note", type: "string" as const, value: "it's" },
+    ];
+    expect(substituteSqlParameters("length({{column}}) > {{limit}}", parameters)).toBe(
+      "length({{column}}) > 10",
+    );
+    expect(substituteSqlParameters("d >= {{cutoff}}", parameters)).toBe("d >= DATE'2026-02-01'");
+    expect(substituteSqlParameters("msg = '{{note}}'", parameters)).toBe("msg = 'it''s'");
+  });
+
+  test("native argument trees replace whole-token placeholders", () => {
+    expect(
+      substituteParamPlaceholders({ allowed: "{{allowed}}", col: "{{column}}" }, { allowed: ["a", "b"] }),
+    ).toEqual({ allowed: ["a", "b"], col: "{{column}}" });
   });
 
   test("each type maps to a Test-rule input family", () => {
