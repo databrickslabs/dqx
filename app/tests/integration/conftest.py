@@ -29,7 +29,12 @@ from databricks.sdk.service.postgres import (
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.migrations import MigrationRunner
 from databricks_labs_dqx_app.backend.migrations.postgres import PgMigrationRunner
-from databricks_labs_dqx_app.backend.pg_executor import PgExecutor, build_pg_executor_from_connection
+from databricks_labs_dqx_app.backend.config import conf
+from databricks_labs_dqx_app.backend.pg_executor import (
+    PgExecutor,
+    build_pg_executor,
+    build_pg_executor_from_connection,
+)
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.compute_service import ComputeService
 from databricks_labs_dqx_app.backend.setup.bootstrap import BootstrapCheckers
@@ -170,6 +175,27 @@ def sql_backend(ws: WorkspaceClient, live_warehouse: object) -> StatementExecuti
     if not isinstance(warehouse_id, str) or not warehouse_id:
         raise RuntimeError("The test warehouse did not return an ID.")
     return StatementExecutionBackend(ws, warehouse_id)
+
+
+@pytest.fixture
+def lakebase_pg(ws: WorkspaceClient, make_random: Callable[[int], str]) -> Generator[PgExecutor, None, None]:
+    """Provide a Postgres executor on a throwaway schema of an existing Lakebase endpoint."""
+    endpoint = os.environ.get("DQX_LAKEBASE_ENDPOINT", "").strip()
+    if not endpoint:
+        pytest.skip("Set DQX_LAKEBASE_ENDPOINT to an endpoint the test profile can create schemas on.")
+    pg = build_pg_executor(
+        ws,
+        endpoint=endpoint,
+        database=conf.lakebase_database_name,
+        schema=f"dqx_test_{make_random(8).lower()}",
+    )
+    try:
+        yield pg
+    finally:
+        try:
+            pg.execute_no_schema(f"DROP SCHEMA IF EXISTS {pg.q(pg.schema)} CASCADE")
+        finally:
+            pg.close()
 
 
 @pytest.fixture

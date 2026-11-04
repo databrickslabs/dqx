@@ -84,7 +84,7 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_schedule_configs_history  (OLTP*) schedule config change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
  │   └── dq_migrations                (Delta) Delta migration version tracker
- │   └── wheels (volume)              ← DQX + task-runner wheels uploaded at app startup
+ │   └── wheels (volume)              ← task-runner wheel (pins DQX) uploaded at app startup
  ├── <prefix>_tmp                     ← temp views created via OBO for profiler/dryrun jobs
  ├── <prefix>_genie                   ← approved Genie views + metadata dimensions
  └── <prefix>_demo                    ← demo source tables
