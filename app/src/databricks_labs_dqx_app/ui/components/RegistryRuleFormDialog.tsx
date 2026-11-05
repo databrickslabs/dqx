@@ -3065,10 +3065,15 @@ export function RegistryRuleFormDialog({
   }, [mode, functionName, nativeSlots, selectedFn, sqlSlots, sqlPredicate, lowcodeAst, groupBy, filter]);
 
   const sqlParamsActive = mode === "sql" || mode === "lowcode";
+  // A declared parameter no condition references is a mistake in both SQL and
+  // the visual builder (whose compiled condition carries `{{param}}` for every
+  // parameter value), so it blocks saving the same way an unused column does.
   const unusedParameters =
     mode === "sql"
       ? sqlParameters.filter((p) => !sqlPredicate.includes(`{{${p.name}}}`))
-      : [];
+      : mode === "lowcode"
+        ? sqlParameters.filter((p) => !lowcodePredicate.includes(`{{${p.name}}}`))
+        : [];
   const slotNameSet = new Set(sqlSlots.map((s) => s.name));
   const parameterNamesValid =
     !sqlParamsActive ||
