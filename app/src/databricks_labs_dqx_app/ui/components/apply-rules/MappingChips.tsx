@@ -353,7 +353,9 @@ function PendingSlotChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-xs font-mono",
+        // justify-self-start: as a direct grid item it would otherwise stretch
+        // to the column width set by a long parameter value below it.
+        "inline-flex items-center gap-1 justify-self-start rounded border border-dashed px-2 py-0.5 text-xs font-mono",
         colorClass,
       )}
     >
@@ -510,7 +512,7 @@ interface MappingChipsProps {
 
 /** Approximate width in characters of a parameter value box's content: each
  *  list item plus its chip chrome, or the text, plus room for the lock icon
- *  and padding (and the number spinner). */
+ *  and padding. */
 function paramCellCh(type: RuleParameter["type"], raw: string): number {
   if (type === "list" || type === "ref_column") {
     const items = raw
@@ -519,8 +521,7 @@ function paramCellCh(type: RuleParameter["type"], raw: string): number {
       .filter(Boolean);
     return items.reduce((sum, item) => sum + item.length + 3, 0) + 8;
   }
-  const numeric = type === "number" || type === "integer" || type === "decimal";
-  return Math.max(raw.length, 4) + 6 + (numeric ? 2 : 0);
+  return Math.max(raw.length, 4) + 6;
 }
 
 function GroupParamCell({

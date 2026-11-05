@@ -74,6 +74,11 @@ function asInt(name: string, value: unknown, minimum: number | null): number {
   if (!Number.isInteger(number)) {
     throw new Error(`${name} must be a whole number.`);
   }
+  // Beyond 2^53 a JS number can't hold the whole number exactly, so a long
+  // run of digits would silently be saved as a rounded value.
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`${name} is too large.`);
+  }
   if (minimum !== null && number < minimum) {
     throw new Error(
       minimum <= 0
