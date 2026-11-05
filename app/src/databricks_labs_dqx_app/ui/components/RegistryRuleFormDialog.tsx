@@ -1276,13 +1276,17 @@ function useReorderIndicator(count: number) {
   // own `dragend` fires (the event then goes to a detached node), so also
   // clear on any drop / drag end in the document. Otherwise the stale index
   // left the row now at that position faded and hid the convert hint.
+  // The reset is deferred to after the event: a real drop is a discrete event,
+  // and React flushes the reset before running the row's onDrop, which then
+  // saw no drag in progress and didn't reorder.
   useEffect(() => {
     if (dragIndex === null) return;
-    document.addEventListener("drop", reset, true);
-    document.addEventListener("dragend", reset, true);
+    const resetAfterEvent = () => window.setTimeout(reset, 0);
+    document.addEventListener("drop", resetAfterEvent, true);
+    document.addEventListener("dragend", resetAfterEvent, true);
     return () => {
-      document.removeEventListener("drop", reset, true);
-      document.removeEventListener("dragend", reset, true);
+      document.removeEventListener("drop", resetAfterEvent, true);
+      document.removeEventListener("dragend", resetAfterEvent, true);
     };
   }, [dragIndex, reset]);
   const trackOver = (event: DragEvent<HTMLElement>) => {
