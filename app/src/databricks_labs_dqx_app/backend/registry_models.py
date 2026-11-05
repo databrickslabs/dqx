@@ -79,8 +79,7 @@ def infer_sql_param_type(name: str) -> "ParamType":
         return "date"
     if "allowed" in lowered:
         return "list"
-    if "regex" in lowered or "pattern" in lowered:
-        return "regex"
+    # regex / pattern are plain strings — no separate parameter type.
     return "string"
 
 
@@ -755,9 +754,10 @@ def set_overridable_parameters(
 ) -> dict[str, Any]:
     """Return a *new* ``user_metadata`` with ``overridable_parameters`` set.
 
-    Names not in *valid_names* (when given) are dropped. An empty list is
-    stored when *persist_empty* is true so "all parameters are fixed" is
-    explicit; otherwise the key is removed.
+    Names not in *valid_names* (when given) are dropped. Prefer omitting the
+    key when there are no unlocks — empty/unbound parameters are already
+    overridable by value, so a stored ``[]`` is misleading in the DQX JSON.
+    *persist_empty* keeps the legacy "write empty list" behaviour for tests.
     """
     allowed = set(valid_names) if valid_names is not None else None
     seen: set[str] = set()

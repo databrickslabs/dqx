@@ -128,8 +128,10 @@ export function isParameterOverridable(
 
 /**
  * Persist explicit unlocks of filled parameters only. Empty params are always
- * overridable at apply time, so they are not stored. An empty list is written
- * when the rule has parameters so "no filled unlocks" stays explicit.
+ * overridable at apply time (derived from their unbound value), so lock state
+ * does not need a DB migration or a complete per-parameter map. When there are
+ * no unlocks, omit the key entirely — an empty ``[]`` in the DQX JSON wrongly
+ * suggests "nothing is overridable".
  */
 export function userMetadataWithOverridableParameters(
   md: Record<string, unknown>,
@@ -146,7 +148,6 @@ export function userMetadataWithOverridableParameters(
   }
   const next = { ...md };
   if (cleaned.length > 0) next[OVERRIDABLE_PARAMETERS_KEY] = cleaned;
-  else if (validNames.length > 0) next[OVERRIDABLE_PARAMETERS_KEY] = [];
   else delete next[OVERRIDABLE_PARAMETERS_KEY];
   return next;
 }
