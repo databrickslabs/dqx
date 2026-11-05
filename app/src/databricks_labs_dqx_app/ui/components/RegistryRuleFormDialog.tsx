@@ -115,6 +115,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   collectAstColumnRefs,
+  renameParamInAst,
   EMPTY_LOWCODE_AST,
   isV2Ast,
   renameColumnInAst,
@@ -1246,6 +1247,22 @@ function readDndIndex(event: { dataTransfer: DataTransfer }, prefix: string): nu
   if (!raw.startsWith(prefix)) return null;
   const index = Number(raw.slice(prefix.length));
   return Number.isInteger(index) ? index : null;
+}
+
+/**
+ * Positional renames between two versions of a name list: index *i* whose
+ * name changed to one that is brand new (not anywhere in *prev*) while the
+ * old name is gone from *next*. A pure reorder ([a, b] → [b, a]) yields none,
+ * so moving rows by drag and drop doesn't rewrite references.
+ */
+function detectRenames(prev: string[], next: string[]): Array<[string, string]> {
+  if (prev.length !== next.length) return [];
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  return prev.flatMap((oldName, i): Array<[string, string]> => {
+    const newName = next[i];
+    return oldName !== newName && !prevSet.has(newName) && !nextSet.has(oldName) ? [[oldName, newName]] : [];
+  });
 }
 
 function reorderItems<T>(items: T[], from: number, to: number): T[] {
@@ -4225,17 +4242,16 @@ export function RegistryRuleFormDialog({
   const handleSlotsChange = (next: RuleSlot[]) => {
     // Detect renames by pairing slots positionally (same index, name changed).
     // Length changes are adds/removes, not renames, so skip rename detection.
-    if (mode === "lowcode" && next.length === currentSlots.length) {
-      let renamedAst = lowcodeAst;
-      let didRename = false;
-      currentSlots.forEach((prevSlot, i) => {
-        const newName = next[i]?.name;
-        if (newName !== undefined && prevSlot.name !== newName) {
-          renamedAst = renameColumnInAst(renamedAst, prevSlot.name, newName);
-          didRename = true;
-        }
-      });
-      if (didRename) setLowcodeAst(renamedAst);
+    // A pure reorder (drag and drop) is not a rename: positional pairing
+    // would read [a, b] → [b, a] as a→b then b→a and corrupt the AST.
+    if (mode === "lowcode") {
+      const renames = detectRenames(
+        currentSlots.map((s) => s.name),
+        next.map((s) => s.name),
+      );
+      if (renames.length > 0) {
+        setLowcodeAst(renames.reduce((ast, [from, to]) => renameColumnInAst(ast, from, to), lowcodeAst));
+      }
     }
     if (mode === "lowcode") {
       const prevByName = new Map(currentSlots.map((s) => [s.name, s.family]));
@@ -4468,7 +4484,11 @@ export function RegistryRuleFormDialog({
       } else {
         lowcodeCacheRef.current = null;
         setGroupBy("");
-        const imported = parseSqlToLowcode(sqlPredicate, lowcodeColumns);
+        const imported = parseSqlToLowcode(
+          sqlPredicate,
+          lowcodeColumns,
+          sqlParameters.map((p) => p.name),
+        );
         const anchor = lowcodeColumns[0]?.name ?? currentSlots[0]?.name ?? "column_1";
         const rows = imported.rows.length > 0 ? imported.rows.slice() : [seededFirstLowcodeRow(anchor)];
         // An operator picked on the way in (the selector's drill-in) still wins
@@ -4727,7 +4747,19 @@ export function RegistryRuleFormDialog({
       {(mode === "sql" || mode === "lowcode") && (
         <ParametersPanel
           value={sqlParameters}
-          onChange={setSqlParameters}
+          onChange={(next) => {
+            // Keep visual-builder `{{param}}` references on a renamed parameter.
+            if (mode === "lowcode") {
+              const renames = detectRenames(
+                sqlParameters.map((p) => p.name),
+                next.map((p) => p.name),
+              );
+              if (renames.length > 0) {
+                setLowcodeAst(renames.reduce((ast, [from, to]) => renameParamInAst(ast, from, to), lowcodeAst));
+              }
+            }
+            setSqlParameters(next);
+          }}
           disabled={readOnly}
           takenNames={sqlSlots.map((s) => s.name)}
           onAcceptSlot={moveSlotToParameters}
@@ -4916,6 +4948,7 @@ export function RegistryRuleFormDialog({
               setLowcodeAst(nextAst);
             }}
             declaredColumns={lowcodeColumns}
+            declaredParameters={sqlParameters}
             readOnly={readOnly}
             hasGroupBy={groupBy.trim().length > 0}
             renderOperator={({ family, value, onChange, isFirst }) =>

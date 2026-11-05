@@ -10,11 +10,13 @@ import { AggregatedFieldArea } from "./AggregatedFieldArea";
 import { aggregateOutputFamily, operatorValidForFamily, type Family } from "@/lib/lowcodeOperators";
 import type { AnyRow, Combinator } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import type { RuleParameter } from "@/lib/api";
 
 type Props = {
   row: AnyRow;
   isFirst: boolean;
   declaredColumns: LowcodeColumnRef[];
+  declaredParameters?: Pick<RuleParameter, "name" | "type">[];
   onChange: (next: AnyRow) => void;
   onDelete: () => void;
   readOnly?: boolean;
@@ -50,7 +52,7 @@ function familyOf(name: string, declared: LowcodeColumnRef[]): Family {
 
 // Ported 1:1 from dqlake's LowcodeRow — one condition row: IF anchor / AND-OR
 // pill, column (or aggregate) picker, operator dropdown, value cell, delete.
-export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, readOnly, renderOperator, canDelete = true, compact = false, hasGroupBy = false }: Props) {
+export function LowcodeRow({ row, isFirst, declaredColumns, declaredParameters, onChange, onDelete, readOnly, renderOperator, canDelete = true, compact = false, hasGroupBy = false }: Props) {
   const { t } = useTranslation();
   const family: Family =
     row.kind === "row"
@@ -206,7 +208,14 @@ export function LowcodeRow({ row, isFirst, declaredColumns, onChange, onDelete, 
       {renderOperator
         ? renderOperator({ family, value: row.operator, onChange: setOperator, isFirst })
         : <OperatorDropdown value={row.operator} family={family} onChange={setOperator} />}
-      <ValueCell operator={row.operator} family={family} value={row.value} onChange={setValue} declaredColumns={declaredColumns} />
+      <ValueCell
+        operator={row.operator}
+        family={family}
+        value={row.value}
+        onChange={setValue}
+        declaredColumns={declaredColumns}
+        declaredParameters={declaredParameters}
+      />
 
       {!readOnly &&
         (canDelete ? (
