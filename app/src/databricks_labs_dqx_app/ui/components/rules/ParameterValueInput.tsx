@@ -7,8 +7,10 @@ import { parameterInputFamily } from "@/lib/apply-time-params";
 import { TypedCell } from "@/components/rules/test/TypedCell";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+// No native number spinner: it's tiny, crowds the value and the lock icon,
+// and stepping by 1 isn't useful for thresholds or limits.
 const CELL_CLASS =
-  "h-6 w-full bg-transparent px-2 font-mono text-xs outline-none focus:bg-accent/40 placeholder:text-muted-foreground/50 appearance-none border-0";
+  "h-6 w-full bg-transparent px-2 font-mono text-xs outline-none focus:bg-accent/40 placeholder:text-muted-foreground/50 appearance-none border-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 
 // Content-sized bounds (in characters) for the non-`fill` value box. Without an
 // explicit width an <input> falls back to its ~20-character default.
@@ -189,10 +191,9 @@ export function ParameterValueInput({
   const { t } = useTranslation();
   const family = parameterInputFamily(type);
   const nonePlaceholder = placeholder ?? t("rulesRegistry.parametersPanelDefaultPlaceholder");
-  // Size the box to its value (or placeholder) between the min/max bounds; the
-  // number spinner needs ~2 extra characters. `fill` stretches to the parent.
-  const valueCh =
-    clampCh((value || nonePlaceholder).length, VALUE_MIN_CH, VALUE_MAX_CH) + (family === "numeric" ? 2 : 0);
+  // Size the box to its value (or placeholder) between the min/max bounds.
+  // `fill` stretches to the parent.
+  const valueCh = clampCh((value || nonePlaceholder).length, VALUE_MIN_CH, VALUE_MAX_CH);
   const cellStyle = fill ? undefined : { width: `calc(${valueCh}ch + 1rem)` };
   if (type === "list" || type === "ref_column") {
     return (

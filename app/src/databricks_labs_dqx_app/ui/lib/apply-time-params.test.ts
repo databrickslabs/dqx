@@ -76,6 +76,15 @@ describe("typed parameters", () => {
     );
   });
 
+  test("integer rejects values too large to store exactly", () => {
+    expect(coerceParameterValue({ name: "threshold", type: "integer" }, "9007199254740991")).toBe(
+      9007199254740991,
+    );
+    expect(() =>
+      coerceParameterValue({ name: "threshold", type: "integer" }, "2333423423423423423423423423"),
+    ).toThrow("threshold is too large.");
+  });
+
   test("scale-named integers may be zero but not negative", () => {
     expect(coerceParameterValue({ name: "allowed_scale", type: "integer" }, "0")).toBe(0);
     expect(() => coerceParameterValue({ name: "allowed_scale", type: "integer" }, "-1")).toThrow(
