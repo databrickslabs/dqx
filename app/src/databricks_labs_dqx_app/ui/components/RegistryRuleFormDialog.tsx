@@ -1263,7 +1263,7 @@ function reorderItems<T>(items: T[], from: number, to: number): T[] {
  * inside the `[data-reorder-panel]`) have their vertical midpoint above the
  * pointer, i.e. the final index of the dragged row. Every gap between the
  * other rows is a drop spot, and `insertAt === dragIndex` is the row's own
- * spot ("put it back"), drawn across the dragged row itself.
+ * spot ("put it back"), drawn in the gap just above the dragged row.
  */
 function useReorderIndicator(count: number) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -1314,23 +1314,21 @@ function useReorderIndicator(count: number) {
     targetIndex,
     lineBefore: (index: number) => !atOwnSpot && index !== dragIndex && gap === otherIndex(index),
     lineAfter: (index: number) => !atOwnSpot && index === lastOtherRow && gap === count - 1,
-    /** Drop spot is the dragged row's own position: draw the line across it. */
+    /** Drop spot is the dragged row's own position: the line goes in the gap
+     *  just above it (below its previous neighbour, or at the top if first). */
     lineOn: (index: number) => atOwnSpot && index === dragIndex,
   };
 }
 
-/** Horizontal drop marker drawn in the 0.5rem gap above/below a row, or across
- *  the dragged row when dropping would put it back where it was. */
-function ReorderLine({ position, className }: { position: "before" | "after" | "on"; className: string }) {
+/** Horizontal drop marker drawn in the 0.5rem gap above/below a row. */
+function ReorderLine({ position, className }: { position: "before" | "after"; className: string }) {
   return (
     <span
       aria-hidden
       data-reorder-line
       className={cn(
         "pointer-events-none absolute -left-1 -right-1 z-10 h-0.5 rounded-full",
-        position === "before" && "-top-[5px]",
-        position === "after" && "-bottom-[5px]",
-        position === "on" && "top-1/2 -translate-y-1/2",
+        position === "before" ? "-top-[5px]" : "-bottom-[5px]",
         className,
       )}
     />
@@ -1660,7 +1658,7 @@ function SlotsPanel({
             // the dragged row itself is faded.
             <div key={i} className="relative">
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-blue-500" /> : null}
-              {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-blue-500" /> : null}
+              {reorder.lineOn(i) ? <ReorderLine position="before" className="bg-blue-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-blue-500" /> : null}
               <div
                 data-reorder-row
@@ -1952,7 +1950,7 @@ function ParametersPanel({
             // the dragged row itself is faded.
             <div key={i} className="relative">
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-amber-500" /> : null}
-              {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-amber-500" /> : null}
+              {reorder.lineOn(i) ? <ReorderLine position="before" className="bg-amber-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-amber-500" /> : null}
               <div
                 data-reorder-row
