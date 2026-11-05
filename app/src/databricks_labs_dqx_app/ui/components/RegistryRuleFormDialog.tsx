@@ -1285,6 +1285,10 @@ function reorderItems<T>(items: T[], from: number, to: number): T[] {
 function useReorderIndicator(count: number) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [insertAt, setInsertAt] = useState<number | null>(null);
+  // A row is only `draggable` once a press starts on its background: with
+  // draggable always on, the browser turns a click-and-drag inside the name
+  // input into a row drag, so text there couldn't be selected.
+  const [armedIndex, setArmedIndex] = useState<number | null>(null);
   const reset = useCallback(() => {
     setDragIndex(null);
     setInsertAt(null);
@@ -1328,6 +1332,10 @@ function useReorderIndicator(count: number) {
     dragIndex,
     reordering: dragIndex !== null,
     start: (index: number) => setDragIndex(index),
+    /** Row `onMouseDown`: arm dragging unless the press is on a control. */
+    arm: (event: { target: EventTarget | null }, index: number) =>
+      setArmedIndex(isInteractiveDragTarget(event.target) ? null : index),
+    isArmed: (index: number) => armedIndex === index,
     trackOver,
     /** Hide the line while the pointer is outside the panel (the drag continues). */
     clearGap: () => setInsertAt(null),
@@ -1683,7 +1691,8 @@ function SlotsPanel({
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-blue-500" /> : null}
               <div
                 data-reorder-row
-                draggable={canDrag}
+                draggable={canDrag && reorder.isArmed(i)}
+                onMouseDown={(event) => reorder.arm(event, i)}
                 onDragStart={(event) => {
                   startPlaceholderDrag(event, `${DND_SLOT}${i}`);
                   if (!event.defaultPrevented) reorder.start(i);
@@ -1974,7 +1983,8 @@ function ParametersPanel({
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-amber-500" /> : null}
               <div
                 data-reorder-row
-                draggable={canDrag}
+                draggable={canDrag && reorder.isArmed(i)}
+                onMouseDown={(event) => reorder.arm(event, i)}
                 onDragStart={(event) => {
                   startPlaceholderDrag(event, `${DND_PARAM}${i}`);
                   if (!event.defaultPrevented) reorder.start(i);
