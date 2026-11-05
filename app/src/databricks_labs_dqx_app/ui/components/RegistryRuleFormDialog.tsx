@@ -1762,11 +1762,12 @@ function ParametersPanel({
 }) {
   const { t } = useTranslation();
   const [dropActive, setDropActive] = useState(false);
-  // Match apply-rule column/parameter badges (TEXT, LIST, …) — uppercase.
-  const typeLabel = (type: RuleParameter["type"]): string =>
-    t(`rulesRegistry.parameterType_${type}`, {
-      defaultValue: type === "regex" ? "string" : type,
-    }).toUpperCase();
+  // Sentence case, like the Variable Columns family badges. Legacy "regex"
+  // shows as String (same input, no separate type).
+  const typeLabel = (type: RuleParameter["type"]): string => {
+    const key = type === "regex" ? "string" : type;
+    return t(`rulesRegistry.parameterType_${key}`, { defaultValue: key });
+  };
   const paramTokenClass = colorPlaceholders ? PARAM_PLACEHOLDER_CLASS : "font-mono";
   const canDrag = Boolean(!disabled && !lockStructure && onAcceptSlot);
   const canDrop = Boolean(!disabled && !lockStructure && onAcceptSlot);
@@ -1988,7 +1989,7 @@ function ParametersPanel({
                 />
               </div>
               {disabled || lockStructure ? (
-                <Badge variant="outline" className="text-[10px] font-medium uppercase tracking-wide">
+                <Badge variant="outline" className="text-[10px] font-medium">
                   {typeLabel(param.type)}
                 </Badge>
               ) : (
@@ -2000,7 +2001,7 @@ function ParametersPanel({
                   }
                 >
                   <SelectTrigger
-                    className="h-6 text-[11px] w-[7.5rem] uppercase tracking-wide"
+                    className="h-6 text-[11px] w-[7.5rem]"
                     aria-label={t("rulesRegistry.parametersPanelTypeLabel")}
                   >
                     <SelectValue />
@@ -2011,12 +2012,12 @@ function ParametersPanel({
                     )
                       ? null
                       : (
-                        <SelectItem value={param.type} className="text-xs uppercase tracking-wide">
+                        <SelectItem value={param.type} className="text-xs">
                           {typeLabel(param.type)}
                         </SelectItem>
                       )}
                     {SQL_PARAMETER_TYPES.map((type) => (
-                      <SelectItem key={type} value={type} className="text-xs uppercase tracking-wide">
+                      <SelectItem key={type} value={type} className="text-xs">
                         {typeLabel(type)}
                       </SelectItem>
                     ))}
