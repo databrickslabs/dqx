@@ -2049,8 +2049,6 @@
     "parametersPanelNameLabel": "Parameter name",
     "parametersPanelTypeLabel": "Value type",
     "parametersPanelRemove": "Remove",
-    "moveToParameters": "Drag to Variable Parameters",
-    "moveToColumns": "Drag to Variable Columns",
     "parameterNameCollision": "Parameter name(s) already used by a column or reserved: {{names}}",
     "unusedParametersError": "Unused declared parameter(s): {{names}}. Reference them in the rule body, or remove them.",
     "slotFamilyNumeric": "Numeric",

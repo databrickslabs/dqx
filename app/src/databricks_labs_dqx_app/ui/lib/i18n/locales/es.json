@@ -2049,8 +2049,6 @@
     "parametersPanelNameLabel": "Nombre del parámetro",
     "parametersPanelTypeLabel": "Tipo de valor",
     "parametersPanelRemove": "Eliminar",
-    "moveToParameters": "Arrastrar a Parámetros variables",
-    "moveToColumns": "Arrastrar a Columnas variables",
     "parameterNameCollision": "Nombre(s) de parámetro ya usados por una columna o reservados: {{names}}",
     "unusedParametersError": "Parámetro(s) declarado(s) sin usar: {{names}}. Referéncialos en el cuerpo de la regla, o elimínalos.",
     "slotFamilyNumeric": "Numérico",

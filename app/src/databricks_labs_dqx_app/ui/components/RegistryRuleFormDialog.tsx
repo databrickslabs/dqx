@@ -1256,6 +1256,62 @@ function reorderItems<T>(items: T[], from: number, to: number): T[] {
   return next;
 }
 
+/**
+ * Tracks an in-panel reorder drag so the panel can draw a drop line where the
+ * row will land. `insertAt` is a gap index (0..count): hovering the top half of
+ * row i targets the gap before it, the bottom half the gap after it.
+ */
+function useReorderIndicator(count: number) {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [insertAt, setInsertAt] = useState<number | null>(null);
+  const reset = () => {
+    setDragIndex(null);
+    setInsertAt(null);
+  };
+  const trackOver = (event: DragEvent<HTMLElement>, index: number) => {
+    if (dragIndex === null) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const gap = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+    if (gap !== insertAt) setInsertAt(gap);
+  };
+  // Dropping into the gap either side of the dragged row is a no-op.
+  const effectiveGap =
+    dragIndex !== null && insertAt !== null && insertAt !== dragIndex && insertAt !== dragIndex + 1
+      ? insertAt
+      : null;
+  /** Final index for `reorderItems`, or null when the drop wouldn't move anything. */
+  const targetIndex = (): number | null => {
+    if (dragIndex === null || effectiveGap === null) return null;
+    return Math.min(effectiveGap > dragIndex ? effectiveGap - 1 : effectiveGap, count - 1);
+  };
+  return {
+    dragIndex,
+    reordering: dragIndex !== null,
+    start: (index: number) => setDragIndex(index),
+    trackOver,
+    /** Hide the line while the pointer is outside the panel (the drag continues). */
+    clearGap: () => setInsertAt(null),
+    reset,
+    targetIndex,
+    lineBefore: (index: number) => effectiveGap === index,
+    lineAfter: (index: number) => index === count - 1 && effectiveGap === count,
+  };
+}
+
+/** Horizontal drop marker drawn in the 0.5rem gap above/below a row. */
+function ReorderLine({ position, className }: { position: "before" | "after"; className: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute -left-1 -right-1 z-10 h-0.5 rounded-full",
+        position === "before" ? "-top-[5px]" : "-bottom-[5px]",
+        className,
+      )}
+    />
+  );
+}
+
 function isInteractiveDragTarget(target: EventTarget | null): boolean {
   return Boolean(
     (target as HTMLElement | null)?.closest?.(
@@ -1439,9 +1495,15 @@ function SlotsPanel({
   const canDrag = Boolean(!disabled && onMoveToParameters);
   const canDrop = Boolean(!disabled && (onAcceptParameter || onMoveToParameters));
   const columnTokenClass = colorPlaceholders ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
+  const reorder = useReorderIndicator(value.length);
+  // Highlight the panel only for a parameter dropped in from the other panel;
+  // reordering within the panel shows the drop line instead.
+  const acceptingParameter = dropActive && !reorder.reordering && Boolean(onAcceptParameter);
 
-  const handlePanelDrop = (event: DragEvent, atIndex?: number) => {
+  const handlePanelDrop = (event: DragEvent) => {
     setDropActive(false);
+    const target = reorder.targetIndex();
+    reorder.reset();
     if (disabled) return;
     const paramIndex = readDndIndex(event, DND_PARAM);
     if (paramIndex !== null) {
@@ -1453,13 +1515,13 @@ function SlotsPanel({
     const slotIndex = readDndIndex(event, DND_SLOT);
     if (slotIndex === null || !onMoveToParameters) return;
     event.preventDefault();
-    const target = atIndex ?? value.length - 1;
+    if (target === null) return;
     onChange(reorderItems(value, slotIndex, target).map((s, idx) => ({ ...s, position: idx })));
   };
 
   return (
     <div
-      className={cn("space-y-2 rounded-md", dropActive && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
+      className={cn("space-y-2 rounded-md", acceptingParameter && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
@@ -1473,6 +1535,7 @@ function SlotsPanel({
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node)) return;
         setDropActive(false);
+        reorder.clearGap();
       }}
       onDrop={(event) => handlePanelDrop(event)}
     >
@@ -1554,12 +1617,12 @@ function SlotsPanel({
         {value.length === 0 && (
           <div className="border rounded-md bg-muted/30 px-3 py-6">
             <p className="text-xs text-muted-foreground">{t("rulesRegistry.slotsPanelEmpty")}</p>
-            {dropActive && onAcceptParameter ? (
+            {acceptingParameter ? (
               <p className="text-xs text-blue-700 dark:text-blue-400 mt-2">{t("rulesRegistry.swapParameterToColumn")}</p>
             ) : null}
           </div>
         )}
-        {dropActive && value.length > 0 && onAcceptParameter ? (
+        {acceptingParameter && value.length > 0 ? (
           <p className="text-xs text-blue-700 dark:text-blue-400">{t("rulesRegistry.swapParameterToColumn")}</p>
         ) : null}
         {value.map((slot, i) => {
@@ -1569,22 +1632,29 @@ function SlotsPanel({
             <div
               key={i}
               draggable={canDrag}
-              title={canDrag ? t("rulesRegistry.moveToParameters") : undefined}
-              onDragStart={(event) => startPlaceholderDrag(event, `${DND_SLOT}${i}`)}
+              onDragStart={(event) => {
+                startPlaceholderDrag(event, `${DND_SLOT}${i}`);
+                if (!event.defaultPrevented) reorder.start(i);
+              }}
+              onDragEnd={reorder.reset}
               onDragOver={(event) => {
                 if (!canDrop) return;
                 event.preventDefault();
                 event.stopPropagation();
+                reorder.trackOver(event, i);
               }}
               onDrop={(event) => {
                 event.stopPropagation();
-                handlePanelDrop(event, i);
+                handlePanelDrop(event);
               }}
               className={cn(
-                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
+                "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
                 canDrag && "cursor-grab active:cursor-grabbing",
+                reorder.dragIndex === i && "opacity-50",
               )}
             >
+              {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-blue-500" /> : null}
+              {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-blue-500" /> : null}
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {/* Inline rename: click the name and type. Braces stay as
                     chrome so the row still reads as a {{slot}} placeholder. */}
@@ -1740,8 +1810,15 @@ function ParametersPanel({
     ]);
   const taken = new Set(takenNames);
 
-  const handlePanelDrop = (event: DragEvent, atIndex?: number) => {
+  const reorder = useReorderIndicator(value.length);
+  // Highlight the panel only for a column dropped in from the other panel;
+  // reordering within the panel shows the drop line instead.
+  const acceptingSlot = dropActive && !reorder.reordering;
+
+  const handlePanelDrop = (event: DragEvent) => {
     setDropActive(false);
+    const target = reorder.targetIndex();
+    reorder.reset();
     if (!canDrop) return;
     const slotIndex = readDndIndex(event, DND_SLOT);
     if (slotIndex !== null) {
@@ -1752,12 +1829,13 @@ function ParametersPanel({
     const paramIndex = readDndIndex(event, DND_PARAM);
     if (paramIndex === null) return;
     event.preventDefault();
-    onChange(reorderItems(value, paramIndex, atIndex ?? value.length - 1));
+    if (target === null) return;
+    onChange(reorderItems(value, paramIndex, target));
   };
 
   return (
     <div
-      className={cn("space-y-2 rounded-md", dropActive && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
+      className={cn("space-y-2 rounded-md", acceptingSlot && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
@@ -1771,6 +1849,7 @@ function ParametersPanel({
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node)) return;
         setDropActive(false);
+        reorder.clearGap();
       }}
       onDrop={(event) => handlePanelDrop(event)}
     >
@@ -1819,12 +1898,12 @@ function ParametersPanel({
         {value.length === 0 && (
           <div className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] flex items-center">
             <p className="text-xs text-muted-foreground">{t("rulesRegistry.parametersPanelEmpty")}</p>
-            {dropActive && canDrop ? (
+            {acceptingSlot && canDrop ? (
               <p className="text-xs text-amber-700 dark:text-amber-400 ml-2">{t("rulesRegistry.swapColumnToParameter")}</p>
             ) : null}
           </div>
         )}
-        {dropActive && value.length > 0 && canDrop ? (
+        {acceptingSlot && value.length > 0 && canDrop ? (
           <p className="text-xs text-amber-700 dark:text-amber-400">{t("rulesRegistry.swapColumnToParameter")}</p>
         ) : null}
         {value.map((param, i) => {
@@ -1837,22 +1916,29 @@ function ParametersPanel({
             <div
               key={i}
               draggable={canDrag}
-              title={canDrag ? t("rulesRegistry.moveToColumns") : undefined}
-              onDragStart={(event) => startPlaceholderDrag(event, `${DND_PARAM}${i}`)}
+              onDragStart={(event) => {
+                startPlaceholderDrag(event, `${DND_PARAM}${i}`);
+                if (!event.defaultPrevented) reorder.start(i);
+              }}
+              onDragEnd={reorder.reset}
               onDragOver={(event) => {
                 if (!canDrop) return;
                 event.preventDefault();
                 event.stopPropagation();
+                reorder.trackOver(event, i);
               }}
               onDrop={(event) => {
                 event.stopPropagation();
-                handlePanelDrop(event, i);
+                handlePanelDrop(event);
               }}
               className={cn(
-                "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
+                "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
                 canDrag && "cursor-grab active:cursor-grabbing",
+                reorder.dragIndex === i && "opacity-50",
               )}
             >
+              {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-amber-500" /> : null}
+              {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-amber-500" /> : null}
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {disabled || lockStructure ? (
                   <code className={cn(paramTokenClass, "text-xs", !nameOk && "text-destructive")}>
