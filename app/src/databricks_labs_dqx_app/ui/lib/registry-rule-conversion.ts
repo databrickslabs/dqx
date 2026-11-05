@@ -591,8 +591,13 @@ function resolveImportedFamily(
   return "any";
 }
 
-function withSlotsForSqlTokens(existing: RuleSlot[], ...fragments: unknown[]): RuleSlot[] {
-  const declared = new Set(existing.map((s) => s.name));
+function withSlotsForSqlTokens(
+  existing: RuleSlot[],
+  parameterNames: readonly string[],
+  ...fragments: unknown[]
+): RuleSlot[] {
+  // Declared Variable Parameters are `{{tokens}}` too, but never column slots.
+  const declared = new Set([...existing.map((s) => s.name), ...parameterNames]);
   const slots = [...existing];
   for (const fragment of fragments) {
     if (typeof fragment !== "string" || !fragment) continue;
@@ -803,6 +808,7 @@ export function parseDqxCheckJson(
     const slots = overlaySlotFamilies(
       withSlotsForSqlTokens(
         currentDefinition.slots ?? [],
+        (currentDefinition.parameters ?? []).map((p) => p.name),
         body.sql_query,
         body.predicate,
         ...((body.merge_columns as unknown[]) ?? []),

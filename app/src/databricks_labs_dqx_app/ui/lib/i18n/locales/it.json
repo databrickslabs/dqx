@@ -1939,6 +1939,8 @@
     "lowcodeTypePlaceholder": "tipo",
     "lowcodeChipPlaceholder": "valori separati da virgole",
     "lowcodeValueColumnsHeader": "Colonne",
+    "lowcodeValueParametersHeader": "Parametri",
+    "lowcodeValueColumnsAndParameters": "Colonne e parametri",
     "lowcodeValueClearColumn": "Usa un valore letterale",
     "lowcodeValueNoColumns": "Nessuna colonna compatibile",
     "lowcodeQuantileTitle": "Quantile (0–1)",
