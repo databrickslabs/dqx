@@ -172,9 +172,12 @@ export function ThresholdPill({
       }}
     >
       <PopoverTrigger asChild>
+        {/* No stopPropagation here: Radix closes an open popover only when the
+            outside click reaches the document, so stopping it on this trigger
+            left the previous pill's popover open (several stacked at once).
+            Containers that must ignore the click check the target instead. */}
         <button
           type="button"
-          onClick={(e) => e.stopPropagation()}
           aria-label={ariaLabel}
           className="focus:outline-none"
         >
