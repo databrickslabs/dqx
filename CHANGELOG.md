@@ -1,5 +1,25 @@
 # Version changelog
 
+## 0.17.2
+
+### DQX Core
+
+- Added the `is_greater_than` and `is_less_than` row-level checks ([#1644](https://github.com/databrickslabs/dqx/issues/1644)). These are the strict counterparts of `is_not_less_than` and `is_not_greater_than` and accept the same limit types (number, date, timestamp, column name, or SQL expression) and the same `allow_nulls` option.
+- Added support for datacontract-cli 1.x ([#1648](https://github.com/databrickslabs/dqx/issues/1648)). The `datacontract` extra now requires `datacontract-cli>=1.2.0,<2.0`, so DQX can be installed alongside current datacontract-cli releases. `generate_rules_from_contract` now also accepts `DataContract(data_contract=<ODCS model>)`, which previously raised `ParameterError`. Rules generated from contract files, strings, and models are unchanged.
+- Fixed date and timestamp format rules generated from ODCS contracts ([#1625](https://github.com/databrickslabs/dqx/issues/1625)). `logicalTypeOptions.format` is now passed to `is_valid_date` / `is_valid_timestamp` unchanged instead of being converted to a Python `strftime` pattern, which Spark rejected or used to flag every valid value as invalid. Contract formats written as `strftime` patterns (containing `%`) are skipped with a warning. If you generated or imported rules from a contract before this fix (e.g. in DQX Studio), regenerate them and remove the old format rules.
+- Fixed checks that require a minimum Databricks Runtime version failing inside Lakeflow Declarative Pipelines ([#1620](https://github.com/databrickslabs/dqx/issues/1620)). The `dlt:` prefix on the pipeline runtime version is now ignored, so geospatial checks no longer fail with `Cannot parse Databricks Runtime version`.
+- Fixed `import databricks.labs.dqx` failing with older Blueprint versions ([#1671](https://github.com/databrickslabs/dqx/issues/1671), [#1679](https://github.com/databrickslabs/dqx/issues/1679)). DQX now requires `databricks-labs-blueprint>=0.10.2,<=0.13`, avoiding the `install_logger() got an unexpected keyword argument 'root'` error and allowing Blueprint 0.13.
+
+### DQX Studio
+
+- DQX Studio: released Studio 0.1.2 and pinned one published DQX version for the app and task runner ([#1647](https://github.com/databrickslabs/dqx/issues/1647)). The app and task runner now install the same DQX release (`0.17.0` for Studio 0.1.2) in both DAB and Marketplace deployments, and start with `uv run --frozen` so the container installs exactly the committed lock without re-resolving at startup. Studio 0.1.2 also ships the table-approval fix from [#1640](https://github.com/databrickslabs/dqx/issues/1640). If your local `target.*.yml` still sets `dqx_task_dependency` to `${var.dqx_wheel_filename}`, remove those lines; the variable no longer exists and `bundle validate` fails until you do.
+
+BREAKING CHANGES!
+
+- The `datacontract` extra now requires `datacontract-cli>=1.2.0,<2.0`. Environments pinned to datacontract-cli 0.x must upgrade. ([#1648](https://github.com/databrickslabs/dqx/issues/1648))
+
+Contributors: @adkinsty, @akuwano, @gueniai, @laurencewells, @vb-dbrks, @ghanse
+
 ## 0.17.1
 
 ### DQX Core
