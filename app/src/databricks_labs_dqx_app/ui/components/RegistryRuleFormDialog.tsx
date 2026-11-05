@@ -1258,10 +1258,12 @@ function reorderItems<T>(items: T[], from: number, to: number): T[] {
 
 /**
  * Tracks an in-panel reorder drag so the panel can draw a drop line where the
- * row will land. `insertAt` is a gap index (0..count): the number of rows
- * (`[data-reorder-row]` inside the `[data-reorder-panel]`) whose vertical
- * midpoint is above the pointer, so it also updates over the gaps between rows,
- * the header and the space below the last row.
+ * row will land. Positions are counted among the rows NOT being dragged:
+ * `insertAt` (0..count-1) is how many of those rows (`[data-reorder-row]`
+ * inside the `[data-reorder-panel]`) have their vertical midpoint above the
+ * pointer, i.e. the final index of the dragged row. Every gap between the
+ * other rows is a drop spot, and `insertAt === dragIndex` is the row's own
+ * spot ("put it back"), drawn across the dragged row itself.
  */
 function useReorderIndicator(count: number) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -1288,21 +1290,19 @@ function useReorderIndicator(count: number) {
     const panel = event.currentTarget.closest("[data-reorder-panel]") ?? event.currentTarget;
     let gap = 0;
     panel.querySelectorAll("[data-reorder-row]").forEach((row, index) => {
+      if (index === dragIndex) return;
       const rect = row.getBoundingClientRect();
-      if (event.clientY > rect.top + rect.height / 2) gap = index + 1;
+      if (event.clientY > rect.top + rect.height / 2) gap += 1;
     });
     if (gap !== insertAt) setInsertAt(gap);
   };
-  // Dropping into the gap either side of the dragged row is a no-op.
-  const effectiveGap =
-    dragIndex !== null && insertAt !== null && insertAt !== dragIndex && insertAt !== dragIndex + 1
-      ? insertAt
-      : null;
+  const gap = dragIndex !== null ? insertAt : null;
+  const atOwnSpot = gap !== null && gap === dragIndex;
+  // Position of actual row `index` among the rows not being dragged.
+  const otherIndex = (index: number) => (dragIndex !== null && index > dragIndex ? index - 1 : index);
+  const lastOtherRow = dragIndex === count - 1 ? count - 2 : count - 1;
   /** Final index for `reorderItems`, or null when the drop wouldn't move anything. */
-  const targetIndex = (): number | null => {
-    if (dragIndex === null || effectiveGap === null) return null;
-    return Math.min(effectiveGap > dragIndex ? effectiveGap - 1 : effectiveGap, count - 1);
-  };
+  const targetIndex = (): number | null => (gap === null || atOwnSpot ? null : gap);
   return {
     dragIndex,
     reordering: dragIndex !== null,
@@ -1312,19 +1312,25 @@ function useReorderIndicator(count: number) {
     clearGap: () => setInsertAt(null),
     reset,
     targetIndex,
-    lineBefore: (index: number) => effectiveGap === index,
-    lineAfter: (index: number) => index === count - 1 && effectiveGap === count,
+    lineBefore: (index: number) => !atOwnSpot && index !== dragIndex && gap === otherIndex(index),
+    lineAfter: (index: number) => !atOwnSpot && index === lastOtherRow && gap === count - 1,
+    /** Drop spot is the dragged row's own position: draw the line across it. */
+    lineOn: (index: number) => atOwnSpot && index === dragIndex,
   };
 }
 
-/** Horizontal drop marker drawn in the 0.5rem gap above/below a row. */
-function ReorderLine({ position, className }: { position: "before" | "after"; className: string }) {
+/** Horizontal drop marker drawn in the 0.5rem gap above/below a row, or across
+ *  the dragged row when dropping would put it back where it was. */
+function ReorderLine({ position, className }: { position: "before" | "after" | "on"; className: string }) {
   return (
     <span
       aria-hidden
+      data-reorder-line
       className={cn(
         "pointer-events-none absolute -left-1 -right-1 z-10 h-0.5 rounded-full",
-        position === "before" ? "-top-[5px]" : "-bottom-[5px]",
+        position === "before" && "-top-[5px]",
+        position === "after" && "-bottom-[5px]",
+        position === "on" && "top-1/2 -translate-y-1/2",
         className,
       )}
     />
@@ -1672,10 +1678,12 @@ function SlotsPanel({
               className={cn(
                 "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
                 canDrag && "cursor-grab active:cursor-grabbing",
-                reorder.dragIndex === i && "opacity-50",
+                // Fade the dragged row's contents but not its drop line.
+                reorder.dragIndex === i && "border-dashed [&>*:not([data-reorder-line])]:opacity-40",
               )}
             >
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-blue-500" /> : null}
+              {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-blue-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-blue-500" /> : null}
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {/* Inline rename: click the name and type. Braces stay as
@@ -1960,10 +1968,12 @@ function ParametersPanel({
               className={cn(
                 "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
                 canDrag && "cursor-grab active:cursor-grabbing",
-                reorder.dragIndex === i && "opacity-50",
+                // Fade the dragged row's contents but not its drop line.
+                reorder.dragIndex === i && "border-dashed [&>*:not([data-reorder-line])]:opacity-40",
               )}
             >
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-amber-500" /> : null}
+              {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-amber-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-amber-500" /> : null}
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {disabled || lockStructure ? (
