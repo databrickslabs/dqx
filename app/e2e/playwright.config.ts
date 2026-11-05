@@ -28,10 +28,14 @@ export default defineConfig({
     trace: "off",
   },
   projects: [
+    // Runs first: takes a fresh deployment through the setup wizard (running the
+    // GRANTs it lists, verifying again) until Studio is ready. On a deployment
+    // that is already set up it only confirms readiness and changes nothing.
+    { name: "setup", testDir: "./tests/setup", workers: 1, use: browser },
     // Read-only checks; safe against any deployment.
-    { name: "smoke", testDir: "./tests/smoke", fullyParallel: true, use: browser },
+    { name: "smoke", testDir: "./tests/smoke", fullyParallel: true, dependencies: ["setup"], use: browser },
     // Read-only; nothing depends on it, so an accessibility finding never blocks the journeys.
-    { name: "accessibility", testDir: "./tests/accessibility", use: browser },
+    { name: "accessibility", testDir: "./tests/accessibility", dependencies: ["setup"], use: browser },
     // Journeys create, change and delete real objects. The setup project sweeps
     // leftovers from aborted runs first; each spec file owns its sample table and
     // runs its tests in order, while different files run in parallel.

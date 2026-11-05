@@ -6,6 +6,22 @@ import { E2E_PREFIX, E2E_TAG, runTag } from "./names";
 // assertions on server state, and cleanup. Journeys drive the UI for the step
 // under test and use this for everything around it.
 
+export interface SetupStep {
+  id: string;
+  /** pending | running | passed | action_required | failed | warning | overridden */
+  state: string;
+  code?: string;
+  summary?: string;
+  grant_statements?: string[];
+  actions?: string[];
+}
+
+export interface SetupStatus {
+  /** checking | setup_required | initializing | ready */
+  report: { state: string; steps: SetupStep[]; current_step?: string | null };
+  can_manage: boolean;
+}
+
 export interface RegistryRule {
   rule_id: string;
   mode: string;
@@ -108,6 +124,13 @@ export type StudioHttp = Pick<APIRequestContext, "get" | "post" | "put" | "patch
 
 export class StudioApi {
   constructor(private readonly http: StudioHttp) {}
+
+  // ---- setup -------------------------------------------------------------
+
+  /** Readiness report; answers before setup finishes, unlike most routes. */
+  async setupStatus(): Promise<SetupStatus> {
+    return json<SetupStatus>(await this.http.get("/api/v1/setup/status"), "setup status");
+  }
 
   // ---- identity / config -------------------------------------------------
 
