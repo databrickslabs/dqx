@@ -2554,7 +2554,17 @@ function ApplyRulesTab({
       const emptyRow =
         rowsForRule.length === 1 && (rowsForRule[0].column_mapping ?? []).length === 0 ? rowsForRule[0] : null;
       if (emptyRow) {
-        return prev.map((r) => (r === emptyRow ? { ...r, column_mapping: [group] } : r));
+        // Parameter values typed before any column was picked sit under the
+        // blank group's key; move them onto the new mapping.
+        const unmappedKey = mappingGroupKey({});
+        const params = { ...(emptyRow.parameter_values ?? {}) };
+        if (params[unmappedKey]) {
+          params[mappingGroupKey(group)] = params[unmappedKey];
+          delete params[unmappedKey];
+        }
+        return prev.map((r) =>
+          r === emptyRow ? { ...r, column_mapping: [group], parameter_values: params } : r,
+        );
       }
       const template = rowsForRule[0];
       if (!template) return prev;

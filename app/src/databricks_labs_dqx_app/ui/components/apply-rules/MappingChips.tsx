@@ -502,7 +502,9 @@ interface MappingChipsProps {
   canEditParameters?: boolean;
   bindAllParameters?: boolean;
   onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
-  /** Unlocked parameter names from the registry rule's user_metadata. Missing/empty = all fixed. */
+  /** Parameter names the applier may set (empty ones plus the author's
+   *  explicit unlocks). Only these get an entry box; locked parameters keep
+   *  the registry value and are hidden. Missing/empty = none shown. */
   overridableParameters?: string[];
 }
 
@@ -545,12 +547,10 @@ function GroupParamCell({
   const key = mappingGroupKey(group);
   const values = stored?.[key] ?? {};
   const { error } = validateGroupParameterValues(parameters, values, bindAll, overridable);
-  const locked = !overridable.includes(param.name);
+  // Pre-fill the registry default until the applier sets their own value.
   const raw = displayParameterValue(
-    locked
-      ? (isUnboundParameterValue(param.value) ? undefined : param.value)
-      : ((values[param.name] as RuleParameter["value"]) ??
-        (isUnboundParameterValue(param.value) ? undefined : param.value)),
+    (values[param.name] as RuleParameter["value"]) ??
+      (isUnboundParameterValue(param.value) ? undefined : param.value),
   );
   const invalid = error?.startsWith(`${param.name} `);
   return (
@@ -567,12 +567,11 @@ function GroupParamCell({
       <ParameterValueInput
         type={param.type}
         value={raw}
-        disabled={!canEdit || locked}
+        disabled={!canEdit}
         invalid={invalid}
         onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
         aria-label={param.name}
         fill
-        lock={{ locked }}
       />
       {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
     </span>
@@ -603,14 +602,20 @@ export function MappingChips({
 }: MappingChipsProps) {
   const { t } = useTranslation();
   const addingGroup = pendingValues !== undefined;
-  if (columnMapping.length === 0 && !onAddGroup && !addingGroup) return null;
+  // Locked parameters always use the registry value, so only the ones the
+  // applier can set get a row. Validation still sees the full list.
+  const overridable = overridableParameters ?? [];
+  const visibleParameters = parameters.filter((param) => overridable.includes(param.name));
+  if (columnMapping.length === 0 && !onAddGroup && !addingGroup && visibleParameters.length === 0) return null;
 
   // No declared slots (e.g. aggregate rule) — fall back to the flat
   // per-group rendering used before slots were threaded through.
   if (!slots || slots.length === 0) {
     return (
       <div className={cn("space-y-1", className)}>
-        {columnMapping.map((group, groupIdx) => (
+        {/* Rules without column slots still need their parameter boxes, so an
+            empty mapping renders one blank group to hold them. */}
+        {(columnMapping.length > 0 ? columnMapping : [{}]).map((group, groupIdx) => (
           <div key={groupIdx} className="flex flex-wrap items-center gap-2">
             {Object.entries(group).map(([slot, column]) => (
               <ReadonlyChip
@@ -622,9 +627,9 @@ export function MappingChips({
                 }
               />
             ))}
-            {parameters.length > 0 && Object.values(group).some(Boolean) && (
+            {visibleParameters.length > 0 && (
               <div className="w-full space-y-2">
-                {parameters.map((param) => (
+                {visibleParameters.map((param) => (
                   <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
                     <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
                     <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
@@ -636,7 +641,7 @@ export function MappingChips({
                       stored={storedParameterValues}
                       canEdit={canEditParameters}
                       bindAll={bindAllParameters}
-                      overridable={overridableParameters ?? []}
+                      overridable={overridable}
                       onChange={onParameterValuesChange}
                     />
                   </div>
@@ -665,11 +670,17 @@ export function MappingChips({
     ? slots.find((s) => !pendingValues?.[s.name])?.name
     : undefined;
 
-  const slotTokenClass = parameters.length > 0 ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
+  const slotTokenClass = visibleParameters.length > 0 ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
   const filledGroups = columnMapping
     .map((group, groupIdx) => ({ group, groupIdx }))
     .filter(({ group }) => slotNames.some((s) => Boolean(group[s])));
-  const showEmptyMapping = filledGroups.length === 0 && !addingGroup && !onAddGroup;
+  // With nothing mapped yet, keep a value column so the parameter boxes still
+  // show: "No column mapped" in the slot rows, the entry boxes below it.
+  const showEmptyMapping =
+    filledGroups.length === 0 && !addingGroup && (!onAddGroup || visibleParameters.length > 0);
+  // Parameter boxes typed before any column is picked live on a blank group
+  // (the caller moves them onto the first mapping once it is chosen).
+  const showUnmappedParams = filledGroups.length === 0 && (addingGroup || showEmptyMapping);
   const valueCols = filledGroups.length + (addingGroup ? 1 : 0) + (showEmptyMapping ? 1 : 0);
   const mappingGridStyle = {
     display: "grid",
@@ -766,7 +777,7 @@ export function MappingChips({
               <span className="text-muted-foreground text-xs justify-self-center self-center">
                 &rarr;
               </span>
-              {filled.length === 0 && !onAddGroup && !addingGroup ? (
+              {showEmptyMapping ? (
                 <span className="text-xs text-muted-foreground italic">
                   {t("monitoredTables.noColumnMapped")}
                 </span>
@@ -871,7 +882,7 @@ export function MappingChips({
             </Fragment>
           );
         })}
-        {parameters.map((param) => (
+        {visibleParameters.map((param) => (
           <Fragment key={param.name}>
             <div className="flex items-center gap-2 min-w-0">
               <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
@@ -888,11 +899,25 @@ export function MappingChips({
                 stored={storedParameterValues}
                 canEdit={canEditParameters}
                 bindAll={bindAllParameters}
-                overridable={overridableParameters ?? []}
+                overridable={overridable}
                 onChange={onParameterValuesChange}
               />
             ))}
-            {addingGroup ? <span /> : null}
+            {showUnmappedParams ? (
+              <GroupParamCell
+                group={{}}
+                groupIdx={0}
+                param={param}
+                parameters={parameters}
+                stored={storedParameterValues}
+                canEdit={canEditParameters}
+                bindAll={bindAllParameters}
+                overridable={overridable}
+                onChange={onParameterValuesChange}
+              />
+            ) : addingGroup ? (
+              <span />
+            ) : null}
             <span />
           </Fragment>
         ))}
