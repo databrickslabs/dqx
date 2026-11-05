@@ -691,7 +691,11 @@ export function MappingChips({
     gridTemplateColumns: `max-content 24px${valueCols > 0 ? ` repeat(${valueCols}, max-content)` : ""} max-content`,
     columnGap: "0.5rem",
     rowGap: "0.5rem",
-    alignItems: "center",
+    // Top-align so each row's first line lines up even when a cell is taller
+    // (matched governed-tag chips under a column chip pushed the arrow and
+    // "+ Apply to another column" down to the middle of the taller cell).
+    // Labels, arrows and the add button are sized to a chip's 1.375rem.
+    alignItems: "start",
     justifyContent: "start",
     width: "max-content",
     maxWidth: "100%",
@@ -760,7 +764,7 @@ export function MappingChips({
           return (
             <Fragment key={slot.name}>
               <div className="flex flex-col items-start gap-1 min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 min-h-[1.375rem]">
                   <span className={cn(slotTokenClass, "text-xs truncate")}>{`{{${slot.name}}}`}</span>
                   <FamilyBadge family={slot.family} />
                 </div>
@@ -778,11 +782,11 @@ export function MappingChips({
                   </span>
                 )}
               </div>
-              <span className="text-muted-foreground text-xs justify-self-center self-center">
+              <span className="text-muted-foreground text-xs justify-self-center flex h-[1.375rem] items-center">
                 &rarr;
               </span>
               {showEmptyMapping ? (
-                <span className="text-xs text-muted-foreground italic">
+                <span className="text-xs text-muted-foreground italic leading-[1.375rem]">
                   {t("monitoredTables.noColumnMapped")}
                 </span>
               ) : (
@@ -888,11 +892,12 @@ export function MappingChips({
         })}
         {visibleParameters.map((param) => (
           <Fragment key={param.name}>
-            <div className="flex items-center gap-2 min-w-0">
+            {/* Parameter rows match the 1.5rem value box instead of a chip. */}
+            <div className="flex items-center gap-2 min-w-0 min-h-6">
               <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
               <FamilyBadge family={param.type === "regex" ? "string" : param.type} />
             </div>
-            <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+            <span className="text-muted-foreground text-xs justify-self-center flex h-6 items-center">&rarr;</span>
             {filledGroups.map(({ group, groupIdx }) => (
               <GroupParamCell
                 key={groupIdx}
