@@ -65,6 +65,17 @@ class TestOverlayAndSubstitute:
         unlocked = overlay_parameters(params, {"limit": 40}, overridable={"limit"})
         assert unlocked[0].value == 40
 
+    def test_empty_param_is_overridable_without_explicit_metadata(self):
+        from databricks_labs_dqx_app.backend.registry_models import get_overridable_parameters
+
+        params = [_param("limit", "number", None), _param("scale", "number", 2)]
+        assert get_overridable_parameters({}, params) == ["limit"]
+        overlaid = overlay_parameters(
+            params, {"limit": 40, "scale": 9}, overridable=set(get_overridable_parameters({}, params))
+        )
+        assert overlaid[0].value == 40
+        assert overlaid[1].value == 2
+
     def test_substitute_replaces_whole_placeholder_with_number(self):
         assert substitute_param_placeholders("{{column_max_length}}", {"column_max_length": 12}) == 12
         assert (

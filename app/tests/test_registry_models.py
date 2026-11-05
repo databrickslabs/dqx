@@ -321,15 +321,25 @@ def test_slot_tags_key_is_reserved():
     assert RESERVED_SLOT_TAGS_KEY in RESERVED_RULE_METADATA_KEYS
 
 
-def test_overridable_parameters_default_fixed_and_roundtrip():
+def test_overridable_parameters_empty_always_unlocked_filled_default_locked():
     from databricks_labs_dqx_app.backend.registry_models import (
         RESERVED_OVERRIDABLE_PARAMETERS_KEY,
+        RuleParameter,
         get_overridable_parameters,
         set_overridable_parameters,
     )
 
     assert RESERVED_OVERRIDABLE_PARAMETERS_KEY == "overridable_parameters"
-    assert get_overridable_parameters({}) == []
+    empty = RuleParameter(name="limit", type="integer", value=None)
+    filled = RuleParameter(name="scale", type="integer", value=2)
+    placeholder = RuleParameter(name="threshold", type="decimal", value="{{threshold}}")
+    # No metadata: empty/placeholder overridable, filled fixed.
+    assert get_overridable_parameters({}, [empty, filled, placeholder]) == ["limit", "threshold"]
+    # Explicit unlock opens a filled default; empty stays overridable either way.
+    assert get_overridable_parameters(
+        {"overridable_parameters": ["scale", "limit"]},
+        [empty, filled],
+    ) == ["limit", "scale"]
     assert get_overridable_parameters({"overridable_parameters": ["limit", "limit", 3, ""]}) == ["limit"]
     written = set_overridable_parameters({}, ["allowed", "limit"], valid_names=["limit", "scale"], persist_empty=True)
     assert written["overridable_parameters"] == ["limit"]

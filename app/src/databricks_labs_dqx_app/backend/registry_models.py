@@ -707,22 +707,42 @@ def set_slot_tags(user_metadata: dict[str, Any], mapping: dict[str, list[str]]) 
     return updated
 
 
-def get_overridable_parameters(user_metadata: dict[str, Any] | None) -> list[str]:
+_PARAM_VALUE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}$")
+
+
+def parameter_value_is_unbound(value: RuleParamValue) -> bool:
+    """True when a registry parameter has no concrete value yet (must be filled at apply)."""
+    if value is None:
+        return True
+    return isinstance(value, str) and _PARAM_VALUE_PLACEHOLDER_RE.match(value.strip()) is not None
+
+
+def get_overridable_parameters(
+    user_metadata: dict[str, Any] | None,
+    parameters: list[RuleParameter] | None = None,
+) -> list[str]:
     """Parameter names that may be overridden at apply time.
 
-    Missing or malformed ``overridable_parameters`` means none — every
-    parameter is fixed to the registry default. Default-locked matches the
-    authoring UI (unlock per parameter to allow apply-time values).
+    Empty / unbound parameters are always overridable — otherwise a blank
+    locked value could never be filled and the rule could not run. Filled
+    parameters default to fixed; names listed in ``overridable_parameters``
+    are the author's explicit unlocks of those filled defaults.
     """
     raw = (user_metadata or {}).get(RESERVED_OVERRIDABLE_PARAMETERS_KEY)
-    if not isinstance(raw, list):
-        return []
-    seen: set[str] = set()
+    explicit: list[str] = []
+    if isinstance(raw, list):
+        seen: set[str] = set()
+        for name in raw:
+            if isinstance(name, str) and name and name not in seen:
+                seen.add(name)
+                explicit.append(name)
+    if parameters is None:
+        return explicit
+    explicit_set = set(explicit)
     out: list[str] = []
-    for name in raw:
-        if isinstance(name, str) and name and name not in seen:
-            seen.add(name)
-            out.append(name)
+    for param in parameters:
+        if parameter_value_is_unbound(param.value) or param.name in explicit_set:
+            out.append(param.name)
     return out
 
 

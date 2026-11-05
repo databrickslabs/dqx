@@ -170,12 +170,14 @@ import {
   PARAM_PLACEHOLDER_CLASS,
   SQL_PARAMETER_TYPES,
   inferSqlParamType,
+  isUnboundParameterValue,
   partitionPlaceholderSlots,
 } from "@/lib/apply-time-params";
 import {
   buildDqxCheckJson,
   COLUMN_KINDS,
   deriveSlotsAndParameters,
+  explicitOverridableParametersFromUserMetadata,
   fnSupportsNegate,
   listColumnArgKey,
   nativeArguments,
@@ -183,7 +185,6 @@ import {
   parseParamValue,
   paramValueToRaw,
   severityValueCriticality,
-  overridableParametersFromUserMetadata,
   slotTagsFromUserMetadata,
   userMetadataWithOverridableParameters,
   userMetadataWithSlotTags,
@@ -1697,11 +1698,25 @@ function ParametersPanel({
   const canDrag = Boolean(!disabled && !lockStructure && onAcceptSlot);
   const canDrop = Boolean(!disabled && !lockStructure && onAcceptSlot);
 
+  // Explicit unlocks of *filled* defaults only. Empty params are always
+  // overridable at apply time (otherwise a blank locked value can never run).
   const unlocked = overridableNames ?? [];
   const setUnlocked = (names: string[]) => onOverridableNamesChange?.(names);
   const setAt = (i: number, patch: Partial<RuleParameter>) => {
-    if (typeof patch.name === "string" && patch.name !== value[i].name) {
-      setUnlocked(unlocked.map((name) => (name === value[i].name ? patch.name! : name)));
+    const current = value[i];
+    if (typeof patch.name === "string" && patch.name !== current.name) {
+      setUnlocked(unlocked.map((name) => (name === current.name ? patch.name! : name)));
+    }
+    if ("value" in patch) {
+      const nowUnbound = isUnboundParameterValue(patch.value);
+      const wasUnbound = isUnboundParameterValue(current.value);
+      if (nowUnbound) {
+        // Cleared → unlocked by default; drop any explicit unlock entry.
+        setUnlocked(unlocked.filter((name) => name !== current.name));
+      } else if (wasUnbound) {
+        // Just filled → locked by default (not in the unlock list).
+        setUnlocked(unlocked.filter((name) => name !== current.name));
+      }
     }
     const next = value.slice();
     next[i] = { ...next[i], ...patch };
@@ -1867,15 +1882,19 @@ function ParametersPanel({
                   onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
                   aria-label={param.name}
                   lock={{
-                    locked: !unlocked.includes(param.name),
-                    onToggle: disabled
-                      ? undefined
-                      : (locked) =>
-                          setUnlocked(
-                            locked
-                              ? unlocked.filter((name) => name !== param.name)
-                              : [...unlocked.filter((name) => name !== param.name), param.name],
-                          ),
+                    // Empty → unlocked (must be fillable at apply). Filled → locked
+                    // unless the author explicitly unlocked it.
+                    locked:
+                      !isUnboundParameterValue(param.value) && !unlocked.includes(param.name),
+                    onToggle:
+                      disabled || isUnboundParameterValue(param.value)
+                        ? undefined
+                        : (locked) =>
+                            setUnlocked(
+                              locked
+                                ? unlocked.filter((name) => name !== param.name)
+                                : [...unlocked.filter((name) => name !== param.name), param.name],
+                            ),
                   }}
                 />
               </div>
@@ -2113,7 +2132,7 @@ function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
     sqlParameters: isNative ? [] : sqlSlotsAndParameters(rule).parameters,
     nativeSlots: isNative ? (rule.definition?.slots ?? []) : [],
     slotTags: slotTagsFromUserMetadata(md),
-    overridableParameters: [...overridableParametersFromUserMetadata(md)].sort(),
+    overridableParameters: [...explicitOverridableParametersFromUserMetadata(md)].sort(),
     lowcodeAst: rule.mode === "lowcode" && isV2Ast(storedAst) ? storedAst : EMPTY_LOWCODE_AST,
     groupBy: rule.mode === "lowcode" && typeof body.group_by === "string" ? body.group_by : "",
     authorKind: rule.author_kind ?? undefined,
@@ -2436,7 +2455,9 @@ export function RegistryRuleFormDialog({
     // apply-on-tag: hydrate the slot -> tags map (nested object, ignored by the
     // string-only `freeTags` loop above). Empty for a brand-new rule.
     setSlotTags(sourceRule ? slotTagsFromUserMetadata(md) : {});
-    setOverridableParameters(sourceRule ? overridableParametersFromUserMetadata(md) : []);
+    setOverridableParameters(
+      sourceRule ? explicitOverridableParametersFromUserMetadata(md) : [],
+    );
 
     if (sourceRule) {
       setDecisionPointChosen(true);
@@ -3079,8 +3100,24 @@ export function RegistryRuleFormDialog({
       if (currentSlotNames.has(slot)) prunedSlotTags[slot] = slotTagList;
     }
     const withSlots = userMetadataWithSlotTags(md, prunedSlotTags);
-    const paramNames = (mode === "dqx_native" ? derivedParams : sqlParameters).map((p) => p.name);
-    return userMetadataWithOverridableParameters(withSlots, overridableParameters, paramNames);
+    // Only persist explicit unlocks of *filled* parameters. Empty ones are
+    // always overridable at apply time and must not appear as "locked".
+    const currentParams =
+      mode === "dqx_native"
+        ? derivedParams.map((p) => ({
+            name: p.name,
+            value: parseParamValue(p.type, paramRawValues[p.name] ?? ""),
+          }))
+        : sqlParameters;
+    const filledNames = new Set(
+      currentParams.filter((p) => !isUnboundParameterValue(p.value)).map((p) => p.name),
+    );
+    const explicitUnlocks = overridableParameters.filter((name) => filledNames.has(name));
+    return userMetadataWithOverridableParameters(
+      withSlots,
+      explicitUnlocks,
+      currentParams.map((p) => p.name),
+    );
   };
 
   // Write a parsed "As JSON" edit (item 11) back into the form state. Mirrors
@@ -3146,7 +3183,7 @@ export function RegistryRuleFormDialog({
     // values), so a JSON round-trip that omits `slot_tags` clears the map —
     // consistent with how the JSON surface treats any non-string metadata.
     setSlotTags(slotTagsFromUserMetadata(parsed.userMetadata));
-    setOverridableParameters(overridableParametersFromUserMetadata(parsed.userMetadata));
+    setOverridableParameters(explicitOverridableParametersFromUserMetadata(parsed.userMetadata));
     // JSON is mostly the implementation body — land the owner there to review.
     setPageTab("implementation");
     toast.success(t("rulesRegistry.jsonAppliedToForm"));

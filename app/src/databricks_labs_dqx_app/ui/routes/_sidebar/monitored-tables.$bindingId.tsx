@@ -2372,7 +2372,10 @@ function ApplyRulesTab({
           columns,
           registry?.definition.parameters ?? [],
           registry?.mode === "sql" || registry?.mode === "lowcode",
-          overridableParametersFromUserMetadata(registry?.user_metadata as Record<string, unknown> | undefined),
+          overridableParametersFromUserMetadata(
+            registry?.user_metadata as Record<string, unknown> | undefined,
+            registry?.definition.parameters ?? [],
+          ),
         );
       }),
     [mergedRules, ruleById, columns],

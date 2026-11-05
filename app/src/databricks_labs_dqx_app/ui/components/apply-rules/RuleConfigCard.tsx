@@ -729,6 +729,7 @@ export function RuleConfigCard({
   const bindAllParameters = bindsEveryParameter(registryRule?.mode);
   const overridableParameters = overridableParametersFromUserMetadata(
     registryRule?.user_metadata as Record<string, unknown> | undefined,
+    parameters,
   );
   // Pass live columns so missing / type-mismatched mappings count as
   // needs-attention alongside incomplete slot fills (schema-drift P0).
