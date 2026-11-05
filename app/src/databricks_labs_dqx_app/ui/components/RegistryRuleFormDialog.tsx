@@ -1258,20 +1258,39 @@ function reorderItems<T>(items: T[], from: number, to: number): T[] {
 
 /**
  * Tracks an in-panel reorder drag so the panel can draw a drop line where the
- * row will land. `insertAt` is a gap index (0..count): hovering the top half of
- * row i targets the gap before it, the bottom half the gap after it.
+ * row will land. `insertAt` is a gap index (0..count): the number of rows
+ * (`[data-reorder-row]` inside the `[data-reorder-panel]`) whose vertical
+ * midpoint is above the pointer, so it also updates over the gaps between rows,
+ * the header and the space below the last row.
  */
 function useReorderIndicator(count: number) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [insertAt, setInsertAt] = useState<number | null>(null);
-  const reset = () => {
+  const reset = useCallback(() => {
     setDragIndex(null);
     setInsertAt(null);
-  };
-  const trackOver = (event: DragEvent<HTMLElement>, index: number) => {
+  }, []);
+  // A row dragged into the other panel is removed from this one before its
+  // own `dragend` fires (the event then goes to a detached node), so also
+  // clear on any drop / drag end in the document. Otherwise the stale index
+  // left the row now at that position faded and hid the convert hint.
+  useEffect(() => {
     if (dragIndex === null) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const gap = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+    document.addEventListener("drop", reset, true);
+    document.addEventListener("dragend", reset, true);
+    return () => {
+      document.removeEventListener("drop", reset, true);
+      document.removeEventListener("dragend", reset, true);
+    };
+  }, [dragIndex, reset]);
+  const trackOver = (event: DragEvent<HTMLElement>) => {
+    if (dragIndex === null) return;
+    const panel = event.currentTarget.closest("[data-reorder-panel]") ?? event.currentTarget;
+    let gap = 0;
+    panel.querySelectorAll("[data-reorder-row]").forEach((row, index) => {
+      const rect = row.getBoundingClientRect();
+      if (event.clientY > rect.top + rect.height / 2) gap = index + 1;
+    });
     if (gap !== insertAt) setInsertAt(gap);
   };
   // Dropping into the gap either side of the dragged row is a no-op.
@@ -1522,10 +1541,12 @@ function SlotsPanel({
   return (
     <div
       className={cn("space-y-2 rounded-md", acceptingParameter && canDrop && "ring-2 ring-blue-400/70 ring-offset-2")}
+      data-reorder-panel
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
+        reorder.trackOver(event);
       }}
       onDragEnter={(event) => {
         if (!canDrop) return;
@@ -1631,6 +1652,7 @@ function SlotsPanel({
           return (
             <div
               key={i}
+              data-reorder-row
               draggable={canDrag}
               onDragStart={(event) => {
                 startPlaceholderDrag(event, `${DND_SLOT}${i}`);
@@ -1641,7 +1663,7 @@ function SlotsPanel({
                 if (!canDrop) return;
                 event.preventDefault();
                 event.stopPropagation();
-                reorder.trackOver(event, i);
+                reorder.trackOver(event);
               }}
               onDrop={(event) => {
                 event.stopPropagation();
@@ -1837,10 +1859,12 @@ function ParametersPanel({
   return (
     <div
       className={cn("space-y-2 rounded-md", acceptingSlot && canDrop && "ring-2 ring-amber-400/70 ring-offset-2")}
+      data-reorder-panel
       onDragOver={(event) => {
         if (!canDrop) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
+        reorder.trackOver(event);
       }}
       onDragEnter={(event) => {
         if (!canDrop) return;
@@ -1916,6 +1940,7 @@ function ParametersPanel({
           return (
             <div
               key={i}
+              data-reorder-row
               draggable={canDrag}
               onDragStart={(event) => {
                 startPlaceholderDrag(event, `${DND_PARAM}${i}`);
@@ -1926,7 +1951,7 @@ function ParametersPanel({
                 if (!canDrop) return;
                 event.preventDefault();
                 event.stopPropagation();
-                reorder.trackOver(event, i);
+                reorder.trackOver(event);
               }}
               onDrop={(event) => {
                 event.stopPropagation();
