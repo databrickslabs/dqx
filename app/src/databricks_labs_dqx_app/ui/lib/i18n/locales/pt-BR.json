@@ -2182,6 +2182,8 @@
     "saveAndPublishButton": "Salvar e publicar",
     "submitting": "Enviando…",
     "submitDisabledNoChangesHint": "Nenhuma alteração para enviar — as verificações desta tabela já estão aprovadas.",
+    "submitDisabledNeedsAttentionHint_one": "Corrija a regra que precisa de atenção em Aplicar regras antes de enviar.",
+    "submitDisabledNeedsAttentionHint_other": "Corrija as {{count}} regras que precisam de atenção em Aplicar regras antes de enviar.",
     "submitDisabledNeedsDraftRunHint": "Uma execução de rascunho é necessária antes de você enviar para revisão",
     "submitDisabledStaleDraftRunHint": "Você não pode enviar para aprovação sem antes executar seu rascunho",
     "toastPublished": "Tabela publicada.",
