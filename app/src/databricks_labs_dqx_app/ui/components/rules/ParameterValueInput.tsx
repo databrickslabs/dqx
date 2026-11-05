@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Lock, LockOpen } from "lucide-react";
+import { LockKeyhole, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RuleParameter } from "@/lib/api";
 import { parameterInputFamily } from "@/lib/apply-time-params";
@@ -21,7 +21,7 @@ function LockAffordance({ locked, onToggle }: ParameterLock) {
   const label = locked
     ? t("rulesRegistry.parametersPanelCannotOverrideTooltip")
     : t("rulesRegistry.parametersPanelCanOverrideTooltip");
-  const icon = locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />;
+  const icon = locked ? <LockKeyhole className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />;
   const node = onToggle ? (
     <button
       type="button"

@@ -341,12 +341,13 @@ def test_overridable_parameters_empty_always_unlocked_filled_default_locked():
         [empty, filled],
     ) == ["limit", "scale"]
     assert get_overridable_parameters({"overridable_parameters": ["limit", "limit", 3, ""]}) == ["limit"]
-    written = set_overridable_parameters({}, ["allowed", "limit"], valid_names=["limit", "scale"], persist_empty=True)
+    written = set_overridable_parameters({}, ["allowed", "limit"], valid_names=["limit", "scale"])
     assert written["overridable_parameters"] == ["limit"]
-    all_fixed = set_overridable_parameters({"name": "x"}, [], valid_names=["limit"], persist_empty=True)
-    assert all_fixed["overridable_parameters"] == []
-    omitted = set_overridable_parameters({"name": "x"}, [], valid_names=[], persist_empty=False)
+    # Prefer omitting the key over writing [] — empty params are already overridable by value.
+    omitted = set_overridable_parameters({"name": "x", "overridable_parameters": ["limit"]}, [], valid_names=["limit"])
     assert "overridable_parameters" not in omitted
+    legacy_empty = set_overridable_parameters({"name": "x"}, [], valid_names=["limit"], persist_empty=True)
+    assert legacy_empty["overridable_parameters"] == []
 
 
 def test_reserved_mapped_columns_key_value():

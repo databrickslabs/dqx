@@ -490,12 +490,13 @@ describe("overridable_parameters helpers", () => {
     ).toEqual(["limit", "scale", "threshold"]);
   });
 
-  test("round-trips unlocked names and persists empty list when params exist", () => {
+  test("round-trips unlocked names and omits the key when there are no unlocks", () => {
     const md = userMetadataWithOverridableParameters({ name: "x" }, ["limit", "bogus"], ["limit", "scale"]);
     expect(md.overridable_parameters).toEqual(["limit"]);
     expect(overridableParametersFromUserMetadata(md)).toEqual(["limit"]);
+    // No explicit unlocks → omit the key (empty [] wrongly reads as "nothing overridable").
     const allFixed = userMetadataWithOverridableParameters({ name: "x" }, [], ["limit"]);
-    expect(allFixed.overridable_parameters).toEqual([]);
+    expect("overridable_parameters" in allFixed).toBe(false);
     const noParams = userMetadataWithOverridableParameters({ overridable_parameters: ["limit"] }, [], []);
     expect("overridable_parameters" in noParams).toBe(false);
   });

@@ -855,7 +855,7 @@ export function MappingChips({
           <Fragment key={param.name}>
             <div className="flex items-center gap-2 min-w-0">
               <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
-              <FamilyBadge family={param.type} />
+              <FamilyBadge family={param.type === "regex" ? "string" : param.type} />
             </div>
             <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
             {filledGroups.map(({ group, groupIdx }) => (

@@ -122,7 +122,8 @@ describe("typed parameters", () => {
     expect(inferSqlParamType("max_value")).toBe("decimal");
     expect(inferSqlParamType("reference_date")).toBe("date");
     expect(inferSqlParamType("allowed")).toBe("list");
-    expect(inferSqlParamType("pattern")).toBe("regex");
+    expect(inferSqlParamType("pattern")).toBe("string");
+    expect(inferSqlParamType("regex")).toBe("string");
     expect(inferSqlParamType("label")).toBe("string");
   });
 

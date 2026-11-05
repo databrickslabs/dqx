@@ -246,12 +246,12 @@ export function inferSqlParamType(name: string): RuleParameter["type"] {
   }
   if (lowered.includes("date")) return "date";
   if (lowered.includes("allowed")) return "list";
-  if (lowered.includes("regex") || lowered.includes("pattern")) return "regex";
+  // regex / pattern are plain strings — no separate parameter type.
   return "string";
 }
 
 /** Parameter types an author can declare on a SQL rule, in picker order. */
-export const SQL_PARAMETER_TYPES = ["integer", "decimal", "date", "string", "list", "boolean", "regex"] as const;
+export const SQL_PARAMETER_TYPES = ["string", "integer", "decimal", "date", "list", "boolean"] as const;
 
 /** The Test-rule cell family that renders the right input for a parameter type. */
 export function parameterInputFamily(type: RuleParameter["type"]): "numeric" | "temporal" | "boolean" | "text" {
