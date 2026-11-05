@@ -2182,6 +2182,8 @@
     "saveAndPublishButton": "Save & publish",
     "submitting": "Submitting…",
     "submitDisabledNoChangesHint": "No changes to submit — this table's checks are already approved.",
+    "submitDisabledNeedsAttentionHint_one": "Fix the {{count}} rule that needs attention on Apply Rules before submitting.",
+    "submitDisabledNeedsAttentionHint_other": "Fix the {{count}} rules that need attention on Apply Rules before submitting.",
     "submitDisabledNeedsDraftRunHint": "A draft run is required before you submit for review",
     "submitDisabledStaleDraftRunHint": "You cannot submit for approval without first running your draft",
     "toastPublished": "Table published.",

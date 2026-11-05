@@ -77,8 +77,22 @@ export function computeStatus(
     return { kind: "no-mapping-needed", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   const groups = rule.column_mapping ?? [];
+  // A rule with column slots but no column mapped yet produces no check, so it
+  // needs attention ("1 of 1 mapping incomplete") rather than reading as done.
+  if (slotNames.length > 0 && !groups.some((g) => slotNames.some((s) => Boolean(g[s])))) {
+    return { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, drift };
+  }
   if (groups.length === 0) {
-    return { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0, drift };
+    // No column slots: the parameters live on the blank mapping group.
+    const { error } = validateGroupParameterValues(
+      parameters,
+      rule.parameter_values?.[mappingGroupKey({})],
+      bindAll,
+      overridableNames,
+    );
+    return error
+      ? { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, drift }
+      : { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   let incomplete = 0;
   for (const g of groups) {

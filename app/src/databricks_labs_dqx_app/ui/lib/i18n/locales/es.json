@@ -2182,6 +2182,8 @@
     "saveAndPublishButton": "Guardar y publicar",
     "submitting": "Enviando…",
     "submitDisabledNoChangesHint": "No hay cambios que enviar — los controles de esta tabla ya están aprobados.",
+    "submitDisabledNeedsAttentionHint_one": "Corrige la regla que requiere atención en Aplicar reglas antes de enviar.",
+    "submitDisabledNeedsAttentionHint_other": "Corrige las {{count}} reglas que requieren atención en Aplicar reglas antes de enviar.",
     "submitDisabledNeedsDraftRunHint": "Se requiere una ejecución de borrador antes de que envíes a revisión",
     "submitDisabledStaleDraftRunHint": "No puedes enviar para aprobación sin antes ejecutar tu borrador",
     "toastPublished": "Tabla publicada.",
