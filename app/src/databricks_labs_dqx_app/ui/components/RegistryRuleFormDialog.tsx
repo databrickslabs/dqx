@@ -1684,7 +1684,6 @@ function SlotsPanel({
                 }}
                 className={cn(
                   "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
-                  canDrag && "cursor-grab active:cursor-grabbing",
                   reorder.dragIndex === i && "border-dashed opacity-40",
                 )}
               >
@@ -1976,7 +1975,6 @@ function ParametersPanel({
                 }}
                 className={cn(
                   "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
-                  canDrag && "cursor-grab active:cursor-grabbing",
                   reorder.dragIndex === i && "border-dashed opacity-40",
                 )}
               >
