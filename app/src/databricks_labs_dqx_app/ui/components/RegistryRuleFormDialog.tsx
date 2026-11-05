@@ -1642,10 +1642,10 @@ function SlotsPanel({
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <div className="border rounded-md bg-muted/30 px-3 py-6">
+          <div className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] flex flex-col justify-center">
             <p className="text-xs text-muted-foreground">{t("rulesRegistry.slotsPanelEmpty")}</p>
             {acceptingParameter ? (
-              <p className="text-xs text-blue-700 dark:text-blue-400 mt-2">{t("rulesRegistry.swapParameterToColumn")}</p>
+              <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">{t("rulesRegistry.swapParameterToColumn")}</p>
             ) : null}
           </div>
         )}
@@ -1656,103 +1656,105 @@ function SlotsPanel({
           const nameOk = SLOT_NAME_PATTERN.test(slot.name);
           const removable = canRemoveSlot(slot, i);
           return (
-            <div
-              key={i}
-              data-reorder-row
-              draggable={canDrag}
-              onDragStart={(event) => {
-                startPlaceholderDrag(event, `${DND_SLOT}${i}`);
-                if (!event.defaultPrevented) reorder.start(i);
-              }}
-              onDragEnd={reorder.reset}
-              onDragOver={(event) => {
-                if (!canDrop) return;
-                event.preventDefault();
-                event.stopPropagation();
-                reorder.trackOver(event);
-              }}
-              onDrop={(event) => {
-                event.stopPropagation();
-                handlePanelDrop(event);
-              }}
-              className={cn(
-                "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
-                canDrag && "cursor-grab active:cursor-grabbing",
-                // Fade the dragged row's contents but not its drop line.
-                reorder.dragIndex === i && "border-dashed [&>*:not([data-reorder-line])]:opacity-40",
-              )}
-            >
+            // Drop lines sit outside the row so they stay at full strength while
+            // the dragged row itself is faded.
+            <div key={i} className="relative">
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-blue-500" /> : null}
               {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-blue-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-blue-500" /> : null}
-              <div className="flex flex-wrap items-center gap-2 min-w-0">
-                {/* Inline rename: click the name and type. Braces stay as
-                    chrome so the row still reads as a {{slot}} placeholder. */}
-                {disabled ? (
-                  <code className={cn(columnTokenClass, "text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
-                ) : (
-                  <label
-                    className={cn(
-                      columnTokenClass,
-                      "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
-                      !nameOk && "text-destructive",
-                    )}
-                    aria-label={t("rulesRegistry.slotsPanelNameLabel")}
-                  >
-                    <span className="text-muted-foreground select-none">{"{{"}</span>
-                    <input
-                      value={slot.name}
-                      onChange={(e) => setAt(i, { name: e.target.value })}
-                      className="bg-transparent outline-none max-w-[14rem] p-0"
-                      // Monospace ch width tracks the text exactly, so the
-                      // closing }} sits flush with no trailing gap.
-                      style={{ width: `${slot.name.length || 1}ch` }}
-                      spellCheck={false}
-                    />
-                    <span className="text-muted-foreground select-none">{"}}"}</span>
-                  </label>
+              <div
+                data-reorder-row
+                draggable={canDrag}
+                onDragStart={(event) => {
+                  startPlaceholderDrag(event, `${DND_SLOT}${i}`);
+                  if (!event.defaultPrevented) reorder.start(i);
+                }}
+                onDragEnd={reorder.reset}
+                onDragOver={(event) => {
+                  if (!canDrop) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  reorder.trackOver(event);
+                }}
+                onDrop={(event) => {
+                  event.stopPropagation();
+                  handlePanelDrop(event);
+                }}
+                className={cn(
+                  "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
+                  canDrag && "cursor-grab active:cursor-grabbing",
+                  reorder.dragIndex === i && "border-dashed opacity-40",
                 )}
-                <SlotTagRegion
-                  tags={slotTags[slot.name] ?? []}
-                  disabled={disabled}
-                  onAddTag={(tag) => addTagToSlot(slot.name, tag)}
-                  onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
-                />
-              </div>
-              {disabled || lockFamily ? (
-                <div className="flex items-center gap-1.5">
-                  <Badge variant="outline" className="text-[10px] font-medium">
-                    {familyLabel(slot.family)}
-                  </Badge>
-                  {lockFamily && !disabled && <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />}
+              >
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  {/* Inline rename: click the name and type. Braces stay as
+                      chrome so the row still reads as a {{slot}} placeholder. */}
+                  {disabled ? (
+                    <code className={cn(columnTokenClass, "text-xs", !nameOk && "text-destructive")}>{`{{${slot.name}}}`}</code>
+                  ) : (
+                    <label
+                      className={cn(
+                        columnTokenClass,
+                        "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
+                        !nameOk && "text-destructive",
+                      )}
+                      aria-label={t("rulesRegistry.slotsPanelNameLabel")}
+                    >
+                      <span className="text-muted-foreground select-none">{"{{"}</span>
+                      <input
+                        value={slot.name}
+                        onChange={(e) => setAt(i, { name: e.target.value })}
+                        className="bg-transparent outline-none max-w-[14rem] p-0"
+                        // Monospace ch width tracks the text exactly, so the
+                        // closing }} sits flush with no trailing gap.
+                        style={{ width: `${slot.name.length || 1}ch` }}
+                        spellCheck={false}
+                      />
+                      <span className="text-muted-foreground select-none">{"}}"}</span>
+                    </label>
+                  )}
+                  <SlotTagRegion
+                    tags={slotTags[slot.name] ?? []}
+                    disabled={disabled}
+                    onAddTag={(tag) => addTagToSlot(slot.name, tag)}
+                    onRemoveTag={(tag) => removeTagFromSlot(slot.name, tag)}
+                  />
                 </div>
-              ) : (
-                <Select
-                  value={slot.family}
-                  onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
-                >
-                  <SelectTrigger className="h-6 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent position="popper">
-                    {SLOT_FAMILIES.map((f) => (
-                      <SelectItem key={f} value={f} className="text-xs">
-                        {familyLabel(f)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {!disabled && removable && (
-                <button
-                  type="button"
-                  aria-label={t("rulesRegistry.slotsPanelRemove")}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                  onClick={() => removeAt(i)}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
+                {disabled || lockFamily ? (
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-[10px] font-medium">
+                      {familyLabel(slot.family)}
+                    </Badge>
+                    {lockFamily && !disabled && <HelpTooltip text={t("rulesRegistry.slotFamilyLockedTooltip")} />}
+                  </div>
+                ) : (
+                  <Select
+                    value={slot.family}
+                    onValueChange={(v) => setAt(i, { family: v as RuleSlotFamilyType })}
+                  >
+                    <SelectTrigger className="h-6 text-[11px] w-[7.5rem]" aria-label={t("rulesRegistry.slotsPanelFamilyLabel")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {SLOT_FAMILIES.map((f) => (
+                        <SelectItem key={f} value={f} className="text-xs">
+                          {familyLabel(f)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {!disabled && removable && (
+                  <button
+                    type="button"
+                    aria-label={t("rulesRegistry.slotsPanelRemove")}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    onClick={() => removeAt(i)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -1929,10 +1931,10 @@ function ParametersPanel({
       </SectionHeader>
       <div className="space-y-2">
         {value.length === 0 && (
-          <div className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] flex items-center">
+          <div className="border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] flex flex-col justify-center">
             <p className="text-xs text-muted-foreground">{t("rulesRegistry.parametersPanelEmpty")}</p>
             {acceptingSlot && canDrop ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400 ml-2">{t("rulesRegistry.swapColumnToParameter")}</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t("rulesRegistry.swapColumnToParameter")}</p>
             ) : null}
           </div>
         )}
@@ -1946,131 +1948,133 @@ function ParametersPanel({
             value.findIndex((p) => p.name === param.name) === i;
           const defaultRaw = paramValueToRaw(param.value);
           return (
-            <div
-              key={i}
-              data-reorder-row
-              draggable={canDrag}
-              onDragStart={(event) => {
-                startPlaceholderDrag(event, `${DND_PARAM}${i}`);
-                if (!event.defaultPrevented) reorder.start(i);
-              }}
-              onDragEnd={reorder.reset}
-              onDragOver={(event) => {
-                if (!canDrop) return;
-                event.preventDefault();
-                event.stopPropagation();
-                reorder.trackOver(event);
-              }}
-              onDrop={(event) => {
-                event.stopPropagation();
-                handlePanelDrop(event);
-              }}
-              className={cn(
-                "relative border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
-                canDrag && "cursor-grab active:cursor-grabbing",
-                // Fade the dragged row's contents but not its drop line.
-                reorder.dragIndex === i && "border-dashed [&>*:not([data-reorder-line])]:opacity-40",
-              )}
-            >
+            // Drop lines sit outside the row so they stay at full strength while
+            // the dragged row itself is faded.
+            <div key={i} className="relative">
               {reorder.lineBefore(i) ? <ReorderLine position="before" className="bg-amber-500" /> : null}
               {reorder.lineOn(i) ? <ReorderLine position="on" className="bg-amber-500" /> : null}
               {reorder.lineAfter(i) ? <ReorderLine position="after" className="bg-amber-500" /> : null}
-              <div className="flex flex-wrap items-center gap-2 min-w-0">
-                {disabled || lockStructure ? (
-                  <code className={cn(paramTokenClass, "text-xs", !nameOk && "text-destructive")}>
-                    {`{{${param.name}}}`}
-                  </code>
-                ) : (
-                  <label
-                    className={cn(
-                      paramTokenClass,
-                      "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
-                      !nameOk && "text-destructive",
-                    )}
-                    aria-label={t("rulesRegistry.parametersPanelNameLabel")}
-                  >
-                    <span className="select-none">{"{{"}</span>
-                    <input
-                      value={param.name}
-                      onChange={(e) => setAt(i, { name: e.target.value })}
-                      className="bg-transparent outline-none max-w-[14rem] p-0"
-                      style={{ width: `${param.name.length || 1}ch` }}
-                      spellCheck={false}
-                    />
-                    <span className="select-none">{"}}"}</span>
-                  </label>
+              <div
+                data-reorder-row
+                draggable={canDrag}
+                onDragStart={(event) => {
+                  startPlaceholderDrag(event, `${DND_PARAM}${i}`);
+                  if (!event.defaultPrevented) reorder.start(i);
+                }}
+                onDragEnd={reorder.reset}
+                onDragOver={(event) => {
+                  if (!canDrop) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  reorder.trackOver(event);
+                }}
+                onDrop={(event) => {
+                  event.stopPropagation();
+                  handlePanelDrop(event);
+                }}
+                className={cn(
+                  "border rounded-md bg-muted/30 px-3 py-2 min-h-[2.5rem] grid grid-cols-[1fr_auto_auto] items-center gap-3",
+                  canDrag && "cursor-grab active:cursor-grabbing",
+                  reorder.dragIndex === i && "border-dashed opacity-40",
                 )}
-                <ParameterValueInput
-                  type={param.type}
-                  value={defaultRaw}
-                  disabled={disabled}
-                  onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
-                  aria-label={param.name}
-                  lock={{
-                    // Empty → unlocked (must be fillable at apply). Filled → locked
-                    // unless the author explicitly unlocked it.
-                    locked:
-                      !isUnboundParameterValue(param.value) && !unlocked.includes(param.name),
-                    onToggle:
-                      disabled || isUnboundParameterValue(param.value)
-                        ? undefined
-                        : (locked) =>
-                            setUnlocked(
-                              locked
-                                ? unlocked.filter((name) => name !== param.name)
-                                : [...unlocked.filter((name) => name !== param.name), param.name],
-                            ),
-                  }}
-                />
-              </div>
-              {disabled || lockStructure ? (
-                <Badge variant="outline" className="text-[10px] font-medium">
-                  {typeLabel(param.type)}
-                </Badge>
-              ) : (
-                <Select
-                  // Legacy "regex" collapses to string — same input, no separate type.
-                  value={param.type === "regex" ? "string" : param.type}
-                  onValueChange={(v) =>
-                    setAt(i, { type: v as RuleParameter["type"], value: null })
-                  }
-                >
-                  <SelectTrigger
-                    className="h-6 text-[11px] w-[7.5rem]"
-                    aria-label={t("rulesRegistry.parametersPanelTypeLabel")}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent position="popper">
-                    {(SQL_PARAMETER_TYPES as readonly RuleParameter["type"][]).includes(
-                      param.type === "regex" ? "string" : param.type,
-                    )
-                      ? null
-                      : (
-                        <SelectItem value={param.type} className="text-xs">
-                          {typeLabel(param.type)}
-                        </SelectItem>
+              >
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  {disabled || lockStructure ? (
+                    <code className={cn(paramTokenClass, "text-xs", !nameOk && "text-destructive")}>
+                      {`{{${param.name}}}`}
+                    </code>
+                  ) : (
+                    <label
+                      className={cn(
+                        paramTokenClass,
+                        "inline-flex items-center gap-0 text-xs rounded-md border border-transparent px-1.5 py-0.5 -mx-1.5 hover:border-input hover:bg-background focus-within:border-ring focus-within:bg-background focus-within:ring-1 focus-within:ring-ring",
+                        !nameOk && "text-destructive",
                       )}
-                    {SQL_PARAMETER_TYPES.map((type) => (
-                      <SelectItem key={type} value={type} className="text-xs">
-                        {typeLabel(type)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {!disabled && !lockStructure ? (
-                <button
-                  type="button"
-                  aria-label={t("rulesRegistry.parametersPanelRemove")}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                  onClick={() => removeAt(i)}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : (
-                <span />
-              )}
+                      aria-label={t("rulesRegistry.parametersPanelNameLabel")}
+                    >
+                      <span className="select-none">{"{{"}</span>
+                      <input
+                        value={param.name}
+                        onChange={(e) => setAt(i, { name: e.target.value })}
+                        className="bg-transparent outline-none max-w-[14rem] p-0"
+                        style={{ width: `${param.name.length || 1}ch` }}
+                        spellCheck={false}
+                      />
+                      <span className="select-none">{"}}"}</span>
+                    </label>
+                  )}
+                  <ParameterValueInput
+                    type={param.type}
+                    value={defaultRaw}
+                    disabled={disabled}
+                    onChange={(raw) => setAt(i, { value: parseParamValue(param.type, raw) })}
+                    aria-label={param.name}
+                    lock={{
+                      // Empty → unlocked (must be fillable at apply). Filled → locked
+                      // unless the author explicitly unlocked it.
+                      locked:
+                        !isUnboundParameterValue(param.value) && !unlocked.includes(param.name),
+                      onToggle:
+                        disabled || isUnboundParameterValue(param.value)
+                          ? undefined
+                          : (locked) =>
+                              setUnlocked(
+                                locked
+                                  ? unlocked.filter((name) => name !== param.name)
+                                  : [...unlocked.filter((name) => name !== param.name), param.name],
+                              ),
+                    }}
+                  />
+                </div>
+                {disabled || lockStructure ? (
+                  <Badge variant="outline" className="text-[10px] font-medium">
+                    {typeLabel(param.type)}
+                  </Badge>
+                ) : (
+                  <Select
+                    // Legacy "regex" collapses to string — same input, no separate type.
+                    value={param.type === "regex" ? "string" : param.type}
+                    onValueChange={(v) =>
+                      setAt(i, { type: v as RuleParameter["type"], value: null })
+                    }
+                  >
+                    <SelectTrigger
+                      className="h-6 text-[11px] w-[7.5rem]"
+                      aria-label={t("rulesRegistry.parametersPanelTypeLabel")}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {(SQL_PARAMETER_TYPES as readonly RuleParameter["type"][]).includes(
+                        param.type === "regex" ? "string" : param.type,
+                      )
+                        ? null
+                        : (
+                          <SelectItem value={param.type} className="text-xs">
+                            {typeLabel(param.type)}
+                          </SelectItem>
+                        )}
+                      {SQL_PARAMETER_TYPES.map((type) => (
+                        <SelectItem key={type} value={type} className="text-xs">
+                          {typeLabel(type)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {!disabled && !lockStructure ? (
+                  <button
+                    type="button"
+                    aria-label={t("rulesRegistry.parametersPanelRemove")}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    onClick={() => removeAt(i)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </div>
             </div>
           );
         })}
