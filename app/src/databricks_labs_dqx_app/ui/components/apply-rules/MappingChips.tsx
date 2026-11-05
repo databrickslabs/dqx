@@ -573,7 +573,10 @@ function GroupParamCell({
         aria-label={param.name}
         fill
       />
-      {invalid && error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {/* An empty required box is already flagged by its red border and the
+          card's "mapping incomplete" warning, so no "<name> is required" line;
+          a filled-in but invalid value still says what's wrong. */}
+      {invalid && error && raw !== "" ? <p className="text-xs text-destructive">{error}</p> : null}
     </span>
   );
 }

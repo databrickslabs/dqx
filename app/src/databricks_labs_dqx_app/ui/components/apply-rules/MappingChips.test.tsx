@@ -73,6 +73,22 @@ describe("MappingChips apply-time parameters", () => {
     expect(html).toContain('aria-label="limit"');
   });
 
+  test("flags an empty required box without a 'required' message", () => {
+    const html = render({ columnMapping: [{ tier: "account_tier" }] });
+    expect(html).toContain("border-destructive");
+    expect(html).not.toContain("is required");
+    expect(html).not.toContain('<p class="text-xs text-destructive">');
+  });
+
+  test("still explains an invalid filled-in value", () => {
+    const key = JSON.stringify({ tier: "account_tier" });
+    const html = render({
+      columnMapping: [{ tier: "account_tier" }],
+      storedParameterValues: { [key]: { limit: "abc" } },
+    });
+    expect(html).toMatch(/<p class="text-xs text-destructive">limit [^<]+<\/p>/);
+  });
+
   test("shows parameter boxes for a rule with no column slots", () => {
     const html = render({ slots: [], columnMapping: [] });
     expect(html).toContain('aria-label="limit"');
