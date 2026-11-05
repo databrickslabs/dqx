@@ -10,6 +10,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 const CELL_CLASS =
   "h-6 w-full bg-transparent px-2 font-mono text-xs outline-none focus:bg-accent/40 placeholder:text-muted-foreground/50 appearance-none border-0";
 
+// Content-sized bounds (in characters) for the non-`fill` value box. Without an
+// explicit width an <input> falls back to its ~20-character default.
+const VALUE_MIN_CH = 6;
+const VALUE_MAX_CH = 40;
+const LIST_DRAFT_MIN_CH = 3;
+
+function clampCh(length: number, min: number, max: number): number {
+  return Math.min(Math.max(length, min), max);
+}
+
 export type ParameterLock = {
   locked: boolean;
   /** When set, the icon toggles lock state (registry authoring). Omit on apply-rules. */
@@ -88,7 +98,7 @@ function ListValueInput({
     <div
       className={cn(
         "flex min-h-6 flex-wrap items-center gap-1 rounded-md border bg-background px-1.5 py-0.5",
-        fill ? "w-full min-w-0" : "min-w-[12rem] max-w-full",
+        fill ? "w-full min-w-0" : "min-w-[6.5rem] max-w-[min(100%,28rem)]",
         disabled && "opacity-60",
       )}
     >
@@ -114,7 +124,25 @@ function ListValueInput({
         <input
           value={draft}
           placeholder={items.length === 0 ? placeholder : ""}
-          className="h-5 min-w-[5rem] flex-1 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground/50"
+          className={cn(
+            "h-5 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground/50",
+            fill && "min-w-[5rem] flex-1",
+          )}
+          // Grow with the draft (or the placeholder when the list is empty)
+          // instead of the input's default ~20-character width.
+          style={
+            fill
+              ? undefined
+              : {
+                  width: `${
+                    clampCh(
+                      Math.max(draft.length, items.length === 0 ? (placeholder ?? "").length : 0),
+                      LIST_DRAFT_MIN_CH,
+                      VALUE_MAX_CH,
+                    ) + 1
+                  }ch`,
+                }
+          }
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === ",") {
@@ -161,6 +189,11 @@ export function ParameterValueInput({
   const { t } = useTranslation();
   const family = parameterInputFamily(type);
   const nonePlaceholder = placeholder ?? t("rulesRegistry.parametersPanelDefaultPlaceholder");
+  // Size the box to its value (or placeholder) between the min/max bounds; the
+  // number spinner needs ~2 extra characters. `fill` stretches to the parent.
+  const valueCh =
+    clampCh((value || nonePlaceholder).length, VALUE_MIN_CH, VALUE_MAX_CH) + (family === "numeric" ? 2 : 0);
+  const cellStyle = fill ? undefined : { width: `calc(${valueCh}ch + 1rem)` };
   if (type === "list" || type === "ref_column") {
     return (
       <span className={cn(fill ? "inline-flex w-full min-w-0" : "inline-flex min-w-[12rem] max-w-full", invalid && "[&>div]:border-destructive", className)} aria-label={ariaLabel}>
@@ -179,7 +212,7 @@ export function ParameterValueInput({
     <span
       className={cn(
         "inline-flex h-6 items-center rounded-md border bg-background pr-0.5",
-        fill ? "w-full min-w-0" : "min-w-[6.5rem] shrink-0",
+        fill ? "w-full min-w-0" : "max-w-full shrink-0",
         disabled && "opacity-60",
         invalid && "border-destructive",
         className,
@@ -193,6 +226,7 @@ export function ParameterValueInput({
         placeholder={nonePlaceholder}
         className={cn(CELL_CLASS, fill && "min-w-0")}
         noMinWidth={fill}
+        style={cellStyle}
         onChange={(next) => onChange(next ?? "")}
       />
       {lock ? <LockAffordance {...lock} /> : null}
