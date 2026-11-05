@@ -506,6 +506,21 @@ interface MappingChipsProps {
   overridableParameters?: string[];
 }
 
+/** Approximate width in characters of a parameter value box's content: each
+ *  list item plus its chip chrome, or the text, plus room for the lock icon
+ *  and padding (and the number spinner). */
+function paramCellCh(type: RuleParameter["type"], raw: string): number {
+  if (type === "list" || type === "ref_column") {
+    const items = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return items.reduce((sum, item) => sum + item.length + 3, 0) + 8;
+  }
+  const numeric = type === "number" || type === "integer" || type === "decimal";
+  return Math.max(raw.length, 4) + 6 + (numeric ? 2 : 0);
+}
+
 function GroupParamCell({
   group,
   groupIdx,
@@ -540,7 +555,12 @@ function GroupParamCell({
   const invalid = error?.startsWith(`${param.name} `);
   return (
     <span
-      className="flex min-w-0 w-0 flex-col items-stretch gap-0.5 justify-self-stretch"
+      // Size the column from the value itself (list chips or text), between
+      // 8rem and 22rem, and stretch to the mapping chip above when that is
+      // wider. `contain: inline-size` stops the inputs' default ~20-character
+      // width from also widening the column.
+      className="flex w-full flex-col items-stretch gap-0.5 justify-self-stretch [contain:inline-size]"
+      style={{ minWidth: `clamp(8rem, ${paramCellCh(param.type, raw)}ch, 22rem)` }}
       onMouseDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
