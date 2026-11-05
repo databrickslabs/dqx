@@ -10,10 +10,12 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Iterator
+from enum import Enum
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
@@ -31,12 +33,8 @@ from pydantic import ValidationError  # type: ignore
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.datacontract.library_metrics import (
-    LibraryMetricRulesBuilder,
-    MetricTarget,
-    is_library_entry,
-)
-from databricks.labs.dqx.datacontract.common import FormatCheck, SkipReason
+from databricks.labs.dqx.datacontract.library_metrics import LibraryMetricRulesBuilder, is_library_entry
+from databricks.labs.dqx.datacontract.skip_reason import SkipReason
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
@@ -53,11 +51,83 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-_FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, FormatCheck] = {
-    "date": FormatCheck("is_valid_date", "date_format", "valid_date_format"),
-    "timestamp": FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
-    "datetime": FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+class _FormatCheck(NamedTuple):
+    """Check generated for a logicalTypeOptions format."""
+
+    function: str
+    format_argument: str
+    rule_name_suffix: str
+
+
+_FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
+    "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
+    "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
 }
+
+_MAX_LOGGED_DESCRIPTION_LENGTH = 120
+
+
+class _QualityHandler(Enum):
+    """Processor that turns a quality entry into rules."""
+
+    LIBRARY = "library"
+    TEXT = "text"
+    EXPLICIT = "explicit"
+
+
+class _QualityHandling(NamedTuple):
+    """How a quality entry is handled: the processor it belongs to, and why it is skipped, if it is."""
+
+    handler: _QualityHandler | None
+    skip_reason: SkipReason | None = None
+
+
+class _QualityLocation(NamedTuple):
+    """Where a quality entry sits in the contract: on a schema, or on a property path within it."""
+
+    schema_name: str
+    property_path: tuple[str | None, ...] = ()
+
+    @property
+    def is_nested(self) -> bool:
+        """Whether the entry is on a property nested inside another property."""
+        return len(self.property_path) > 1
+
+    def describe(self) -> str:
+        """Return the location as logged, e.g. *property 'addr.zip' in schema 'orders'*."""
+        schema = f"schema '{sanitize_for_logging(self.schema_name)}'"
+        if not self.property_path:
+            return schema
+        if None in self.property_path:
+            return f"an unnamed property in {schema}"
+        return f"property '{sanitize_for_logging('.'.join(str(name) for name in self.property_path))}' in {schema}"
+
+
+def _quality_entries(odcs: OpenDataContractStandard) -> Iterator[tuple[_QualityLocation, DataQuality]]:
+    """Yield every quality entry of the contract with its location, nested properties included."""
+    for schema_obj in odcs.schema_ or []:
+        schema_name = schema_obj.name or "unknown_schema"
+        yield from _property_quality_entries(schema_name, schema_obj.properties, ())
+        yield from ((_QualityLocation(schema_name), quality_rule) for quality_rule in schema_obj.quality or [])
+
+
+def _property_quality_entries(
+    schema_name: str, properties: list[SchemaProperty] | None, parent_path: tuple[str | None, ...]
+) -> Iterator[tuple[_QualityLocation, DataQuality]]:
+    """Yield the quality entries of the given properties and of the properties nested inside them."""
+    for prop in properties or []:
+        location = _QualityLocation(schema_name, (*parent_path, prop.name))
+        yield from ((location, quality_rule) for quality_rule in prop.quality or [])
+        yield from _property_quality_entries(schema_name, prop.properties, location.property_path)
+
+
+def _logged_description(description: str | None) -> str:
+    """Return the description sanitized for logging and trimmed to *_MAX_LOGGED_DESCRIPTION_LENGTH* characters."""
+    text = sanitize_for_logging(description or "")
+    if len(text) <= _MAX_LOGGED_DESCRIPTION_LENGTH:
+        return text
+    return f"{text[: _MAX_LOGGED_DESCRIPTION_LENGTH - 3]}..."
 
 
 class DataContractRulesGenerator(DQEngineBase):
@@ -136,11 +206,11 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_file: Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
-            process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__. When False, text entries are skipped and one info line is logged.
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
             strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
-            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True). Set to False to skip this mapping entirely.
+            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True). When False, library entries are skipped and one info line is logged.
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
@@ -291,7 +361,6 @@ class DataContractRulesGenerator(DQEngineBase):
 
             explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
-            self._warn_about_skipped_quality(schema_obj, schema_name, process_text_rules, process_library_rules)
 
             if process_library_rules:
                 taken_names.update(rule["name"] for rule in dq_rules[schema_start:] if rule.get("name"))
@@ -300,6 +369,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 )
                 dq_rules.extend(library_rules)
 
+        self._log_skipped_quality(odcs, process_text_rules, process_library_rules)
         return dq_rules
 
     def _validate_generated_rules(self, dq_rules: list[dict]) -> list[dict]:
@@ -1075,11 +1145,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
         rules = []
         for quality_rule in prop.quality or []:
-            if quality_rule.type == 'text' and quality_rule.description:
+            if self._is_handled_by(quality_rule, _QualityHandler.TEXT):
                 logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
 
                 prediction = self.llm_engine.detect_business_rules_with_llm(
-                    user_input=quality_rule.description, schema_info=schema_info_json
+                    user_input=quality_rule.description or "", schema_info=schema_info_json
                 )
 
                 llm_rules_json = prediction.quality_rules
@@ -1107,11 +1177,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
         rules = []
         for quality_rule in quality_list or []:
-            if quality_rule.type == 'text' and quality_rule.description:
+            if self._is_handled_by(quality_rule, _QualityHandler.TEXT):
                 logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
                 prediction = self.llm_engine.detect_business_rules_with_llm(
-                    user_input=quality_rule.description, schema_info=schema_info_json
+                    user_input=quality_rule.description or "", schema_info=schema_info_json
                 )
 
                 llm_rules_json = prediction.quality_rules
@@ -1196,7 +1266,7 @@ class DataContractRulesGenerator(DQEngineBase):
             return rules
 
         for quality_rule in prop.quality:
-            if self._is_dqx_explicit_rule(quality_rule):
+            if self._is_handled_by(quality_rule, _QualityHandler.EXPLICIT):
                 rule = self._build_explicit_rule_from_quality(
                     quality_rule, prop.name, schema_name, odcs, default_criticality
                 )
@@ -1214,7 +1284,7 @@ class DataContractRulesGenerator(DQEngineBase):
         """Extract explicit DQX rules from schema quality definitions."""
         rules = []
         for quality_rule in quality_list:
-            if self._is_dqx_explicit_rule(quality_rule):
+            if self._is_handled_by(quality_rule, _QualityHandler.EXPLICIT):
                 rule = self._build_explicit_rule_from_quality(
                     quality_rule, None, schema_name, odcs, default_criticality
                 )
@@ -1222,55 +1292,79 @@ class DataContractRulesGenerator(DQEngineBase):
                     rules.append(rule)
         return rules
 
-    def _warn_about_skipped_quality(
-        self, schema_obj: SchemaObject, schema_name: str, process_text_rules: bool, process_library_rules: bool
+    def _log_skipped_quality(
+        self, odcs: OpenDataContractStandard, process_text_rules: bool, process_library_rules: bool
     ) -> None:
-        """Log a warning for each quality entry of the schema that does not become a rule."""
-        targets = [(MetricTarget(schema_name, prop.name), prop.quality) for prop in schema_obj.properties or []]
-        targets.append((MetricTarget(schema_name, None), schema_obj.quality))
-        for target, quality_list in targets:
-            for quality_rule in quality_list or []:
-                reason = self._skip_reason(quality_rule, process_text_rules, process_library_rules)
-                if reason is None:
-                    continue
-                description = sanitize_for_logging(quality_rule.description or "")
-                engine = sanitize_for_logging(str(quality_rule.engine))
-                logger.warning(
-                    f"Skipping type '{sanitize_for_logging(str(quality_rule.type))}' quality entry on {target.location} "
-                    f"(description: '{description}'): {reason.value.format(engine=engine)}."
-                )
+        """Log a warning for each quality entry that does not become a rule, and one info line per opt-out."""
+        opted_out = {
+            handler
+            for handler, enabled in (
+                (_QualityHandler.LIBRARY, process_library_rules),
+                (_QualityHandler.TEXT, process_text_rules),
+            )
+            if not enabled
+        }
+        opted_out_counts: Counter[_QualityHandler] = Counter()
+        for location, quality_rule in _quality_entries(odcs):
+            handling = self._quality_handling(quality_rule)
+            if handling.handler in opted_out:
+                opted_out_counts[handling.handler] += 1
+            elif location.is_nested:
+                self._warn_skipped(location, quality_rule, SkipReason.NESTED_PROPERTY_UNSUPPORTED)
+            elif handling.skip_reason:
+                self._warn_skipped(location, quality_rule, handling.skip_reason)
+        for handler, count in opted_out_counts.items():
+            logger.info(f"process_{handler.value}_rules is False; skipped {handler.value} quality entries: {count}.")
 
-    def _skip_reason(
-        self, quality_rule: DataQuality, process_text_rules: bool, process_library_rules: bool
-    ) -> SkipReason | None:
-        """Return why a quality entry does not become a rule, or None if it does (or was opted out of)."""
+    @staticmethod
+    def _warn_skipped(location: _QualityLocation, quality_rule: DataQuality, reason: SkipReason) -> None:
+        """Log a warning that a quality entry does not become a rule."""
+        entry = (
+            f"type '{sanitize_for_logging(str(quality_rule.type))}' quality entry"
+            if quality_rule.type is not None
+            else "quality entry with no type"
+        )
+        logger.warning(
+            f"Skipping {entry} on {location.describe()} "
+            f"(description: '{_logged_description(quality_rule.description)}'): {reason.message(quality_rule)}."
+        )
+
+    def _is_handled_by(self, quality_rule: DataQuality, handler: _QualityHandler) -> bool:
+        """Whether the quality entry becomes rules through the given processor."""
+        return self._quality_handling(quality_rule) == _QualityHandling(handler)
+
+    def _quality_handling(self, quality_rule: DataQuality) -> _QualityHandling:
+        """Decide which processor turns a quality entry into rules, and why it is skipped if none can."""
         if is_library_entry(quality_rule):
-            return None if process_library_rules else SkipReason.LIBRARY_DISABLED
+            return _QualityHandling(_QualityHandler.LIBRARY)
         if quality_rule.type == "text":
-            return self._text_skip_reason(quality_rule, process_text_rules)
-        if quality_rule.type == "sql":
-            return SkipReason.SQL_UNSUPPORTED
+            return self._text_handling(quality_rule)
         if quality_rule.type == "custom":
-            return self._custom_skip_reason(quality_rule)
-        return SkipReason.TYPE_UNSUPPORTED
+            return self._custom_handling(quality_rule)
+        if quality_rule.type == "sql":
+            return _QualityHandling(None, SkipReason.SQL_UNSUPPORTED)
+        if quality_rule.type is None:
+            return _QualityHandling(None, SkipReason.TYPE_MISSING)
+        return _QualityHandling(None, SkipReason.TYPE_UNSUPPORTED)
 
-    def _text_skip_reason(self, quality_rule: DataQuality, process_text_rules: bool) -> SkipReason | None:
-        """Return why a type: text entry does not become a rule, or None if it does (or was opted out of)."""
-        if not process_text_rules:
-            return None
+    def _text_handling(self, quality_rule: DataQuality) -> _QualityHandling:
+        """Decide how a type: text entry is handled."""
         if not self.llm_engine:
-            return SkipReason.TEXT_NO_LLM_ENGINE
+            return _QualityHandling(_QualityHandler.TEXT, SkipReason.TEXT_NO_LLM_ENGINE)
         if not quality_rule.description:
-            return SkipReason.TEXT_NO_DESCRIPTION
-        return None
+            return _QualityHandling(_QualityHandler.TEXT, SkipReason.TEXT_NO_DESCRIPTION)
+        return _QualityHandling(_QualityHandler.TEXT)
 
-    def _custom_skip_reason(self, quality_rule: DataQuality) -> SkipReason | None:
-        """Return why a type: custom entry does not become a rule, or None if it is a DQX explicit rule."""
-        if self._is_dqx_explicit_rule(quality_rule):
-            return None
+    @staticmethod
+    def _custom_handling(quality_rule: DataQuality) -> _QualityHandling:
+        """Decide how a type: custom entry is handled."""
+        if DataContractRulesGenerator._is_dqx_explicit_rule(quality_rule):
+            return _QualityHandling(_QualityHandler.EXPLICIT)
+        if quality_rule.engine is None:
+            return _QualityHandling(None, SkipReason.CUSTOM_NO_ENGINE)
         if quality_rule.engine != "dqx":
-            return SkipReason.CUSTOM_ENGINE_UNSUPPORTED
-        return SkipReason.CUSTOM_NO_CHECK
+            return _QualityHandling(None, SkipReason.CUSTOM_ENGINE_UNSUPPORTED)
+        return _QualityHandling(None, SkipReason.CUSTOM_NO_CHECK)
 
     @staticmethod
     def _is_dqx_explicit_rule(quality_rule: DataQuality) -> bool:
@@ -1530,4 +1624,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 extra_metadata=metric_metadata,
             )
 
-        return LibraryMetricRulesBuilder(build_rule).build_for_schema(schema_obj, schema_name, taken_names)
+        return LibraryMetricRulesBuilder(
+            build_rule, lambda entry: self._is_handled_by(entry, _QualityHandler.LIBRARY)
+        ).build_for_schema(schema_obj, schema_name, taken_names)

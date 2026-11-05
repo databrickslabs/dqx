@@ -538,7 +538,7 @@ If you don't have LLM dependencies installed or want to skip text processing:
         process_text_rules=False  # Skip LLM processing
     )
 
-    # Text expectations are skipped
+    # Text expectations are skipped and one info line is logged
     ```
   </TabItem>
 </Tabs>
@@ -559,7 +559,7 @@ Treat that as a starting point. The five metrics cover the common cases, but not
 This five-metric surface is intentionally closed: DQX does not plan to grow this mapping into a general ODCS interpreter for arbitrary quality vocabularies.
 </Admonition>
 
-Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
+Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. When disabled, library entries are skipped and one info line is logged with their count. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
 
 <Admonition type="note" title="Where the ODCS spec is silent">
 Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX follows the interpretation already established by other ODCS-compliant tooling rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit and `invalidValues`'s combined-condition handling of `validValues` + `pattern`. Bound inclusivity for `mustBeBetween`/`mustNotBeBetween` is a different case — the spec is inconsistent rather than silent — and is covered under [Threshold Fields and the SQL Fallback](#threshold-fields-and-the-sql-fallback).
@@ -806,7 +806,7 @@ If a contract's `type: library` entries misbehave, or you'd rather express quali
     # Skip type: library processing, generate only predefined/explicit/text rules
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        process_library_rules=False  # Skip library metric mapping
+        process_library_rules=False  # Skip library metric mapping; logs one info line
     )
     ```
   </TabItem>
@@ -1263,6 +1263,8 @@ pip install 'databricks-labs-dqx[datacontract]'
 - The data contract feature requires the `datacontract-cli` library which increases package size.
 - Text-based rule generation requires LLM dependencies and network access to the model endpoint.
 - `type: sql` quality entries are not supported yet. They are skipped with a warning, as is any other quality entry that does not become a rule (e.g. `type: custom` with an engine other than `dqx`, or `type: text` without the LLM dependencies).
+- Quality entries on nested properties (e.g. `addr.zip` inside an `object` property) do not become rules yet. Each one is skipped with a warning naming its dotted path.
+- Entries skipped because of `process_library_rules=False` or `process_text_rules=False` are not warned about; one info line per option reports how many were skipped.
 - Dataset-level checks beyond the `rowCount` and `duplicateValues` library metrics must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
