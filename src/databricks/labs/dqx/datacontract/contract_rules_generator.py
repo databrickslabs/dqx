@@ -50,93 +50,169 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
-# Type a range check casts a column stored as text to, by ODCS logical type.
-_TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {"date": "DATE", "timestamp": "TIMESTAMP", "integer": "DOUBLE", "number": "DOUBLE"}
+# A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
+# string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
+_ISO_DATE_OR_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.(?:\d{3}|\d{6}))?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+)
 _NUMBER_BOUND = "number"
 _TEMPORAL_BOUND = "date or timestamp"
-# Kind of minimum/maximum ODCS defines, by logical type. A field without a logical type accepts either kind.
+# Kind of range bound ODCS defines, by logical type (datetime is accepted as timestamp, as for format). A field
+# without a logical type accepts either kind; other logical types have no range bounds.
 _BOUND_KIND_BY_LOGICAL_TYPE = {
     "integer": _NUMBER_BOUND,
     "number": _NUMBER_BOUND,
     "date": _TEMPORAL_BOUND,
     "timestamp": _TEMPORAL_BOUND,
+    "datetime": _TEMPORAL_BOUND,
+}
+# Type a range check casts a column stored as text to, by ODCS logical type.
+_TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
+    "date": "DATE",
+    "timestamp": "TIMESTAMP",
+    "datetime": "TIMESTAMP",
+    "integer": "DOUBLE",
+    "number": "DOUBLE",
 }
 
 
-def _range_bound_kind(value: object) -> str | None:
-    """Return the kind of a logicalTypeOptions bound that can be passed to a range check as a value, or None.
+class _RangeBound(NamedTuple):
+    """A validated range bound from logicalTypeOptions."""
 
-    Range checks treat any other string limit as a column name or SQL expression, which a contract value must not
-    become. A bound is a finite number, or a date or timestamp: an ISO string, or a date YAML loaded from an
-    unquoted value.
+    value: Any  # value passed to the range check
+    kind: str  # _NUMBER_BOUND or _TEMPORAL_BOUND
+    lower: bool  # a lower bound rather than an upper one
+    strict: bool = False
+
+
+def _parse_range_bound(value: object) -> tuple[str, Any] | None:
+    """Return the kind of a range bound and the value to pass to the check, or None when it can't be a bound.
+
+    A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
+    which a contract value must not become. So a bound is a finite number, a date YAML loaded from an unquoted
+    value, or an ISO date or timestamp string. A 'Z' offset is passed as '+00:00', which every supported Python
+    version parses.
     """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return _NUMBER_BOUND if math.isfinite(value) else None
+        return (_NUMBER_BOUND, value) if math.isfinite(value) else None
     if isinstance(value, datetime.date):  # also covers datetime.datetime
-        return _TEMPORAL_BOUND
-    if not isinstance(value, str):
+        return _TEMPORAL_BOUND, value
+    if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
         return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
-        datetime.datetime.fromisoformat(value)  # how get_limit_expr reads a date or timestamp string
+        datetime.datetime.fromisoformat(text)  # rejects impossible dates such as 2024-02-30
     except ValueError:
         return None
-    return _TEMPORAL_BOUND
+    return _TEMPORAL_BOUND, text
 
 
-def _as_datetime(bound: Any) -> datetime.datetime:
-    """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
-    if isinstance(bound, datetime.datetime):
-        return bound
-    if isinstance(bound, datetime.date):
-        return datetime.datetime.combine(bound, datetime.time.min)
-    return datetime.datetime.fromisoformat(bound)
-
-
-def _unusable_range_reason(minimum: Any, maximum: Any) -> str | None:
-    """Return why a minimum and a maximum can't form a range that passes, or None if they can."""
-    kind = _range_bound_kind(minimum)
-    if kind != _range_bound_kind(maximum):
-        return "one is a number and the other a date or timestamp"
-    try:
-        reversed_range = minimum > maximum if kind == _NUMBER_BOUND else _as_datetime(minimum) > _as_datetime(maximum)
-    except TypeError:  # a timezone-aware and a naive timestamp, which Spark still compares
+def _range_bound(
+    column_path: str, option: str, value: object, expected_kind: str | None, *, lower: bool, strict: bool = False
+) -> _RangeBound | None:
+    """Return the validated bound, or None (with a warning when it is not of the kind the logical type expects)."""
+    if value is None:
         return None
-    if reversed_range:
-        return f"minimum {minimum} is greater than maximum {maximum}"
+    parsed = _parse_range_bound(value)
+    if parsed is not None and expected_kind in (None, parsed[0]):
+        kind, check_value = parsed
+        return _RangeBound(check_value, kind, lower, strict)
+    logger.warning(
+        f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
+        f"'{sanitize_for_logging(str(value))}' is not a {expected_kind or 'number, date or timestamp'}."
+    )
     return None
 
 
-def _text_cast_type(logical_type: str | None, physical_type: str | None) -> str | None:
+def _as_datetime(value: Any) -> datetime.datetime:
+    """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time.min)
+    return datetime.datetime.fromisoformat(value)
+
+
+def _describe_bound(bound: _RangeBound) -> str:
+    """Describe what a bound requires of a value, e.g. 'at least 0' or 'less than 100'."""
+    if bound.lower:
+        comparison = "greater than" if bound.strict else "at least"
+    else:
+        comparison = "less than" if bound.strict else "at most"
+    return f"{comparison} {bound.value}"
+
+
+def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
+    """Return why no value can satisfy every bound, or None if some value can."""
+    if len({bound.kind for bound in bounds}) > 1:
+        return "the bounds mix numbers with dates or timestamps"
+    for low in (bound for bound in bounds if bound.lower):
+        for high in (bound for bound in bounds if not bound.lower):
+            low_key, high_key = (
+                (low.value, high.value)
+                if low.kind == _NUMBER_BOUND
+                else (_as_datetime(low.value), _as_datetime(high.value))
+            )
+            try:
+                empty = low_key > high_key or (low_key == high_key and (low.strict or high.strict))
+            except TypeError:  # a timezone-aware and a naive timestamp, which Spark still compares
+                continue
+            if empty:
+                return f"no value is {_describe_bound(low)} and {_describe_bound(high)}"
+    return None
+
+
+def _text_cast_type(logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound]) -> str | None:
     """Return the type to *try_cast* a column stored as text to before a range check, or None.
 
     Under ANSI mode, comparing a text column with a number or date casts every value, so one malformed value would
     fail the whole run. *try_cast* turns it into NULL instead, which passes the range check (a format or pattern
-    rule is the one that flags it).
+    rule is the one that flags it). Without a logical type, the type follows the bounds.
     """
     if not physical_type or not _TEXT_PHYSICAL_TYPE.match(physical_type):
         return None
-    return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type or "")
+    if logical_type:
+        return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type)
+    if bounds[0].kind == _NUMBER_BOUND:
+        return "DOUBLE"
+    has_time = any(
+        isinstance(bound.value, datetime.datetime) or (isinstance(bound.value, str) and ":" in bound.value)
+        for bound in bounds
+    )
+    return "TIMESTAMP" if has_time else "DATE"
 
 
-def _inclusive_range_check(column: str, minimum: object, maximum: object) -> tuple[dict, str] | None:
-    """Return the row-level check and rule name suffix for minimum/maximum, or None when neither is set."""
+def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
+    """Return the row-level checks and rule name suffixes for validated range bounds.
+
+    Inclusive bounds use *is_in_range*, *is_not_less_than* or *is_not_greater_than*; each exclusive bound uses
+    *is_greater_than* or *is_less_than*.
+    """
+    minimum = next((bound.value for bound in bounds if bound.lower and not bound.strict), None)
+    maximum = next((bound.value for bound in bounds if not bound.lower and not bound.strict), None)
+    checks = []
     if minimum is not None and maximum is not None:
         arguments = {"column": column, "min_limit": minimum, "max_limit": maximum}
-        return {"function": "is_in_range", "arguments": arguments}, "out_of_range"
-    if minimum is not None:
-        return {"function": "is_not_less_than", "arguments": {"column": column, "limit": minimum}}, "below_minimum"
-    if maximum is not None:
-        return {"function": "is_not_greater_than", "arguments": {"column": column, "limit": maximum}}, "above_maximum"
-    return None
-
-
-def _strict_range_check(column: str, function: str, limit: object, name_suffix: str) -> tuple[dict, str] | None:
-    """Return the strict comparison check and rule name suffix for an exclusive bound, or None when it isn't set."""
-    if limit is None:
-        return None
-    return {"function": function, "arguments": {"column": column, "limit": limit}}, name_suffix
+        checks.append(({"function": "is_in_range", "arguments": arguments}, "out_of_range"))
+    elif minimum is not None:
+        checks.append(
+            ({"function": "is_not_less_than", "arguments": {"column": column, "limit": minimum}}, "below_minimum")
+        )
+    elif maximum is not None:
+        checks.append(
+            ({"function": "is_not_greater_than", "arguments": {"column": column, "limit": maximum}}, "above_maximum")
+        )
+    for bound in bounds:
+        if bound.strict:
+            function, name_suffix = (
+                ("is_greater_than", "at_or_below_exclusive_minimum")
+                if bound.lower
+                else ("is_less_than", "at_or_above_exclusive_maximum")
+            )
+            checks.append(({"function": function, "arguments": {"column": column, "limit": bound.value}}, name_suffix))
+    return checks
 
 
 class _FormatCheck(NamedTuple):
@@ -777,6 +853,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 self._generate_pattern_rules_from_options(column_path, field_metadata, default_criticality, opts)
             )
 
+        # Handle range constraints from minimum and maximum
         # Handle range constraints from minimum, maximum and their exclusive variants (no rules if none is set)
         rules.extend(
             self._generate_range_rules_from_options(
@@ -868,39 +945,45 @@ class DataContractRulesGenerator(DQEngineBase):
         Generate range rules from logicalTypeOptions minimum/maximum and exclusiveMinimum/exclusiveMaximum.
 
         ODCS defines every bound per value, so each becomes a row-level check that flags only the rows out of range.
-        minimum/maximum use *is_in_range*, *is_not_less_than* or *is_not_greater_than*, and exclusive bounds use
-        *is_greater_than* or *is_less_than*. An exclusive bound comes in either ODCS form: a flag that makes
-        minimum/maximum exclusive (v3.0.x) or a bound of its own (v3.1.0+).
-
-        The bounds are passed to the checks as written. A bound of the wrong kind for the logical type (a number for
-        integer/number, a date or timestamp for date/timestamp) is skipped with a warning, as is a minimum and
-        maximum pair that no value could satisfy. A column stored as text is compared through *try_cast*.
+        An exclusive bound comes in either ODCS form: a flag that makes minimum/maximum exclusive (v3.0.x), or a bound
+        of its own (v3.1.0+). Bounds are taken for integer, number, date and timestamp fields (or fields without a
+        logical type), and must be of the kind ODCS gives them: numbers, or dates and timestamps. Anything else is
+        skipped with a warning, as are bounds that no value could satisfy. A column stored as text is compared
+        through *try_cast*.
         """
+        if all(opts.get(option) is None for option in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")):
+            return []
         expected_kind = _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type or "")
-        minimum = self._range_bound(column_path, "minimum", opts.get("minimum"), expected_kind)
-        maximum = self._range_bound(column_path, "maximum", opts.get("maximum"), expected_kind)
-        if minimum is not None and maximum is not None:
-            reason = _unusable_range_reason(minimum, maximum)
-            if reason:
-                logger.warning(
-                    f"Skipping minimum and maximum on '{sanitize_for_logging(column_path)}': "
-                    f"{sanitize_for_logging(reason)}."
-                )
-                minimum = maximum = None
-        exclusive_minimum = self._exclusive_bound(
-            column_path, "exclusiveMinimum", "minimum", minimum, opts, expected_kind
-        )
-        exclusive_maximum = self._exclusive_bound(
-            column_path, "exclusiveMaximum", "maximum", maximum, opts, expected_kind
-        )
+        if logical_type and expected_kind is None:
+            reason = (
+                "range bounds on time fields aren't supported yet"
+                if logical_type == "time"
+                else f"ODCS defines no range bounds for logical type '{logical_type}'"
+            )
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(reason)}."
+            )
+            return []
 
-        cast_type = _text_cast_type(logical_type, physical_type)
+        bounds = []
+        for inclusive_option, exclusive_option, lower in (
+            ("minimum", "exclusiveMinimum", True),
+            ("maximum", "exclusiveMaximum", False),
+        ):
+            bounds.extend(
+                self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
+            )
+        if not bounds:
+            return []
+        empty_reason = _empty_range_reason(bounds)
+        if empty_reason:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(empty_reason)}."
+            )
+            return []
+
+        cast_type = _text_cast_type(logical_type, physical_type, bounds)
         column = f"try_cast({normalize_column_expr(column_path)} AS {cast_type})" if cast_type else column_path
-        checks = [
-            _inclusive_range_check(column, minimum, maximum),
-            _strict_range_check(column, "is_greater_than", exclusive_minimum, "at_or_below_exclusive_minimum"),
-            _strict_range_check(column, "is_less_than", exclusive_maximum, "at_or_above_exclusive_maximum"),
-        ]
         return [
             {
                 "check": check,
@@ -912,51 +995,38 @@ class DataContractRulesGenerator(DQEngineBase):
                     "rule_type": "predefined",
                 },
             }
-            for check, name_suffix in filter(None, checks)
+            for check, name_suffix in _range_checks(column, bounds)
         ]
 
     @staticmethod
-    def _range_bound(column_path: str, option: str, value: object, expected_kind: str | None) -> object:
-        """Return the bound, or None (with a warning when it is not of the kind the logical type expects)."""
-        if value is None:
-            return None
-        kind = _range_bound_kind(value)
-        if kind is not None and kind == (expected_kind or kind):
-            return value
-        logger.warning(
-            f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
-            f"'{sanitize_for_logging(str(value))}' is not a {expected_kind or 'number, date or timestamp'}."
-        )
-        return None
-
-    @classmethod
-    def _exclusive_bound(
-        cls,
+    def _side_bounds(
         column_path: str,
-        option: str,
         inclusive_option: str,
-        inclusive_bound: object,
+        exclusive_option: str,
         opts: dict,
         expected_kind: str | None,
-    ) -> object:
-        """Return the bound an exclusiveMinimum/exclusiveMaximum sets, in either ODCS form, or None.
+        *,
+        lower: bool,
+    ) -> list[_RangeBound]:
+        """Return the validated bounds on one side of the range: minimum/exclusiveMinimum or maximum/exclusiveMaximum.
 
-        ODCS v3.0.x makes it a flag that turns minimum/maximum exclusive; from v3.1.0 it is a bound of its own.
-        The form is taken from the value's type, not from apiVersion, because contracts often keep an older one.
-        The flag reuses the already validated *inclusive_bound*, so an invalid minimum/maximum is reported once.
+        ODCS v3.0.x makes the exclusive option a flag that turns the inclusive bound exclusive; from v3.1.0 it is a
+        bound of its own. The form is taken from the value's type, not from apiVersion, because contracts often keep
+        an older one.
         """
-        value = opts.get(option)
-        if not isinstance(value, bool):  # checked first: bool is a subclass of int
-            return cls._range_bound(column_path, option, value, expected_kind)
-        if not value:
-            return None
-        if opts.get(inclusive_option) is None:
+        inclusive = _range_bound(column_path, inclusive_option, opts.get(inclusive_option), expected_kind, lower=lower)
+        exclusive = opts.get(exclusive_option)
+        if not isinstance(exclusive, bool):  # checked first: bool is a subclass of int
+            strict = _range_bound(column_path, exclusive_option, exclusive, expected_kind, lower=lower, strict=True)
+            return [bound for bound in (inclusive, strict) if bound is not None]
+        if exclusive and opts.get(inclusive_option) is None:
             logger.warning(
-                f"Skipping {option} on '{sanitize_for_logging(column_path)}': it is true, but there is no "
+                f"Skipping {exclusive_option} on '{sanitize_for_logging(column_path)}': it is true, but there is no "
                 f"{inclusive_option} to make exclusive."
             )
-            return None
-        return inclusive_bound
+        if inclusive is None:
+            return []
+        return [inclusive._replace(strict=exclusive)]
 
     def _generate_string_length_rules_from_options(
         self, column_path: str, contract_metadata: dict, criticality: str, opts: dict

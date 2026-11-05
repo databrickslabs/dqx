@@ -2484,6 +2484,30 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ),
             (None, "INT", {"minimum": 1}, "is_not_less_than", {"limit": 1}, "below_minimum"),
             (
+                "integer",
+                "INT",
+                {"minimum": 5, "maximum": 5},
+                "is_in_range",
+                {"min_limit": 5, "max_limit": 5},
+                "out_of_range",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T10:00:00Z"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T10:00:00+00:00"},
+                "below_minimum",
+            ),
+            (
+                "datetime",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01 10:00"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01 10:00"},
+                "above_maximum",
+            ),
+            (
                 "timestamp",
                 "TIMESTAMP",
                 {"minimum": "2024-01-01T00:00:00", "maximum": "2024-12-31T00:00:00+00:00"},
@@ -2551,7 +2575,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "Skipping minimum on 'value': 'nan' is not a number, date or timestamp.",
             ),
             (
-                "string",
+                None,
                 "STRING",
                 {"minimum": "other_column"},
                 "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp.",
@@ -2573,6 +2597,42 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "DOUBLE",
                 {"maximum": float("nan")},
                 "Skipping maximum on 'value': 'nan' is not a number.",
+            ),
+            (
+                "date",
+                "DATE",
+                {"minimum": "20240101"},
+                "Skipping minimum on 'value': '20240101' is not a date or timestamp.",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2020-01-01T10"},
+                "Skipping minimum on 'value': '2020-01-01T10' is not a date or timestamp.",
+            ),
+            (
+                "date",
+                "DATE",
+                {"maximum": "2024-02-30"},
+                "Skipping maximum on 'value': '2024-02-30' is not a date or timestamp.",
+            ),
+            (
+                "string",
+                "STRING",
+                {"minimum": 5},
+                "Skipping range bounds on 'value': ODCS defines no range bounds for logical type 'string'.",
+            ),
+            (
+                "boolean",
+                "BOOLEAN",
+                {"minimum": 0},
+                "Skipping range bounds on 'value': ODCS defines no range bounds for logical type 'boolean'.",
+            ),
+            (
+                "time",
+                "STRING",
+                {"minimum": "08:00:00"},
+                "Skipping range bounds on 'value': range bounds on time fields aren't supported yet.",
             ),
         ],
     )
@@ -2611,17 +2671,25 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "logical_type, options, reason",
         [
-            ("integer", {"minimum": 10, "maximum": 1}, "minimum 10 is greater than maximum 1"),
+            ("integer", {"minimum": 10, "maximum": 1}, "no value is at least 10 and at most 1"),
             (
                 "date",
                 {"minimum": "2030-01-01", "maximum": "2020-01-01"},
-                "minimum 2030-01-01 is greater than maximum 2020-01-01",
+                "no value is at least 2030-01-01 and at most 2020-01-01",
             ),
-            (None, {"minimum": 1, "maximum": "2020-01-01"}, "one is a number and the other a date or timestamp"),
+            (None, {"minimum": 1, "maximum": "2020-01-01"}, "the bounds mix numbers with dates or timestamps"),
+            (None, {"minimum": 5, "exclusiveMaximum": "2024-01-01"}, "the bounds mix numbers with dates or timestamps"),
+            ("integer", {"minimum": 10, "exclusiveMaximum": 5}, "no value is at least 10 and less than 5"),
+            ("integer", {"exclusiveMinimum": 5, "exclusiveMaximum": 5}, "no value is greater than 5 and less than 5"),
+            (
+                "integer",
+                {"minimum": 5, "maximum": 5, "exclusiveMinimum": True},
+                "no value is greater than 5 and at most 5",
+            ),
             (
                 "integer",
                 {"minimum": 10, "maximum": 1, "exclusiveMinimum": True},
-                "minimum 10 is greater than maximum 1",
+                "no value is greater than 10 and at most 1",
             ),
         ],
     )
@@ -2635,7 +2703,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             rules = self._generate_range_rules(generator, prop)
 
         assert not rules
-        assert f"Skipping minimum and maximum on 'value': {reason}." in caplog.messages
+        assert f"Skipping range bounds on 'value': {reason}." in caplog.messages
 
     @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
     def test_range_bounds_are_the_same_in_every_odcs_version(self, generator, api_version):
@@ -2664,7 +2732,10 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ("value", "timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
             ("value", "integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
             ("value", "number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
-            ("value", None, "CHAR(8)", {"minimum": "2020-01-01"}, "value"),
+            ("value", None, "CHAR(8)", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            ("value", None, "STRING", {"maximum": "2020-01-01T10:00:00"}, "try_cast(value AS TIMESTAMP)"),
+            ("value", None, "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
+            ("value", "datetime", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS TIMESTAMP)"),
             ("value", "date", "DATE", {"minimum": "2020-01-01"}, "value"),
             ("Päivämäärä", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(`Päivämäärä` AS DATE)"),
         ],
@@ -3128,18 +3199,24 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "logical_type, physical_type, options, expected",
         [
-            # ODCS v3.0.x: a flag that makes minimum/maximum exclusive; the inclusive rule stays
+            # ODCS v3.0.x: a flag that makes minimum/maximum exclusive, replacing that side's inclusive check
             (
                 "integer",
                 "INT",
                 {"minimum": 0, "exclusiveMinimum": True},
-                [("below_minimum", "is_not_less_than", 0), ("at_or_below_exclusive_minimum", "is_greater_than", 0)],
+                [("at_or_below_exclusive_minimum", "is_greater_than", 0)],
             ),
             (
                 "integer",
                 "INT",
                 {"maximum": 10, "exclusiveMaximum": True},
-                [("above_maximum", "is_not_greater_than", 10), ("at_or_above_exclusive_maximum", "is_less_than", 10)],
+                [("at_or_above_exclusive_maximum", "is_less_than", 10)],
+            ),
+            (
+                "integer",
+                "INT",
+                {"minimum": 18, "maximum": 100, "exclusiveMaximum": True},  # the ODCS v3.0.2 all-data-types example
+                [("below_minimum", "is_not_less_than", 18), ("at_or_above_exclusive_maximum", "is_less_than", 100)],
             ),
             (
                 "integer",
@@ -3288,7 +3365,6 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
         )
 
         assert [(r["name"], r["check"]) for r in rules] == [
-            ("value_below_minimum", self._check("is_not_less_than", 0)),
             ("value_at_or_below_exclusive_minimum", self._check("is_greater_than", 0)),
             ("value_at_or_above_exclusive_maximum", self._check("is_less_than", 100)),
         ]

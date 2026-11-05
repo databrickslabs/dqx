@@ -642,7 +642,7 @@ class TestDataContractIntegration:
 class TestDataContractRangeRulesIntegration:
     """Range rules generated from logicalTypeOptions bounds, applied on Spark."""
 
-    def test_generated_range_rules_flag_only_out_of_range_rows(self, ws, spark):
+    def test_generated_range_rules_flag_only_out_of_range_rows(self, ws, spark, set_utc_timezone):
         """Range rules generated from logicalTypeOptions flag only the rows outside the bounds, on Spark."""
         properties = [
             ("qty", "INT", "integer", {"minimum": 0}),
@@ -769,7 +769,7 @@ class TestDataContractRangeRulesIntegration:
         assert flagged_by_row == {
             1: strict_rules,
             2: set(),
-            3: strict_rules | {"qty_below_minimum", "price_at_or_above_exclusive_maximum"},
+            3: strict_rules | {"price_at_or_above_exclusive_maximum"},
             4: set(),
         }
 
