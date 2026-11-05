@@ -477,9 +477,17 @@ describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_
 });
 
 describe("overridable_parameters helpers", () => {
-  test("missing metadata means no parameter is overridable", () => {
-    expect(overridableParametersFromUserMetadata(undefined)).toEqual([]);
-    expect(overridableParametersFromUserMetadata({})).toEqual([]);
+  test("empty parameters are overridable; filled ones need an explicit unlock", () => {
+    const params = [
+      { name: "limit", value: null },
+      { name: "scale", value: 2 },
+      { name: "threshold", value: "{{threshold}}" },
+    ];
+    expect(overridableParametersFromUserMetadata(undefined, params)).toEqual(["limit", "threshold"]);
+    expect(overridableParametersFromUserMetadata({}, params)).toEqual(["limit", "threshold"]);
+    expect(
+      overridableParametersFromUserMetadata({ overridable_parameters: ["scale"] }, params),
+    ).toEqual(["limit", "scale", "threshold"]);
   });
 
   test("round-trips unlocked names and persists empty list when params exist", () => {

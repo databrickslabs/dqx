@@ -34,6 +34,7 @@ import type {
   RuleSlot,
 } from "@/lib/api";
 import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
+import { isUnboundParameterValue } from "@/lib/apply-time-params";
 import { findRefs, isReservedRef } from "@/lib/columnRefs";
 
 export const COLUMN_KINDS = new Set(["column", "columns"]);
@@ -43,7 +44,7 @@ export const COLUMN_KINDS = new Set(["column", "columns"]);
  * Mirrors the backend's `registry_models.RESERVED_SLOT_TAGS_KEY`.
  */
 export const SLOT_TAGS_KEY = "slot_tags";
-/** Parameter names that may be overridden at apply time. Missing/empty = all fixed. */
+/** Explicit unlocks of filled parameters. Empty params are always overridable. */
 export const OVERRIDABLE_PARAMETERS_KEY = "overridable_parameters";
 
 /**
@@ -82,8 +83,10 @@ export function userMetadataWithSlotTags(
   return next;
 }
 
-/** Names listed in `user_metadata.overridable_parameters`. Missing/malformed → none (fixed). */
-export function overridableParametersFromUserMetadata(md: Record<string, unknown> | undefined): string[] {
+/** Explicit unlocks stored in metadata (filled params the author opened for apply-time override). */
+export function explicitOverridableParametersFromUserMetadata(
+  md: Record<string, unknown> | undefined,
+): string[] {
   const raw = md?.[OVERRIDABLE_PARAMETERS_KEY];
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -97,11 +100,37 @@ export function overridableParametersFromUserMetadata(md: Record<string, unknown
   return out;
 }
 
-export function isParameterOverridable(md: Record<string, unknown> | undefined, name: string): boolean {
-  return overridableParametersFromUserMetadata(md).includes(name);
+/**
+ * Effective apply-time overridable names: every empty/unbound parameter (so it
+ * can be filled), plus filled parameters the author explicitly unlocked.
+ */
+export function overridableParametersFromUserMetadata(
+  md: Record<string, unknown> | undefined,
+  parameters?: Array<Pick<RuleParameter, "name" | "value">> | null,
+): string[] {
+  const explicit = explicitOverridableParametersFromUserMetadata(md);
+  if (!parameters) return explicit;
+  const unlocked = new Set(explicit);
+  const out: string[] = [];
+  for (const param of parameters) {
+    if (isUnboundParameterValue(param.value) || unlocked.has(param.name)) out.push(param.name);
+  }
+  return out;
 }
 
-/** Persist unlocked parameter names. Empty list is stored when the rule has parameters so "all fixed" is explicit. */
+export function isParameterOverridable(
+  md: Record<string, unknown> | undefined,
+  name: string,
+  parameters?: Array<Pick<RuleParameter, "name" | "value">> | null,
+): boolean {
+  return overridableParametersFromUserMetadata(md, parameters).includes(name);
+}
+
+/**
+ * Persist explicit unlocks of filled parameters only. Empty params are always
+ * overridable at apply time, so they are not stored. An empty list is written
+ * when the rule has parameters so "no filled unlocks" stays explicit.
+ */
 export function userMetadataWithOverridableParameters(
   md: Record<string, unknown>,
   names: string[],

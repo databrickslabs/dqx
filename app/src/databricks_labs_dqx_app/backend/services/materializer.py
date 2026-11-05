@@ -326,7 +326,7 @@ def render_check(
     parameters = overlay_parameters(
         definition.parameters,
         apply_parameter_values,
-        set(get_overridable_parameters(version.user_metadata)),
+        set(get_overridable_parameters(version.user_metadata, definition.parameters)),
     )
     unbound = [
         param.name
