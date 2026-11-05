@@ -797,7 +797,7 @@ export function RuleConfigCard({
           nothing. Clicks on the controls themselves (buttons, links, inputs)
           and inside their portaled popovers/menus are left alone. */}
       <div
-        className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40 cursor-pointer"
+        className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40"
         onClick={(e) => {
           if (!e.currentTarget.contains(e.target as Node)) return;
           if ((e.target as Element).closest("button, a, input, select, textarea, [role='menuitem']")) return;
