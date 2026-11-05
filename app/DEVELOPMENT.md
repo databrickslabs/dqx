@@ -53,12 +53,13 @@ The first command creates the release branch in a temporary worktree, builds and
 
 Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the Playwright suite against it.
 
-> **The suite must point at a real, fully set-up DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A deployment that is still on the setup screen fails every test that needs Studio to be ready, and the failure lists the pending setup steps. Deploy, open the app once, and finish every setup step (catalog, prefix, user group, task runner) before running it.
+> **The suite must point at a real DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A freshly deployed instance is fine: the `setup` project runs first and takes it through the setup wizard as an administrator. It runs the GRANT statements the wizard lists and verifies again until Studio is ready. It never overrides a step. If a step needs a manual fix, such as a task runner the deployment didn't set or access only an override could confirm, the test fails and names the step. Fix it in the app, then run the suite again.
 
 ```bash
 make app-install                          # once, installs @playwright/test
-make app-e2e PROFILE=<profile>            # smoke + journeys; app name defaults to dqx-studio (APP=<name>)
-make app-e2e PROFILE=<profile> SUITE=smoke   # read-only checks only
+make app-e2e PROFILE=<profile>            # setup + smoke + journeys; app name defaults to dqx-studio (APP=<name>)
+make app-e2e PROFILE=<profile> SUITE=setup   # finish setup on a fresh deployment only
+make app-e2e PROFILE=<profile> SUITE=smoke   # setup, then the read-only checks
 ```
 
 The suite lives in `app/e2e/`. It looks up the app URL with `databricks apps get` and authenticates with an OAuth token from `databricks auth token`. The profile must use OAuth (`databricks auth login`), because the Apps proxy does not accept personal access tokens. The token is sent only to the app's own origin. Run it as a Studio admin with approvals mode set to **Require approval**.
@@ -67,8 +68,9 @@ The suite runs as Playwright projects, in order:
 
 | Project | What it does |
 |---|---|
+| `setup` | Runs first; every other project depends on it. Waits for Studio's own readiness check (a just-deployed app answers 502 until it's up), then in the setup wizard runs each blocked step's GRANT statements (**Run SQL**) and clicks **Verify again**, for up to four rounds, until setup is ready. Checks the warnings review lists any warning steps, and that Studio then opens on Home without errors. On a deployment that's already set up it only checks this and changes nothing. |
 | `smoke` | Read-only: backend health, deployed version matches `app/pyproject.toml`, setup is complete, identity and role resolve, every sidebar page renders without uncaught errors or 5xx API responses. |
-| `accessibility` | Read-only axe-core WCAG 2 A/AA scan of every sidebar page: no serious or critical violations beyond a documented known list. Runs alongside the others; nothing depends on it. |
+| `accessibility` | Read-only axe-core WCAG 2 A/AA scan of every sidebar page: no serious or critical violations beyond a documented known list. Runs after `setup`, alongside the others; nothing depends on it. |
 | `journeys-setup` | Sweeps leftovers from an aborted earlier run (see below). |
 | `journeys` | Real customer journeys, one spec per area, run in parallel: author, approve, reject and delete registry rules; write custom-condition (visual builder) and SQL rules and run them; write a cross-table SQL check and run it with a table; export a table's checks (DQX YAML, ODCS) and a rule, and import the export back; publish v2 of a rule used by a table following latest and one pinned to v1; YAML rule import; monitor a table from the catalog browser, apply and map a rule, submit, approve in Review & Approve, stop monitoring; approve a second table and check the first still runs its approved checks; run an approved table and triage the run (Runs History, results, review status, comments); browse, explain and download (CSV, Excel) a run's failed records; runs that go wrong (a check that can't be evaluated, cancelling); collections (build from approved tables, approve, run as one unit, rolled-up results); multi-table (monitor a whole schema with Select all, bulk approve, bulk run, compare on Results, bulk delete); schedules (create, pause, resume, remove, for a table and a collection; profiling + data quality on a sample); a real scheduled run (a 5-minute cron fires, the run succeeds, the schedule is turned off); sharing a table from its Permissions tab; UI language switch. |
 | `isolated` | Journeys that touch shared state, one at a time: approvals mode (including Skip when self-approvable), the draft-run requirement, rule labels and run review statuses in Admin Settings, marketplace import, ODCS data-contract import, profiling and its suggested checks. |
