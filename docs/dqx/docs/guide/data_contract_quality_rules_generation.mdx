@@ -196,11 +196,16 @@ will fail when checks run.
 
 #### Range constraints
 
-ODCS defines `minimum` and `maximum` for each value, in every v3.x version, so DQX generates row-level checks that flag only the rows outside the bounds. The bounds are passed to the check as written. As in the ODCS schema, an `integer` or `number` field takes number bounds, and a `date` or `timestamp` field takes date or timestamp bounds such as `2020-01-01` or `2020-01-01T10:00:00`. A bound of any other kind (e.g. `minimum: "5"` on an `integer` field, or `minimum: other_column`) is skipped with a warning, so a contract value is never evaluated as a SQL expression. A `minimum` greater than its `maximum` is also skipped with a warning, since no value could pass.
+ODCS defines `minimum` and `maximum` for each value, so DQX generates row-level checks that flag only the rows outside the bounds. The bounds are passed to the check as written. As in the ODCS schema, an `integer` or `number` field takes number bounds, and a `date` or `timestamp` field (`timestamp` from ODCS v3.1.0) takes date or timestamp bounds: `2020-01-01`, `2020-01-01T10:00:00` or `2020-01-01T10:00:00+00:00` (a `Z` offset is passed as `+00:00`). A field without a logical type takes either kind.
+
+These are skipped with a warning, so a contract value is never evaluated as a SQL expression:
+- a bound of another kind, such as `minimum: "5"` on an `integer` field, `minimum: other_column`, `.inf`, or a date written without dashes (`20240101`);
+- bounds on other logical types, which ODCS gives no range (`time` bounds aren't supported yet);
+- a `minimum` greater than its `maximum`, since no value could pass.
 
 `exclusiveMinimum` and `exclusiveMaximum` are not supported yet and are ignored ([#1635](https://github.com/databrickslabs/dqx/issues/1635)).
 
-A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number`. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
+A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number` (exact up to 2<sup>53</sup>). Without a logical type, it follows the bounds. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
 
 <Admonition type="note" title="Previous behavior">
 In DQX v0.17.1 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
