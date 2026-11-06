@@ -197,17 +197,25 @@ export function useSavedViews<C extends string, F extends string>(
     [queryClient, queryKey],
   );
 
-  /** Runs *action*, refreshes the list and reports failures (except duplicate names) with a toast. */
+  /**
+   * Runs *action*, refreshes the list and reports failures (except duplicate names) with a toast.
+   * The list is refreshed on failure too: a 404 means the view was deleted elsewhere, and the
+   * fresh list lets adoption fall back to the effective default instead of a ghost view.
+   */
   const run = useCallback(
     async <T,>(action: () => Promise<T>, failureKey: string): Promise<T> => {
+      let result: T;
       try {
-        const result = await action();
-        await refetchList();
-        return result;
+        result = await action();
       } catch (error) {
-        if (!isDuplicateViewNameError(error)) toast.error(t(failureKey));
+        if (!isDuplicateViewNameError(error)) {
+          toast.error(t(failureKey));
+          await refetchList();
+        }
         throw error;
       }
+      await refetchList();
+      return result;
     },
     [refetchList, t],
   );

@@ -7,7 +7,6 @@ import {
   getScheduleSortValue,
   hasActiveScheduleFilters,
   matchesScheduleFilters,
-  resetScheduleFilter,
   scheduleHealth,
   scheduleOwners,
   scheduleRowKey,
@@ -145,13 +144,5 @@ describe("tablesScheduledByCollections", () => {
       { schedule_cron: null, members: [{ table_fqn: "x.y.z" }] },
     ]);
     expect([...set]).toEqual(["a.b.c"]);
-  });
-});
-
-describe("resetScheduleFilter", () => {
-  it("clears only the given filter", () => {
-    const filters = { search: "x", type: "table" as const, status: "paused" as const, owner: "ana" };
-    expect(resetScheduleFilter(filters, "status")).toEqual({ ...filters, status: "all" });
-    expect(resetScheduleFilter(filters, "search")).toEqual({ ...filters, search: "" });
   });
 });

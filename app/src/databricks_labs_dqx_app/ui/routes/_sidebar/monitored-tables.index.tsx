@@ -76,7 +76,7 @@ import {
   type TableGroupBy,
 } from "@/components/monitored-tables/table-grouping";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
-import { oneOf, stringValue } from "@/components/data-table/saved-views";
+import { MAX_VIEW_STRING_LENGTH, oneOf, stringValue } from "@/components/data-table/saved-views";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
@@ -628,6 +628,7 @@ function MonitoredTablesPage() {
         <Input
           placeholder={t("monitoredTables.searchTablesPlaceholder")}
           value={nameSearch}
+          maxLength={MAX_VIEW_STRING_LENGTH}
           onChange={(e) => setValue("search", e.target.value)}
           className="h-8 text-xs pl-7"
         />

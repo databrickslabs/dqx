@@ -76,8 +76,8 @@ function SortableItem<K extends string>({ id, label, checked, onCheckedChange, d
 
 /**
  * A drag-reorderable, toggleable list of keys — one view of the Edit View
- * menu. The column view is fed by `useColumnLayout`; the filter view by
- * `useFilterLayout` (adapt it with `filterLayoutMenuConfig`).
+ * menu. The column view is fed by `useColumnLayout` or `useSavedViews`; the filter
+ * view by `useSavedViews().filterLayout` (adapt it with `filterLayoutMenuConfig`).
  */
 export interface SortableToggleListConfig<K extends string> {
   /** Current order, drag-reorderable — the same array driving the table / filter bar. */

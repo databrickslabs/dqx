@@ -80,7 +80,7 @@ import { GroupBySelect } from "@/components/data-table/GroupBySelect";
 import { FilterPills } from "@/components/data-table/FilterToolbar";
 import { compareSeverityGroups } from "@/components/rules/severity-group-order";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
-import { oneOf, stringArrayValue, stringValue } from "@/components/data-table/saved-views";
+import { MAX_VIEW_STRING_LENGTH, oneOf, stringArrayValue, stringValue } from "@/components/data-table/saved-views";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
@@ -951,6 +951,7 @@ function RegistryRulesPage() {
         <Input
           placeholder={t("rulesRegistry.searchPlaceholder")}
           value={nameSearch}
+          maxLength={MAX_VIEW_STRING_LENGTH}
           onChange={(e) => setValue("search", e.target.value)}
           className="h-8 text-xs pl-7"
         />

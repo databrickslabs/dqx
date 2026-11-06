@@ -24,6 +24,7 @@ import {
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
+import { MAX_VIEW_STRING_LENGTH } from "@/components/data-table/saved-views";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
@@ -398,6 +399,7 @@ function SchedulesContent({ isAdmin, canCreate }: { isAdmin: boolean; canCreate:
         <Input
           placeholder={t("schedules.search")}
           value={filters.search}
+          maxLength={MAX_VIEW_STRING_LENGTH}
           onChange={(e) => setFilter("search", e.target.value)}
           className="h-8 pl-7 text-xs"
         />

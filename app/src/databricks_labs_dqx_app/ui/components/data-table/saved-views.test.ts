@@ -5,6 +5,7 @@ import {
   builtinViewState,
   cleanViewName,
   isDirty,
+  MAX_VIEW_STRING_LENGTH,
   oneOf,
   optionsSanitizer,
   rowActions,
@@ -114,6 +115,27 @@ describe("isDirty / toPayload", () => {
     expect(p.v).toBe(1);
     expect(p.values).toEqual({});
   });
+
+  it("clamps string values to the server's 512-character limit", () => {
+    const state = builtinViewState(defs);
+    const p = toPayload({ ...state, values: { ...state.values, status: "x".repeat(600), tags: ["y".repeat(600)] } }, defs);
+    expect(MAX_VIEW_STRING_LENGTH).toBe(512);
+    expect(p.values?.status).toBe("x".repeat(512));
+    expect(p.values?.tags).toEqual(["y".repeat(600)]);
+  });
+
+  it("clamps by code point so a surrogate pair is never split", () => {
+    const state = builtinViewState(defs);
+    const p = toPayload({ ...state, values: { ...state.values, status: "\u{1F600}".repeat(600) } }, defs);
+    expect(Array.from(p.values?.status as string)).toHaveLength(512);
+    expect(p.values?.status).toBe("\u{1F600}".repeat(512));
+  });
+
+  it("leaves values within the limit untouched", () => {
+    const state = builtinViewState(defs);
+    const p = toPayload({ ...state, values: { ...state.values, status: "x".repeat(512) } }, defs);
+    expect(p.values?.status).toBe("x".repeat(512));
+  });
 });
 
 const view = (over: Partial<SavedViewOut>): SavedViewOut => ({
@@ -182,6 +204,15 @@ describe("view names", () => {
 
   it("cleans whitespace like the server", () => {
     expect(cleanViewName("  a \t  b  ")).toBe("a b");
+  });
+
+  it("replaces control characters like the server", () => {
+    expect(cleanViewName("a\u0000b\u001fc\u007fd\u0085e")).toBe("a b c d e");
+    expect(cleanViewName("\u0001Sales\u0002")).toBe("Sales");
+  });
+
+  it("treats a name differing only by control characters as a duplicate", () => {
+    expect(viewNameError("Exec\u0000overview", "org", views)).toBe("duplicate");
   });
 
   it("requires 1-80 characters", () => {

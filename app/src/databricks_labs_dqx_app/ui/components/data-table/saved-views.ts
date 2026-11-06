@@ -137,7 +137,19 @@ function sameValue(a: ViewValue, b: ViewValue): boolean {
   return a === b;
 }
 
-/** Serialises state for storage. With *defs*, values equal to their empty value are omitted. */
+/** Longest string value the server accepts in a saved view (its MAX_STRING_LENGTH). */
+export const MAX_VIEW_STRING_LENGTH = 512;
+
+/** Cuts *value* to {@link MAX_VIEW_STRING_LENGTH} code points (the server counts code points). */
+function clampViewString(value: string): string {
+  if (value.length <= MAX_VIEW_STRING_LENGTH) return value;
+  return Array.from(value).slice(0, MAX_VIEW_STRING_LENGTH).join("");
+}
+
+/**
+ * Serialises state for storage. With *defs*, values equal to their empty value are omitted.
+ * String values are clamped to {@link MAX_VIEW_STRING_LENGTH} so an over-long search can't be rejected.
+ */
 export function toPayload<C extends string, F extends string>(
   state: ViewState<C, F>,
   defs?: ViewDefs<C, F>,
@@ -146,7 +158,7 @@ export function toPayload<C extends string, F extends string>(
   for (const [key, value] of Object.entries(state.values)) {
     const empty = defs?.emptyValues[key as F];
     if (empty !== undefined && sameValue(value, empty)) continue;
-    values[key] = Array.isArray(value) ? [...value] : value;
+    values[key] = Array.isArray(value) ? [...value] : typeof value === "string" ? clampViewString(value) : value;
   }
   const payload: SavedViewPayload = {
     v: 1,
@@ -231,9 +243,12 @@ export const MAX_VIEW_NAME_LENGTH = 80;
 
 export type ViewNameError = "required" | "tooLong" | "duplicate";
 
-/** Collapses whitespace and trims, matching the server's name cleaning. */
+/** Replaces control characters, collapses whitespace and trims, matching the server's name cleaning. */
 export function cleanViewName(raw: string): string {
-  return raw.replace(/\s+/g, " ").trim();
+  return raw
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

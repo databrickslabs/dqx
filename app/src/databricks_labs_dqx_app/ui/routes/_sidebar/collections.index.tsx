@@ -65,7 +65,7 @@ import {
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
-import { stringValue } from "@/components/data-table/saved-views";
+import { MAX_VIEW_STRING_LENGTH, stringValue } from "@/components/data-table/saved-views";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
@@ -538,6 +538,7 @@ function DataProductsPage() {
         <Input
           placeholder={t("dataProducts.searchPlaceholder")}
           value={search}
+          maxLength={MAX_VIEW_STRING_LENGTH}
           onChange={(e) => setValue("search", e.target.value)}
           className="h-8 text-xs pl-7"
         />
