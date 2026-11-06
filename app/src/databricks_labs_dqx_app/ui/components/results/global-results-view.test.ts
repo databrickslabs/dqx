@@ -45,7 +45,6 @@ describe("buildGlobalResultsViewDefs", () => {
       "schema",
       "table",
       "rule",
-      "dqScore",
       "outcome",
     ]);
     expect(state.values.dqScore).toBe("all");

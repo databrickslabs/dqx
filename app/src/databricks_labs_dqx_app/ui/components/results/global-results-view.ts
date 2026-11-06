@@ -42,7 +42,7 @@ export const GLOBAL_RESULTS_FILTERS: Record<GlobalResultsFilterKey, FilterLayout
   schema: { labelKey: "resultsUi.filterLabelSchema", defaultVisible: true },
   owner: { labelKey: "resultsUi.filterLabelOwner", defaultVisible: false },
   collection: { labelKey: "resultsUi.filterLabelCollection", defaultVisible: false },
-  dqScore: { labelKey: "resultsUi.filterLabelDqScore", defaultVisible: true },
+  dqScore: { labelKey: "resultsUi.filterLabelDqScore", defaultVisible: false },
   table: { labelKey: "resultsUi.filterLabelTable", defaultVisible: true },
   rule: { labelKey: "resultsUi.filterLabelRule", defaultVisible: true },
   outcome: { labelKey: "resultsUi.filterLabelAlerts", defaultVisible: true },
