@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Check, ChevronLeft, ChevronRight, Home, MoreHorizontal, RotateCcw, Star } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, MoreHorizontal, RotateCcw, Star } from "lucide-react";
 import type { SavedViewOut } from "@/lib/api";
 import {
   AlertDialog,
@@ -51,20 +51,23 @@ function UnsavedDot() {
 export function SavedViewsEntry({ config, onOpen }: { config: SavedViewsMenuConfig; onOpen: () => void }) {
   const { t } = useTranslation();
   return (
-    <DropdownMenuItem
-      className="mb-1 gap-2 border bg-muted/40 text-xs font-medium"
-      onSelect={(e) => {
-        e.preventDefault();
-        onOpen();
-      }}
-    >
-      <span className="shrink-0">{t("savedViews.title")}</span>
-      <span className="ml-auto flex min-w-0 items-center gap-1.5 font-normal text-muted-foreground">
-        {config.activeView && <TruncatedLabel text={config.activeView.name} className="min-w-0" />}
-        {config.dirty && <UnsavedDot />}
-      </span>
-      <ChevronRight className="text-muted-foreground" />
-    </DropdownMenuItem>
+    <>
+      <DropdownMenuItem
+        className="gap-1 text-xs font-medium"
+        onSelect={(e) => {
+          e.preventDefault();
+          onOpen();
+        }}
+      >
+        <span className="shrink-0">{t("savedViews.title")}</span>
+        <span className="ml-auto flex min-w-0 items-center gap-1.5 font-normal text-muted-foreground">
+          {config.activeView && <TruncatedLabel text={config.activeView.name} className="min-w-0" />}
+          {config.dirty && <UnsavedDot />}
+        </span>
+        <ChevronRight className="text-muted-foreground" />
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+    </>
   );
 }
 
@@ -120,12 +123,6 @@ function ViewRow({
         </span>
         <TruncatedLabel text={view.name} className="min-w-0" />
         {active && config.dirty && <UnsavedDot />}
-        {config.effectiveDefaultId === view.id && (
-          <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground">
-            <Home className="h-3 w-3" />
-            {t("savedViews.defaultMarker")}
-          </span>
-        )}
       </DropdownMenuItem>
       <DropdownMenuItem
         aria-label={view.starred ? t("savedViews.unstar") : t("savedViews.star")}
