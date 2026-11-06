@@ -55,9 +55,12 @@ test.describe("Similar-rule import and applied overrides", () => {
       await page.locator("textarea").first().fill(yaml);
       await expect(page.getByText("Loaded 1 checks from YAML").or(page.getByText("Loaded 1 check from YAML"))).toBeVisible();
 
-      // Similar-rule lookup is debounced after parse.
+      // Similar-rule lookup is debounced after parse. Different allowed values
+      // are a settings conflict, so reuse is offered unchecked — tick it.
       await expect(page.getByText(/imported rule matches an existing rule/)).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText(new RegExp(`Reuse ${existingName}`))).toBeVisible();
+      const reuse = page.getByRole("checkbox", { name: new RegExp(`Reuse ${existingName}`) });
+      await expect(reuse).toBeVisible();
+      if (!(await reuse.isChecked())) await reuse.check();
 
       await page.getByRole("button", { name: "Save as drafts" }).click();
       await expectToast(page, /Reused \d+ existing rule/);
