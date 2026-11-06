@@ -60,3 +60,8 @@ export function breachTimesBySeries(markers: BreachMarker[] | undefined): Map<st
   }
   return out;
 }
+
+/** Whether *ts* (epoch ms or numeric string) is one of a series' breach times. */
+export function isBreachTime(times: Set<number> | undefined, ts: number | string | null | undefined): boolean {
+  return times != null && ts != null && times.has(Number(ts));
+}

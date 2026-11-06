@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { breachedSeriesAt, breachTimesBySeries, perTableBreachMarkers } from "./breachMarkers";
+import { isBreachTime, breachedSeriesAt, breachTimesBySeries, perTableBreachMarkers } from "./breachMarkers";
 
 describe("perTableBreachMarkers", () => {
   const points = [
@@ -43,5 +43,18 @@ describe("breachedSeriesAt / breachTimesBySeries", () => {
     expect(m.get("a")?.size).toBe(2);
     expect(m.get("b")?.has(Date.parse("2026-10-01 00:00:00"))).toBe(true);
     expect(m.size).toBe(2);
+  });
+});
+
+describe("isBreachTime", () => {
+  const times = new Set([1000]);
+  it("matches numeric and string timestamps in the set", () => {
+    expect(isBreachTime(times, 1000)).toBe(true);
+    expect(isBreachTime(times, "1000")).toBe(true);
+  });
+  it("is false for other, missing or set-less inputs", () => {
+    expect(isBreachTime(times, 2000)).toBe(false);
+    expect(isBreachTime(times, null)).toBe(false);
+    expect(isBreachTime(undefined, 1000)).toBe(false);
   });
 });

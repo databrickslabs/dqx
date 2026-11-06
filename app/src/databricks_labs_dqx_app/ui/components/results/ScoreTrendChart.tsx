@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { breachedSeriesAt, breachTimesBySeries, type BreachMarker } from "@/components/results/breachMarkers";
+import { breachedSeriesAt, breachTimesBySeries, isBreachTime, type BreachMarker } from "@/components/results/breachMarkers";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, CircleHelp } from "lucide-react";
@@ -377,6 +377,20 @@ function XGlyph({ color }: { color?: string }) {
   );
 }
 
+/** The ⚠ breach glyph in `color`, same box as XGlyph so it replaces the × in
+ *  the tooltip row of a breached point. */
+function BreachGlyph({ color }: { color?: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex h-[10px] w-[10px] shrink-0 items-center justify-center text-[10px] font-bold leading-none"
+      style={{ color }}
+    >
+      ⚠
+    </span>
+  );
+}
+
 export function TrendTooltip({
   active,
   payload,
@@ -499,7 +513,11 @@ export function TrendTooltip({
                   fill={seriesColors?.[name] ?? COUNT_COLORS[0]}
                 />
               ) : xMarkers ? (
-                <XGlyph color={p.color} />
+                breachedHere.has(name) ? (
+                  <BreachGlyph color={p.color} />
+                ) : (
+                  <XGlyph color={p.color} />
+                )
               ) : (
                 <span
                   className="inline-block h-2 w-2 rounded-full shrink-0"
@@ -507,11 +525,6 @@ export function TrendTooltip({
                 />
               )}
               <span>
-                {breachedHere.has(name) && (
-                  <span aria-hidden style={{ color: p.color }} className="mr-0.5 font-bold">
-                    ⚠
-                  </span>
-                )}
                 {name}: {text}
               </span>
             </li>
@@ -548,13 +561,36 @@ export type OverallStep = { run_date: string; value: number | null };
 
 /** A recharts dot renderer drawing an "×" at (cx, cy). Used for the member-table
  *  points so they read as recessive marks, distinct from the Average's bold
- *  circular markers. */
-function xMarkerDot(r: number, color: string, opacity = 0.7, suppressAt?: Set<number>) {
+ *  circular markers. At points in `breachAt` (epoch-ms run times where the
+ *  series breached) it draws the ⚠ glyph in the series colour instead, so a
+ *  breach point never shows both; `active` (hover) enlarges the ⚠ and masks the
+ *  static one beneath it so the two never overlap. */
+function xMarkerDot(r: number, color: string, opacity = 0.7, breachAt?: Set<number>, active = false) {
   return (props: { cx?: number; cy?: number; payload?: { ts?: number | string | null } }) => {
     const { cx, cy, payload } = props;
     if (cx == null || cy == null) return <g key={`${cx}-${cy}`} />;
-    // A breach ⚠ is drawn on this point instead of the ×.
-    if (suppressAt && payload?.ts != null && suppressAt.has(Number(payload.ts))) return <g key={`${cx}-${cy}`} />;
+    if (isBreachTime(breachAt, payload?.ts)) {
+      return (
+        <g key={`${cx}-${cy}`} style={{ pointerEvents: "none" }}>
+          {active && <circle cx={cx} cy={cy} r={10} fill="var(--background)" />}
+          <text
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={active ? 18 : 14}
+            fontWeight={700}
+            fill={color}
+            stroke="var(--background)"
+            strokeWidth={3}
+            strokeLinejoin="round"
+            paintOrder="stroke"
+          >
+            ⚠
+          </text>
+        </g>
+      );
+    }
     return (
       <path
         key={`${cx}-${cy}`}
@@ -1542,7 +1578,7 @@ export function ScoreTrendChart({
                       connectNulls
                       hide={hidden.has(name)}
                       dot={xMarkerDot(3.5, stroke, 0.7, breachTimes.get(name))}
-                      activeDot={xMarkerDot(4.5, stroke, 1)}
+                      activeDot={xMarkerDot(4.5, stroke, 1, breachTimes.get(name), true)}
                       isAnimationActive={false}
                     />
                   );
@@ -1585,6 +1621,8 @@ export function ScoreTrendChart({
                 if (m.series && hidden.has(m.series)) return null;
                 const fill = "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
                 if (m.series) {
+                  // Average mode: the series' dot renderer draws the ⚠ itself.
+                  if (overallMode) return null;
                   // Multi-table: the ⚠ sits ON the point in that table's line
                   // colour (replacing its ×), haloed with the background colour.
                   const idx = series.indexOf(m.series);
