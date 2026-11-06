@@ -8,6 +8,7 @@ import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Pagination } from "@/components/Pagination";
 import {
+  DATA_PRODUCTS_COLUMN_LAYOUT,
   DataProductsTable,
   getDataProductsSortValue,
   getDataProductsSortConfig,
@@ -48,6 +49,7 @@ import {
   useRunDataProduct,
   getListDataProductsQueryKey,
   getGetDataProductQueryKey,
+  SavedViewPage,
   type DataProductOut,
 } from "@/lib/api";
 import {
@@ -62,11 +64,16 @@ import {
   matchesDqScoreBucket,
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
+import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
+import { stringValue } from "@/components/data-table/saved-views";
+import { useSavedViews } from "@/components/data-table/useSavedViews";
+import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
-  filterLayoutMenuConfig,
-  useFilterLayout,
-  type FilterLayoutDef,
-} from "@/components/data-table/filter-layout";
+  COLLECTIONS_FILTERS as FILTERS,
+  COLLECTIONS_FILTER_ALL as ALL,
+  buildCollectionsViewDefs,
+  type CollectionsFilterKey,
+} from "@/components/data-products/collections-view";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { cn } from "@/lib/utils";
 
@@ -76,15 +83,6 @@ function extractApiError(err: unknown, fallback: string): string {
 }
 
 const PAGE_SIZE = 50;
-const ALL = "all";
-
-type CollectionsFilterKey = "search" | "owner" | "dqScore";
-const FILTER_ORDER: readonly CollectionsFilterKey[] = ["search", "owner", "dqScore"];
-const FILTERS: Record<CollectionsFilterKey, FilterLayoutDef> = {
-  search: { labelKey: "dataProducts.filterSearch", defaultVisible: true },
-  owner: { labelKey: "dataProducts.colOwner", defaultVisible: true },
-  dqScore: { labelKey: "dataProducts.colDqScore", defaultVisible: true },
-};
 
 export const Route = createFileRoute("/_sidebar/collections/")({
   component: () => (
@@ -144,15 +142,26 @@ function DataProductsPage() {
   const { data, isLoading, isError, refetch } = useListDataProducts();
   const products = useMemo(() => data?.data ?? [], [data]);
 
-  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
-  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-
   const ownerOptions = useMemo(
     () => Array.from(new Set(products.map((p) => p.owner).filter((s): s is string => !!s))).sort(),
     [products],
   );
+
+  // Saved views own the column layout, filter layout and every filter value
+  // (search included). A saved owner with no collections left is dropped once
+  // the list loads; until then it is kept.
+  const loaded = data !== undefined;
+  const viewDefs = useMemo(
+    () => buildCollectionsViewDefs(DATA_PRODUCTS_COLUMN_LAYOUT, { owners: loaded ? ownerOptions : null }),
+    [loaded, ownerOptions],
+  );
+  const views = useSavedViews(SavedViewPage.collections, viewDefs);
+  const { values, setValue } = views;
+  const ownerFilter = stringValue(values.owner, ALL);
+  const scoreFilter = stringValue(values.dqScore, DQ_SCORE_FILTER_ALL);
+  const search = stringValue(values.search, "");
+  // Any filter edit (or switching view) starts the list from page 1.
+  const [page, setPage] = usePageResetOn(values);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -210,33 +219,13 @@ function DataProductsPage() {
   const hasActiveFilters = ownerFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
 
   const applyFilter = useCallback(
-    <T,>(setter: (v: T) => void) =>
-      (v: T) => {
-        setter(v);
-        setPage(1);
-      },
-    [],
+    (key: CollectionsFilterKey) => (v: string) => setValue(key, v),
+    [setValue],
   );
 
-  // Which filter pills show, and in what order (Edit Columns > Filters).
-  // Hiding a filter clears it so it can't keep narrowing the list unseen.
-  const resetFilter = useCallback((key: CollectionsFilterKey) => {
-    setPage(1);
-    switch (key) {
-      case "search":
-        return setSearch("");
-      case "owner":
-        return setOwnerFilter(ALL);
-      case "dqScore":
-        return setScoreFilter(DQ_SCORE_FILTER_ALL);
-    }
-  }, []);
-  const filterLayout = useFilterLayout<CollectionsFilterKey>({
-    storageKey: "dqx.collections.filters",
-    defaultOrder: FILTER_ORDER,
-    filters: FILTERS,
-    onHide: resetFilter,
-  });
+  // Which filter pills show, and in what order (Edit View > Filters). Hiding a
+  // filter clears it (useSavedViews) so it can't keep narrowing the list unseen.
+  const { filterLayout } = views;
 
   const openProduct = (product: DataProductOut) => {
     navigate({ to: "/collections/$productId", params: { productId: product.product_id } });
@@ -549,7 +538,7 @@ function DataProductsPage() {
         <Input
           placeholder={t("dataProducts.searchPlaceholder")}
           value={search}
-          onChange={(e) => applyFilter(setSearch)(e.target.value)}
+          onChange={(e) => setValue("search", e.target.value)}
           className="h-8 text-xs pl-7"
         />
       </div>
@@ -557,7 +546,7 @@ function DataProductsPage() {
     owner: (
       <SearchableSelect
         value={ownerFilter}
-        onChange={applyFilter(setOwnerFilter)}
+        onChange={applyFilter("owner")}
         options={ownerOptions.map((s) => ({ value: s, label: s }))}
         allValue={ALL}
         allLabel={t("dataProducts.allOwners")}
@@ -567,7 +556,7 @@ function DataProductsPage() {
       />
     ),
     dqScore: (
-      <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+      <Select value={scoreFilter} onValueChange={applyFilter("dqScore")}>
         <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
           <SelectValue />
         </SelectTrigger>
@@ -737,7 +726,9 @@ function DataProductsPage() {
                   </div>
                 )
           }
+          columnLayout={views.columnLayout!}
           filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
+          savedViews={views.menuConfig}
           toolbarExtra={filterLayout.visibleKeys.map((key) => (
             <Fragment key={key}>{filterControls[key]}</Fragment>
           ))}

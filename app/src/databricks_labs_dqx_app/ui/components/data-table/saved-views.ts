@@ -297,3 +297,77 @@ export function saveDisabledReason(
   if (activeView && !activeView.can_edit) return { disabled: true, reasonKey: "savedViews.saveReadOnly" };
   return { disabled: !activeView || !dirty, reasonKey: null };
 }
+
+/**
+ * Drops a filter value whose options no longer exist. *options* is the filter's
+ * current option list, or null while the options are still loading — in which
+ * case the value is kept (so a saved filter survives the first render). Single
+ * values not in *options* fall back to *empty*; arrays keep only known options.
+ * The empty value itself is always kept.
+ */
+export function sanitizeAgainstOptions(
+  value: ViewValue,
+  options: readonly string[] | null,
+  empty: ViewValue,
+): ViewValue {
+  if (options === null || value === null) return value;
+  if (Array.isArray(value)) {
+    const known = value.filter((v) => options.includes(v));
+    return known.length === value.length ? value : known;
+  }
+  if (value === empty || options.includes(value)) return value;
+  return cloneEmpty(empty);
+}
+
+/**
+ * Builds a *sanitizeValue* for {@link ViewDefs} from per-filter option lists.
+ * Filters without an entry are left untouched; a null entry means "still loading".
+ */
+export function optionsSanitizer<F extends string>(
+  options: Partial<Record<F, readonly string[] | null>>,
+  emptyValues: Record<F, ViewValue>,
+): (key: F, value: ViewValue) => ViewValue {
+  return (key, value) => {
+    const known = options[key];
+    return known === undefined ? value : sanitizeAgainstOptions(value, known, emptyValues[key]);
+  };
+}
+
+/**
+ * Re-applies *defs.sanitizeValue* to the working values, e.g. once a filter's options
+ * have loaded. Returns *state* itself when nothing changed.
+ */
+export function sanitizeViewValues<C extends string, F extends string>(
+  state: ViewState<C, F>,
+  defs: ViewDefs<C, F>,
+): ViewState<C, F> {
+  const sanitize = defs.sanitizeValue;
+  if (!sanitize) return state;
+  let changed = false;
+  const values: ViewValues = { ...state.values };
+  for (const key of defs.filters.defaultOrder) {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) continue;
+    const cleaned = sanitize(key, values[key]);
+    if (!sameValue(cleaned, values[key])) {
+      values[key] = cleaned;
+      changed = true;
+    }
+  }
+  return changed ? { ...state, values } : state;
+}
+
+/** *value* as a string, or *fallback* when it is an array or null. */
+export function stringValue(value: ViewValue | undefined, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** *value* as a string array; a single string becomes a one-item array, null an empty one. */
+export function stringArrayValue(value: ViewValue | undefined): string[] {
+  if (Array.isArray(value)) return value;
+  return typeof value === "string" ? [value] : [];
+}
+
+/** *value* when it is one of *allowed*, else *fallback* — narrows a stored string to a union. */
+export function oneOf<T extends string>(value: ViewValue | undefined, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}

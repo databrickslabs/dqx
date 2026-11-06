@@ -39,6 +39,7 @@ import {
   isDirty,
   reconcileView,
   resolveActiveView,
+  sanitizeViewValues,
   sortViews,
   toPayload,
   type ViewDefs,
@@ -122,8 +123,11 @@ const NO_COLUMNS: { defaultOrder: readonly never[]; columns: Record<never, Colum
  * working column layout, filter layout and filter values. Unsaved edits live in
  * memory only. Column widths are session-only and never saved.
  *
- * *defs* should be a module-level constant. While the list loads, the working
- * state is the built-in layout so the page renders straight away.
+ * *defs* must keep a stable identity: a module-level constant, or memoised on
+ * the option lists its *sanitizeValue* checks against. Whenever *defs* changes
+ * (e.g. a filter's options finish loading) the working values are re-sanitised.
+ * While the list loads, the working state is the built-in layout so the page
+ * renders straight away.
  */
 export function useSavedViews<C extends string, F extends string>(
   pageKey: SavedViewPage,
@@ -140,6 +144,14 @@ export function useSavedViews<C extends string, F extends string>(
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [working, setWorking] = useState<ViewState<C, F>>(() => builtinViewState(defs));
+  const [sanitizedFor, setSanitizedFor] = useState(defs);
+
+  // New defs usually mean new filter options: drop values whose option is gone.
+  // Adjusted during render (not in an effect) so a stale value never paints.
+  if (sanitizedFor !== defs) {
+    setSanitizedFor(defs);
+    setWorking((prev) => sanitizeViewValues(prev, defs));
+  }
 
   // On first load — or when the active view disappears (deleted here or elsewhere) —
   // adopt the resolved view during render, so the page never paints a stale layout.

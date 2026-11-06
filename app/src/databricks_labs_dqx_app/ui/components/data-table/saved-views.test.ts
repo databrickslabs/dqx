@@ -5,7 +5,13 @@ import {
   builtinViewState,
   cleanViewName,
   isDirty,
+  oneOf,
+  optionsSanitizer,
   rowActions,
+  sanitizeAgainstOptions,
+  sanitizeViewValues,
+  stringArrayValue,
+  stringValue,
   saveDisabledReason,
   viewNameError,
   reconcileView,
@@ -243,5 +249,76 @@ describe("saveDisabledReason", () => {
 
   it("is enabled for a dirty, editable view", () => {
     expect(saveDisabledReason(view({}), true)).toEqual({ disabled: false, reasonKey: null });
+  });
+});
+
+describe("sanitizeAgainstOptions", () => {
+  it("keeps any value while the options are still loading", () => {
+    expect(sanitizeAgainstOptions("sales", null, "all")).toBe("sales");
+    expect(sanitizeAgainstOptions(["a", "gone"], null, [])).toEqual(["a", "gone"]);
+  });
+
+  it("drops a single value that is no longer an option", () => {
+    expect(sanitizeAgainstOptions("gone", ["sales", "ops"], "all")).toBe("all");
+    expect(sanitizeAgainstOptions("sales", ["sales", "ops"], "all")).toBe("sales");
+  });
+
+  it("always keeps the empty value", () => {
+    expect(sanitizeAgainstOptions("all", [], "all")).toBe("all");
+  });
+
+  it("filters arrays to known options", () => {
+    expect(sanitizeAgainstOptions(["a", "gone", "b"], ["a", "b"], [])).toEqual(["a", "b"]);
+  });
+});
+
+describe("optionsSanitizer / sanitizeViewValues", () => {
+  const withOptions = (status: readonly string[] | null): ViewDefs<C, F> => ({
+    ...defs,
+    sanitizeValue: optionsSanitizer<F>({ status }, defs.emptyValues),
+  });
+
+  it("leaves filters without an option list alone", () => {
+    const sanitize = optionsSanitizer<F>({ status: ["open"] }, defs.emptyValues);
+    expect(sanitize("groupBy", "anything")).toBe("anything");
+  });
+
+  it("keeps a saved value on first render, then drops it once options load without it", () => {
+    const loaded = reconcileView({ v: 1, values: { status: "archived" } }, withOptions(null));
+    expect(loaded.values.status).toBe("archived");
+
+    expect(sanitizeViewValues(loaded, withOptions(["archived", "open"]))).toBe(loaded);
+    const cleaned = sanitizeViewValues(loaded, withOptions(["open"]));
+    expect(cleaned.values.status).toBe("all");
+    expect(cleaned.filters).toBe(loaded.filters);
+  });
+
+  it("is not dirty when the saved and working values were sanitised against the same options", () => {
+    const payload = { v: 1, values: { status: "archived" } };
+    const stale = reconcileView(payload, withOptions(null));
+    const current = withOptions(["open"]);
+    expect(isDirty(reconcileView(payload, current), sanitizeViewValues(stale, current), current)).toBe(false);
+  });
+});
+
+describe("value readers", () => {
+  it("stringValue falls back for non-strings", () => {
+    expect(stringValue("x", "all")).toBe("x");
+    expect(stringValue(null, "all")).toBe("all");
+    expect(stringValue(["x"], "all")).toBe("all");
+    expect(stringValue(undefined, "all")).toBe("all");
+  });
+
+  it("stringArrayValue wraps strings and empties null", () => {
+    expect(stringArrayValue(["a"])).toEqual(["a"]);
+    expect(stringArrayValue("a")).toEqual(["a"]);
+    expect(stringArrayValue(null)).toEqual([]);
+  });
+
+  it("oneOf narrows to the allowed values", () => {
+    const allowed = ["none", "catalog"] as const;
+    expect(oneOf("catalog", allowed, "none")).toBe("catalog");
+    expect(oneOf("bogus", allowed, "none")).toBe("none");
+    expect(oneOf(null, allowed, "none")).toBe("none");
   });
 });
