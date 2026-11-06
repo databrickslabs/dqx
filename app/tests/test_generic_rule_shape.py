@@ -36,7 +36,7 @@ class TestShapeKey:
     def test_function_parameters_and_polarity_change_the_shape(self):
         base = shape_key("dqx_native", _native("is_not_null", ["x"]), None)
         assert base != shape_key("dqx_native", _native("is_unique", ["x"]), None)
-        assert base != shape_key("dqx_native", _native("is_not_null", ["x"]), "must_fail")
+        assert base != shape_key("dqx_native", _native("is_not_null", ["x"]), "fail")
         limit0 = [{"name": "limit", "type": "number", "value": 0}]
         limit1 = [{"name": "limit", "type": "number", "value": 1}]
         assert shape_key("dqx_native", _native("is_not_less_than", ["x"], limit0), None) != shape_key(

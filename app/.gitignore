@@ -47,3 +47,7 @@ target.*.yml
 # pyproject.toml, not uv.lock) and only ever re-leaks the internal PyPI proxy
 # URL when regenerated on a Databricks machine. Keep it out of the repo.
 tasks/uv.lock
+
+# Playwright e2e output (screenshots of the deployment under test).
+/e2e/test-results/
+/e2e/playwright-report/

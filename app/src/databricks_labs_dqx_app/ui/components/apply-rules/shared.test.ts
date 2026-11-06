@@ -95,6 +95,38 @@ describe("mergeColumnThresholds", () => {
 // buildDesiredApplications — column_pass_thresholds round-trip
 // ---------------------------------------------------------------------------
 
+describe("buildDesiredApplications row_filter", () => {
+  test("carries a per-table population override", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        pinned_version: null,
+        severity_override: null,
+        pass_threshold: null,
+        row_filter: "region = 'EU'",
+        column_mapping: [{ col: "email" }],
+        user_metadata: {},
+      } as unknown as AppliedRuleOut,
+    ];
+    expect(buildDesiredApplications(rows)[0]?.row_filter).toBe("region = 'EU'");
+  });
+
+  test("blank row_filter is sent as null (inherit rule default)", () => {
+    const rows: AppliedRuleOut[] = [
+      {
+        id: "row1",
+        binding_id: "b1",
+        rule_id: "r1",
+        row_filter: "  ",
+        column_mapping: [{ col: "email" }],
+      } as unknown as AppliedRuleOut,
+    ];
+    expect(buildDesiredApplications(rows)[0]?.row_filter).toBeNull();
+  });
+});
+
 describe("buildDesiredApplications column_pass_thresholds", () => {
   test("carries column_pass_thresholds into the payload", () => {
     const rows: AppliedRuleOut[] = [

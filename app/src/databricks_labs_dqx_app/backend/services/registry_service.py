@@ -310,6 +310,22 @@ class RegistryService:
         )
         return compute_registry_rule_fingerprint(probe)
 
+    def refresh_fingerprints(self) -> int:
+        """Rewrite stored fingerprints that no longer match the current algorithm. Returns the count."""
+        refreshed = 0
+        for rule in self.list_rules():
+            fingerprint = compute_registry_rule_fingerprint(rule)
+            if fingerprint == rule.fingerprint:
+                continue
+            self._sql.execute(
+                f"UPDATE {self._table} SET fingerprint = '{escape_sql_string(fingerprint)}' "  # noqa: S608
+                f"WHERE rule_id = '{escape_sql_string(rule.rule_id)}'"
+            )
+            refreshed += 1
+        if refreshed:
+            logger.info("Refreshed the fingerprint of %d registry rule(s)", refreshed)
+        return refreshed
+
     def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
         """Get the first ``approved`` registry rule matching *fingerprint*.
 
@@ -536,7 +552,7 @@ class RegistryService:
             return True
         if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
             return True
-        return rule.user_metadata != snapshot.user_metadata
+        return (rule.user_metadata or {}) != (snapshot.user_metadata or {})
 
     def _get(self, rule_id: str) -> RegistryRule | None:
         e_rule_id = escape_sql_string(rule_id)

@@ -390,6 +390,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           groups: Record<string, string>[];
           groupKeys: Set<string>;
           outcomes: SchemaOutcome[];
+          rowFilter: string | null;
         }
       >();
 
@@ -418,6 +419,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule: CreateRegistryRuleOut["rule"];
             reused: boolean;
             slotRenames: Record<string, string>;
+            rowFilter: string | null;
           }[];
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally
@@ -436,8 +438,18 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             const created = resp.data.created ?? [];
             const reused = resp.data.reused ?? [];
             processed = [
-              ...created.map((cr) => ({ rule: cr.rule, reused: false, slotRenames: cr.slot_renames ?? {} })),
-              ...reused.map((cr) => ({ rule: cr.rule, reused: true, slotRenames: cr.slot_renames ?? {} })),
+              ...created.map((cr) => ({
+                rule: cr.rule,
+                reused: false,
+                slotRenames: cr.slot_renames ?? {},
+                rowFilter: cr.row_filter ?? null,
+              })),
+              ...reused.map((cr) => ({
+                rule: cr.rule,
+                reused: true,
+                slotRenames: cr.slot_renames ?? {},
+                rowFilter: cr.row_filter ?? null,
+              })),
             ];
             const failed = resp.data.failed ?? [];
             // Surface the real (server-sanitized) per-rule reason instead of a
@@ -505,6 +517,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 groups: [],
                 groupKeys: new Set(),
                 outcomes: [],
+                rowFilter: entryRule.rowFilter,
               };
               targets.set(targetKey, target);
             }
@@ -532,6 +545,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             binding_id: target.bindingId,
             rule_id: target.ruleId,
             column_mapping: target.groups,
+            row_filter: target.rowFilter,
           });
           for (const o of affectedOutcomes) o.pending += 1;
           continue;
@@ -540,6 +554,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           await applyRuleToTable(target.bindingId, {
             rule_id: target.ruleId,
             column_mapping: target.groups,
+            row_filter: target.rowFilter,
           });
           for (const o of affectedOutcomes) o.applied += 1;
           anyApplied = true;

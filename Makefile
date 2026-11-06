@@ -153,6 +153,21 @@ app-integration: ## Run opt-in Studio setup integration tests (requires PROFILE=
 	@test -n "$(PROFILE)" || (echo "Usage: make app-integration PROFILE=<databricks-profile>"; exit 1)
 	cd app && DATABRICKS_CONFIG_PROFILE=$(PROFILE) uv run --exact --group test --with "databricks-labs-pytester~=0.7.4" pytest tests/integration/ --studio-integration -v
 
+# Browser tests against a running Studio deployment — a manual pre-release step
+# (see app/DEVELOPMENT.md). The target must be a real DQX Studio instance;
+# there is no mocked backend. A fresh deployment is fine: the setup project runs
+# first and completes the setup wizard, and every other project depends on it.
+# The app URL is looked up from PROFILE + APP (default dqx-studio); BASE_URL
+# overrides it, e.g. BASE_URL=http://localhost:9001 for app-start-dev.
+# SUITE=setup runs only setup; SUITE=smoke runs setup and the read-only checks;
+# the default also runs the journeys, which create and delete real objects.
+# Extra Playwright flags go through ARGS, e.g. ARGS="--headed".
+app-e2e: ## Run Playwright e2e tests against a deployed app (PROFILE=<p> [APP=<name>] [SUITE=setup|smoke] [ARGS=...])
+	@test -n "$(PROFILE)$(BASE_URL)" || (echo "Usage: make app-e2e PROFILE=<databricks-profile> [APP=<app-name>] [SUITE=setup|smoke]"; exit 1)
+	cd app && node_modules/.bin/playwright install chromium
+	cd app && DQX_E2E_PROFILE=$(PROFILE) DQX_E2E_APP=$(APP) DQX_E2E_BASE_URL=$(BASE_URL) \
+	  node_modules/.bin/playwright test -c e2e/playwright.config.ts $(if $(SUITE),--project=$(SUITE)) $(ARGS)
+
 # Start the local dev loop (foreground). ``scripts/dev.py`` spawns
 # uvicorn (FastAPI, port 9002) and vite (port 9001) and wires vite's
 # built-in proxy so the documented http://localhost:9001 URL works
@@ -193,6 +208,7 @@ open('.build/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
 app-check: ## Type-check app: tsc -b (TypeScript) + basedpyright (Python) + bun UI unit tests
 	@echo "🔍 Checking TypeScript..."
 	cd app && bun run tsc -b --incremental
+	cd app && bun run tsc -p e2e
 	@echo "🔍 Checking Python..."
 	# basedpyright lives in the app ``dev`` dependency group — do not use
 	# root ``UV_RUN`` (``--all-extras``) here; the app has no extras and that
@@ -494,4 +510,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-e2e app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

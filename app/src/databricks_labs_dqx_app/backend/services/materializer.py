@@ -420,28 +420,22 @@ def render_check(
     error_message = definition.error_message
     if error_message:
         check_dict["message_expr"] = error_message
-    # Rule-level filter (definition.filter) scopes which rows THIS check validates —
-    # rendered straight into DQX's native per-check ``filter`` (a SQL WHERE
-    # predicate). Slot placeholders ({{slot}}) are substituted via _substitute_text
-    # so the filter can reference the rule's mapped columns. Blank/None = validate
-    # every row. Safety was validated at rule create/update time (RegistryService).
-    # NOTE: per-applied-rule ``row_filter`` (applied.row_filter) is intentionally
-    # NOT read here — rule filter only (user decision, Task 5).
-    definition_filter = definition.filter
-    if definition_filter and definition_filter.strip():
-        substituted_filter = _substitute_text(definition_filter, group, definition.slots)
-        # SECURITY: the stored filter was validated as safe at rule
-        # create/update time, but {{slot}} placeholders are substituted here
-        # with column_mapping VALUES that are free-form and never sanitized —
-        # a malicious APPLY-holder could inject a prohibited statement through
-        # them. Re-validate the SUBSTITUTED filter (mirrors the predicate /
-        # sql_query paths above), scanning it as the WHERE clause it becomes at
-        # runtime so a bare boolean predicate is judged like real SQL. Comments
+    # Applied ``row_filter`` overrides the rule's default ``definition.filter``.
+    # Empty/None on the application inherits the rule default. Slot placeholders
+    # ({{slot}}) are substituted so the filter can reference mapped columns.
+    effective_filter = (row_filter or "").strip() or (definition.filter or "").strip() or None
+    if effective_filter:
+        substituted_filter = _substitute_text(effective_filter, group, definition.slots)
+        # SECURITY: the stored filter was validated as safe at persist time, but
+        # {{slot}} placeholders are substituted here with column_mapping VALUES
+        # that are free-form and never sanitized — a malicious APPLY-holder
+        # could inject a prohibited statement through them. Re-validate the
+        # SUBSTITUTED filter as the WHERE clause it becomes at runtime. Comments
         # are inert (Spark's F.expr lexer skips `--` lines) so strip them first.
         wrapped_filter = f"SELECT * FROM _t WHERE ({strip_sql_line_comments(substituted_filter)})"
         if not is_sql_query_safe(wrapped_filter):
             raise UnsafeSqlQueryError(
-                "The registry rule's filter contains prohibited statements and cannot be materialized."
+                "The rule's population filter contains prohibited statements and cannot be materialized."
             )
         check_dict["filter"] = substituted_filter
     # Stamp the mapped columns into user_metadata as a JSON array so the results
