@@ -13,7 +13,6 @@ import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,8 +40,13 @@ import { ThresholdPill } from "./ThresholdPill";
 import { RESERVED_DESCRIPTION_KEY } from "@/components/RegistryRuleBadges";
 import { RESERVED_DIMENSION_KEY, RESERVED_SEVERITY_KEY, TagBadge, colorFor, getTag, getUsedColumnsForRule, pickSlotForColumn } from "./shared";
 import type { ColumnRef } from "./RulesByColumn";
-import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { overridableParametersFromUserMetadata, slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
 import { computeRuleSchemaDrift, type RuleSchemaDrift } from "./schemaDrift";
+import {
+  bindsEveryParameter,
+  mappingGroupKey,
+  validateGroupParameterValues,
+} from "@/lib/apply-time-params";
 
 // ---------------------------------------------------------------------------
 // Completeness status — derives whether every applied mapping group fills
@@ -63,20 +67,49 @@ export function computeStatus(
   rule: AppliedRuleOut,
   slots: RuleSlot[],
   columns: ColumnOut[] = [],
+  parameters: RuleParameter[] = [],
+  bindAll = false,
+  overridableNames?: readonly string[] | null,
 ): RuleStatus {
   const drift = computeRuleSchemaDrift(rule, slots, columns);
   const slotNames = slots.map((s) => s.name);
-  if (slotNames.length === 0) {
+  if (slotNames.length === 0 && parameters.length === 0) {
     return { kind: "no-mapping-needed", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   const groups = rule.column_mapping ?? [];
+  // A rule with column slots but no column mapped yet produces no check, so it
+  // needs attention ("1 of 1 mapping incomplete") rather than reading as done.
+  if (slotNames.length > 0 && !groups.some((g) => slotNames.some((s) => Boolean(g[s])))) {
+    return { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, drift };
+  }
   if (groups.length === 0) {
-    return { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0, drift };
+    // No column slots: the parameters live on the blank mapping group.
+    const { error } = validateGroupParameterValues(
+      parameters,
+      rule.parameter_values?.[mappingGroupKey({})],
+      bindAll,
+      overridableNames,
+    );
+    return error
+      ? { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, drift }
+      : { kind: "complete", incompleteGroupCount: 0, totalGroupCount: 0, drift };
   }
   let incomplete = 0;
   for (const g of groups) {
     const filled = slotNames.filter((s) => Boolean(g[s])).length;
-    if (filled > 0 && filled < slotNames.length) incomplete++;
+    if (slotNames.length > 0 && filled > 0 && filled < slotNames.length) {
+      incomplete++;
+      continue;
+    }
+    if (parameters.length > 0 && (slotNames.length === 0 || filled === slotNames.length)) {
+      const { error } = validateGroupParameterValues(
+        parameters,
+        rule.parameter_values?.[mappingGroupKey(g)],
+        bindAll,
+        overridableNames,
+      );
+      if (error) incomplete++;
+    }
   }
   return {
     kind: incomplete === 0 ? "complete" : "incomplete",
@@ -207,7 +240,13 @@ function PolarityLine({ registryRule }: { registryRule: RegistryRuleOut }) {
 // Exported so the Marketplace preview can render the read-only rule body
 // directly (function/SQL/low-code + polarity pill) inside its own animated
 // accordion, rather than nesting the toggle-owning RuleLogicDisclosure.
-export function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut }) {
+export function RuleLogicBody({
+  registryRule,
+  hideParameters = false,
+}: {
+  registryRule: RegistryRuleOut;
+  hideParameters?: boolean;
+}) {
   const { t } = useTranslation();
   const body = (registryRule.definition.body ?? {}) as Record<string, unknown>;
   const fn = typeof body.function === "string" ? body.function : undefined;
@@ -255,7 +294,7 @@ export function RuleLogicBody({ registryRule }: { registryRule: RegistryRuleOut 
       </pre>
       {/* Non-column parameters only apply to DQX-native (function-based)
           checks — SQL/predicate rules have no declared `parameters`. */}
-      {fn && <RuleParametersView parameters={parameters} />}
+      {fn && !hideParameters && <RuleParametersView parameters={parameters} />}
       <PolarityLine registryRule={registryRule} />
     </div>
   );
@@ -305,15 +344,18 @@ export function RuleLogicDisclosure({
         <div className="overflow-hidden">
           <div className="px-3 pb-3 border-t pt-3 space-y-3">
             {registryRule ? (
-              <RuleLogicBody registryRule={registryRule} />
+              <RuleLogicBody registryRule={registryRule} hideParameters />
             ) : (
               <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
             )}
             {filter && (
               <div className="space-y-1">
-                <Label htmlFor={filter.id} className="text-xs text-muted-foreground">
+                <label
+                  htmlFor={filter.id}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+                >
                   {t("monitoredTables.applyRowFilterLabel")}
-                </Label>
+                </label>
                 <Input
                   id={filter.id}
                   value={filter.value}
@@ -651,6 +693,8 @@ interface RuleConfigCardProps {
   thresholdEnabled?: boolean;
   /** Per-table population override. Empty inherits the rule's default filter. */
   onRowFilterChange?: (value: string) => void;
+  /** Per-mapping-group apply-time parameter values. */
+  onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
 }
 
 export function RuleConfigCard({
@@ -678,6 +722,7 @@ export function RuleConfigCard({
   columnTags,
   thresholdEnabled = true,
   onRowFilterChange,
+  onParameterValuesChange,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [logicOpen, setLogicOpen] = useState(false);
@@ -694,9 +739,15 @@ export function RuleConfigCard({
   const slotTags = slotTagsFromUserMetadata(registryRule?.user_metadata as Record<string, unknown> | undefined);
   const effectiveSeverity = rule.severity_override ?? ruleSeverity;
   const slots = registryRule?.definition.slots ?? [];
+  const parameters = registryRule?.definition.parameters ?? [];
+  const bindAllParameters = bindsEveryParameter(registryRule?.mode);
+  const overridableParameters = overridableParametersFromUserMetadata(
+    registryRule?.user_metadata as Record<string, unknown> | undefined,
+    parameters,
+  );
   // Pass live columns so missing / type-mismatched mappings count as
   // needs-attention alongside incomplete slot fills (schema-drift P0).
-  const status = computeStatus(rule, slots, columns ?? []);
+  const status = computeStatus(rule, slots, columns ?? [], parameters, bindAllParameters, overridableParameters);
   const incomplete = status.kind === "incomplete";
   const hasDrift =
     status.drift.missingCount > 0 || status.drift.typeMismatchCount > 0;
@@ -755,7 +806,18 @@ export function RuleConfigCard({
         isOpen && "bg-card",
       )}
     >
-      <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40">
+      {/* The whole header row toggles the card, not just the name button:
+          clicks on its padding and the gaps between the controls used to do
+          nothing. Clicks on the controls themselves (buttons, links, inputs)
+          and inside their portaled popovers/menus are left alone. */}
+      <div
+        className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40"
+        onClick={(e) => {
+          if (!e.currentTarget.contains(e.target as Node)) return;
+          if ((e.target as Element).closest("button, a, input, select, textarea, [role='menuitem']")) return;
+          onToggle();
+        }}
+      >
         <button
           type="button"
           onClick={onToggle}
@@ -967,6 +1029,12 @@ export function RuleConfigCard({
               onCancelAdd={() => setPendingGroup(null)}
               slotTags={Object.keys(slotTags).length > 0 ? slotTags : undefined}
               columnTags={columnTags}
+              parameters={parameters}
+              storedParameterValues={rule.parameter_values}
+              canEditParameters={canEdit && Boolean(onParameterValuesChange)}
+              bindAllParameters={bindAllParameters}
+              overridableParameters={overridableParameters}
+              onParameterValuesChange={onParameterValuesChange}
             />
           </div>
         </div>

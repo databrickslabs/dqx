@@ -1,5 +1,5 @@
 import { findRefs } from "./columnRefs";
-import { isColumnRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
+import { isColumnRef, isParamRef, type AnyRow, type JoinAst, type LowcodeAstV2 } from "./lowcodeAst";
 import { operatorValidForFamily, VALIDITY_SQL_TYPE, type Family } from "./lowcodeOperators";
 import { INPUT_VIEW_SLOT } from "./refTableColumns";
 import { stripSqlLineComments } from "./sqlComments";
@@ -75,6 +75,10 @@ const ref = (c: string, qualify = false): string =>
   c.includes(".") ? quoteIdentPath(c) : qualify ? `{{input_view}}.{{${c}}}` : `{{${c}}}`;
 
 function quote(v: unknown): string {
+  // A Variable Parameter compiles to its bare token; the apply-time
+  // substitution renders it as a literal of the parameter's type. Handled here
+  // so every literal operand (comparisons, contains, regex, lengths…) accepts one.
+  if (isParamRef(v)) return `{{${v.$param}}}`;
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return String(v);
   if (v === null || v === undefined) return "NULL";

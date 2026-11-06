@@ -17,6 +17,7 @@ hand-roll ``user_metadata["dimension"]`` lookups.
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -41,11 +42,45 @@ AuthorKind = Literal["human", "ai_generated", "ai_assisted"]
 SlotFamily = Literal["numeric", "text", "temporal", "boolean", "any"]
 SlotCardinality = Literal["one", "many"]
 
-ParamType = Literal["number", "string", "list", "boolean", "regex", "ref_table", "ref_column"]
+ParamType = Literal[
+    "number", "integer", "decimal", "date", "string", "list", "boolean", "regex", "ref_table", "ref_column"
+]
 # JSON-compatible parameter value. ``Any`` is deliberately avoided per
 # AGENTS.md — a registry-rule parameter can only ever be one of these
 # primitive/JSON shapes once it round-trips through ``dq_rules.definition``.
 RuleParamValue = str | float | int | bool | list[str] | None
+
+# SQL ``{{token}}`` names that are apply-time scalars, not column slots.
+_SQL_PARAM_NAME_RE = re.compile(
+    r"(max_length|min_length|min_limit|max_limit|min_value|max_value|"
+    r"regex|pattern|decimal_scale|\bscale\b|\blimit\b|\bthreshold\b|allowed|launch_date|_rate)",
+    re.IGNORECASE,
+)
+
+
+def is_sql_param_placeholder_name(name: str) -> bool:
+    """True when a SQL ``{{token}}`` should be collected as a parameter, not a column slot."""
+    return _SQL_PARAM_NAME_RE.search(name) is not None and not re.fullmatch(r"columns?_?\d*", name, flags=re.IGNORECASE)
+
+
+def infer_sql_param_type(name: str) -> "ParamType":
+    """Value type for a SQL ``{{token}}`` parameter, mirroring the UI's ``inferSqlParamType``."""
+    lowered = name.lower()
+    if (
+        lowered in {"limit", "scale"}
+        or "max_length" in lowered
+        or "min_length" in lowered
+        or lowered.endswith("_scale")
+    ):
+        return "integer"
+    if "rate" in lowered or any(part in lowered for part in ("min_limit", "max_limit", "min_value", "max_value")):
+        return "decimal"
+    if "date" in lowered:
+        return "date"
+    if "allowed" in lowered:
+        return "list"
+    # regex / pattern are plain strings — no separate parameter type.
+    return "string"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +165,31 @@ class RuleDefinition(BaseModel):
             "are the same check."
         ),
     )
+
+
+def promote_sql_parameter_slots(definition: RuleDefinition) -> RuleDefinition:
+    """Move value-named SQL ``{{tokens}}`` from slots to parameters.
+
+    Call this only at import / AI-proposal time, where the author can see and
+    undo the split. Inferring a slot's kind from its name on every parse would
+    rewrite real column slots such as ``{{exchange_rate}}`` or ``{{pattern_id}}``.
+    """
+    if definition.parameters or "function" in definition.body or "lowcode_ast" in definition.body:
+        return definition
+    if "predicate" not in definition.body and "sql_query" not in definition.body:
+        return definition
+    promoted = [s for s in definition.slots if s.arg_key is None and is_sql_param_placeholder_name(s.name)]
+    if not promoted:
+        return definition
+    promoted_names = {s.name for s in promoted}
+    existing = {p.name for p in definition.parameters}
+    next_definition = definition.model_copy(deep=True)
+    next_definition.slots = [s for s in definition.slots if s.name not in promoted_names]
+    next_definition.parameters = [
+        *definition.parameters,
+        *(RuleParameter(name=s.name, type=infer_sql_param_type(s.name)) for s in promoted if s.name not in existing),
+    ]
+    return next_definition
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +597,10 @@ RESERVED_DESCRIPTION_KEY = "description"
 RESERVED_DIMENSION_KEY = "dimension"
 RESERVED_SEVERITY_KEY = "severity"
 RESERVED_SLOT_TAGS_KEY = "slot_tags"
+# Parameter names that may be overridden when the rule is applied to a table.
+# Absence (or an empty list) means every parameter is fixed at the registry
+# value — no new DB column; this is part of the rule definition in JSON.
+RESERVED_OVERRIDABLE_PARAMETERS_KEY = "overridable_parameters"
 
 # The reserved user_metadata key holding a materialized check's mapped columns
 # as a JSON-encoded array string (e.g. '["city"]'). Populated by the
@@ -567,6 +631,7 @@ RESERVED_RULE_METADATA_KEYS: frozenset[str] = frozenset(
         # as a free-text tag. (``column_pass_thresholds`` is an APPLIED-rule key,
         # not a registry-rule key, so it deliberately does NOT belong here.)
         RESERVED_PASS_THRESHOLD_KEY,
+        RESERVED_OVERRIDABLE_PARAMETERS_KEY,
     }
 )
 
@@ -638,6 +703,79 @@ def set_slot_tags(user_metadata: dict[str, Any], mapping: dict[str, list[str]]) 
         updated[RESERVED_SLOT_TAGS_KEY] = cleaned
     else:
         updated.pop(RESERVED_SLOT_TAGS_KEY, None)
+    return updated
+
+
+_PARAM_VALUE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}$")
+
+
+def parameter_value_is_unbound(value: RuleParamValue) -> bool:
+    """True when a registry parameter has no concrete value yet (must be filled at apply)."""
+    if value is None:
+        return True
+    return isinstance(value, str) and _PARAM_VALUE_PLACEHOLDER_RE.match(value.strip()) is not None
+
+
+def get_overridable_parameters(
+    user_metadata: dict[str, Any] | None,
+    parameters: list[RuleParameter] | None = None,
+) -> list[str]:
+    """Parameter names that may be overridden at apply time.
+
+    Empty / unbound parameters are always overridable — otherwise a blank
+    locked value could never be filled and the rule could not run. Filled
+    parameters default to fixed; names listed in ``overridable_parameters``
+    are the author's explicit unlocks of those filled defaults.
+    """
+    raw = (user_metadata or {}).get(RESERVED_OVERRIDABLE_PARAMETERS_KEY)
+    explicit: list[str] = []
+    if isinstance(raw, list):
+        seen: set[str] = set()
+        for name in raw:
+            if isinstance(name, str) and name and name not in seen:
+                seen.add(name)
+                explicit.append(name)
+    if parameters is None:
+        return explicit
+    explicit_set = set(explicit)
+    out: list[str] = []
+    for param in parameters:
+        if parameter_value_is_unbound(param.value) or param.name in explicit_set:
+            out.append(param.name)
+    return out
+
+
+def set_overridable_parameters(
+    user_metadata: dict[str, Any],
+    names: list[str],
+    *,
+    valid_names: list[str] | None = None,
+    persist_empty: bool = False,
+) -> dict[str, Any]:
+    """Return a *new* ``user_metadata`` with ``overridable_parameters`` set.
+
+    Names not in *valid_names* (when given) are dropped. Prefer omitting the
+    key when there are no unlocks — empty/unbound parameters are already
+    overridable by value, so a stored ``[]`` is misleading in the DQX JSON.
+    *persist_empty* keeps the legacy "write empty list" behaviour for tests.
+    """
+    allowed = set(valid_names) if valid_names is not None else None
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for name in names:
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        if allowed is not None and name not in allowed:
+            continue
+        seen.add(name)
+        cleaned.append(name)
+    updated = dict(user_metadata)
+    if cleaned:
+        updated[RESERVED_OVERRIDABLE_PARAMETERS_KEY] = cleaned
+    elif persist_empty:
+        updated[RESERVED_OVERRIDABLE_PARAMETERS_KEY] = []
+    else:
+        updated.pop(RESERVED_OVERRIDABLE_PARAMETERS_KEY, None)
     return updated
 
 

@@ -34,6 +34,7 @@ import type {
   RuleSlot,
 } from "@/lib/api";
 import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
+import { isUnboundParameterValue } from "@/lib/apply-time-params";
 import { findRefs, isReservedRef } from "@/lib/columnRefs";
 
 export const COLUMN_KINDS = new Set(["column", "columns"]);
@@ -43,6 +44,8 @@ export const COLUMN_KINDS = new Set(["column", "columns"]);
  * Mirrors the backend's `registry_models.RESERVED_SLOT_TAGS_KEY`.
  */
 export const SLOT_TAGS_KEY = "slot_tags";
+/** Explicit unlocks of filled parameters. Empty params are always overridable. */
+export const OVERRIDABLE_PARAMETERS_KEY = "overridable_parameters";
 
 /**
  * Read the reserved `slot_tags` map from a rule's `user_metadata`. Mirrors the
@@ -77,6 +80,75 @@ export function userMetadataWithSlotTags(
   const next = { ...md };
   if (Object.keys(cleaned).length > 0) next[SLOT_TAGS_KEY] = cleaned;
   else delete next[SLOT_TAGS_KEY];
+  return next;
+}
+
+/** Explicit unlocks stored in metadata (filled params the author opened for apply-time override). */
+export function explicitOverridableParametersFromUserMetadata(
+  md: Record<string, unknown> | undefined,
+): string[] {
+  const raw = md?.[OVERRIDABLE_PARAMETERS_KEY];
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of raw) {
+    if (typeof name === "string" && name.length > 0 && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Effective apply-time overridable names: every empty/unbound parameter (so it
+ * can be filled), plus filled parameters the author explicitly unlocked.
+ */
+export function overridableParametersFromUserMetadata(
+  md: Record<string, unknown> | undefined,
+  parameters?: Array<Pick<RuleParameter, "name" | "value">> | null,
+): string[] {
+  const explicit = explicitOverridableParametersFromUserMetadata(md);
+  if (!parameters) return explicit;
+  const unlocked = new Set(explicit);
+  const out: string[] = [];
+  for (const param of parameters) {
+    if (isUnboundParameterValue(param.value) || unlocked.has(param.name)) out.push(param.name);
+  }
+  return out;
+}
+
+export function isParameterOverridable(
+  md: Record<string, unknown> | undefined,
+  name: string,
+  parameters?: Array<Pick<RuleParameter, "name" | "value">> | null,
+): boolean {
+  return overridableParametersFromUserMetadata(md, parameters).includes(name);
+}
+
+/**
+ * Persist explicit unlocks of filled parameters only. Empty params are always
+ * overridable at apply time (derived from their unbound value), so lock state
+ * does not need a DB migration or a complete per-parameter map. When there are
+ * no unlocks, omit the key entirely — an empty ``[]`` in the DQX JSON wrongly
+ * suggests "nothing is overridable".
+ */
+export function userMetadataWithOverridableParameters(
+  md: Record<string, unknown>,
+  names: string[],
+  validNames: string[],
+): Record<string, unknown> {
+  const allowed = new Set(validNames);
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const name of names) {
+    if (!allowed.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    cleaned.push(name);
+  }
+  const next = { ...md };
+  if (cleaned.length > 0) next[OVERRIDABLE_PARAMETERS_KEY] = cleaned;
+  else delete next[OVERRIDABLE_PARAMETERS_KEY];
   return next;
 }
 
@@ -519,8 +591,13 @@ function resolveImportedFamily(
   return "any";
 }
 
-function withSlotsForSqlTokens(existing: RuleSlot[], ...fragments: unknown[]): RuleSlot[] {
-  const declared = new Set(existing.map((s) => s.name));
+function withSlotsForSqlTokens(
+  existing: RuleSlot[],
+  parameterNames: readonly string[],
+  ...fragments: unknown[]
+): RuleSlot[] {
+  // Declared Variable Parameters are `{{tokens}}` too, but never column slots.
+  const declared = new Set([...existing.map((s) => s.name), ...parameterNames]);
   const slots = [...existing];
   for (const fragment of fragments) {
     if (typeof fragment !== "string" || !fragment) continue;
@@ -731,6 +808,7 @@ export function parseDqxCheckJson(
     const slots = overlaySlotFamilies(
       withSlotsForSqlTokens(
         currentDefinition.slots ?? [],
+        (currentDefinition.parameters ?? []).map((p) => p.name),
         body.sql_query,
         body.predicate,
         ...((body.merge_columns as unknown[]) ?? []),
