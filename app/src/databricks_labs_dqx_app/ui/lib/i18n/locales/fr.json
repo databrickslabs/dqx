@@ -3176,6 +3176,22 @@
       "description": "Studio est prêt à l'emploi. Examinez les avertissements ci-dessous, que vous pouvez corriger maintenant ou plus tard, puis continuez. Utilisez Vérifier à nouveau après les avoir corrigés.",
       "acknowledge": "J'ai compris, continuer vers Studio"
     },
+    "complete": {
+      "title": "DQX Studio est prêt",
+      "description": "Vous pouvez déployer la démo maintenant, ou l'ignorer et passer directement à Studio.",
+      "skip": "Ignorer et ouvrir Studio",
+      "continue": "Ouvrir Studio",
+      "demo": {
+        "title": "Déployer la démo",
+        "optional": "Facultatif",
+        "body": "Ajoute des tables, des règles et un historique d'exécutions d'exemple pour essayer Studio. Le déploiement s'exécute en arrière-plan et prend environ 30 minutes.",
+        "deploy": "Déployer la démo",
+        "started": "Déploiement de la démo lancé. Il prend environ 30 minutes, et vous pouvez utiliser Studio pendant ce temps.",
+        "running": "Un déploiement de la démo est déjà en cours.",
+        "deployed": "La démo est déjà déployée.",
+        "failed": "Le déploiement de la démo n'a pas pu démarrer. Vous pourrez la déployer plus tard depuis la page Marketplace de Studio."
+      }
+    },
     "instructions": "Comment résoudre ce problème",
     "grants": {
       "partial": "Terminé : {{applied}} sur {{total}}.",
@@ -3251,13 +3267,13 @@
         "useTyped": "Utiliser l'ID d'application {{id}}",
         "noMatches": "Aucun principal de service ne correspond. Collez son ID d'application pour l'utiliser.",
         "pastePlaceholder": "ID d'application, par exemple 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
-        "listUnavailable": "Studio n'a pas pu charger la liste des principaux de service. Collez plutôt l'ID d'application du principal de service. Vous le trouverez sur sa page, sous Settings → Identity and access.",
+        "listUnavailable": "Studio n'a pas pu charger la liste des principaux de service. Collez plutôt l'Application ID. Vous le trouverez sur la page du principal de service.",
         "listTruncated_one": "Affichage de {{count}} principal de service uniquement. Si le vôtre n'apparaît pas, collez son ID d'application.",
         "listTruncated_other": "Affichage des {{count}} premiers principaux de service. Si le vôtre n'apparaît pas, collez son ID d'application.",
         "invalidId": "Un ID d'application ressemble à 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
         "createTitle": "Vous n'en avez pas ? Créez-le",
-        "createStep1": "Ouvrez le menu de votre profil (en haut à droite) → Settings → Identity and access → Service principals. Cliquez sur Add service principal et créez-en un nouveau nommé dqx-studio-task-runner.",
-        "createStep2": "Revenez ici et choisissez-le ci-dessus. Vous définirez ses autorisations à l'étape 2.",
+        "createStep1": "Dans Settings → Identity and access → Service principals, cliquez sur Add service principal et nommez-le dqx-studio-task-runner.",
+        "createStep2": "Revenez ici et sélectionnez-le ci-dessus.",
         "openServicePrincipals": "Ouvrir les principaux de service"
       },
       "access": {
@@ -3271,31 +3287,31 @@
         "result": {
           "confirmed": "Accès confirmé. Studio peut utiliser ce principal de service.",
           "permissionConfirmed": "Studio peut utiliser ce principal de service.",
-          "missing": "L'application DQX Studio n'a pas encore CAN USE sur ce principal de service. Ajoutez-le dans l'onglet Permissions (étape b ci-dessus), puis cliquez à nouveau sur Confirmer l'accès. Si vous êtes sûr que Studio dispose déjà de cette autorisation (par exemple via un groupe d'administrateurs), vous pouvez passer à l'étape 3.",
-          "unverified": "Studio ne peut pas vérifier lui-même les autorisations de ce principal de service. Assurez-vous d'avoir effectué les étapes a et b, puis continuez. L'étape 3 le confirmera.",
-          "grantsPending": "Ce principal de service a aussi besoin d'accéder aux données de Studio. Exécutez les commandes suivantes. Si vous n'avez pas les autorisations nécessaires, demandez au propriétaire du catalogue de les exécuter.",
+          "missing": "L'application DQX Studio n'a pas encore Service Principal: User sur ce principal de service. Ajoutez-le (étape b), puis confirmez à nouveau. Si elle y a accès autrement, par exemple via un groupe, passez à l'étape 3.",
+          "unverified": "Studio ne peut pas lire les permissions de ce principal de service. Vérifiez que les étapes a et b sont faites, puis continuez. L'étape 3 le confirmera.",
+          "grantsPending": "Ce principal de service a aussi besoin d'accéder aux données de Studio. Exécutez ces commandes, ou demandez au propriétaire du catalogue de le faire.",
           "automaticGrants": "Studio configurera automatiquement le reste de l'accès de ce principal de service une fois qu'il sera affecté au job.",
           "grantsUnverified": "Studio n'a pas pu vérifier tout l'accès de ce principal de service aux données de Studio. La configuration le vérifie à nouveau après l'étape 3."
         },
         "errors": {
           "task_runner_principal_invalid": "Ce n'est pas un ID d'application. Choisissez à nouveau le principal de service, ou collez son ID d'application.",
           "task_runner_principal_is_app": "Il s'agit du principal de service propre à l'application DQX Studio. Choisissez-en un autre.",
-          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service de ce job est donc choisi à l'installation et ne peut pas être modifié ici. Demandez à la personne qui a installé Studio de définir dqx_service_principal_application_id dans les paramètres du bundle avec l'ID d'application d'un principal de service (pas celui de l'application), puis de redéployer Studio. Ensuite, cliquez sur Vérifier à nouveau.",
+          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service du job est donc défini à l'installation. Définissez dqx_service_principal_application_id dans le bundle sur l'Application ID d'un principal de service dédié, redéployez, puis cliquez sur Vérifier à nouveau.",
           "task_runner_job_unavailable": "Le job d'exécution de Studio n'est pas encore prêt. Cliquez sur Vérifier à nouveau, puis réessayez.",
           "default": "Studio n'a pas pu vérifier ce principal de service. Réessayez dans une minute."
         }
       },
       "apply": {
-        "help": "Studio configure son job d'exécution, le job en arrière-plan qui lance les contrôles planifiés, pour qu'il utilise ce principal de service, puis vérifie à nouveau la configuration.",
+        "help": "Studio configure le job d'exécution pour qu'il s'exécute avec ce principal de service, puis vérifie à nouveau la configuration.",
         "button": "Utiliser ce principal de service",
         "confirmFirst": "Confirmez d'abord l'accès.",
-        "grantsStillMissing": "Certains accès aux données manquent encore. Vous pouvez continuer. La configuration les listera à nouveau après cette étape.",
+        "grantsStillMissing": "Certains accès aux données manquent encore. Vous pouvez quand même continuer, et la configuration listera ce qui reste ensuite.",
         "errors": {
-          "task_runner_run_as_forbidden": "Studio n'est pas encore autorisé à utiliser ce principal de service. Cela signifie généralement que l'application DQX Studio n'a pas CAN USE dessus (étape 2b). Ajoutez-le, puis cliquez à nouveau sur Utiliser ce principal de service. Ou cliquez sur Ouvrir le job d'exécution ci-dessous, repérez Run as (l'identité sous laquelle le job s'exécute) dans le panneau Job details, choisissez ce principal de service, puis cliquez sur Vérifier à nouveau.",
+          "task_runner_run_as_forbidden": "Studio n'est pas encore autorisé à utiliser ce principal de service, en général parce que l'application n'a pas Service Principal: User dessus (étape 2b). Ajoutez-le et réessayez. Ou ouvrez le job d'exécution, définissez vous-même Run as sur ce principal de service, puis cliquez sur Vérifier à nouveau.",
           "task_runner_principal_not_found": "Studio n'a pas trouvé ce principal de service. Vérifiez qu'il a bien été créé dans cet espace de travail, puis choisissez-le à nouveau.",
           "task_runner_principal_invalid": "Ce n'est pas un ID d'application. Choisissez à nouveau le principal de service, ou collez son ID d'application.",
           "task_runner_principal_is_app": "Il s'agit du principal de service propre à l'application DQX Studio. Choisissez-en un autre.",
-          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service de ce job est donc choisi à l'installation et ne peut pas être modifié ici. Demandez à la personne qui a installé Studio de définir dqx_service_principal_application_id dans les paramètres du bundle avec l'ID d'application d'un principal de service (pas celui de l'application), puis de redéployer Studio. Ensuite, cliquez sur Vérifier à nouveau.",
+          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service du job est donc défini à l'installation. Définissez dqx_service_principal_application_id dans le bundle sur l'Application ID d'un principal de service dédié, redéployez, puis cliquez sur Vérifier à nouveau.",
           "task_runner_job_unavailable": "Le job d'exécution de Studio n'est pas encore prêt. Cliquez sur Vérifier à nouveau, puis réessayez.",
           "default": "Studio n'a pas pu mettre à jour son job d'exécution. Réessayez, ou ouvrez le job et définissez vous-même son paramètre Run as sur ce principal de service, puis cliquez sur Vérifier à nouveau."
         }
