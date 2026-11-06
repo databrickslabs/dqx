@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { BreachMarker } from "@/components/results/breachMarkers";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, CircleHelp } from "lucide-react";
@@ -699,7 +700,7 @@ export function ScoreTrendChart({
    *  vertical rule. ``score`` is the point's 0–100 y-value (pass_rate * 100) so
    *  the icon anchors to the trend line; omit it to skip the marker.
    *  Only the overall-score trend chart in MultiTableResults passes these. */
-  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn"; score?: number | null }>;
+  breachMarkers?: BreachMarker[];
   /** Optional subtle vertical markers at the runs where the monitored-table
    *  binding version incremented (#65). Each `run_date` is matched to its `ts`
    *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
@@ -1568,10 +1569,11 @@ export function ScoreTrendChart({
               {(breachMarkers ?? []).map((m) => {
                 const x = Date.parse(m.run_date);
                 if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
+                if (m.series && hidden.has(m.series)) return null;
                 const fill = "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
                 return (
                   <ReferenceDot
-                    key={`bm-${m.run_date}`}
+                    key={`bm-${m.series ?? "all"}-${m.run_date}`}
                     x={x}
                     y={m.score}
                     r={0}

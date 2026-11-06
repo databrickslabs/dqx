@@ -820,6 +820,25 @@ class TestAsOfAverageTrend:
             rows, facets or ResultFacets(), table_axis="by_table", asof_rows=expand_asof(rows)
         )
 
+    def test_average_breach_carries_forward_but_per_table_breach_stays_on_its_own_point(self):
+        # A breaches at t1 and never runs again; B runs (cleanly) at t2.
+        # The Average point at t2 is breached (A's breach is carried
+        # forward), but trend_by_table flags ONLY A@t1 — which is where the
+        # chart must draw the marker.
+        rows = [
+            make_row("c1", failed=20, total=100, run_id="a1", run_date=self.T1, fqn=self.A, criticality="warn"),
+            make_row("c1", failed=0, total=100, run_id="b1", run_date=self.T2, fqn=self.B),
+        ]
+        out = compute_entity_results(
+            rows,
+            ResultFacets(),
+            table_axis="by_table",
+            asof_rows=expand_asof(rows),
+            resolve_threshold=lambda _row: 90,
+        )
+        assert [(p.run_date, p.breached) for p in out.trend] == [(self.T1, True), (self.T2, True)]
+        assert [(p.series, p.run_date) for p in out.trend_by_table if p.breached] == [(self.A, self.T1)]
+
     def test_average_carries_each_table_forward_at_every_instant(self):
         out = self._compute(self._misaligned())
         assert [p.run_date for p in out.trend] == [self.T1, self.T2, self.T3]

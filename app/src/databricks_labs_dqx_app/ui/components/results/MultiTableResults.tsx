@@ -32,6 +32,7 @@ import {
   EXPORT_ROW_LIMIT,
   toFailingRecords,
 } from "@/components/results/failedRecordsExport";
+import { perTableBreachMarkers } from "@/components/results/breachMarkers";
 import { toCountSeries } from "@/components/results/countSeries";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
@@ -781,27 +782,10 @@ export function MultiTableResultsSection({
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(trends?.trend);
 
-  // Breach markers for the overall trend chart: one entry per breaching point
-  // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
-  // criticalities are filtered out so only real breaches render a marker.
-  // Suppressed entirely when the pass-threshold feature is disabled.
-  const overallBreachMarkers = thresholdEnabled
-    ? (trends?.trend ?? []).flatMap((p) => {
-        if (!p.breached) return [];
-        const crit = p.breach_criticality;
-        if (crit !== "error" && crit !== "warn") return [];
-        // score = the point's 0–100 y-value (pass_rate * 100) so the ⚠ icon
-        // anchors to the trend line at that run, matching how the series plots.
-        const rate = toNum(p.pass_rate);
-        return [
-          {
-            run_date: String(p.run_date ?? ""),
-            criticality: crit as "error" | "warn",
-            score: rate == null ? null : rate * 100,
-          },
-        ];
-      })
-    : [];
+  // Breach markers sit on each breaching TABLE's own line (the Average's
+  // `breached` flag is carried forward, so it would repeat one table's breach
+  // on every later point). Suppressed when the pass-threshold feature is off.
+  const overallBreachMarkers = thresholdEnabled ? perTableBreachMarkers(trends?.trend_by_table) : [];
 
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.

@@ -459,6 +459,10 @@ def _trend_asof(
 
     For a single-table scope the expansion degenerates to the table's
     own per-run rows, so this is its per-run rate series.
+
+    ``breached`` on an Average point means *something in scope breached as of
+    this instant* (carried forward); charts place per-table markers from
+    ``trend_by_table`` instead.
     """
     # instant -> table -> pooled accumulator.
     per_instant: dict[str | None, dict[str, _GroupAcc]] = defaultdict(lambda: defaultdict(_GroupAcc))
