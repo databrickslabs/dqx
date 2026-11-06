@@ -3424,6 +3424,7 @@
     "dialogTitle": "Enregistrer comme nouvelle vue",
     "renameTitle": "Renommer la vue",
     "name": "Nom",
+    "namePlaceholder": "Ma vue personnalisée",
     "visibleTo": "Visible par",
     "onlyMe": "Moi uniquement",
     "everyone": "Toute l'organisation",

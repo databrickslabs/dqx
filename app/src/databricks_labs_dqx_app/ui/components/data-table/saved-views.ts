@@ -251,6 +251,11 @@ export function cleanViewName(raw: string): string {
     .trim();
 }
 
+/** Whether *raw* has any content left after cleaning; whitespace and control characters alone don't count. */
+export function canSubmitViewName(raw: string): boolean {
+  return cleanViewName(raw).length > 0;
+}
+
 /**
  * Why *raw* can't be used as a view name in *scope*, or null when it can. Names are
  * unique per page within a scope (case-insensitive); *excludeId* skips the view being renamed.

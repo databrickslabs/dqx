@@ -3424,6 +3424,7 @@
     "dialogTitle": "Salvar como nova visualização",
     "renameTitle": "Renomear visualização",
     "name": "Nome",
+    "namePlaceholder": "Minha visualização personalizada",
     "visibleTo": "Visível para",
     "onlyMe": "Somente eu",
     "everyone": "Toda a organização",

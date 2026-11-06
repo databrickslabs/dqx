@@ -3424,6 +3424,7 @@
     "dialogTitle": "Salva come nuova vista",
     "renameTitle": "Rinomina vista",
     "name": "Nome",
+    "namePlaceholder": "La mia vista personalizzata",
     "visibleTo": "Visibile a",
     "onlyMe": "Solo io",
     "everyone": "Tutta l'organizzazione",

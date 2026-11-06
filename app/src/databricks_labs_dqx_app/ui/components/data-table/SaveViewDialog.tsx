@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { MAX_VIEW_NAME_LENGTH, viewNameError, type ViewNameError } from "./saved-views";
+import { canSubmitViewName, MAX_VIEW_NAME_LENGTH, viewNameError, type ViewNameError } from "./saved-views";
 import { isDuplicateViewNameError, type SaveAsNewInput } from "./useSavedViews";
 
 /** Wraps a disabled control so its *reason* still shows as a tooltip (disabled elements get no pointer events). */
@@ -48,11 +48,15 @@ export function ViewNameField({
   const id = useId();
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id}>{t("savedViews.name")}</Label>
+      <Label htmlFor={id}>
+        {t("savedViews.name")} <span className="text-destructive">*</span>
+      </Label>
       <Input
         id={id}
         value={value}
         autoFocus
+        required
+        placeholder={t("savedViews.namePlaceholder")}
         maxLength={MAX_VIEW_NAME_LENGTH + 20}
         aria-invalid={error !== null}
         aria-describedby={error ? `${id}-error` : undefined}
@@ -101,7 +105,7 @@ export function useViewNameState(
   /** Validates, then runs *action*; true when it succeeded. */
   const submit = async (action: () => Promise<void>): Promise<boolean> => {
     setSubmitted(true);
-    if (clientError) return false;
+    if (!canSubmitViewName(name) || clientError) return false;
     setPending(true);
     try {
       await action();
@@ -119,7 +123,7 @@ export function useViewNameState(
     setServerDuplicate(false);
   };
 
-  return { name, changeName, error: shownError, pending, submit };
+  return { name, changeName, error: shownError, pending, canSubmit: canSubmitViewName(name), submit };
 }
 
 type Scope = SaveAsNewInput["scope"];
@@ -263,7 +267,7 @@ export function SaveViewDialog({ open, onOpenChange, isAdmin, views, onSave }: S
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" size="sm" disabled={nameState.pending}>
+            <Button type="submit" size="sm" disabled={nameState.pending || !nameState.canSubmit}>
               {t("savedViews.save")}
             </Button>
           </DialogFooter>

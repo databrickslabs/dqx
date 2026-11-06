@@ -39,7 +39,7 @@ export function RenameViewDialog({ view, views, onClose, onRename }: RenameViewD
             <Button type="button" variant="outline" size="sm" onClick={onClose}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" size="sm" disabled={nameState.pending}>
+            <Button type="submit" size="sm" disabled={nameState.pending || !nameState.canSubmit}>
               {t("savedViews.save")}
             </Button>
           </DialogFooter>

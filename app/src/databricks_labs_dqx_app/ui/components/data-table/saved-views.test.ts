@@ -4,6 +4,7 @@ import {
   applyFilterToggle,
   applyStarOptimistic,
   builtinViewState,
+  canSubmitViewName,
   cleanViewName,
   isDirty,
   MAX_VIEW_STRING_LENGTH,
@@ -423,5 +424,18 @@ describe("applyStarOptimistic", () => {
   });
   it("returns the same list for an unknown view", () => {
     expect(applyStarOptimistic(list, "zzz", true)).toBe(list);
+  });
+});
+
+describe("canSubmitViewName", () => {
+  it("rejects empty, whitespace-only and control-character-only names", () => {
+    expect(canSubmitViewName("")).toBe(false);
+    expect(canSubmitViewName("   ")).toBe(false);
+    expect(canSubmitViewName("\n")).toBe(false);
+    expect(canSubmitViewName("\u0000\t\u007f")).toBe(false);
+  });
+  it("accepts a name with content", () => {
+    expect(canSubmitViewName("a")).toBe(true);
+    expect(canSubmitViewName("  Sales  ")).toBe(true);
   });
 });

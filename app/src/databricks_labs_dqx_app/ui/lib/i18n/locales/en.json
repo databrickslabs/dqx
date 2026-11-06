@@ -3424,6 +3424,7 @@
     "dialogTitle": "Save as new view",
     "renameTitle": "Rename view",
     "name": "Name",
+    "namePlaceholder": "My Custom View",
     "visibleTo": "Visible to",
     "onlyMe": "Only me",
     "everyone": "Everyone in the organisation",
