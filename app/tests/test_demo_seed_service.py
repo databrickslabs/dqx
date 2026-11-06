@@ -1828,12 +1828,13 @@ def _saved_views_fake():
     from databricks_labs_dqx_app.backend.services.saved_views_service import SavedViewsService
 
     store: list[SavedViewOut] = []
+    owners: dict[str, str] = {}
     fake = create_autospec(SavedViewsService, instance=True)
 
     def _list(page, *, user, is_admin):
-        return SavedViewListOut(
-            views=[v for v in store if v.page == page], effective_default_id=f"builtin:{page.value}"
-        )
+        # Mirrors the real service: org views plus the caller's own personal views.
+        visible = [v for v in store if v.page == page and (v.scope.value == "org" or owners.get(v.id) == user)]
+        return SavedViewListOut(views=visible, effective_default_id=f"builtin:{page.value}")
 
     def _create(body, *, user, is_admin):
         view = SavedViewOut(
@@ -1850,9 +1851,11 @@ def _saved_views_fake():
             can_set_org_default=True,
         )
         store.append(view)
+        owners[view.id] = user
         return view
 
     def _update(view_id, payload, *, user, is_admin):
+        assert owners.get(view_id) == user, "seed must only update the seeding user's own views"
         index = next(i for i, v in enumerate(store) if v.id == view_id)
         store[index] = store[index].model_copy(update={"payload": payload})
         return store[index]
@@ -1860,6 +1863,7 @@ def _saved_views_fake():
     fake.list_views.side_effect = _list
     fake.create_view.side_effect = _create
     fake.update_view.side_effect = _update
+    fake.owners = owners
     return fake, store
 
 
@@ -1871,7 +1875,7 @@ def _views_svc(saved_views, **over):
     return svc, deps
 
 
-def test_seed_creates_demo_org_views_scoped_to_the_injected_catalog_and_schema():
+def test_seed_creates_demo_personal_views_scoped_to_the_injected_catalog_and_schema():
     from databricks_labs_dqx_app.backend.saved_views_models import SavedViewPage, SavedViewScope
 
     fake, store = _saved_views_fake()
@@ -1886,7 +1890,8 @@ def test_seed_creates_demo_org_views_scoped_to_the_injected_catalog_and_schema()
         (SavedViewPage.REGISTRY_RULES, "Validity Rules by Severity"),
         (SavedViewPage.COLLECTIONS, "Collection Health"),
     }
-    assert all(v.scope == SavedViewScope.ORG and not v.is_org_default for v in store)
+    assert all(v.scope == SavedViewScope.USER and not v.is_org_default and not v.is_my_default for v in store)
+    assert set(fake.owners.values()) == {"admin@example.com"}
     by_page = {v.page: v.payload for v in store}
     tables = by_page[SavedViewPage.MONITORED_TABLES]
     results = by_page[SavedViewPage.GLOBAL_RESULTS]
@@ -1912,6 +1917,18 @@ def test_reseed_updates_existing_demo_views_instead_of_duplicating():
     assert sorted(v.id for v in store) == ids
     assert fake.create_view.call_count == 4
     assert fake.update_view.call_count == 4
+
+
+def test_another_seeding_admin_gets_their_own_demo_views_and_leaves_others_untouched():
+    fake, store = _saved_views_fake()
+    svc, _deps = _views_svc(fake, catalog="acme", schema="acme_demo")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    svc.run(user_email="other@example.com", wipe_first=False, weeks=0)
+
+    assert len(store) == 8
+    assert fake.update_view.call_count == 0
+    assert sorted(fake.owners.values()) == ["admin@example.com"] * 4 + ["other@example.com"] * 4
 
 
 def test_failed_demo_view_is_logged_and_the_seed_continues(caplog: pytest.LogCaptureFixture):

@@ -1,4 +1,4 @@
-"""Demo saved views: the org views the demo seed adds to the Tables, Results, Rules and Collections pages.
+"""Demo saved views: the personal views the demo seed adds to the Tables, Results, Rules and Collections pages.
 
 The views live in the bundled ``saved_views.json`` template (the single source
 of truth, also read by the UI drift test). Values that point at the demo data
@@ -23,11 +23,11 @@ _TOKEN_PATTERN = re.compile(f"{re.escape(CATALOG_TOKEN)}|{re.escape(SCHEMA_TOKEN
 
 @dataclass(frozen=True)
 class DemoSavedViewSpec:
-    """One demo org view.
+    """One demo personal view.
 
     Args:
         page: Page the view belongs to.
-        name: View name (unique among the page's org views).
+        name: View name (unique among the owner's views on the page).
         payload: Column layout, filter layout and filter values.
     """
 

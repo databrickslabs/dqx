@@ -41,9 +41,9 @@ skipped (logged) when no Job/warehouse is available and never fails the seed.
   :data:`~.manifest.SCHEDULES`, written through the same services the schedule
   routes use and seeded **paused**: the pause flag is written *before* the cron,
   so the scheduler never sees an unpaused demo schedule and none ever fires.
-* **Saved views** — a few org saved views (Tables, Results, Rules,
-  Collections) from the bundled :mod:`.saved_views` template, scoped to the
-  demo catalog/schema. Best-effort: a failed view never fails the seed.
+* **Saved views** — a few personal saved views (Tables, Results, Rules,
+  Collections) owned by the seeding admin, from the bundled
+  :mod:`.saved_views` template, scoped to the demo catalog/schema. Best-effort: a failed view never fails the seed.
 
 **Testability.** ``run(weeks=0)`` builds rules + bindings + products (all
 approved) and writes a terminal status, but SKIPS the validation-gate real-run
@@ -181,7 +181,7 @@ class DemoSeedResult:
         weeks: Number of weeks of quality trend generated (0 for a build-only run).
         trend_points: Number of re-dated score-history points written.
         schedules: Number of paused demo schedules written.
-        saved_views: Number of demo org saved views created or updated.
+        saved_views: Number of demo personal saved views created or updated.
     """
 
     rules: int
@@ -264,7 +264,7 @@ class DemoSeedService:
         # grant is attempted. It never fails the seed.
         self._schedule_config = schedule_config
         self._schedule_grants = schedule_grants
-        # Optional saved-views collaborator. With it the seed adds the demo org
+        # Optional saved-views collaborator. With it the seed adds the demo personal
         # views (Tables, Results, Rules, Collections); without it (minimal test
         # graph) that phase is a logged no-op. Best-effort: never fails the seed.
         self._saved_views = saved_views
@@ -904,13 +904,15 @@ class DemoSeedService:
     # ------------------------------------------------------------------
 
     def _build_saved_views(self, user_email: str) -> int:
-        """Add the demo org saved views; return how many were created or updated.
+        """Add the demo saved views as *user_email*'s personal views; return how many were created or updated.
 
         The views come from the bundled template (see :mod:`.saved_views`) with
-        the demo catalog and schema substituted. None is made the org default,
-        so each page still opens on its built-in Default view. A re-seed
-        updates the payload of an existing org view with the same name on the
-        page instead of adding a duplicate. Best-effort: a view that fails is
+        the demo catalog and schema substituted. They are personal (scope
+        user) views owned by the seeding admin, and none is made the user's or
+        the org default, so each page still opens on its built-in Default view.
+        A re-seed updates the payload of that user's existing view with the
+        same name on the page instead of adding a duplicate; other users'
+        views are never touched. Best-effort: a view that fails is
         logged and skipped, and the seed carries on.
         """
         if self._saved_views is None:
@@ -929,14 +931,14 @@ class DemoSeedService:
                     (
                         view
                         for view in listing.views
-                        if view.scope == SavedViewScope.ORG and not view.is_builtin and view.name == spec.name
+                        if view.scope == SavedViewScope.USER and not view.is_builtin and view.name == spec.name
                     ),
                     None,
                 )
                 if existing is None:
                     self._saved_views.create_view(
                         SavedViewCreateIn(
-                            page=spec.page, name=spec.name, scope=SavedViewScope.ORG, payload=spec.payload
+                            page=spec.page, name=spec.name, scope=SavedViewScope.USER, payload=spec.payload
                         ),
                         user=user_email,
                         is_admin=True,
