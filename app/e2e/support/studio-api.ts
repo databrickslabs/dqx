@@ -20,6 +20,15 @@ export interface SetupStatus {
   /** checking | setup_required | initializing | ready */
   report: { state: string; steps: SetupStep[]; current_step?: string | null };
   can_manage: boolean;
+  task_runner_job_id?: number | null;
+  configuration?: {
+    /** deployment (DAB) | saved (setup form) | none */
+    source: string;
+    catalog?: string;
+    prefix?: string;
+    audience_group?: string;
+    schemas?: string[];
+  } | null;
 }
 
 export interface RegistryRule {

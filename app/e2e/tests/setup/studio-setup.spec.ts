@@ -16,6 +16,9 @@ import { openStudio, sidebarLinks } from "../../support/ui";
 // statements and verifying again. It never overrides a step, because an
 // override would hide exactly the problem setup exists to catch; a step that
 // needs one (or any other manual fix) fails the test and names the step.
+// Along the way it checks what the wizard shows against the backend's report.
+// A second test checks the setup page of a ready deployment, which a fresh
+// browser sees once when setup finished with warnings.
 
 const SETUP_COPY = JSON.parse(
   readFileSync(
@@ -26,8 +29,11 @@ const SETUP_COPY = JSON.parse(
   setup: {
     title: string;
     steps: Record<string, string>;
+    states: Record<string, string>;
     actions: Record<string, string>;
-    warningsReview: { title: string };
+    warningsReview: { title: string; acknowledge: string };
+    configuration: { submit: string };
+    override: { button: Record<string, string>; help: Record<string, string> };
   };
   sqlCodeBlock: { run: string };
 };
@@ -85,6 +91,14 @@ function stepCard(page: Page, stepId: string) {
   return page.locator("ol > li").filter({ has: page.getByText(title, { exact: true }) });
 }
 
+/** The step's card shows the backend's state badge and, when it has them, its GRANT statements. */
+async function expectStepCard(page: Page, step: SetupStep): Promise<void> {
+  const card = stepCard(page, step.id);
+  await expect(card, `wizard shows the ${step.id} step`).toBeVisible();
+  await expect(card.getByText(SETUP_COPY.setup.states[step.state], { exact: true }), `${step.id} badge`).toBeVisible();
+  for (const statement of step.grant_statements ?? []) await expect(card.locator("pre")).toContainText(statement);
+}
+
 /** Runs one step's GRANT statements from the wizard and fails with Studio's explanation if any didn't run. */
 async function runStepGrants(page: Page, step: SetupStep): Promise<void> {
   const card = stepCard(page, step.id);
@@ -134,7 +148,9 @@ async function verifyAgain(page: Page, studio: StudioApi): Promise<SetupStatus> 
 // Fresh deployments spend minutes on their first check; grants and re-checks add more.
 test.setTimeout(30 * 60_000);
 
-test("administrator completes the setup wizard", async ({ page, studio, problems }) => {
+test.describe.configure({ mode: "serial" });
+
+test("administrator completes the setup wizard", async ({ page, api, studio, problems }) => {
   let status = await settledStatus(studio);
   expect(status.can_manage, "run the suite as a Studio administrator (workspace admins or DQX_ADMIN_GROUP)").toBe(true);
 
@@ -153,6 +169,22 @@ test("administrator completes the setup wizard", async ({ page, studio, problems
       await page.goto("/");
       await expect(page.getByRole("heading", { name: SETUP_COPY.setup.title })).toBeVisible({ timeout: 60_000 });
       console.log(`Setup round ${round}, blocked on:\n${describeSteps(blocking)}`);
+
+      // Until setup is ready, routes outside the setup allowlist are refused.
+      const gated = await api.get("/api/v1/config/branding");
+      expect(gated.status(), "routes outside setup answer 503 before setup is ready").toBe(503);
+      expect(await gated.json()).toEqual({ detail: "DQX Studio setup is required." });
+
+      for (const step of status.report.steps) await expectStepCard(page, step);
+      const runner = stepCard(page, "task_runner");
+      if (status.task_runner_job_id && !status.report.steps.some((s) => s.actions?.includes("choose_task_runner"))) {
+        // The deployment chose the job's runner, so the step links straight to the job.
+        await expect(runner.getByRole("link", { name: SETUP_COPY.setup.actions.openTaskRunnerJob })).toHaveAttribute(
+          "href",
+          new RegExp(`/jobs/${status.task_runner_job_id}$`),
+        );
+      }
+
       for (const step of withGrants) await runStepGrants(page, step);
       // Running grants re-verifies their step; only check again if something still blocks.
       status = await settledStatus(studio);
@@ -183,4 +215,47 @@ test("administrator completes the setup wizard", async ({ page, studio, problems
   });
 
   expect(blockingSteps(await studio.setupStatus()), "every setup step is settled").toEqual([]);
+});
+
+test("setup page of a ready deployment matches the backend's report", async ({ page, studio }) => {
+  const status = await settledStatus(studio);
+  expect(status.report.state, "the previous test leaves setup ready").toBe("ready");
+  const warnings = status.report.steps.filter((s) => s.state === "warning");
+  test.skip(!warnings.length, "setup finished without warnings, so a ready Studio never shows the setup page");
+
+  // Each test gets a new browser, so the review shows again even though the previous test acknowledged it.
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: SETUP_COPY.setup.warningsReview.title })).toBeVisible();
+
+  await test.step("every step shows its state", async () => {
+    for (const step of status.report.steps) await expectStepCard(page, step);
+  });
+
+  const configuration = status.configuration;
+  if (configuration?.source === "deployment") {
+    await test.step("configuration shows the deployed values and can't be edited", async () => {
+      const card = stepCard(page, "configuration");
+      for (const value of [configuration.catalog, configuration.prefix, configuration.audience_group]) {
+        if (value) await expect(card.getByText(value, { exact: true })).toBeVisible();
+      }
+      await expect(card.getByRole("button", { name: SETUP_COPY.setup.configuration.submit })).toHaveCount(0);
+    });
+  }
+
+  await test.step("warnings that only an administrator can confirm offer it, with an explanation", async () => {
+    for (const step of warnings.filter((s) => s.actions?.includes("override"))) {
+      const key = step.id in SETUP_COPY.setup.override.button ? step.id : "default";
+      const card = stepCard(page, step.id);
+      await expect(card.getByRole("button", { name: SETUP_COPY.setup.override.button[key] })).toBeEnabled();
+      await expect(card.getByText(SETUP_COPY.setup.override.help[key])).toBeVisible();
+    }
+  });
+
+  await test.step("acknowledging opens Studio, and the browser remembers it", async () => {
+    await page.getByRole("button", { name: SETUP_COPY.setup.warningsReview.acknowledge }).click();
+    await expect(sidebarLinks(page).first()).toBeVisible();
+    await page.reload();
+    await expect(sidebarLinks(page).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: SETUP_COPY.setup.warningsReview.title })).toHaveCount(0);
+  });
 });
