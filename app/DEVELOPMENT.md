@@ -30,7 +30,7 @@ project-specific CLI required. **Prefer `make` from the project root.**
 | `make app-check` | TypeScript (`tsc -b`) + Python (`basedpyright`) type-check |
 | `make app-regen-api` | Regenerate `ui/lib/api.ts` after backend model changes (no full wheel rebuild) |
 | `make app-test` | Backend pytest suite |
-| `make app-e2e PROFILE=<profile>` | Playwright smoke tests and customer journeys against a running Studio deployment (see [Pre-release browser tests](#pre-release-browser-tests)) |
+| `make app-e2e PROFILE=<profile>` | Playwright setup, smoke tests and customer journeys against a running Studio deployment; setup completes the setup wizard first, so a fresh deployment works (see [Pre-release browser tests](#pre-release-browser-tests)) |
 | `make fmt` | Format Python (run from root before committing) |
 | `make test` | Library unit tests |
 | `make integration` | Integration tests (requires live workspace) |
@@ -51,7 +51,7 @@ The first command creates the release branch in a temporary worktree, builds and
 
 ### Pre-release browser tests
 
-Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), finish setup in the Studio UI, then run the Playwright suite against it.
+Before cutting a tag, deploy the release candidate (`make app-deploy PROFILE=<profile> TARGET=<target>`), then run the Playwright suite against it. You don't need to open the app first; the suite completes setup itself.
 
 > **The suite must point at a real DQX Studio instance.** It has no mocks or fixtures standing in for the backend. It talks to a live app, its Lakebase database, warehouse and Unity Catalog storage. A freshly deployed instance is fine: the `setup` project runs first and takes it through the setup wizard as an administrator. It runs the GRANT statements the wizard lists and verifies again until Studio is ready. It never overrides a step. If a step needs a manual fix, such as a task runner the deployment didn't set or access only an override could confirm, the test fails and names the step. Fix it in the app, then run the suite again.
 
