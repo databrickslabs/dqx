@@ -3419,6 +3419,7 @@
     "star": "Ajouter aux favoris",
     "unstar": "Retirer des favoris",
     "saveReadOnly": "Seuls les administrateurs peuvent modifier les vues de l'organisation. Utilisez Enregistrer comme nouvelle.",
+    "saveBuiltin": "La vue par défaut ne peut pas être modifiée. Utilisez Enregistrer comme nouvelle.",
     "dialogTitle": "Enregistrer comme nouvelle vue",
     "renameTitle": "Renommer la vue",
     "name": "Nom",

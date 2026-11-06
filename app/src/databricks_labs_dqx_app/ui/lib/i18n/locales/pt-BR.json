@@ -3419,6 +3419,7 @@
     "star": "Marcar como favorita",
     "unstar": "Desmarcar como favorita",
     "saveReadOnly": "Somente administradores podem alterar visualizações da organização. Use Salvar como nova.",
+    "saveBuiltin": "A visualização padrão não pode ser alterada. Use Salvar como nova.",
     "dialogTitle": "Salvar como nova visualização",
     "renameTitle": "Renomear visualização",
     "name": "Nome",

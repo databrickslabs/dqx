@@ -309,6 +309,7 @@ export function saveDisabledReason(
   activeView: SavedViewOut | null,
   dirty: boolean,
 ): { disabled: boolean; reasonKey: string | null } {
+  if (activeView?.is_builtin) return { disabled: true, reasonKey: "savedViews.saveBuiltin" };
   if (activeView && !activeView.can_edit) return { disabled: true, reasonKey: "savedViews.saveReadOnly" };
   return { disabled: !activeView || !dirty, reasonKey: null };
 }

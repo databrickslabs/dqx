@@ -189,8 +189,11 @@ class SavedViewsService:
         Raises:
             SavedViewNotFoundError: The view is missing or not visible.
             SavedViewForbiddenError: The caller may not edit this view.
+            SavedViewValidationError: The view is built in.
         """
         row = self._get_visible(view_id, user)
+        if _is_true(row["is_builtin"]):
+            raise SavedViewValidationError("The Default view cannot be saved over; use Save as new")
         self._require_edit(row, user, is_admin)
         self._sql.update(
             self._views,
@@ -222,9 +225,9 @@ class SavedViewsService:
             SavedViewConflictError: Another view already uses this name.
         """
         row = self._get_visible(view_id, user)
-        self._require_edit(row, user, is_admin)
         if _is_true(row["is_builtin"]):
             raise SavedViewValidationError("The Default view cannot be renamed")
+        self._require_edit(row, user, is_admin)
         clean = normalize_view_name(name)
         page = SavedViewPage(row["page_key"])
         self._ensure_builtin(page)
@@ -255,9 +258,9 @@ class SavedViewsService:
             SavedViewValidationError: The view is built in.
         """
         row = self._get_visible(view_id, user)
-        self._require_edit(row, user, is_admin)
         if _is_true(row["is_builtin"]):
             raise SavedViewValidationError("The Default view cannot be deleted")
+        self._require_edit(row, user, is_admin)
         self._sql.delete(self._views, where={"id": view_id})
         logger.info(f"Deleted saved view {view_id}")
 
@@ -448,6 +451,8 @@ class SavedViewsService:
 
     @staticmethod
     def _can_edit(row: dict[str, str | None], user: str, is_admin: bool) -> bool:
+        if _is_true(row["is_builtin"]):
+            return False
         if row["scope"] == SavedViewScope.ORG.value:
             return is_admin
         return row["owner"] == user

@@ -279,6 +279,15 @@ describe("saveDisabledReason", () => {
     expect(saveDisabledReason(view({ can_edit: false }), false).reasonKey).toBe("savedViews.saveReadOnly");
   });
 
+  it("explains the built-in Default view, ahead of the read-only reason", () => {
+    for (const can_edit of [true, false]) {
+      expect(saveDisabledReason(view({ is_builtin: true, can_edit }), true)).toEqual({
+        disabled: true,
+        reasonKey: "savedViews.saveBuiltin",
+      });
+    }
+  });
+
   it("is enabled for a dirty, editable view", () => {
     expect(saveDisabledReason(view({}), true)).toEqual({ disabled: false, reasonKey: null });
   });

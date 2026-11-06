@@ -109,6 +109,12 @@ def test_update_foreign_view_is_404(svc):
     assert resp.status_code == 404
 
 
+def test_admin_update_builtin_is_422(svc):
+    svc.update_view.side_effect = SavedViewValidationError("The Default view cannot be saved over")
+    resp = _client(svc, UserRole.ADMIN).put("/api/v1/saved-views/builtin:monitored_tables", json={"payload": PAYLOAD})
+    assert resp.status_code == 422
+
+
 def test_rename_builtin_is_422(svc):
     svc.rename_view.side_effect = SavedViewValidationError("builtin")
     resp = _client(svc).patch("/api/v1/saved-views/builtin:collections", json={"name": "x"})

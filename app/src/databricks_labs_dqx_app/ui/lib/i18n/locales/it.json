@@ -3419,6 +3419,7 @@
     "star": "Aggiungi ai preferiti",
     "unstar": "Rimuovi dai preferiti",
     "saveReadOnly": "Solo gli amministratori possono modificare le viste dell'organizzazione. Usa Salva come nuova.",
+    "saveBuiltin": "La vista predefinita non può essere modificata. Usa Salva come nuova.",
     "dialogTitle": "Salva come nuova vista",
     "renameTitle": "Rinomina vista",
     "name": "Nome",

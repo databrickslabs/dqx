@@ -3419,6 +3419,7 @@
     "star": "Star view",
     "unstar": "Unstar view",
     "saveReadOnly": "Only admins can change organisation views. Use Save as new.",
+    "saveBuiltin": "Default can't be changed. Use Save as new.",
     "dialogTitle": "Save as new view",
     "renameTitle": "Rename view",
     "name": "Name",

@@ -303,10 +303,18 @@ def test_owner_updates_own_view(sql):
     assert sql.update.call_args.kwargs["where"] == {"id": "mine"}
 
 
-def test_admin_updates_builtin_payload(sql):
+def test_admin_update_builtin_is_validation_error(sql):
     svc = make_service(sql, Store([BUILTIN]))
-    svc.update_view("builtin:monitored_tables", payload(), user="admin@x", is_admin=True)
-    sql.update.assert_called_once()
+    with pytest.raises(SavedViewValidationError):
+        svc.update_view("builtin:monitored_tables", payload(), user="admin@x", is_admin=True)
+    sql.update.assert_not_called()
+
+
+@pytest.mark.parametrize("is_admin", [True, False])
+def test_builtin_can_edit_is_false_for_everyone(sql, is_admin):
+    svc = make_service(sql, Store([BUILTIN]))
+    out = svc.list_views(PAGE, user="u@x", is_admin=is_admin)
+    assert next(v for v in out.views if v.is_builtin).can_edit is False
 
 
 def test_rename_builtin_is_validation_error(sql):
