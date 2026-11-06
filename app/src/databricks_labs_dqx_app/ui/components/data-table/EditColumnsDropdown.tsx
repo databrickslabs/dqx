@@ -187,7 +187,9 @@ export function EditColumnsDropdown<K extends string, F extends string = string>
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
-    if (!next) setView(homeView);
+    // Reset on open, not close: the closing menu keeps animating out and must
+    // not re-render the main page while it fades.
+    if (next) setView(homeView);
   };
 
   const openDialog = (request: SavedViewsDialogRequest) => {
