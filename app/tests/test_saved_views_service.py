@@ -58,6 +58,11 @@ class Store:
         self.my_default = my_default
         self.name_matches = name_matches
 
+    def ensure_builtin(self, sql):
+        if "INSERT INTO" in sql and "ON CONFLICT (id) DO NOTHING" in sql:
+            if not any(r["id"] == BUILTIN["id"] for r in self.views):
+                self.views.append(dict(BUILTIN, is_org_default="false"))
+
     def query_dicts(self, sql, **_kwargs):
         if "lower(name) = lower(" in sql:
             return [{"id": "dup"}] if self.name_matches else []
@@ -90,6 +95,7 @@ def sql():
 def make_service(sql, store):
     sql.query_dicts.side_effect = store.query_dicts
     sql.select_dicts.side_effect = store.select_dicts
+    sql.execute.side_effect = store.ensure_builtin
     return SavedViewsService(sql=sql)
 
 
@@ -358,9 +364,9 @@ def test_set_org_default_requires_admin(sql):
 def test_set_org_default_issues_single_update(sql):
     svc = make_service(sql, Store([BUILTIN, view_row("org1")]))
     svc.set_org_default(PAGE, "org1", user="admin@x", is_admin=True)
-    sql.execute.assert_called_once()
-    stmt = sql.execute.call_args[0][0]
-    assert stmt.startswith("UPDATE cat.sch.dq_saved_views")
+    updates = [c[0][0] for c in sql.execute.call_args_list if c[0][0].startswith("UPDATE")]
+    assert len(updates) == 1
+    stmt = updates[0]
     assert "is_org_default = (id = 'org1')" in stmt
     assert "page_key = 'monitored_tables' AND scope = 'org'" in stmt
 
@@ -399,3 +405,23 @@ def test_migration_v5_creates_tables_and_seeds_every_page():
     for page in SavedViewPage:
         assert f"'builtin:{page.value}'" in flat
     assert "ON CONFLICT (id) DO NOTHING" in flat
+
+
+# ------------------------------------------------------- builtin healing
+
+
+def test_list_recreates_missing_builtin_after_reset(sql):
+    store = Store([])
+    out = make_service(sql, store).list_views(PAGE, user="a@x", is_admin=False)
+    stmt = sql.execute.call_args_list[0][0][0]
+    assert stmt.startswith("INSERT INTO cat.sch.dq_saved_views")
+    assert "'builtin:monitored_tables'" in stmt and "ON CONFLICT (id) DO NOTHING" in stmt
+    assert out.effective_default_id == "builtin:monitored_tables"
+    assert [v.id for v in out.views] == ["builtin:monitored_tables"]
+
+
+def test_set_org_default_on_builtin_heals_missing_row(sql):
+    store = Store([])
+    make_service(sql, store).set_org_default(PAGE, "builtin:monitored_tables", user="admin@x", is_admin=True)
+    assert any("ON CONFLICT (id) DO NOTHING" in c[0][0] for c in sql.execute.call_args_list)
+    assert any("is_org_default = (id = 'builtin:monitored_tables')" in c[0][0] for c in sql.execute.call_args_list)

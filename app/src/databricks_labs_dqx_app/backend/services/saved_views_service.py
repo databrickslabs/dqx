@@ -27,6 +27,7 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 logger = logging.getLogger(__name__)
 
 MAX_NAME_LENGTH = 80
+BUILTIN_VIEW_NAME = "Default"
 _UNIQUE_VIOLATION_SQLSTATE = "23505"
 
 
@@ -101,6 +102,7 @@ class SavedViewsService:
         Returns:
             Visible views (org views plus the caller's own) and the id of the view to load by default.
         """
+        self._ensure_builtin(page)
         rows = self._select_views(
             f"page_key = '{escape_sql_string(page.value)}' "
             f"AND (scope = 'org' OR owner = '{escape_sql_string(user)}')"
@@ -349,7 +351,27 @@ class SavedViewsService:
         )
         return self._sql.query_dicts(sql)
 
+    def _ensure_builtin(self, page: SavedViewPage) -> None:
+        """Re-create the built-in Default row if a database reset removed it.
+
+        The row is inserted unflagged: with zero flagged org views, resolution
+        already falls back to the built-in, and it never overrides an admin's choice.
+        """
+        self._sql.execute(
+            f"INSERT INTO {self._views} (id, page_key, name, scope, owner, payload, is_builtin, "
+            "is_org_default, created_by, updated_by) "
+            f"VALUES ('{escape_sql_string(_builtin_id(page))}', '{escape_sql_string(page.value)}', "
+            f"'{escape_sql_string(BUILTIN_VIEW_NAME)}', 'org', NULL, NULL, TRUE, FALSE, 'system', 'system') "
+            "ON CONFLICT (id) DO NOTHING"
+        )
+
     def _get_visible(self, view_id: str, user: str) -> dict[str, str | None]:
+        prefix = "builtin:"
+        if view_id.startswith(prefix):
+            try:
+                self._ensure_builtin(SavedViewPage(view_id[len(prefix) :]))
+            except ValueError:
+                pass
         rows = self._select_views(
             f"id = '{escape_sql_string(view_id)}' AND (scope = 'org' OR owner = '{escape_sql_string(user)}')"
         )
