@@ -15,6 +15,7 @@ from open_data_contract_standard.model import OpenDataContractStandard
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidationMode
 import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
@@ -26,6 +27,15 @@ from databricks.labs.dqx.errors import (
 )
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from tests.conftest import get_schema_validation_rules
+
+
+_RANGE_RULE_NAME_SUFFIXES = (
+    "_below_minimum",
+    "_above_maximum",
+    "_out_of_range",
+    "_at_or_below_exclusive_minimum",
+    "_at_or_above_exclusive_maximum",
+)
 
 
 class DataContractGeneratorTestBase:
@@ -841,6 +851,22 @@ class DataContractGeneratorTestBase:
         assert "`col name` STRING" in ddl
         assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
         assert "normal_col STRING" in ddl
+
+    def _generate_range_rules(self, generator, prop: dict, api_version: str = "v3.0.2") -> list[dict]:
+        """Generate predefined rules for a single property and return those for its range bounds."""
+        contract_dict = self.create_basic_contract(properties=[prop])
+        contract_dict["apiVersion"] = api_version
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+        return [r for r in rules if r["name"].endswith(_RANGE_RULE_NAME_SUFFIXES)]
 
 
 class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
@@ -2332,22 +2358,6 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     """Test constraint-specific predefined rule generation."""
 
-    def _generate_range_rules(self, generator, prop: dict, api_version: str = "v3.0.2") -> list[dict]:
-        """Generate predefined rules for a single property and return those for its range bounds."""
-        contract_dict = self.create_basic_contract(properties=[prop])
-        contract_dict["apiVersion"] = api_version
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path,
-                generate_predefined_rules=True,
-                process_text_rules=False,
-                generate_schema_validation=False,
-            )
-        finally:
-            os.unlink(temp_path)
-        return [r for r in rules if r["name"].endswith(("_below_minimum", "_above_maximum", "_out_of_range"))]
-
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that a float minimum generates a row-level is_not_less_than rule."""
         rules = self._generate_range_rules(
@@ -2541,6 +2551,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         [
             ("integer", "INT", {"minimum": "abc"}, "Skipping minimum on 'value': 'abc' is not a number."),
             ("integer", "INT", {"minimum": "10"}, "Skipping minimum on 'value': '10' is not a number."),
+            ("integer", "INT", {"exclusiveMinimum": "5"}, "Skipping exclusiveMinimum on 'value': '5' is not a number."),
             ("integer", "INT", {"minimum": True}, "Skipping minimum on 'value': 'True' is not a number."),
             ("integer", "INT", {"minimum": [1, 2]}, "Skipping minimum on 'value': '[1, 2]' is not a number."),
             ("number", "DOUBLE", {"maximum": float("inf")}, "Skipping maximum on 'value': 'inf' is not a number."),
@@ -2568,6 +2579,24 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "STRING",
                 {"minimum": "other_column"},
                 "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp.",
+            ),
+            (
+                "integer",
+                "INT",
+                {"exclusiveMinimum": True},
+                "Skipping exclusiveMinimum on 'value': it is true, but there is no minimum to make exclusive.",
+            ),
+            (
+                "number",
+                "DOUBLE",
+                {"exclusiveMaximum": float("inf")},
+                "Skipping exclusiveMaximum on 'value': 'inf' is not a number.",
+            ),
+            (
+                "number",
+                "DOUBLE",
+                {"maximum": float("nan")},
+                "Skipping maximum on 'value': 'nan' is not a number.",
             ),
             (
                 "date",
@@ -2649,6 +2678,19 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "no value is at least 2030-01-01 and at most 2020-01-01",
             ),
             (None, {"minimum": 1, "maximum": "2020-01-01"}, "the bounds mix numbers with dates or timestamps"),
+            (None, {"minimum": 5, "exclusiveMaximum": "2024-01-01"}, "the bounds mix numbers with dates or timestamps"),
+            ("integer", {"minimum": 10, "exclusiveMaximum": 5}, "no value is at least 10 and less than 5"),
+            ("integer", {"exclusiveMinimum": 5, "exclusiveMaximum": 5}, "no value is greater than 5 and less than 5"),
+            (
+                "integer",
+                {"minimum": 5, "maximum": 5, "exclusiveMinimum": True},
+                "no value is greater than 5 and at most 5",
+            ),
+            (
+                "integer",
+                {"minimum": 10, "maximum": 1, "exclusiveMinimum": True},
+                "no value is greater than 10 and at most 1",
+            ),
         ],
     )
     def test_unusable_range_is_skipped_with_warning(self, generator, caplog, logical_type, options, reason):
@@ -3145,6 +3187,205 @@ class TestDataContractGeneratorQualityAndLengthConstraints(DataContractGenerator
 
         finally:
             os.unlink(temp_path)
+
+
+class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
+    """Test strict rules generated from exclusiveMinimum/exclusiveMaximum."""
+
+    @staticmethod
+    def _check(function: str, limit: object, column: str = "value") -> dict:
+        return {"function": function, "arguments": {"column": column, "limit": limit}}
+
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, options, expected",
+        [
+            # ODCS v3.0.x: a flag that makes minimum/maximum exclusive, replacing that side's inclusive check
+            (
+                "integer",
+                "INT",
+                {"minimum": 0, "exclusiveMinimum": True},
+                [("at_or_below_exclusive_minimum", "is_greater_than", 0)],
+            ),
+            (
+                "integer",
+                "INT",
+                {"maximum": 10, "exclusiveMaximum": True},
+                [("at_or_above_exclusive_maximum", "is_less_than", 10)],
+            ),
+            (
+                "integer",
+                "INT",
+                {"minimum": 18, "maximum": 100, "exclusiveMaximum": True},  # the ODCS v3.0.2 all-data-types example
+                [("below_minimum", "is_not_less_than", 18), ("at_or_above_exclusive_maximum", "is_less_than", 100)],
+            ),
+            (
+                "integer",
+                "INT",
+                {"maximum": 10, "exclusiveMaximum": False},
+                [("above_maximum", "is_not_greater_than", 10)],
+            ),
+            # ODCS v3.1.0+: a bound of its own
+            (
+                "number",
+                "DOUBLE",
+                {"exclusiveMinimum": 0.5},
+                [("at_or_below_exclusive_minimum", "is_greater_than", 0.5)],
+            ),
+            ("integer", "INT", {"exclusiveMaximum": 5.5}, [("at_or_above_exclusive_maximum", "is_less_than", 5.5)]),
+            (
+                "integer",
+                "INT",
+                {"minimum": 1, "exclusiveMaximum": 100},
+                [("below_minimum", "is_not_less_than", 1), ("at_or_above_exclusive_maximum", "is_less_than", 100)],
+            ),
+            (
+                "integer",
+                "INT",
+                {"exclusiveMinimum": 0, "exclusiveMaximum": 100},
+                [
+                    ("at_or_below_exclusive_minimum", "is_greater_than", 0),
+                    ("at_or_above_exclusive_maximum", "is_less_than", 100),
+                ],
+            ),
+            (
+                "date",
+                "DATE",
+                {"exclusiveMaximum": "2030-01-01"},
+                [("at_or_above_exclusive_maximum", "is_less_than", "2030-01-01")],
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"exclusiveMinimum": datetime.datetime(2024, 1, 1, 10)},
+                [("at_or_below_exclusive_minimum", "is_greater_than", datetime.datetime(2024, 1, 1, 10))],
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"exclusiveMinimum": "2024-01-01T10:00:00+00:00"},
+                [("at_or_below_exclusive_minimum", "is_greater_than", "2024-01-01T10:00:00+00:00")],
+            ),
+        ],
+    )
+    def test_exclusive_bounds_generate_strict_checks(
+        self, generator, caplog, logical_type, physical_type, options, expected
+    ):
+        """Test that exclusive bounds in either ODCS form add a strict is_greater_than / is_less_than rule."""
+        prop = {
+            "name": "value",
+            "physicalType": physical_type,
+            "logicalType": logical_type,
+            "logicalTypeOptions": options,
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert [(r["name"], r["check"]) for r in rules] == [
+            (f"value_{name_suffix}", self._check(function, limit)) for name_suffix, function, limit in expected
+        ]
+        assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+
+    def test_exclusive_bound_on_text_column_compares_try_cast(self, generator):
+        """Test that a strict rule on a column stored as text compares it through try_cast, like the inclusive ones."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "STRING",
+                "logicalType": "timestamp",
+                "logicalTypeOptions": {"exclusiveMinimum": "2024-01-01T00:00:00"},
+            },
+        )
+
+        assert [r["check"] for r in rules] == [
+            self._check("is_greater_than", "2024-01-01T00:00:00", column="try_cast(value AS TIMESTAMP)")
+        ]
+
+    def test_exclusive_bound_rule_carries_contract_metadata(self, generator):
+        """Test that a strict rule carries the same metadata as the other range rules."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "qty",
+                "physicalType": "INT",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"exclusiveMinimum": 0},
+            },
+        )
+
+        assert rules == [
+            {
+                "check": self._check("is_greater_than", 0, column="qty"),
+                "name": "qty_at_or_below_exclusive_minimum",
+                "criticality": "error",
+                "user_metadata": {
+                    "contract_id": "test",
+                    "contract_version": "1.0.0",
+                    "odcs_version": "v3.0.2",
+                    "schema": "test_table",
+                    "field": "qty",
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
+
+    def test_all_range_bounds_on_one_column_do_not_conflict(self, generator):
+        """Test that inclusive and exclusive bounds on one column pass the semantic validator in fail mode."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "INT",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": 1, "maximum": 99, "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+            },
+        )
+
+        assert [r["name"] for r in rules] == [
+            "value_out_of_range",
+            "value_at_or_below_exclusive_minimum",
+            "value_at_or_above_exclusive_maximum",
+        ]
+        assert not DQEngine.validate_checks(rules, semantic_validation_mode=ChecksSemanticValidationMode.FAIL).errors
+
+    @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
+    def test_exclusive_bounds_are_read_in_every_odcs_version(self, generator, api_version):
+        """Test that both exclusive forms are read by the value's type, whatever the contract's apiVersion."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "INT",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": 0, "exclusiveMinimum": True, "exclusiveMaximum": 100},
+            },
+            api_version=api_version,
+        )
+
+        assert [(r["name"], r["check"]) for r in rules] == [
+            ("value_at_or_below_exclusive_minimum", self._check("is_greater_than", 0)),
+            ("value_at_or_above_exclusive_maximum", self._check("is_less_than", 100)),
+        ]
+
+    def test_flag_with_invalid_bound_warns_once(self, generator, caplog):
+        """Test that exclusiveMinimum: true reuses the validated minimum, so an invalid one is reported once."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(
+                generator,
+                {
+                    "name": "value",
+                    "physicalType": "INT",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {"minimum": "other_column", "exclusiveMinimum": True},
+                },
+            )
+
+        assert not rules
+        assert [r.getMessage() for r in caplog.records if r.name == contract_rules_generator_module.__name__] == [
+            "Skipping minimum on 'value': 'other_column' is not a number."
+        ]
 
 
 class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):

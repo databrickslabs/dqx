@@ -714,6 +714,65 @@ class TestDataContractRangeRulesIntegration:
             4: set(),
         }
 
+    def test_generated_exclusive_bound_rules_flag_values_on_the_bound(self, ws, spark, set_utc_timezone):
+        """Strict rules from exclusiveMinimum/exclusiveMaximum (both ODCS forms) flag values on or past the bound."""
+        properties = [
+            ("qty", "INT", "integer", {"minimum": 0, "exclusiveMinimum": True}),  # ODCS v3.0.x form
+            ("ratio", "DOUBLE", "number", {"exclusiveMinimum": 0, "exclusiveMaximum": 1.0}),  # ODCS v3.1.0+ form
+            ("price", "INT", "integer", {"exclusiveMaximum": 5.5}),  # a decimal bound on an integer column
+            ("shipped", "DATE", "date", {"exclusiveMinimum": "2020-01-01"}),
+            ("created", "TIMESTAMP", "timestamp", {"exclusiveMaximum": "2030-01-01T00:00:00"}),
+            ("shipped_text", "STRING", "date", {"exclusiveMinimum": "2020-01-01"}),
+        ]
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:exclusive_ranges",
+            "name": "Exclusive Ranges",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": name, "physicalType": physical, "logicalType": logical, "logicalTypeOptions": options}
+                        for name, physical, logical, options in properties
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [
+                # On the bounds: only the strict rules flag these (price 5 is below 5.5)
+                [1, 0, 1.0, 5, datetime.date(2020, 1, 1), datetime.datetime(2030, 1, 1), "2020-01-01"],
+                # Inside the bounds (a malformed date string is left to a format rule)
+                [2, 5, 0.5, 5, datetime.date(2024, 6, 1), datetime.datetime(2024, 1, 1, 10), "not a date"],
+                # Past the bounds
+                [3, -1, 1.5, 6, datetime.date(2019, 12, 31), datetime.datetime(2030, 1, 2), "2019-12-31"],
+                [4, None, None, None, None, None, None],
+            ],
+            "row_id int, qty int, ratio double, price int, shipped date, created timestamp, shipped_text string",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        strict_rules = {
+            "qty_at_or_below_exclusive_minimum",
+            "ratio_at_or_above_exclusive_maximum",
+            "shipped_at_or_below_exclusive_minimum",
+            "created_at_or_above_exclusive_maximum",
+            "shipped_text_at_or_below_exclusive_minimum",
+        }
+        assert flagged_by_row == {
+            1: strict_rules,
+            2: set(),
+            3: strict_rules | {"price_at_or_above_exclusive_maximum"},
+            4: set(),
+        }
+
 
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
