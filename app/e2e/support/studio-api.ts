@@ -22,10 +22,21 @@ export interface SetupStatus {
   can_manage: boolean;
 }
 
+export interface RuleParameter {
+  name: string;
+  type: string;
+  value?: string | number | boolean | string[] | null;
+}
+
 export interface RegistryRule {
   rule_id: string;
   mode: string;
-  definition: { body: Record<string, unknown>; slots: { name: string }[] };
+  definition: {
+    body: Record<string, unknown>;
+    slots: { name: string }[];
+    parameters?: RuleParameter[];
+    filter?: string | null;
+  };
   status: string;
   version: number;
   display_status?: string;
@@ -40,9 +51,18 @@ export interface MonitoredTable {
   created_by?: string;
 }
 
+export interface AppliedRule {
+  id: string;
+  rule_id: string;
+  column_mapping?: Record<string, string>[];
+  parameter_values?: Record<string, Record<string, unknown>>;
+  user_metadata?: Record<string, unknown>;
+  row_filter?: string | null;
+}
+
 export interface MonitoredTableDetail {
   table: MonitoredTable;
-  applied_rules: { id: string; rule_id: string }[];
+  applied_rules: AppliedRule[];
 }
 
 export interface Collection {
@@ -102,6 +122,10 @@ export interface NativeRuleSpec {
   fn: string;
   /** Extra literal arguments besides the column slot, e.g. { limit: 0 }. */
   args?: Record<string, unknown>;
+  /** Typed Variable Parameters on the rule definition (apply-time values). */
+  parameters?: RuleParameter[];
+  /** Default population filter on the registry rule (applied row_filter can override). */
+  filter?: string;
   /** Name of the rule's column variable (default "column"). "Apply to tables"
    *  auto-maps it to a same-named column, e.g. "franchiseID". */
   slot?: string;
@@ -163,14 +187,20 @@ export class StudioApi {
   // ---- registry rules ----------------------------------------------------
 
   async createNativeRule(spec: NativeRuleSpec): Promise<RegistryRule> {
+    const slot = spec.slot ?? "column";
+    const args = { column: `{{${slot}}}`, ...spec.args };
+    // Mirror Studio authoring: scalar/list args that become Variable Parameters
+    // live in *parameters* and stay out of the function arguments map.
+    for (const param of spec.parameters ?? []) delete (args as Record<string, unknown>)[param.name];
     const body = await json<{ rule: RegistryRule }>(
       await this.http.post("/api/v1/registry-rules", {
         data: {
           mode: "dqx_native",
           definition: {
-            body: { function: spec.fn, arguments: { column: `{{${spec.slot ?? "column"}}}`, ...spec.args } },
-            slots: [{ name: spec.slot ?? "column", family: "any", position: 0, cardinality: "one" }],
-            parameters: [],
+            body: { function: spec.fn, arguments: args },
+            slots: [{ name: slot, family: "any", position: 0, cardinality: "one" }],
+            parameters: spec.parameters ?? [],
+            ...(spec.filter ? { filter: spec.filter } : {}),
           },
           user_metadata: {
             name: spec.name,
@@ -197,8 +227,17 @@ export class StudioApi {
     predicate?: string;
     sqlQuery?: string;
     slots?: { name: string; family?: string }[];
+    parameters?: RuleParameter[];
+    overridableParameters?: string[];
     polarity?: "pass" | "fail";
   }): Promise<RegistryRule> {
+    const user_metadata: Record<string, unknown> = {
+      name: spec.name,
+      severity: "High",
+      dimension: "Validity",
+      [E2E_TAG]: runTag(),
+    };
+    if (spec.overridableParameters?.length) user_metadata.overridable_parameters = spec.overridableParameters;
     const body = await json<{ rule: RegistryRule }>(
       await this.http.post("/api/v1/registry-rules", {
         data: {
@@ -207,9 +246,9 @@ export class StudioApi {
           definition: {
             body: spec.sqlQuery ? { sql_query: spec.sqlQuery } : { predicate: spec.predicate },
             slots: (spec.slots ?? []).map((s, i) => ({ name: s.name, family: s.family ?? "any", position: i, cardinality: "one" })),
-            parameters: [],
+            parameters: spec.parameters ?? [],
           },
-          user_metadata: { name: spec.name, severity: "High", dimension: "Validity", [E2E_TAG]: runTag() },
+          user_metadata,
           allow_duplicate: true,
         },
       }),
@@ -298,10 +337,21 @@ export class StudioApi {
     return (await this.getMonitoredTableDetail(bindingId)).table;
   }
 
-  async applyRule(bindingId: string, ruleId: string, column: string, slot = "column"): Promise<string> {
+  async applyRule(
+    bindingId: string,
+    ruleId: string,
+    column: string,
+    slot = "column",
+    extras: { tags?: Record<string, unknown>; row_filter?: string } = {},
+  ): Promise<string> {
     const body = await json<{ id: string }>(
       await this.http.post(`/api/v1/monitored-tables/${bindingId}/applied-rules`, {
-        data: { rule_id: ruleId, column_mapping: [{ [slot]: column }] },
+        data: {
+          rule_id: ruleId,
+          column_mapping: [{ [slot]: column }],
+          ...(extras.tags ? { tags: extras.tags } : {}),
+          ...(extras.row_filter !== undefined ? { row_filter: extras.row_filter } : {}),
+        },
       }),
       "apply rule",
     );
@@ -309,14 +359,57 @@ export class StudioApi {
   }
 
   /** Applies a rule with an explicit slot → column mapping ({} for a rule with no slots). */
-  async applyRuleWithMapping(bindingId: string, ruleId: string, mapping: Record<string, string>): Promise<string> {
+  async applyRuleWithMapping(
+    bindingId: string,
+    ruleId: string,
+    mapping: Record<string, string>,
+    extras: {
+      tags?: Record<string, unknown>;
+      row_filter?: string;
+      parameter_values?: Record<string, Record<string, unknown>>;
+    } = {},
+  ): Promise<string> {
+    // Parameter values are reconciled through saveAppliedRules; apply first, then patch.
     const body = await json<{ id: string }>(
       await this.http.post(`/api/v1/monitored-tables/${bindingId}/applied-rules`, {
-        data: { rule_id: ruleId, column_mapping: [mapping] },
+        data: {
+          rule_id: ruleId,
+          column_mapping: [mapping],
+          ...(extras.tags ? { tags: extras.tags } : {}),
+          ...(extras.row_filter !== undefined ? { row_filter: extras.row_filter } : {}),
+        },
       }),
       "apply rule",
     );
+    if (extras.parameter_values) {
+      await this.saveAppliedRules(bindingId, [
+        {
+          rule_id: ruleId,
+          column_mapping: [mapping],
+          tags: extras.tags ?? {},
+          row_filter: extras.row_filter,
+          parameter_values: extras.parameter_values,
+        },
+      ]);
+    }
     return body.id;
+  }
+
+  /** Replaces the full applied-rules set for a binding (supports parameter_values). */
+  async saveAppliedRules(
+    bindingId: string,
+    applications: {
+      rule_id: string;
+      column_mapping: Record<string, string>[];
+      tags?: Record<string, unknown>;
+      row_filter?: string | null;
+      parameter_values?: Record<string, Record<string, unknown>> | null;
+    }[],
+  ): Promise<AppliedRule[]> {
+    return json<AppliedRule[]>(
+      await this.http.put(`/api/v1/monitored-tables/${bindingId}/applied-rules`, { data: { applications } }),
+      "save applied rules",
+    );
   }
 
   async submitTable(bindingId: string): Promise<void> {
