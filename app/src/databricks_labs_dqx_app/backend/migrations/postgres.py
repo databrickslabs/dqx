@@ -37,8 +37,12 @@ The ALTER is what upgrades an existing deployment: its ``dq_migrations``
 table already records v1 as applied, so an edited baseline alone is
 skipped and the new column never appears.  On a fresh install the ALTER
 is a no-op because v1 already created the column.  Keep later
-migrations additive (``ADD COLUMN IF NOT EXISTS`` only) so the baseline
-stays the single description of the schema.
+migrations additive so the baseline stays the single description of the
+schema that existed at v1: ``ADD COLUMN IF NOT EXISTS`` for baseline
+tables, plus brand-new feature tables (``CREATE TABLE IF NOT EXISTS``,
+their ``CREATE INDEX IF NOT EXISTS`` indexes and idempotent
+``INSERT ... ON CONFLICT DO NOTHING`` seed rows) that live only in the
+migration which introduces them.
 """
 
 import logging

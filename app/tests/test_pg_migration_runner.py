@@ -186,7 +186,10 @@ class TestBaselineCatalogue:
     upgrade deployments that already applied v1. Each column they add must
     already be in the baseline, and each table they drop must not be, so a
     fresh install and an upgraded one end up with the same shape. Constraint
-    replacements are allowed when the CHECK they add is already in v1.
+    replacements are allowed when the CHECK they add is already in v1. A later
+    migration may also introduce a brand-new feature table (CREATE TABLE /
+    CREATE INDEX IF NOT EXISTS plus idempotent seed INSERTs); such tables are
+    not in the baseline and are described only by the migration that adds them.
     """
 
     def test_baseline_is_version_one(self):

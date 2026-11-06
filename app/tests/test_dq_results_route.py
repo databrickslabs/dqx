@@ -109,6 +109,7 @@ def registry_mock() -> MagicMock:
 def data_products_mock() -> MagicMock:
     mock = create_autospec(DataProductService, instance=True)
     mock.get.return_value = None
+    mock.member_fqns.return_value = set()
     return mock
 
 
@@ -902,14 +903,30 @@ class TestGlobalUniverseFilters:
         self, client, sql_mock, data_products_mock
     ):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
-        data_products_mock.get.return_value = product_detail(
-            "p1", [("b1", "main.sales.orders"), ("b4", "secret.hr.salaries")]
-        )
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "secret.hr.salaries"}
         assert self.labels(client, collection=["p1"]) == ["main.sales.orders"]
+
+    def test_collection_uses_one_batched_member_lookup_without_product_detail(
+        self, client, sql_mock, data_products_mock, monitored_tables_mock
+    ):
+        # The GET hot path must never build full product details (SCIM owner
+        # backfill + UPDATEs) — one batched member lookup for every collection.
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
+        assert self.labels(client, collection=["p1", "p2"]) == ["main.sales.items", "main.sales.orders"]
+        data_products_mock.member_fqns.assert_called_once_with(["p1", "p2"], summaries=None)
+        data_products_mock.get.assert_not_called()
+        monitored_tables_mock.list_monitored_tables.assert_not_called()
 
     def test_unknown_collection_matches_nothing(self, client, sql_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
         assert self.labels(client, collection=["nope"]) == []
+
+    @pytest.mark.parametrize("param", ["collection", "owner"])
+    def test_more_than_200_values_is_rejected(self, client, sql_mock, param):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        resp = client.get("/api/v1/dq-results/global", params=[(param, f"v{i}") for i in range(201)])
+        assert resp.status_code == 422
 
     def test_owner_uses_display_name_then_owner_then_created_by(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
@@ -942,15 +959,18 @@ class TestGlobalUniverseFilters:
 
     def test_params_intersect(self, client, sql_mock, data_products_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
-        data_products_mock.get.return_value = product_detail(
-            "p1", [("b1", "main.sales.orders"), ("b2", "main.sales.items")]
-        )
-        monitored_tables_mock.list_monitored_tables.return_value = [
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
+        summaries = [
             self.summary("main.sales.orders", score=0.9, display="Ada"),
             self.summary("main.sales.items", score=0.9, display="Bob"),
         ]
+        monitored_tables_mock.list_monitored_tables.return_value = summaries
         assert self.labels(client, collection=["p1"], owner=["Ada"], score_bucket="75-100") == ["main.sales.orders"]
+        # The listing is fetched once per request and shared with the member join.
+        assert monitored_tables_mock.list_monitored_tables.call_count == 1
+        data_products_mock.member_fqns.assert_called_once_with(["p1"], summaries=summaries)
         assert self.labels(client, collection=["p1"], owner=["Bob"], score_bucket="0-25") == []
+        data_products_mock.get.assert_not_called()
 
     def test_no_params_does_not_load_monitored_tables(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)

@@ -459,19 +459,11 @@ def _table_universe_filter(
     """
     if not collection and not owner and score_bucket is None:
         return None
-    allowed: set[str] | None = None
-    if collection:
-        member_fqns: set[str] = set()
-        for product_id in collection:
-            detail = data_products.get(product_id)
-            if detail is not None:
-                member_fqns.update(member.table_fqn for member in detail.members)
-        allowed = member_fqns
-    summaries = (
-        {s.table.table_fqn: s for s in monitored_tables.list_monitored_tables()}
-        if owner or score_bucket is not None
-        else {}
-    )
+    # One monitored-table listing per request, shared by the collection join
+    # and the owner / score lookups (only fetched when one of them needs it).
+    listed = monitored_tables.list_monitored_tables() if owner or score_bucket is not None else None
+    allowed = data_products.member_fqns(collection, summaries=listed) if collection else None
+    summaries = {s.table.table_fqn: s for s in listed} if listed is not None else {}
     owners = set(owner or ())
 
     def predicate(fqn: str) -> bool:
@@ -938,8 +930,8 @@ def get_global_results(
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
     outcome: Annotated[list[str] | None, Query()] = None,
-    collection: Annotated[list[str] | None, Query()] = None,
-    owner: Annotated[list[str] | None, Query()] = None,
+    collection: Annotated[list[str] | None, Query(max_length=200)] = None,
+    owner: Annotated[list[str] | None, Query(max_length=200)] = None,
     score_bucket: Annotated[ScoreBucket | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),

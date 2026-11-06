@@ -138,6 +138,7 @@ class SavedViewsService:
             SavedViewValidationError: Invalid name, or org default requested for a personal view.
             SavedViewConflictError: A view with this name already exists.
         """
+        self._ensure_builtin(body.page)
         name = normalize_view_name(body.name)
         if (body.scope == SavedViewScope.ORG or body.make_org_default) and not is_admin:
             raise SavedViewForbiddenError("Only admins can create org views or set the org default")
@@ -171,7 +172,7 @@ class SavedViewsService:
             self._write_my_default(user, body.page, view_id)
         if body.make_org_default:
             self._flag_org_default(body.page, view_id)
-        logger.info("Created saved view %s on %s", view_id, body.page.value)
+        logger.info(f"Created saved view {view_id} on {body.page.value}")
         return self._out_for(view_id, user=user, is_admin=is_admin)
 
     def update_view(self, view_id: str, payload: SavedViewPayload, *, user: str, is_admin: bool) -> SavedViewOut:
@@ -226,9 +227,9 @@ class SavedViewsService:
         if _is_true(row["is_builtin"]):
             raise SavedViewValidationError("The Default view cannot be renamed")
         clean = normalize_view_name(name)
-        self._ensure_name_free(
-            SavedViewPage(row["page_key"]), SavedViewScope(row["scope"]), row["owner"], clean, exclude_id=view_id
-        )
+        page = SavedViewPage(row["page_key"])
+        self._ensure_builtin(page)
+        self._ensure_name_free(page, SavedViewScope(row["scope"]), row["owner"], clean, exclude_id=view_id)
         try:
             self._sql.update(
                 self._views,
@@ -259,7 +260,7 @@ class SavedViewsService:
         if _is_true(row["is_builtin"]):
             raise SavedViewValidationError("The Default view cannot be deleted")
         self._sql.delete(self._views, where={"id": view_id})
-        logger.info("Deleted saved view %s", view_id)
+        logger.info(f"Deleted saved view {view_id}")
 
     def set_starred(self, view_id: str, starred: bool, *, user: str, is_admin: bool) -> SavedViewOut:
         """Star or unstar a visible view for the caller.
@@ -356,13 +357,15 @@ class SavedViewsService:
 
         The row is inserted unflagged: with zero flagged org views, resolution
         already falls back to the built-in, and it never overrides an admin's choice.
+        Any conflict (id or the per-scope name constraint) is ignored so that an
+        org view already named "Default" can never break listing.
         """
         self._sql.execute(
             f"INSERT INTO {self._views} (id, page_key, name, scope, owner, payload, is_builtin, "
             "is_org_default, created_by, updated_by) "
             f"VALUES ('{escape_sql_string(_builtin_id(page))}', '{escape_sql_string(page.value)}', "
             f"'{escape_sql_string(BUILTIN_VIEW_NAME)}', 'org', NULL, NULL, TRUE, FALSE, 'system', 'system') "
-            "ON CONFLICT (id) DO NOTHING"
+            "ON CONFLICT DO NOTHING"
         )
 
     def _get_visible(self, view_id: str, user: str) -> dict[str, str | None]:
@@ -443,7 +446,7 @@ class SavedViewsService:
         try:
             return SavedViewPayload.model_validate_json(raw)
         except ValidationError:
-            logger.warning("Saved view %s has an invalid stored payload; returning it without a payload", view_id)
+            logger.warning(f"Saved view {view_id} has an invalid stored payload; returning it without a payload")
             return None
 
     @staticmethod

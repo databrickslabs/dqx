@@ -58,14 +58,28 @@ class Store:
         self.my_default = my_default
         self.name_matches = name_matches
 
+    def _org_name_taken(self, name, exclude_id=None):
+        return any(
+            r["scope"] == "org" and r["name"].lower() == name.lower() and r["id"] != exclude_id for r in self.views
+        )
+
     def ensure_builtin(self, sql):
-        if "INSERT INTO" in sql and "ON CONFLICT (id) DO NOTHING" in sql:
-            if not any(r["id"] == BUILTIN["id"] for r in self.views):
-                self.views.append(dict(BUILTIN, is_org_default="false"))
+        # Mirrors Postgres: a bare ON CONFLICT DO NOTHING skips the insert on an id
+        # clash or on a clash with uq_dq_saved_views_name (org view named "Default").
+        if "INSERT INTO" in sql and "ON CONFLICT DO NOTHING" in sql:
+            if any(r["id"] == BUILTIN["id"] for r in self.views) or self._org_name_taken(BUILTIN["name"]):
+                return
+            self.views.append(dict(BUILTIN, is_org_default="false"))
 
     def query_dicts(self, sql, **_kwargs):
         if "lower(name) = lower(" in sql:
-            return [{"id": "dup"}] if self.name_matches else []
+            if self.name_matches:
+                return [{"id": "dup"}]
+            if "scope = 'org'" not in sql:
+                return []
+            name = sql.split("lower(name) = lower('")[1].split("')")[0]
+            exclude = sql.split("AND id <> '")[1].split("'")[0] if "AND id <> '" in sql else None
+            return [{"id": "dup"}] if self._org_name_taken(name, exclude) else []
         rows = self.views
         if "WHERE id = '" in sql:
             wanted = sql.split("WHERE id = '")[1].split("'")[0]
@@ -254,7 +268,8 @@ def test_admin_creates_org_view(sql):
     assert values["scope"] == "org" and values["owner"] is None
     assert values["payload"].expr.endswith("::jsonb")
     assert out.name == "Mine"
-    sql.execute.assert_called_once()
+    updates = [c[0][0] for c in sql.execute.call_args_list if c[0][0].startswith("UPDATE")]
+    assert len(updates) == 1 and "SET is_org_default" in updates[0]
     sql.upsert.assert_called_once()
 
 
@@ -415,7 +430,7 @@ def test_list_recreates_missing_builtin_after_reset(sql):
     out = make_service(sql, store).list_views(PAGE, user="a@x", is_admin=False)
     stmt = sql.execute.call_args_list[0][0][0]
     assert stmt.startswith("INSERT INTO cat.sch.dq_saved_views")
-    assert "'builtin:monitored_tables'" in stmt and "ON CONFLICT (id) DO NOTHING" in stmt
+    assert "'builtin:monitored_tables'" in stmt and "ON CONFLICT DO NOTHING" in stmt
     assert out.effective_default_id == "builtin:monitored_tables"
     assert [v.id for v in out.views] == ["builtin:monitored_tables"]
 
@@ -423,5 +438,32 @@ def test_list_recreates_missing_builtin_after_reset(sql):
 def test_set_org_default_on_builtin_heals_missing_row(sql):
     store = Store([])
     make_service(sql, store).set_org_default(PAGE, "builtin:monitored_tables", user="admin@x", is_admin=True)
-    assert any("ON CONFLICT (id) DO NOTHING" in c[0][0] for c in sql.execute.call_args_list)
+    assert any("ON CONFLICT DO NOTHING" in c[0][0] for c in sql.execute.call_args_list)
     assert any("is_org_default = (id = 'builtin:monitored_tables')" in c[0][0] for c in sql.execute.call_args_list)
+
+
+def test_create_after_reset_heals_builtin_before_name_check(sql):
+    store = Store([])
+    svc = make_service(sql, store)
+    body = SavedViewCreateIn(page=PAGE, name="default", scope=SavedViewScope.ORG, payload=payload())
+    with pytest.raises(SavedViewConflictError):
+        svc.create_view(body, user="admin@x", is_admin=True)
+    assert sql.execute.call_args_list[0][0][0].startswith("INSERT INTO cat.sch.dq_saved_views")
+    sql.insert.assert_not_called()
+
+
+def test_rename_after_reset_heals_builtin_before_name_check(sql):
+    store = Store([view_row("v1", name="Sales")])
+    svc = make_service(sql, store)
+    with pytest.raises(SavedViewConflictError):
+        svc.rename_view("v1", "Default", user="admin@x", is_admin=True)
+    sql.update.assert_not_called()
+
+
+def test_list_survives_org_view_named_default_with_builtin_missing(sql):
+    store = Store([view_row("v1", name="Default")])
+    out = make_service(sql, store).list_views(PAGE, user="a@x", is_admin=False)
+    heal = sql.execute.call_args_list[0][0][0]
+    assert heal.endswith("ON CONFLICT DO NOTHING")
+    assert "ON CONFLICT (id)" not in heal
+    assert [v.id for v in out.views] == ["v1"]

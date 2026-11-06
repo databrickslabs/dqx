@@ -115,6 +115,13 @@ def test_rename_builtin_is_422(svc):
     assert resp.status_code == 422
 
 
+def test_delete_builtin_is_422_even_for_admin(svc):
+    svc.delete_view.side_effect = SavedViewValidationError("The Default view cannot be deleted")
+    resp = _client(svc, UserRole.ADMIN).delete("/api/v1/saved-views/builtin:monitored_tables")
+    assert resp.status_code == 422
+    svc.delete_view.assert_called_once_with("builtin:monitored_tables", user="u@x", is_admin=True)
+
+
 def test_delete_returns_204(svc):
     resp = _client(svc).delete("/api/v1/saved-views/v1")
     assert resp.status_code == 204
