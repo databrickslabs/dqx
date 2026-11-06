@@ -1,0 +1,174 @@
+{
+  "views": [
+    {
+      "page": "monitored_tables",
+      "name": "Demo Tables Only",
+      "payload": {
+        "v": 1,
+        "columns": {
+          "order": [
+            "appliedRules",
+            "catalog",
+            "schema",
+            "table",
+            "dqScore",
+            "description",
+            "rulesCount",
+            "checksCount",
+            "version",
+            "lastRun",
+            "owner",
+            "dimension",
+            "severity",
+            "status"
+          ],
+          "visibility": {
+            "appliedRules": false,
+            "description": true,
+            "checksCount": false,
+            "version": false
+          }
+        },
+        "filters": {
+          "order": ["groupBy", "search", "catalog", "schema", "owner", "dqScore"],
+          "visibility": {
+            "groupBy": true,
+            "search": true,
+            "catalog": true,
+            "schema": true,
+            "owner": false,
+            "dqScore": true
+          }
+        },
+        "values": {
+          "groupBy": "dqScore",
+          "catalog": "{catalog}",
+          "schema": "{schema}"
+        }
+      }
+    },
+    {
+      "page": "global_results",
+      "name": "Demo Tables Only",
+      "payload": {
+        "v": 1,
+        "filters": {
+          "order": [
+            "catalog",
+            "schema",
+            "owner",
+            "collection",
+            "table",
+            "rule",
+            "dqScore",
+            "outcome",
+            "dimension",
+            "severity"
+          ],
+          "visibility": {
+            "catalog": true,
+            "schema": true,
+            "owner": false,
+            "collection": true,
+            "table": true,
+            "rule": true,
+            "dqScore": true,
+            "outcome": true,
+            "dimension": false,
+            "severity": false
+          }
+        },
+        "values": {
+          "catalog": ["{catalog}"],
+          "schema": ["{catalog}.{schema}"]
+        }
+      }
+    },
+    {
+      "page": "registry_rules",
+      "name": "Validity Rules by Severity",
+      "payload": {
+        "v": 1,
+        "columns": {
+          "order": [
+            "appliedTables",
+            "aiAuthorship",
+            "name",
+            "dimension",
+            "severity",
+            "description",
+            "status",
+            "version",
+            "owner",
+            "source",
+            "modified",
+            "createdBy",
+            "mode",
+            "actions"
+          ],
+          "visibility": {
+            "dimension": true,
+            "severity": true,
+            "createdBy": false,
+            "source": false,
+            "mode": false
+          }
+        },
+        "filters": {
+          "order": ["groupBy", "search", "dimension", "severity", "owner", "labels"],
+          "visibility": {
+            "groupBy": true,
+            "search": true,
+            "dimension": true,
+            "severity": true,
+            "owner": false,
+            "labels": false
+          }
+        },
+        "values": {
+          "groupBy": "severity",
+          "dimension": "Validity"
+        }
+      }
+    },
+    {
+      "page": "collections",
+      "name": "Collection Health",
+      "payload": {
+        "v": 1,
+        "columns": {
+          "order": [
+            "name",
+            "dqScore",
+            "lastRun",
+            "description",
+            "tables",
+            "rules",
+            "checks",
+            "version",
+            "owner",
+            "status",
+            "schedule"
+          ],
+          "visibility": {
+            "dqScore": true,
+            "lastRun": true,
+            "schedule": true,
+            "description": false,
+            "checks": false,
+            "version": false
+          }
+        },
+        "filters": {
+          "order": ["search", "owner", "dqScore"],
+          "visibility": {
+            "search": true,
+            "owner": false,
+            "dqScore": true
+          }
+        },
+        "values": {}
+      }
+    }
+  ]
+}

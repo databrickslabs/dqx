@@ -1109,6 +1109,7 @@ async def get_demo_seed_service(
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     schedule_config: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
+    saved_views: Annotated[SavedViewsService, Depends(get_saved_views_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -1197,6 +1198,7 @@ async def get_demo_seed_service(
         schedule_grants=ScheduleGrantService(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
+        saved_views=saved_views,
         catalog=resources.volume.catalog,
         schema=resources.demo_schema,
     )

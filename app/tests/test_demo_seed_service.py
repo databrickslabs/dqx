@@ -311,9 +311,9 @@ def test_build_source_data_assigns_governed_tags_via_set_tag_ddl():
     assert len(ddls) == len(manifest.COLUMN_TAGS)
     for tag in manifest.COLUMN_TAGS:
         # the governed key appears backtick-quoted with its dot intact
-        assert any(
-            f"`{tag.tag}`" in d and f"`{tag.column}`" in d and tag.table in d for d in ddls
-        ), f"no SET TAG DDL for {tag.tag} on {tag.table}.{tag.column}; got {ddls!r}"
+        assert any(f"`{tag.tag}`" in d and f"`{tag.column}`" in d and tag.table in d for d in ddls), (
+            f"no SET TAG DDL for {tag.tag} on {tag.table}.{tag.column}; got {ddls!r}"
+        )
     # the SP entity-tag API is no longer used for tagging
     assert not deps["sp_ws"].entity_tag_assignments.create.called
 
@@ -675,9 +675,9 @@ def test_orphan_sweep_runs_before_final_cache_refresh():
     # refresh_all_for_tables is only called once (the final truthful refresh), so
     # a simple index compare proves the sweep runs first — the refresh then never
     # sees the deleted gate run
-    assert events.index("orphan_sweep") < events.index(
-        "final_refresh"
-    ), f"orphan sweep must precede the final cache refresh; got {events!r}"
+    assert events.index("orphan_sweep") < events.index("final_refresh"), (
+        f"orphan sweep must precede the final cache refresh; got {events!r}"
+    )
 
 
 def test_history_cleanup_cutoff_is_final_week_instant_not_now():
@@ -725,9 +725,9 @@ def test_history_cleanup_cutoff_is_final_week_instant_not_now():
     executed = [call.args[0] for call in deps["oltp"].execute.call_args_list]
     cleanup = [s for s in executed if s.startswith("DELETE FROM") and "dq_score_history" in s and "computed_at >" in s]
     assert cleanup, "expected a dq_score_history post-cutoff cleanup DELETE"
-    assert any(
-        expected_cutoff in s for s in cleanup
-    ), f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
+    assert any(expected_cutoff in s for s in cleanup), (
+        f"cleanup cutoff must be the final-week instant {expected_cutoff!r}; got {cleanup!r}"
+    )
 
 
 def test_tighten_card_rule_bumps_version_via_edit_submit_approve():
@@ -975,9 +975,9 @@ def test_weekly_trend_sweeps_orphans_before_each_weeks_score_refresh():
     # every refresh is preceded by the sweep of its week: between consecutive
     # sweeps there is at least one sweep before any refresh in that block
     first_refresh = events.index("refresh")
-    assert (
-        events.index("sweep") < first_refresh
-    ), f"each week's orphan sweep must precede its score refresh; got {events!r}"
+    assert events.index("sweep") < first_refresh, (
+        f"each week's orphan sweep must precede its score refresh; got {events!r}"
+    )
     # the expected interleave for 2 weeks x 2 tables: sweep,refresh,refresh per
     # week, then a trailing final sweep
     assert events == [
@@ -1619,9 +1619,9 @@ def test_view_service_names_views_from_its_sql_executor_schema():
     try:
         svc = ViewService(sql=sql, sp_sql=sp, cleanup_principal="app-sp")
         view_name = svc.create_view("dqx.sales.orders")
-        assert (
-            ".dqx_studio_tmp.tmp_view_" in view_name
-        ), f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
+        assert ".dqx_studio_tmp.tmp_view_" in view_name, (
+            f"Expected view to be created in dqx_studio_tmp, got: {view_name}"
+        )
     finally:
         reset_tmp_schema_ready()
 
@@ -1815,3 +1815,136 @@ def test_schedules_phase_is_a_noop_without_schedule_config():
     assert result.schedules == 0
     assert not deps["monitored_tables"].update_schedule.called
     assert not deps["data_products"].update.called
+
+
+# ---------------------------------------------------------------------------
+# Saved views phase
+# ---------------------------------------------------------------------------
+
+
+def _saved_views_fake():
+    """Autospec'd SavedViewsService backed by an in-memory list of views."""
+    from databricks_labs_dqx_app.backend.saved_views_models import SavedViewListOut, SavedViewOut
+    from databricks_labs_dqx_app.backend.services.saved_views_service import SavedViewsService
+
+    store: list[SavedViewOut] = []
+    fake = create_autospec(SavedViewsService, instance=True)
+
+    def _list(page, *, user, is_admin):
+        return SavedViewListOut(
+            views=[v for v in store if v.page == page], effective_default_id=f"builtin:{page.value}"
+        )
+
+    def _create(body, *, user, is_admin):
+        view = SavedViewOut(
+            id=f"v{len(store)}",
+            page=body.page,
+            name=body.name,
+            scope=body.scope,
+            payload=body.payload,
+            is_builtin=False,
+            is_org_default=body.make_org_default,
+            is_my_default=body.make_my_default,
+            starred=False,
+            can_edit=True,
+            can_set_org_default=True,
+        )
+        store.append(view)
+        return view
+
+    def _update(view_id, payload, *, user, is_admin):
+        index = next(i for i, v in enumerate(store) if v.id == view_id)
+        store[index] = store[index].model_copy(update={"payload": payload})
+        return store[index]
+
+    fake.list_views.side_effect = _list
+    fake.create_view.side_effect = _create
+    fake.update_view.side_effect = _update
+    return fake, store
+
+
+def _views_svc(saved_views, **over):
+    svc, deps = _svc(saved_views=saved_views, **over)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+    return svc, deps
+
+
+def test_seed_creates_demo_org_views_scoped_to_the_injected_catalog_and_schema():
+    from databricks_labs_dqx_app.backend.saved_views_models import SavedViewPage, SavedViewScope
+
+    fake, store = _saved_views_fake()
+    svc, deps = _views_svc(fake, catalog="acme", schema="acme_demo")
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.saved_views == 4
+    assert {(v.page, v.name) for v in store} == {
+        (SavedViewPage.MONITORED_TABLES, "Demo Tables Only"),
+        (SavedViewPage.GLOBAL_RESULTS, "Demo Tables Only"),
+        (SavedViewPage.REGISTRY_RULES, "Validity Rules by Severity"),
+        (SavedViewPage.COLLECTIONS, "Collection Health"),
+    }
+    assert all(v.scope == SavedViewScope.ORG and not v.is_org_default for v in store)
+    by_page = {v.page: v.payload for v in store}
+    tables = by_page[SavedViewPage.MONITORED_TABLES]
+    results = by_page[SavedViewPage.GLOBAL_RESULTS]
+    assert tables is not None and results is not None
+    assert tables.values == {"groupBy": "dqScore", "catalog": "acme", "schema": "acme_demo"}
+    assert results.values == {"catalog": ["acme"], "schema": ["acme.acme_demo"]}
+    for call in fake.create_view.call_args_list:
+        assert call.kwargs == {"user": "admin@example.com", "is_admin": True}
+    phases = [c.args[0].phase for c in deps["status"].set.call_args_list]
+    assert phases.index("products") < phases.index("views") < phases.index("schedules")
+    assert "{catalog}" not in json.dumps([v.payload.model_dump() for v in store if v.payload])
+
+
+def test_reseed_updates_existing_demo_views_instead_of_duplicating():
+    fake, store = _saved_views_fake()
+    svc, _deps = _views_svc(fake, catalog="acme", schema="acme_demo")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    ids = sorted(v.id for v in store)
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.saved_views == 4
+    assert sorted(v.id for v in store) == ids
+    assert fake.create_view.call_count == 4
+    assert fake.update_view.call_count == 4
+
+
+def test_failed_demo_view_is_logged_and_the_seed_continues(caplog: pytest.LogCaptureFixture):
+    from databricks_labs_dqx_app.backend.saved_views_models import SavedViewPage
+
+    fake, store = _saved_views_fake()
+    create = fake.create_view.side_effect
+
+    def _flaky(body, *, user, is_admin):
+        if body.page == SavedViewPage.REGISTRY_RULES:
+            raise RuntimeError("boom\nforged line")
+        return create(body, user=user, is_admin=is_admin)
+
+    fake.create_view.side_effect = _flaky
+    svc, deps = _views_svc(fake)
+
+    with caplog.at_level("WARNING"):
+        result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.saved_views == 3
+    assert len(store) == 3
+    assert deps["status"].set.call_args_list[-1].args[0].state == "succeeded"
+    messages = [r.getMessage() for r in caplog.records if "Validity Rules by Severity" in r.getMessage()]
+    assert messages and all("\n" not in m for m in messages)
+
+
+def test_saved_views_phase_is_a_noop_without_saved_views_service():
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["data_products"].create.return_value = MagicMock(product_id="p1")
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.saved_views == 0
+    assert deps["status"].set.call_args_list[-1].args[0].state == "succeeded"
