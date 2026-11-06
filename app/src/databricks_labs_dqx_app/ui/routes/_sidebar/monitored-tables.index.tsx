@@ -8,6 +8,7 @@ import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Pagination } from "@/components/Pagination";
 import {
+  MONITORED_TABLES_COLUMN_LAYOUT,
   MonitoredTablesTable,
   getMonitoredTablesSortValue,
   getMonitoredTablesSortConfig,
@@ -48,6 +49,7 @@ import {
   useRejectMonitoredTable,
   useRevertMonitoredTable,
   useRunMonitoredTable,
+  SavedViewPage,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
 import {
@@ -73,16 +75,21 @@ import {
   type GroupableTable,
   type TableGroupBy,
 } from "@/components/monitored-tables/table-grouping";
+import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
+import { MAX_VIEW_STRING_LENGTH, oneOf, stringValue } from "@/components/data-table/saved-views";
+import { useSavedViews } from "@/components/data-table/useSavedViews";
+import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
-  filterLayoutMenuConfig,
-  useFilterLayout,
-  type FilterLayoutDef,
-} from "@/components/data-table/filter-layout";
+  TABLES_FILTERS as FILTERS,
+  TABLES_FILTER_ALL as ALL,
+  TABLE_GROUP_BY_VALUES,
+  buildMonitoredTablesViewDefs,
+  type TablesFilterKey,
+} from "@/components/monitored-tables/monitored-tables-view";
 import { cn } from "@/lib/utils";
 import { isFqnLikeTableSearch, matchesTableFqnSearch } from "./monitored-tables-search";
 
 const PAGE_SIZE = 25;
-const ALL = "all";
 
 const GROUP_BY_OPTIONS: readonly { value: TableGroupBy; labelKey: string }[] = [
   { value: "none", labelKey: "monitoredTables.groupByNone" },
@@ -90,18 +97,6 @@ const GROUP_BY_OPTIONS: readonly { value: TableGroupBy; labelKey: string }[] = [
   { value: "catalog", labelKey: "monitoredTables.groupByCatalog" },
   { value: "schema", labelKey: "monitoredTables.groupBySchema" },
 ];
-
-type TablesFilterKey = "groupBy" | "search" | "catalog" | "schema" | "owner" | "dqScore";
-// Group by is pinned: always first, divided from the other pills, not reorderable.
-const FILTER_ORDER: readonly TablesFilterKey[] = ["groupBy", "search", "catalog", "schema", "owner", "dqScore"];
-const FILTERS: Record<TablesFilterKey, FilterLayoutDef> = {
-  groupBy: { labelKey: "common.groupBy", defaultVisible: false, pinned: true },
-  search: { labelKey: "monitoredTables.filterSearch", defaultVisible: true },
-  catalog: { labelKey: "monitoredTables.colCatalog", defaultVisible: true },
-  schema: { labelKey: "monitoredTables.colSchema", defaultVisible: true },
-  owner: { labelKey: "monitoredTables.colOwner", defaultVisible: true },
-  dqScore: { labelKey: "monitoredTables.colDqScore", defaultVisible: true },
-};
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/")({
   component: () => (
@@ -171,16 +166,9 @@ function MonitoredTablesPage() {
   const { data: labelDefsData } = useLabelDefinitions();
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
-  const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
-  const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
-  const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
-  const [scoreFilter, setScoreFilter] = useState<string>(DQ_SCORE_FILTER_ALL);
-  const [groupBy, setGroupBy] = useState<TableGroupBy>("none");
-  const [nameSearch, setNameSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
 
   // ONE list fetch, unfiltered — every facet (catalog, schema, name, owner,
@@ -194,6 +182,47 @@ function MonitoredTablesPage() {
   // still honors these query params, but the overview no longer uses them.
   const { data, isLoading, isError, refetch } = useListMonitoredTables({});
   const tables = useMemo(() => data?.data ?? [], [data]);
+
+  // Facet options are derived from the full fetched row set — always the
+  // complete catalog/owner lists regardless of the active filters, with the
+  // schema list cascading to the selected catalog.
+  const catalogOptions = useMemo(
+    () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
+    [tables],
+  );
+  const allSchemaOptions = useMemo(
+    () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).schema))).sort(),
+    [tables],
+  );
+  const ownerOptions = useMemo(
+    () =>
+      Array.from(new Set(tables.map(monitoredTableOwner).filter((s): s is string => !!s))).sort(),
+    [tables],
+  );
+
+  // Saved views own the column layout, filter layout and every filter value
+  // (search and Group by included). Saved values whose option has gone are
+  // dropped once the tables load; until then they are kept.
+  const loaded = data !== undefined;
+  const viewDefs = useMemo(
+    () =>
+      buildMonitoredTablesViewDefs(MONITORED_TABLES_COLUMN_LAYOUT, {
+        catalogs: loaded ? catalogOptions : null,
+        schemas: loaded ? allSchemaOptions : null,
+        owners: loaded ? ownerOptions : null,
+      }),
+    [loaded, catalogOptions, allSchemaOptions, ownerOptions],
+  );
+  const views = useSavedViews(SavedViewPage.monitored_tables, viewDefs);
+  const { values, setValue } = views;
+  const catalogFilter = stringValue(values.catalog, ALL);
+  const schemaFilter = stringValue(values.schema, ALL);
+  const ownerFilter = stringValue(values.owner, ALL);
+  const scoreFilter = stringValue(values.dqScore, DQ_SCORE_FILTER_ALL);
+  const nameSearch = stringValue(values.search, "");
+  const groupBy: TableGroupBy = oneOf(values.groupBy, TABLE_GROUP_BY_VALUES, "none");
+  // Any filter edit (or switching view) starts the list from page 1.
+  const [page, setPage] = usePageResetOn(values);
 
   const visibleTables = useMemo(() => {
     const fqnSearch = isFqnLikeTableSearch(nameSearch);
@@ -213,22 +242,10 @@ function MonitoredTablesPage() {
     });
   }, [tables, catalogFilter, schemaFilter, nameSearch, ownerFilter, scoreFilter]);
 
-  // Facet options are derived from the full fetched row set — always the
-  // complete catalog/owner lists regardless of the active filters, with the
-  // schema list cascading to the selected catalog.
-  const catalogOptions = useMemo(
-    () => Array.from(new Set(tables.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
-    [tables],
-  );
   const schemaOptions = useMemo(() => {
     const rows = catalogFilter === ALL ? tables : tables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
     return Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).schema))).sort();
   }, [tables, catalogFilter]);
-  const ownerOptions = useMemo(
-    () =>
-      Array.from(new Set(tables.map(monitoredTableOwner).filter((s): s is string => !!s))).sort(),
-    [tables],
-  );
 
   const [sortKey, setSortKey] = useState<MonitoredTablesSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -290,40 +307,24 @@ function MonitoredTablesPage() {
     nameSearch.trim() !== "";
 
   const applyFilter = useCallback(
-    <T,>(setter: (v: T) => void) =>
-      (v: T) => {
-        setter(v);
-        setPage(1);
-      },
-    [],
+    (key: TablesFilterKey) => (v: string) => setValue(key, v),
+    [setValue],
   );
 
-  // Which filter pills show, and in what order (Edit Columns > Filters).
-  // Hiding a filter clears it so it can't keep narrowing the list unseen.
-  const resetFilter = useCallback((key: TablesFilterKey) => {
-    setPage(1);
-    switch (key) {
-      case "search":
-        return setNameSearch("");
-      case "catalog":
-        setCatalogFilter(ALL);
-        return setSchemaFilter(ALL);
-      case "schema":
-        return setSchemaFilter(ALL);
-      case "owner":
-        return setOwnerFilter(ALL);
-      case "dqScore":
-        return setScoreFilter(DQ_SCORE_FILTER_ALL);
-      case "groupBy":
-        return setGroupBy("none");
-    }
-  }, []);
-  const filterLayout = useFilterLayout<TablesFilterKey>({
-    storageKey: "dqx.monitoredTables.filters",
-    defaultOrder: FILTER_ORDER,
-    filters: FILTERS,
-    onHide: resetFilter,
-  });
+  // Which filter pills show, and in what order (Edit View > Filters). Hiding a
+  // filter clears it (useSavedViews) so it can't keep narrowing the list
+  // unseen; hiding the catalog also clears the schema it narrowed.
+  const { filterLayout: viewFilterLayout } = views;
+  const filterLayout = useMemo(
+    () => ({
+      ...viewFilterLayout,
+      toggle: (key: TablesFilterKey) => {
+        if (key === "catalog" && viewFilterLayout.isVisible("catalog")) setValue("schema", ALL);
+        viewFilterLayout.toggle(key);
+      },
+    }),
+    [viewFilterLayout, setValue],
+  );
 
   const deleteMutation = useDeleteMonitoredTable();
   const approveMutation = useApproveMonitoredTable();
@@ -617,10 +618,7 @@ function MonitoredTablesPage() {
     groupBy: (
       <GroupBySelect
         value={groupBy}
-        onChange={(value) => {
-          setGroupBy(value);
-          setPage(1);
-        }}
+        onChange={(value) => setValue("groupBy", value)}
         options={GROUP_BY_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
       />
     ),
@@ -630,7 +628,8 @@ function MonitoredTablesPage() {
         <Input
           placeholder={t("monitoredTables.searchTablesPlaceholder")}
           value={nameSearch}
-          onChange={(e) => applyFilter(setNameSearch)(e.target.value)}
+          maxLength={MAX_VIEW_STRING_LENGTH}
+          onChange={(e) => setValue("search", e.target.value)}
           className="h-8 text-xs pl-7"
         />
       </div>
@@ -638,7 +637,7 @@ function MonitoredTablesPage() {
     catalog: (
       <SearchableSelect
         value={catalogFilter}
-        onChange={applyFilter(setCatalogFilter)}
+        onChange={applyFilter("catalog")}
         options={catalogOptions.map((c) => ({ value: c, label: c }))}
         allValue={ALL}
         allLabel={t("monitoredTables.allCatalogs")}
@@ -650,7 +649,7 @@ function MonitoredTablesPage() {
     schema: (
       <SearchableSelect
         value={schemaFilter}
-        onChange={applyFilter(setSchemaFilter)}
+        onChange={applyFilter("schema")}
         options={schemaOptions.map((s) => ({ value: s, label: s }))}
         allValue={ALL}
         allLabel={t("monitoredTables.allSchemas")}
@@ -662,7 +661,7 @@ function MonitoredTablesPage() {
     owner: (
       <SearchableSelect
         value={ownerFilter}
-        onChange={applyFilter(setOwnerFilter)}
+        onChange={applyFilter("owner")}
         options={ownerOptions.map((s) => ({ value: s, label: s }))}
         allValue={ALL}
         allLabel={t("monitoredTables.allOwners")}
@@ -672,7 +671,7 @@ function MonitoredTablesPage() {
       />
     ),
     dqScore: (
-      <Select value={scoreFilter} onValueChange={applyFilter(setScoreFilter)}>
+      <Select value={scoreFilter} onValueChange={applyFilter("dqScore")}>
         <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
           <SelectValue />
         </SelectTrigger>
@@ -746,7 +745,9 @@ function MonitoredTablesPage() {
           }
           pendingBindingId={pendingId}
           selection={tableSelection}
+          columnLayout={views.columnLayout!}
           filterLayout={filterLayoutMenuConfig(filterLayout, (key) => t(FILTERS[key].labelKey))}
+          savedViews={views.menuConfig}
           toolbarExtra={
             <FilterPills
               keys={filterLayout.visibleKeys}

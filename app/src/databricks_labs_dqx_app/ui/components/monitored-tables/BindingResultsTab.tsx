@@ -98,6 +98,12 @@ export type MultiFilters = {
   schema: string[];
   /** "passed" / "failed" check outcome (Global Results only). */
   outcome: string[];
+  /** Table owners (monitoredTableOwner identity) — Global Results only. */
+  owner: string[];
+  /** Collection (data product) ids — Global Results only. */
+  collection: string[];
+  /** DQ score bucket ("all" = any score) — Global Results only. */
+  scoreBucket: string;
   runId?: string | null;
 };
 
@@ -110,6 +116,9 @@ export const EMPTY_FILTERS: MultiFilters = {
   catalog: [],
   schema: [],
   outcome: [],
+  owner: [],
+  collection: [],
+  scoreBucket: "all",
 };
 
 /** Toggle a value in a facet's multi-select set: add if absent, remove if

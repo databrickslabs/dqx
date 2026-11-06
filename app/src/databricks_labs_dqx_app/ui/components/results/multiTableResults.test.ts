@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { breakdownParams, nextTableSelection, sumTestCounts } from "./MultiTableResults";
+import {
+  baseFilterOptionValues,
+  breakdownParams,
+  nextTableSelection,
+  sumTestCounts,
+  topFilterOptionLists,
+} from "./MultiTableResults";
+import type { EntityResultsOut } from "@/lib/api";
 import { EMPTY_FILTERS, toggleFacet } from "@/components/monitored-tables/BindingResultsTab";
 
 // The composition-level helpers shared by the product tab, the global
@@ -111,5 +118,54 @@ describe("sumTestCounts (ScoreBox subtitle sums)", () => {
       failedTests: 0,
       totalTests: 0,
     });
+  });
+});
+
+describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)", () => {
+  const base = {
+    by_table: [{ label: "main.sales.orders" }, { label: "main.hr.staff" }, { label: "dev.sales.orders" }],
+    by_rule: [{ label: "Not null", rule_id: "r1" }, { label: "Legacy" }],
+    by_dimension: [{ label: "Validity" }, { label: "Completeness" }],
+    by_severity: [{ label: "High" }],
+  } as unknown as EntityResultsOut;
+
+  it("narrows table options to the selected collections' members", () => {
+    const lists = topFilterOptionLists(base, { catalog: [], schema: [] }, new Set(["main.hr.staff"]));
+    expect(lists.table).toEqual([{ value: "main.hr.staff", label: "staff" }]);
+    expect(lists.catalog.map((o) => o.value)).toEqual(["dev", "main"]);
+  });
+
+  it("cascades catalog → schema → table and keeps every table without a collection", () => {
+    const lists = topFilterOptionLists(base, { catalog: ["main"], schema: ["main.sales"] });
+    expect(lists.schema.map((o) => o.value)).toEqual(["main.hr", "main.sales"]);
+    expect(lists.table.map((o) => o.value)).toEqual(["main.sales.orders"]);
+    expect(topFilterOptionLists(base, { catalog: [], schema: [] }).table).toHaveLength(3);
+  });
+
+  it("offers rule identities and dimension/severity labels", () => {
+    const lists = topFilterOptionLists(base, { catalog: [], schema: [] });
+    expect(lists.rule).toEqual([
+      { value: "Legacy", label: "Legacy" },
+      { value: "r1", label: "Not null" },
+    ]);
+    expect(lists.dimension.map((o) => o.value)).toEqual(["Completeness", "Validity"]);
+    expect(lists.severity.map((o) => o.value)).toEqual(["High"]);
+  });
+
+  it("is all-null while the base rows load, else the full option universe", () => {
+    expect(baseFilterOptionValues(undefined).table).toBeNull();
+    const values = baseFilterOptionValues(base);
+    expect(values.table).toHaveLength(3);
+    expect([...(values.schema ?? [])].sort()).toEqual(["dev.sales", "main.hr", "main.sales"]);
+  });
+});
+
+describe("breakdownParams carries the Global Results universe filters", () => {
+  it("adds collection/owner/score_bucket only when set", () => {
+    const params = breakdownParams({ ...EMPTY_FILTERS, owner: ["ann"], scoreBucket: "none" });
+    expect(params.owner).toEqual(["ann"]);
+    expect(params.score_bucket).toBe("none");
+    expect("collection" in params).toBe(false);
+    expect("score_bucket" in breakdownParams(EMPTY_FILTERS)).toBe(false);
   });
 });

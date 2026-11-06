@@ -821,6 +821,38 @@ class TestMemberTableFqns:
         assert service.member_table_fqns("p1") == ["c.s.t1"]
 
 
+class TestMemberFqns:
+    """Batched, read-only member lookup for the global-results collection filter."""
+
+    def test_unions_members_of_every_product_in_one_query(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [
+                _list_member_row("m1", "p1", "b1"),
+                _list_member_row("m2", "p2", "b2"),
+                _list_member_row("m3", "p2", "b-gone"),
+            ]
+        ]
+        monitored_tables.list_monitored_tables.return_value = [
+            _table_summary(binding_id="b1", table_fqn="c.s.t1"),
+            _table_summary(binding_id="b2", table_fqn="c.s.t2"),
+        ]
+        assert service.member_fqns(["p1", "p2"]) == {"c.s.t1", "c.s.t2"}
+        assert sql.query.call_count == 1
+        assert "IN ('p1', 'p2')" in sql.query.call_args[0][0]
+        sql.execute.assert_not_called()
+
+    def test_reuses_caller_summaries(self, service, sql, monitored_tables):
+        sql.query.side_effect = [[_list_member_row("m1", "p1", "b1")]]
+        summaries = [_table_summary(binding_id="b1", table_fqn="c.s.t1")]
+        assert service.member_fqns(["p1"], summaries=summaries) == {"c.s.t1"}
+        monitored_tables.list_monitored_tables.assert_not_called()
+
+    def test_unknown_products_return_empty_without_listing_tables(self, service, sql, monitored_tables):
+        sql.query.side_effect = [[]]
+        assert service.member_fqns(["nope"]) == set()
+        monitored_tables.list_monitored_tables.assert_not_called()
+
+
 class TestDelete:
     def test_delete_success(self, service, sql):
         sql.query.return_value = [["p1"]]

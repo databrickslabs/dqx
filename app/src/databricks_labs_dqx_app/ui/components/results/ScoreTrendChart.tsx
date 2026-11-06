@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { breachedSeriesAt, breachTimesBySeries, isBreachTime, type BreachMarker } from "@/components/results/breachMarkers";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, CircleHelp } from "lucide-react";
@@ -376,6 +377,20 @@ function XGlyph({ color }: { color?: string }) {
   );
 }
 
+/** The ⚠ breach glyph in `color`, layout box matches XGlyph (so row text stays aligned) but the glyph
+ *  itself is ~1.3x and heavier to balance optically against the ×. */
+function BreachGlyph({ color }: { color?: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex h-[10px] w-[10px] shrink-0 items-center justify-center overflow-visible text-[13px] font-black leading-none"
+      style={{ color }}
+    >
+      ⚠
+    </span>
+  );
+}
+
 export function TrendTooltip({
   active,
   payload,
@@ -390,6 +405,7 @@ export function TrendTooltip({
   points,
   allSeries,
   colorMap,
+  breachMarkers,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
@@ -403,6 +419,8 @@ export function TrendTooltip({
   /** series name → colour (matches the plotted lines), for the consolidated
    *  swatches. */
   colorMap?: Record<string, string>;
+  /** Per-table breach markers: rows of tables that breached at the hovered run get a ⚠ prefix. */
+  breachMarkers?: BreachMarker[];
   /** Count mode: series name → marker shape, so the tooltip icon matches the
    *  line's marker instead of a generic round dot. */
   seriesShapes?: Record<string, Marker>;
@@ -460,6 +478,7 @@ export function TrendTooltip({
   // row carries the reserved DRAFT_KEY flag. Shown prominently at the top so a
   // draft run reads at a glance without decoding the series values.
   const hoveredRow = points?.find((p) => Number(p.ts) === Number(runKey));
+  const breachedHere = breachedSeriesAt(breachMarkers, runKey == null ? null : Number(runKey));
   const isDraftPoint = hoveredRow?.[DRAFT_KEY] === 1;
   return (
     <div
@@ -494,7 +513,11 @@ export function TrendTooltip({
                   fill={seriesColors?.[name] ?? COUNT_COLORS[0]}
                 />
               ) : xMarkers ? (
-                <XGlyph color={p.color} />
+                breachedHere.has(name) ? (
+                  <BreachGlyph color={p.color} />
+                ) : (
+                  <XGlyph color={p.color} />
+                )
               ) : (
                 <span
                   className="inline-block h-2 w-2 rounded-full shrink-0"
@@ -538,11 +561,35 @@ export type OverallStep = { run_date: string; value: number | null };
 
 /** A recharts dot renderer drawing an "×" at (cx, cy). Used for the member-table
  *  points so they read as recessive marks, distinct from the Average's bold
- *  circular markers. */
-function xMarkerDot(r: number, color: string, opacity = 0.7) {
-  return (props: { cx?: number; cy?: number }) => {
-    const { cx, cy } = props;
+ *  circular markers. At points in `breachAt` (epoch-ms run times where the
+ *  series breached) it draws the ⚠ glyph in the series colour instead, so a
+ *  breach point never shows both; `active` (hover) enlarges the ⚠, centred
+ *  exactly over the static one (no background-filled shape). */
+function xMarkerDot(r: number, color: string, opacity = 0.7, breachAt?: Set<number>, active = false) {
+  return (props: { cx?: number; cy?: number; payload?: { ts?: number | string | null } }) => {
+    const { cx, cy, payload } = props;
     if (cx == null || cy == null) return <g key={`${cx}-${cy}`} />;
+    if (isBreachTime(breachAt, payload?.ts)) {
+      return (
+        <g key={`${cx}-${cy}`} style={{ pointerEvents: "none" }}>
+          <text
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={active ? 18 : 14}
+            fontWeight={700}
+            fill={color}
+            stroke="var(--background)"
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            paintOrder="stroke"
+          >
+            ⚠
+          </text>
+        </g>
+      );
+    }
     return (
       <path
         key={`${cx}-${cy}`}
@@ -699,7 +746,7 @@ export function ScoreTrendChart({
    *  vertical rule. ``score`` is the point's 0–100 y-value (pass_rate * 100) so
    *  the icon anchors to the trend line; omit it to skip the marker.
    *  Only the overall-score trend chart in MultiTableResults passes these. */
-  breachMarkers?: Array<{ run_date: string; criticality: "error" | "warn"; score?: number | null }>;
+  breachMarkers?: BreachMarker[];
   /** Optional subtle vertical markers at the runs where the monitored-table
    *  binding version incremented (#65). Each `run_date` is matched to its `ts`
    *  on the time axis; `label` is the pre-formatted tag (e.g. "v2"). Only the
@@ -1061,6 +1108,7 @@ export function ScoreTrendChart({
   // Count mode: clicking a legend item hides/shows that line. Track the hidden
   // series names; each <Line hide> reflects membership.
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const breachTimes = useMemo(() => breachTimesBySeries(breachMarkers), [breachMarkers]);
   const toggleSeries = (name: string) =>
     setHidden((cur) => toggleHidden(cur, name));
   // series name → marker shape, in series order (markers cycle by index). Used
@@ -1341,6 +1389,7 @@ export function ScoreTrendChart({
                     points={points}
                     allSeries={series}
                     colorMap={colorMap}
+                    breachMarkers={breachMarkers}
                   />
                 )}
               />
@@ -1527,8 +1576,8 @@ export function ScoreTrendChart({
                       strokeOpacity={0.55}
                       connectNulls
                       hide={hidden.has(name)}
-                      dot={xMarkerDot(3.5, stroke, 0.7)}
-                      activeDot={xMarkerDot(4.5, stroke, 1)}
+                      dot={xMarkerDot(3.5, stroke, 0.7, breachTimes.get(name))}
+                      activeDot={xMarkerDot(4.5, stroke, 1, breachTimes.get(name), true)}
                       isAnimationActive={false}
                     />
                   );
@@ -1568,10 +1617,50 @@ export function ScoreTrendChart({
               {(breachMarkers ?? []).map((m) => {
                 const x = Date.parse(m.run_date);
                 if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
+                if (m.series && hidden.has(m.series)) return null;
                 const fill = "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
+                if (m.series) {
+                  // Average mode: the series' dot renderer draws the ⚠ itself.
+                  if (overallMode) return null;
+                  // Multi-table: the ⚠ sits ON the point in that table's line
+                  // colour (replacing its ×), haloed with the background colour.
+                  const idx = series.indexOf(m.series);
+                  const glyphColor = colorMap?.[m.series] ?? CHART_FALLBACK[Math.max(idx, 0) % CHART_FALLBACK.length];
+                  return (
+                    <ReferenceDot
+                      key={`bm-${m.series}-${m.run_date}`}
+                      x={x}
+                      y={m.score}
+                      r={0}
+                      ifOverflow="hidden"
+                      fill="none"
+                      stroke="none"
+                      shape={(p: { cx?: number; cy?: number }) =>
+                        p.cx == null || p.cy == null ? <g /> : (
+                          <text
+                            x={p.cx}
+                            y={p.cy}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fontSize={14}
+                            fontWeight={700}
+                            fill={glyphColor}
+                            stroke="var(--background)"
+                            strokeWidth={1.5}
+                            strokeLinejoin="round"
+                            paintOrder="stroke"
+                            style={{ pointerEvents: "none" }}
+                          >
+                            ⚠
+                          </text>
+                        )
+                      }
+                    />
+                  );
+                }
                 return (
                   <ReferenceDot
-                    key={`bm-${m.run_date}`}
+                    key={`bm-${m.series ?? "all"}-${m.run_date}`}
                     x={x}
                     y={m.score}
                     r={0}

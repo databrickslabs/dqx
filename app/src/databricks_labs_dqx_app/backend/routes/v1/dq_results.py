@@ -26,8 +26,8 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
-from collections.abc import Iterable
-from typing import Annotated
+from collections.abc import Callable, Iterable
+from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -423,6 +423,65 @@ def _facets(
         schemas=tuple(schema or ()),
         outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
     )
+
+
+ScoreBucket = Literal["75-100", "50-75", "25-50", "0-25", "none"]
+
+
+def _matches_score_bucket(score: float | None, bucket: ScoreBucket) -> bool:
+    """Server twin of the UI's *matchesDqScoreBucket* (scores are stored 0-1)."""
+    if score is None:
+        return bucket == "none"
+    pct = score * 100
+    if bucket == "0-25":
+        return pct < 25
+    if bucket == "25-50":
+        return 25 <= pct < 50
+    if bucket == "50-75":
+        return 50 <= pct < 75
+    if bucket == "75-100":
+        return pct >= 75
+    return False
+
+
+def _table_universe_filter(
+    monitored_tables: MonitoredTableService,
+    data_products: DataProductService,
+    collection: list[str] | None,
+    owner: list[str] | None,
+    score_bucket: ScoreBucket | None,
+) -> Callable[[str], bool] | None:
+    """Predicate over table FQNs for the collection / owner / score_bucket
+    table-universe filters (intersected), or None when none is set.
+
+    Owner identity is owner_display_name -> owner -> created_by (the UI's
+    *monitoredTableOwner*); the score is the cached ``dq_score_cache`` value.
+    A table with no monitored-table row has no owner and no cached score.
+    """
+    if not collection and not owner and score_bucket is None:
+        return None
+    # One monitored-table listing per request, shared by the collection join
+    # and the owner / score lookups (only fetched when one of them needs it).
+    listed = monitored_tables.list_monitored_tables() if owner or score_bucket is not None else None
+    allowed = data_products.member_fqns(collection, summaries=listed) if collection else None
+    summaries = {s.table.table_fqn: s for s in listed} if listed is not None else {}
+    owners = set(owner or ())
+
+    def predicate(fqn: str) -> bool:
+        if allowed is not None and fqn not in allowed:
+            return False
+        summary = summaries.get(fqn)
+        if owners:
+            if summary is None:
+                return False
+            table = summary.table
+            if (table.owner_display_name or table.owner or table.created_by or "") not in owners:
+                return False
+        if score_bucket is not None and not _matches_score_bucket(summary.score if summary else None, score_bucket):
+            return False
+        return True
+
+    return predicate
 
 
 def _validate_table_facet(table: list[str] | None) -> None:
@@ -863,6 +922,7 @@ def get_global_results(
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -871,6 +931,9 @@ def get_global_results(
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
     outcome: Annotated[list[str] | None, Query()] = None,
+    collection: Annotated[list[str] | None, Query(max_length=200)] = None,
+    owner: Annotated[list[str] | None, Query(max_length=200)] = None,
+    score_bucket: Annotated[ScoreBucket | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -886,6 +949,11 @@ def get_global_results(
     catalog-gated, so an inaccessible value simply matches nothing).
     *outcome* keeps only ``passed`` or ``failed`` checks.
 
+    *collection* (data-product ids), *owner* (owner_display_name -> owner ->
+    created_by) and *score_bucket* (cached DQ score) narrow the TABLE
+    UNIVERSE like *catalog* does: intersected, applied after the catalog
+    gate, and to every axis including by_table.
+
     Concurrent member runs of one run set are consolidated onto their
     RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
     markers align; *as_of_batch* caps to a chosen batch's instant.
@@ -894,10 +962,15 @@ def get_global_results(
     _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
+        in_universe = _table_universe_filter(monitored_tables, data_products, collection, owner, score_bucket)
+
+        def visible(fqn: str) -> bool:
+            return catalog_of(fqn) in user_catalogs and (in_universe is None or in_universe(fqn))
+
         rows = [
             row
             for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs)
-            if catalog_of(row.table_fqn) in user_catalogs
+            if visible(row.table_fqn)
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
@@ -912,7 +985,7 @@ def get_global_results(
                 for row in _fetch_asof_check_rows(
                     sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs
                 )
-                if catalog_of(row.table_fqn) in user_catalogs
+                if visible(row.table_fqn)
             ]
     except Exception as exc:
         logger.exception("Failed to compute global results")

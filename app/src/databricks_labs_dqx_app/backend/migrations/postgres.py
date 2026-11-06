@@ -37,8 +37,12 @@ The ALTER is what upgrades an existing deployment: its ``dq_migrations``
 table already records v1 as applied, so an edited baseline alone is
 skipped and the new column never appears.  On a fresh install the ALTER
 is a no-op because v1 already created the column.  Keep later
-migrations additive (``ADD COLUMN IF NOT EXISTS`` only) so the baseline
-stays the single description of the schema.
+migrations additive so the baseline stays the single description of the
+schema that existed at v1: ``ADD COLUMN IF NOT EXISTS`` for baseline
+tables, plus brand-new feature tables (``CREATE TABLE IF NOT EXISTS``,
+their ``CREATE INDEX IF NOT EXISTS`` indexes and idempotent
+``INSERT ... ON CONFLICT DO NOTHING`` seed rows) that live only in the
+migration which introduces them.
 """
 
 import logging
@@ -812,6 +816,52 @@ PG_MIGRATIONS: list[PgMigration] = [
             f"ALTER TABLE {_S}.dq_schedule_runs ADD CONSTRAINT chk_dq_schedule_runs_status "
             "CHECK (status IS NULL OR status IN "
             "('pending','success','partial_failure','failed','skipped'));"
+        ),
+    ),
+    PgMigration(
+        version=5,
+        description="Saved views: named column/filter presets, stars and personal defaults",
+        sql=(
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_views ("
+            "  id              TEXT PRIMARY KEY,"
+            "  page_key        TEXT NOT NULL,"
+            "  name            TEXT NOT NULL,"
+            "  scope           TEXT NOT NULL CHECK (scope IN ('org','user')),"
+            "  owner           TEXT,"
+            "  payload         JSONB,"
+            "  is_builtin      BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  is_org_default  BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  created_by      TEXT,"
+            "  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  updated_by      TEXT,"
+            "  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  CHECK ((scope = 'user') = (owner IS NOT NULL)),"
+            "  CHECK (NOT is_org_default OR scope = 'org')"
+            ");"
+            f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dq_saved_views_name "
+            f"  ON {_S}.dq_saved_views (page_key, scope, COALESCE(owner, ''), lower(name));"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_saved_views_page "
+            f"  ON {_S}.dq_saved_views (page_key);"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_view_user_state ("
+            "  user_email TEXT NOT NULL,"
+            f"  view_id    TEXT NOT NULL REFERENCES {_S}.dq_saved_views(id) ON DELETE CASCADE,"
+            "  starred    BOOLEAN NOT NULL,"
+            "  PRIMARY KEY (user_email, view_id)"
+            ");"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_view_defaults ("
+            "  user_email TEXT NOT NULL,"
+            "  page_key   TEXT NOT NULL,"
+            f"  view_id    TEXT NOT NULL REFERENCES {_S}.dq_saved_views(id) ON DELETE CASCADE,"
+            "  PRIMARY KEY (user_email, page_key)"
+            ");"
+            f"INSERT INTO {_S}.dq_saved_views "
+            "(id, page_key, name, scope, owner, payload, is_builtin, is_org_default, created_by, updated_by) VALUES "
+            "('builtin:monitored_tables','monitored_tables','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
+            "('builtin:registry_rules','registry_rules','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
+            "('builtin:collections','collections','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
+            "('builtin:schedules','schedules','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
+            "('builtin:global_results','global_results','Default','org',NULL,NULL,TRUE,TRUE,'system','system') "
+            "ON CONFLICT (id) DO NOTHING;"
         ),
     ),
 ]

@@ -169,6 +169,13 @@ _DROP_CONSTRAINT_RE = re.compile(
 _ADD_CONSTRAINT_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD CONSTRAINT ([a-z_][a-z0-9_]*) CHECK \(.+\)"
 )
+# Brand-new feature tables (with their indexes and idempotent seed rows) arrive
+# in a later migration; they are not part of the v1 baseline.
+_CREATE_TABLE_STMT_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.[a-z_][a-z0-9_]* \(.+\)")
+_CREATE_INDEX_STMT_RE = re.compile(r"CREATE (UNIQUE )?INDEX IF NOT EXISTS [a-z_][a-z0-9_]* ON \{schema\}\..+")
+_SEED_INSERT_STMT_RE = re.compile(
+    r"INSERT INTO \{schema\}\.[a-z_][a-z0-9_]* \(.+\) VALUES .+ ON CONFLICT .+ DO NOTHING"
+)
 
 
 class TestBaselineCatalogue:
@@ -179,13 +186,16 @@ class TestBaselineCatalogue:
     upgrade deployments that already applied v1. Each column they add must
     already be in the baseline, and each table they drop must not be, so a
     fresh install and an upgraded one end up with the same shape. Constraint
-    replacements are allowed when the CHECK they add is already in v1.
+    replacements are allowed when the CHECK they add is already in v1. A later
+    migration may also introduce a brand-new feature table (CREATE TABLE /
+    CREATE INDEX IF NOT EXISTS plus idempotent seed INSERTs); such tables are
+    not in the baseline and are described only by the migration that adds them.
     """
 
     def test_baseline_is_version_one(self):
         assert PG_MIGRATIONS[0].version == 1
 
-    def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+    def test_later_migrations_only_make_additive_changes(self):
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
                 assert (
@@ -193,7 +203,10 @@ class TestBaselineCatalogue:
                     or _DROP_TABLE_RE.fullmatch(stmt)
                     or _DROP_CONSTRAINT_RE.fullmatch(stmt)
                     or _ADD_CONSTRAINT_RE.fullmatch(stmt)
-                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
+                    or _CREATE_TABLE_STMT_RE.fullmatch(stmt)
+                    or _CREATE_INDEX_STMT_RE.fullmatch(stmt)
+                    or _SEED_INSERT_STMT_RE.fullmatch(stmt)
+                ), f"v{m.version}: not a recognised additive migration statement: {stmt[:120]}"
 
     def test_dropped_tables_are_not_in_the_baseline(self):
         for m in PG_MIGRATIONS[1:]:
@@ -231,7 +244,9 @@ class TestBaselineCatalogue:
     def test_oltp_table_set_is_derived_from_postgres_baseline(self):
         # The view is not a table and must stay out of OLTP_TABLE_NAMES
         # (it is never cleared by the reset sweep nor version-tracked).
-        assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+        later = [name for m in PG_MIGRATIONS[1:] for name in _created_tables(" ".join(m.sql.split()))]
+        assert set(_created_tables(_baseline())) | set(later) == set(OLTP_TABLE_NAMES)
+        assert {"dq_saved_views", "dq_saved_view_user_state", "dq_saved_view_defaults"} <= set(later)
         assert "dq_rules_core" not in OLTP_TABLE_NAMES
 
 

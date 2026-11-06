@@ -23,18 +23,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
-import { filterLayoutMenuConfig, useFilterLayout } from "@/components/data-table/filter-layout";
+import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
+import { MAX_VIEW_STRING_LENGTH } from "@/components/data-table/saved-views";
+import { useSavedViews } from "@/components/data-table/useSavedViews";
+import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { compareSortValues, type SortDirection } from "@/components/data-table/sort";
 import {
-  EMPTY_SCHEDULE_FILTERS,
   SCHEDULE_FILTER_ALL,
   SCHEDULE_FILTER_DEFS,
-  SCHEDULE_FILTER_ORDER,
   getScheduleSortValue,
   hasActiveScheduleFilters,
   matchesScheduleFilters,
-  resetScheduleFilter,
   scheduleOwners,
   scheduleRowKey,
   tablesScheduledByCollections,
@@ -42,13 +42,20 @@ import {
   type ScheduleFilters,
   type ScheduleSortKey,
 } from "@/components/schedules/schedule-list";
-import { SchedulesTable, getScheduleSortConfig, type SchedulesTableSelection } from "@/components/schedules/SchedulesTable";
+import { buildSchedulesViewDefs, scheduleFiltersFromValues } from "@/components/schedules/schedules-view";
+import {
+  SCHEDULES_COLUMN_LAYOUT,
+  SchedulesTable,
+  getScheduleSortConfig,
+  type SchedulesTableSelection,
+} from "@/components/schedules/SchedulesTable";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   deleteSchedule,
   getListDataProductsQueryKey,
   getListScheduleOverviewQueryKey,
   getListSchedulesQueryKey,
+  SavedViewPage,
   saveSchedule,
   setSchedulePaused,
   updateDataProduct,
@@ -66,7 +73,6 @@ export const Route = createFileRoute("/_sidebar/schedules/")({
 });
 
 const PAGE_SIZE = 50;
-const LS_KEY_FILTERS = "dqx.schedules.filters.v1";
 
 function extractApiError(err: unknown, fallback: string): string {
   const axErr = err as { response?: { data?: { detail?: string } } };
@@ -94,24 +100,27 @@ function SchedulesContent({ isAdmin, canCreate }: { isAdmin: boolean; canCreate:
   const owners = useMemo(() => scheduleOwners(rows), [rows]);
   const duplicateTargets = useMemo(() => tablesScheduledByCollections(productsData?.data ?? []), [productsData]);
 
-  const [filters, setFilters] = useState<ScheduleFilters>(EMPTY_SCHEDULE_FILTERS);
-  const [page, setPage] = useState(1);
-  const setFilter = useCallback(<K extends keyof ScheduleFilters>(key: K, value: ScheduleFilters[K]) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
-    setPage(1);
-  }, []);
+  // Saved views own the column layout, filter layout and every filter value
+  // (search included). A saved owner with no schedules left is dropped once
+  // the list loads; until then it is kept.
+  const loaded = data !== undefined;
+  const viewDefs = useMemo(
+    () => buildSchedulesViewDefs(SCHEDULES_COLUMN_LAYOUT, { owners: loaded ? owners : null }),
+    [loaded, owners],
+  );
+  const views = useSavedViews(SavedViewPage.schedules, viewDefs);
+  const { values, setValue } = views;
+  const filters = useMemo(() => scheduleFiltersFromValues(values), [values]);
+  const setFilter = useCallback(
+    <K extends ScheduleFilterKey>(key: K, value: ScheduleFilters[K]) => setValue(key, value),
+    [setValue],
+  );
+  // Any filter edit (or switching view) starts the list from page 1.
+  const [page, setPage] = usePageResetOn(values);
 
-  // Which filter pills show, and in what order (Edit Columns > Filters).
-  // Hiding a pill clears its value so it can't keep narrowing the rows.
-  const filterLayout = useFilterLayout<ScheduleFilterKey>({
-    storageKey: LS_KEY_FILTERS,
-    defaultOrder: SCHEDULE_FILTER_ORDER,
-    filters: SCHEDULE_FILTER_DEFS,
-    onHide: (key) => {
-      setFilters((prev) => resetScheduleFilter(prev, key));
-      setPage(1);
-    },
-  });
+  // Which filter pills show, and in what order (Edit View > Filters). Hiding a
+  // pill clears its value (useSavedViews) so it can't keep narrowing the rows.
+  const { filterLayout } = views;
 
   const filtered = useMemo(() => rows.filter((row) => matchesScheduleFilters(row, filters)), [rows, filters]);
 
@@ -390,6 +399,7 @@ function SchedulesContent({ isAdmin, canCreate }: { isAdmin: boolean; canCreate:
         <Input
           placeholder={t("schedules.search")}
           value={filters.search}
+          maxLength={MAX_VIEW_STRING_LENGTH}
           onChange={(e) => setFilter("search", e.target.value)}
           className="h-8 pl-7 text-xs"
         />
@@ -490,7 +500,9 @@ function SchedulesContent({ isAdmin, canCreate }: { isAdmin: boolean; canCreate:
             duplicateTargets={duplicateTargets}
             selection={selection}
             emptyState={emptyState}
+            columnLayout={views.columnLayout!}
             filterMenu={filterLayoutMenuConfig(filterLayout, (key) => t(SCHEDULE_FILTER_DEFS[key].labelKey))}
+            savedViews={views.menuConfig}
             toolbarExtra={filterLayout.visibleKeys.map((key) => filterControls[key])}
           />
         </div>

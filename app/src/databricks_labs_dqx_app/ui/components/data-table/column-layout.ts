@@ -128,49 +128,21 @@ function loadLayout<K extends string>(
   return reconcileLayout(readStoredLayout<K>(storageKey), defaultOrder, defaultVisibility);
 }
 
+export interface UseColumnResizeResult<K extends string> {
+  colWidths: Record<K, number>;
+  onResizeStart: (key: K, e: React.MouseEvent) => void;
+}
+
 /**
- * Shared column visibility/order/width/resize state for tables with a
- * drag-reorderable, toggleable "Edit View" dropdown. Ported from
- * dqlake's `BindingsTable` and used by both the Rules Registry list
- * (`RulesTable`) and the Monitored Tables list (`MonitoredTablesTable`) so
- * the two don't drift in behavior.
+ * Session-only column widths with drag-to-resize handles (not persisted,
+ * matching dqlake). Shared by {@link useColumnLayout} and the saved-views hook.
  */
-export function useColumnLayout<K extends string>({
-  storageKey,
-  defaultOrder,
-  columns,
-}: UseColumnLayoutOptions<K>): UseColumnLayoutResult<K> {
-  const initialLayout = useState(() => loadLayout(storageKey, defaultOrder, columns))[0];
-  const [colVisibility, setColVisibility] = useState<Record<K, boolean>>(() => initialLayout.visibility);
-  const [colOrder, setColOrder] = useState<K[]>(() => initialLayout.order);
+export function useColumnResize<K extends string>(
+  defaultOrder: readonly K[],
+  columns: Record<K, ColumnLayoutDef>,
+): UseColumnResizeResult<K> {
   const [colWidths, setColWidths] = useState<Record<K, number>>(() => defaultWidthsOf(defaultOrder, columns));
 
-  useEffect(() => {
-    persistLayout(storageKey, colVisibility, colOrder);
-  }, [storageKey, colVisibility, colOrder]);
-
-  const toggleColumn = useCallback((id: K) => {
-    setColVisibility((prev) => ({ ...prev, [id]: !prev[id] }));
-  }, []);
-
-  const show = useCallback((id: K) => colVisibility[id] ?? false, [colVisibility]);
-
-  const visibleKeys = colOrder.filter((k) => (columns[k].toggleable ? show(k) : true));
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setColOrder((prev) => {
-        const oldIdx = prev.indexOf(active.id as K);
-        const newIdx = prev.indexOf(over.id as K);
-        return arrayMove(prev, oldIdx, newIdx);
-      });
-    }
-  }, []);
-
-  // -- Column resizing (session-only; not persisted, matching dqlake) -----
   const resizingRef = useRef<{ key: K; startX: number; startW: number } | null>(null);
 
   const onResizeMove = useCallback((e: MouseEvent) => {
@@ -207,6 +179,51 @@ export function useColumnLayout<K extends string>({
       document.removeEventListener("mouseup", onResizeEnd);
     };
   }, [onResizeMove, onResizeEnd]);
+
+  return { colWidths, onResizeStart };
+}
+
+/**
+ * Shared column visibility/order/width/resize state for tables with a
+ * drag-reorderable, toggleable "Edit View" dropdown. Ported from
+ * dqlake's `BindingsTable` and used by both the Rules Registry list
+ * (`RulesTable`) and the Monitored Tables list (`MonitoredTablesTable`) so
+ * the two don't drift in behavior.
+ */
+export function useColumnLayout<K extends string>({
+  storageKey,
+  defaultOrder,
+  columns,
+}: UseColumnLayoutOptions<K>): UseColumnLayoutResult<K> {
+  const initialLayout = useState(() => loadLayout(storageKey, defaultOrder, columns))[0];
+  const [colVisibility, setColVisibility] = useState<Record<K, boolean>>(() => initialLayout.visibility);
+  const [colOrder, setColOrder] = useState<K[]>(() => initialLayout.order);
+  const { colWidths, onResizeStart } = useColumnResize(defaultOrder, columns);
+
+  useEffect(() => {
+    persistLayout(storageKey, colVisibility, colOrder);
+  }, [storageKey, colVisibility, colOrder]);
+
+  const toggleColumn = useCallback((id: K) => {
+    setColVisibility((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const show = useCallback((id: K) => colVisibility[id] ?? false, [colVisibility]);
+
+  const visibleKeys = colOrder.filter((k) => (columns[k].toggleable ? show(k) : true));
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setColOrder((prev) => {
+        const oldIdx = prev.indexOf(active.id as K);
+        const newIdx = prev.indexOf(over.id as K);
+        return arrayMove(prev, oldIdx, newIdx);
+      });
+    }
+  }, []);
 
   return {
     colOrder,

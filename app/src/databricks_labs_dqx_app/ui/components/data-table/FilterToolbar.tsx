@@ -17,9 +17,9 @@ export function FilterToolbar({ filters, editColumns }: { filters?: ReactNode; e
 }
 
 export interface FilterPillsProps<K extends string> {
-  /** Filters to render, in order — typically `useFilterLayout().visibleKeys`. */
+  /** Filters to render, in order — typically `useSavedViews().filterLayout.visibleKeys`. */
   keys: readonly K[];
-  /** Typically `useFilterLayout().isPinned`. */
+  /** Typically `useSavedViews().filterLayout.isPinned`. */
   isPinned: (key: K) => boolean;
   renderPill: (key: K) => ReactNode;
 }
