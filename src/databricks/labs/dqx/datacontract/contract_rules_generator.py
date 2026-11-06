@@ -63,6 +63,7 @@ _FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
     "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
     "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
     "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "time": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
 }
 
 _MAX_LOGGED_DESCRIPTION_LENGTH = 120
@@ -756,9 +757,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         # Handle range constraints from minimum and maximum
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
-            rules.extend(
-                self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
-            )
+            if prop.logicalType == 'time':
+                logger.warning(f"Time bounds aren't supported yet for field {column_path!r}; skipping them.")
+            else:
+                rules.extend(
+                    self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
+                )
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
@@ -1068,7 +1072,7 @@ class DataContractRulesGenerator(DQEngineBase):
         self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """
-        Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
+        Generate a format validation rule from logicalTypeOptions format (for date, time, and timestamp fields).
 
         ODCS defines the format as a Java DateTimeFormatter pattern (e.g. *'yyyy-MM-dd'*), the syntax Spark datetime
         patterns are based on. The contract format is passed to the check unchanged. Any pattern containing '%' is
