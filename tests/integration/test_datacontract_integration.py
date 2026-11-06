@@ -9,6 +9,7 @@ multiple schemas, recursive type validation, DECIMAL validation, and error paths
 """
 
 import contextlib
+import datetime
 import logging
 import os
 import tempfile
@@ -52,6 +53,18 @@ def _flagged_names(row: Row) -> set[str]:
     """Return the set of check names present in a row's _errors array (empty set if none)."""
     errors = row["_errors"]
     return {e["name"] for e in errors} if errors else set()
+
+
+def _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) -> dict[int, set[str]]:
+    """Apply the rules with ANSI on, where a malformed text value would fail the run without try_cast."""
+    original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+    try:
+        spark.conf.set("spark.sql.ansi.enabled", "true")
+        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+        rows = checked.select("row_id", "_errors").collect()
+    finally:
+        spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
+    return {row["row_id"]: _flagged_names(row) for row in rows}
 
 
 def _assert_flagged_only(flagged_by_row: dict[int, set[str]], check_name: str, expected_row_ids: set[int]) -> None:
@@ -624,6 +637,82 @@ class TestDataContractIntegration:
                 process_text_rules=False,
             )
         assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
+
+
+class TestDataContractRangeRulesIntegration:
+    """Range rules generated from logicalTypeOptions bounds, applied on Spark."""
+
+    def test_generated_range_rules_flag_only_out_of_range_rows(self, ws, spark, set_utc_timezone):
+        """Range rules generated from logicalTypeOptions flag only the rows outside the bounds, on Spark."""
+        properties = [
+            ("qty", "INT", "integer", {"minimum": 0}),
+            ("price", "DOUBLE", "number", {"maximum": 100.5}),
+            ("pct", "DOUBLE", "number", {"minimum": 0.0, "maximum": 1.0}),
+            ("shipped", "DATE", "date", {"minimum": "2020-01-01"}),
+            ("created", "TIMESTAMP", "timestamp", {"maximum": "2030-01-01T00:00:00"}),
+            ("Päivämäärä", "DOUBLE", "number", {"minimum": 0}),
+            # Stored as text: compared through try_cast, so a malformed value can't fail the run under ANSI
+            ("shipped_text", "STRING", "date", {"minimum": "2020-01-01"}),
+        ]
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:ranges",
+            "name": "Ranges",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": name, "physicalType": physical, "logicalType": logical, "logicalTypeOptions": options}
+                        for name, physical, logical, options in properties
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [
+                # On the bounds
+                [1, 0, 100.5, 0.0, datetime.date(2020, 1, 1), datetime.datetime(2030, 1, 1), 0.0, "2020-01-01"],
+                # Inside the bounds (a malformed date string is left to a format rule)
+                [2, 5, 1.0, 1.0, datetime.date(2024, 6, 1), datetime.datetime(2024, 1, 1, 10), 50.0, "not a date"],
+                # Just outside the bounds
+                [
+                    3,
+                    -1,
+                    100.6,
+                    1.01,
+                    datetime.date(2019, 12, 31),
+                    datetime.datetime(2030, 1, 1, 0, 0, 1),
+                    -0.1,
+                    "2019-12-31",
+                ],
+                [4, None, None, None, None, None, None, None],
+            ],
+            "row_id int, qty int, price double, pct double, shipped date, created timestamp, `Päivämäärä` double, "
+            "shipped_text string",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: set(),
+            3: {
+                "qty_below_minimum",
+                "price_above_maximum",
+                "pct_out_of_range",
+                "shipped_below_minimum",
+                "created_above_maximum",
+                "Päivämäärä_below_minimum",
+                "shipped_text_below_minimum",
+            },
+            4: set(),
+        }
 
 
 class TestDataContractIntegrationErrors:
