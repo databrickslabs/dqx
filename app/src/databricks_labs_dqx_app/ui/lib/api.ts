@@ -511,6 +511,11 @@ export interface BatchImportRegistryRulesFailure {
 }
 
 /**
+ * Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``).
+ */
+export type BatchImportRegistryRulesInReuseRuleIds = {[key: string]: string};
+
+/**
  * Bulk-create registry drafts from imported check dicts (YAML, data contract, …).
  */
 export interface BatchImportRegistryRulesIn {
@@ -529,8 +534,8 @@ export interface BatchImportRegistryRulesIn {
   source?: string;
   /** When true, rules whose slots are named after concrete columns (data contracts) are created as generic rules: slots renamed to 'column'/'column_N', a generic name, and no column-specific description. See ``slot_renames`` on each result. */
   generalize_slots?: boolean;
-  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates. */
-  reuse_rule_ids?: { [key: string]: string };
+  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``). */
+  reuse_rule_ids?: BatchImportRegistryRulesInReuseRuleIds;
 }
 
 /**
@@ -1178,6 +1183,11 @@ export type CreateRegistryRuleOutInputIndex = number | null;
 export type CreateRegistryRuleOutSlotRenames = {[key: string]: string};
 
 /**
+ * Batch import only: imported filter that differs from the returned rule's default. Apply it as the applied rule's ``row_filter`` so skip_duplicates reuse does not drop a population filter that is not part of the fingerprint.
+ */
+export type CreateRegistryRuleOutRowFilter = string | null;
+
+/**
  * Response for a successful create — includes a non-blocking dedup warning, if any.
  */
 export interface CreateRegistryRuleOut {
@@ -1188,8 +1198,8 @@ export interface CreateRegistryRuleOut {
   input_index?: CreateRegistryRuleOutInputIndex;
   /** Batch import only: input slot name -> slot name on the returned rule, when they differ (the input was matched to, or created as, a generic rule with different slot names). */
   slot_renames?: CreateRegistryRuleOutSlotRenames;
-  /** Batch import only: imported filter that differs from the returned rule's default. Apply it as the applied rule's row_filter. */
-  row_filter?: string | null;
+  /** Batch import only: imported filter that differs from the returned rule's default. Apply it as the applied rule's ``row_filter`` so skip_duplicates reuse does not drop a population filter that is not part of the fingerprint. */
+  row_filter?: CreateRegistryRuleOutRowFilter;
 }
 
 export interface CreateRoleMappingIn {
@@ -1735,19 +1745,25 @@ export interface FailedRowOut {
   run_ts?: FailedRowOutRunTs;
 }
 
+export type FailedRowsOutTotal = number | null;
+
+export type FailedRowsOutRunId = string | null;
+
 /**
  * Filtered failing-rows sample (dqlake shape plus *suppressed*).
 
-*total* is the number of matching rows found within the scanned
-window — it can exceed ``len(rows)`` when capped by *limit*.
+*total* is the number of matching rows for the resolved run when known
+(it can exceed ``len(rows)`` when capped by *limit*). ``None`` when the
+run has no stored metrics. *run_id* is the run the page was read from.
 *suppressed* is True when the source table carries fine-grained
 access controls (Task 7 semantics); an empty non-suppressed response
 is also what a caller without SELECT on the source table receives.
  */
 export interface FailedRowsOut {
   rows?: FailedRowOut[];
-  total?: number;
+  total?: FailedRowsOutTotal;
   suppressed?: boolean;
+  run_id?: FailedRowsOutRunId;
 }
 
 export interface FilterTablesByColumnsIn {
@@ -4565,6 +4581,7 @@ export interface ScheduleOverviewOut {
   next_run_at?: ScheduleOverviewOutNextRunAt;
   last_run_id?: ScheduleOverviewOutLastRunId;
   run_status?: ScheduleOverviewOutRunStatus;
+  awaiting_approval?: boolean;
 }
 
 export interface SchedulePauseIn {
@@ -16653,10 +16670,12 @@ export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof get
 /**
  * Update a registry rule's live definition/tags in place.
 
-Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
-revision path — the edits stay inert behind the frozen vN snapshot until
-the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
-any other status.
+Editable for ``draft`` and ``approved`` rules (the edit-in-place revision
+path — the edits stay inert behind the frozen vN snapshot until the rule
+is re-submitted and re-approved as vN+1) and for ``pending_approval``
+rules so an approver or admin can correct the submitted definition before
+publishing. Authors with MODIFY cannot edit a pending rule. Rejected with
+400 for any other status.
 
 Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
 inherited, or via ownership) unless the caller is an admin/approver.
@@ -16943,7 +16962,7 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 "Similar" rules run the same check on the same slots but with different
 parameters (e.g. ``trim_strings``); the importer decides whether to reuse
-one by passing it in ``reuse_rule_ids`` on the batch import.
+one by passing it in ``reuse_rule_ids`` (input index -> rule id) on the batch import.
  * @summary Preview Batch Import Registry Rules
  */
 export const previewBatchImportRegistryRules = (

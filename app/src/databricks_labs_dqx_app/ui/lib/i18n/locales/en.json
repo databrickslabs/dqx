@@ -64,6 +64,11 @@
           "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the owner of the catalog or schema."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "Won't run until approved",
+      "descriptionTable": "Scheduled runs use the latest approved rules, and this table has none yet. You can save the schedule now; it starts running once the table is approved.",
+      "descriptionCollection": "Scheduled runs use the latest approved version, and this collection has none yet. You can save the schedule now; it starts running once the collection is approved."
     }
   },
   "lifecycle": {
@@ -1752,6 +1757,7 @@
     "applyModalApplyButton": "Apply",
     "applyModalToastSummary": "Applied to {{applied}} table(s); {{needsMapping}} need column mapping — open each table to finish.",
     "actionApprove": "Approve",
+    "actionEditAndApprove": "Edit and approve",
     "actionReject": "Reject",
     "actionRevoke": "Revoke",
     "actionDeprecate": "Deprecate",
@@ -1817,6 +1823,7 @@
     "toastUpdated": "Rule updated.",
     "saveFailed": "Failed to save rule.",
     "toastSavedSubmitFailed": "Rule saved, but it could not be submitted for review: {{error}}",
+    "toastSavedApproveFailed": "Rule saved, but it could not be approved: {{error}}",
     "submitNoRevisionTooltip": "Nothing to review — this change takes effect as soon as you save it. Only edits to the rule's logic or metadata create a new version to approve.",
     "dialogSrDescription": "Create or edit a reusable data quality rule.",
     "createTitle": "New registry rule",
@@ -3404,6 +3411,8 @@
     "empty": "No schedules match these filters.",
     "duplicateWarning": "This table also runs through a scheduled collection.",
     "viewRuns": "View runs",
+    "awaitingApproval": "Waiting for approval",
+    "awaitingApprovalHint": "This schedule starts running once it has an approved version.",
     "newSchedule": "New schedule",
     "kind": "Runs",
     "updatedAt": "Last updated",

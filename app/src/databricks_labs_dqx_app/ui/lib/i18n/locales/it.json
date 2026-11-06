@@ -64,6 +64,11 @@
           "unknown": "Impossibile eseguire questi comandi. Copiali ed eseguili nel SQL Editor (nella barra laterale di Databricks), oppure inviali al proprietario del catalogo o dello schema."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "Non verrà eseguita finché non viene approvata",
+      "descriptionTable": "Le esecuzioni pianificate usano le ultime regole approvate e questa tabella non ne ha ancora. Puoi salvare la pianificazione ora; inizierà a essere eseguita quando la tabella sarà approvata.",
+      "descriptionCollection": "Le esecuzioni pianificate usano l'ultima versione approvata e questa raccolta non ne ha ancora. Puoi salvare la pianificazione ora; inizierà a essere eseguita quando la raccolta sarà approvata."
     }
   },
   "lifecycle": {
@@ -1817,6 +1822,7 @@
     "toastUpdated": "Regola aggiornata.",
     "saveFailed": "Impossibile salvare la regola.",
     "toastSavedSubmitFailed": "La regola è stata salvata, ma non è stato possibile inviarla in revisione: {{error}}",
+    "toastSavedApproveFailed": "La regola è stata salvata, ma non è stato possibile approvarla: {{error}}",
     "submitNoRevisionTooltip": "Nulla da revisionare: questa modifica ha effetto appena la salvi. Solo le modifiche alla logica o ai metadati della regola creano una nuova versione da approvare.",
     "dialogSrDescription": "Crea o modifica una regola di qualità dei dati riutilizzabile.",
     "createTitle": "Nuova regola del registro",
@@ -2110,7 +2116,8 @@
     "filterDimensions": "Dimensioni",
     "filterSeverities": "Gravità",
     "filterOwners": "Proprietari",
-    "filterLabels": "Etichette"
+    "filterLabels": "Etichette",
+    "actionEditAndApprove": "Modifica e approva"
   },
   "monitoredTables": {
     "breadcrumb": "Tabelle",
@@ -3450,6 +3457,8 @@
     "pickCollectionTitle": "Aggiungi raccolta",
     "pickCollectionDescription": "Scegli la raccolta eseguita da questa pianificazione. Tutte le sue tabelle vengono eseguite secondo la pianificazione.",
     "pickCollectionSearch": "Cerca raccolte",
-    "pickCollectionEmpty": "Nessuna raccolta corrisponde."
+    "pickCollectionEmpty": "Nessuna raccolta corrisponde.",
+    "awaitingApproval": "In attesa di approvazione",
+    "awaitingApprovalHint": "Questa pianificazione inizierà a essere eseguita quando avrà una versione approvata."
   }
 }

@@ -64,6 +64,11 @@
           "unknown": "No se pudieron ejecutar estos comandos. Cópialos y ejecútalos en el SQL Editor (en la barra lateral de Databricks), o envíalos al propietario del catálogo o del esquema."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "No se ejecutará hasta que se apruebe",
+      "descriptionTable": "Las ejecuciones programadas usan las últimas reglas aprobadas y esta tabla aún no tiene ninguna. Puedes guardar la programación ahora; empezará a ejecutarse cuando se apruebe la tabla.",
+      "descriptionCollection": "Las ejecuciones programadas usan la última versión aprobada y esta colección aún no tiene ninguna. Puedes guardar la programación ahora; empezará a ejecutarse cuando se apruebe la colección."
     }
   },
   "lifecycle": {
@@ -1817,6 +1822,7 @@
     "toastUpdated": "Regla actualizada.",
     "saveFailed": "No se pudo guardar la regla.",
     "toastSavedSubmitFailed": "La regla se guardó, pero no se pudo enviar a revisión: {{error}}",
+    "toastSavedApproveFailed": "La regla se guardó, pero no se pudo aprobar: {{error}}",
     "submitNoRevisionTooltip": "No hay nada que revisar: este cambio se aplica en cuanto lo guardas. Solo los cambios en la lógica o los metadatos de la regla crean una nueva versión que aprobar.",
     "dialogSrDescription": "Crea o edita una regla de calidad de datos reutilizable.",
     "createTitle": "Nueva regla del registro",
@@ -2110,7 +2116,8 @@
     "filterDimensions": "Dimensiones",
     "filterSeverities": "Severidades",
     "filterOwners": "Propietarios",
-    "filterLabels": "Etiquetas"
+    "filterLabels": "Etiquetas",
+    "actionEditAndApprove": "Editar y aprobar"
   },
   "monitoredTables": {
     "breadcrumb": "Tablas",
@@ -3450,6 +3457,8 @@
     "pickCollectionTitle": "Añadir colección",
     "pickCollectionDescription": "Elige la colección que ejecuta esta programación. Todas sus tablas se ejecutan según la programación.",
     "pickCollectionSearch": "Buscar colecciones",
-    "pickCollectionEmpty": "Ninguna colección coincide."
+    "pickCollectionEmpty": "Ninguna colección coincide.",
+    "awaitingApproval": "Pendiente de aprobación",
+    "awaitingApprovalHint": "Esta programación empezará a ejecutarse cuando tenga una versión aprobada."
   }
 }
