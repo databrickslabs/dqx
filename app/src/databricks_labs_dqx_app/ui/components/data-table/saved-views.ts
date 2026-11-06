@@ -29,7 +29,7 @@ export interface ViewDefs<C extends string, F extends string> {
   sanitizeValue?: (key: F, value: ViewValue) => ViewValue;
   /** Filters whose value is kept when the filter is hidden (set by other UI, e.g. breakdown clicks). */
   keepValueOnHide?: readonly F[];
-  /** Legacy localStorage keys migrated into the first view by the hook. */
+  /** Legacy localStorage layout keys; `useSavedViews` removes them on mount (they are not migrated). */
   legacyStorageKeys?: string[];
 }
 
@@ -208,4 +208,92 @@ export function resolveActiveView(list: SavedViewListOut, requestedId?: string |
   const byId = (id: string | null | undefined): SavedViewOut | undefined =>
     id ? list.views.find((v) => v.id === id) : undefined;
   return byId(requestedId) ?? byId(list.effective_default_id) ?? list.views.find((v) => v.is_builtin) ?? list.views[0];
+}
+
+/**
+ * Shows or hides filter *key*. Hiding resets its value to its empty value unless the
+ * filter is in *keepValueOnHide* — the same rule {@link reconcileView} applies, so a
+ * hidden filter never narrows the rows and {@link isDirty} stays consistent.
+ */
+export function applyFilterToggle<C extends string, F extends string>(
+  state: ViewState<C, F>,
+  key: F,
+  defs: ViewDefs<C, F>,
+): ViewState<C, F> {
+  const wasVisible = state.filters.visibility[key] ?? false;
+  const filters = { ...state.filters, visibility: { ...state.filters.visibility, [key]: !wasVisible } };
+  const keep = (defs.keepValueOnHide ?? []).includes(key);
+  const values = wasVisible && !keep ? { ...state.values, [key]: cloneEmpty(defs.emptyValues[key]) } : state.values;
+  return { ...state, filters, values };
+}
+
+export const MAX_VIEW_NAME_LENGTH = 80;
+
+export type ViewNameError = "required" | "tooLong" | "duplicate";
+
+/** Collapses whitespace and trims, matching the server's name cleaning. */
+export function cleanViewName(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Why *raw* can't be used as a view name in *scope*, or null when it can. Names are
+ * unique per page within a scope (case-insensitive); *excludeId* skips the view being renamed.
+ */
+export function viewNameError(
+  raw: string,
+  scope: SavedViewOut["scope"],
+  views: readonly SavedViewOut[],
+  excludeId?: string,
+): ViewNameError | null {
+  const name = cleanViewName(raw);
+  if (name.length === 0) return "required";
+  if (name.length > MAX_VIEW_NAME_LENGTH) return "tooLong";
+  const lower = name.toLowerCase();
+  const taken = views.some(
+    (v) => v.scope === scope && v.id !== excludeId && cleanViewName(v.name).toLowerCase() === lower,
+  );
+  return taken ? "duplicate" : null;
+}
+
+/** Whether a menu action can be used and, if not, the i18n key of the reason shown in its tooltip. */
+export interface ActionState {
+  enabled: boolean;
+  reasonKey: string | null;
+}
+
+/** The actions in a saved view's ⋯ menu. Rename and Delete are null (not shown) on the built-in view. */
+export interface RowActions {
+  rename: ActionState | null;
+  delete: ActionState | null;
+  setMyDefault: ActionState;
+  setOrgDefault: ActionState;
+}
+
+const ENABLED: ActionState = { enabled: true, reasonKey: null };
+const disabledBecause = (reasonKey: string): ActionState => ({ enabled: false, reasonKey });
+
+/** Which row actions *view* allows for the current user. */
+export function rowActions(view: SavedViewOut, isAdmin: boolean): RowActions {
+  const edit = view.can_edit ? ENABLED : disabledBecause("savedViews.reasons.orgViewAdminsOnly");
+  let setOrgDefault: ActionState = ENABLED;
+  if (view.is_org_default) setOrgDefault = disabledBecause("savedViews.reasons.alreadyOrgDefault");
+  else if (!isAdmin) setOrgDefault = disabledBecause("savedViews.reasons.orgDefaultAdminsOnly");
+  else if (view.scope !== "org" || !view.can_set_org_default)
+    setOrgDefault = disabledBecause("savedViews.reasons.orgDefaultOrgViewsOnly");
+  return {
+    rename: view.is_builtin ? null : edit,
+    delete: view.is_builtin ? null : edit,
+    setMyDefault: view.is_my_default ? disabledBecause("savedViews.reasons.alreadyMyDefault") : ENABLED,
+    setOrgDefault,
+  };
+}
+
+/** Whether Save is disabled and, when the active view is read-only, the i18n key of the reason. */
+export function saveDisabledReason(
+  activeView: SavedViewOut | null,
+  dirty: boolean,
+): { disabled: boolean; reasonKey: string | null } {
+  if (activeView && !activeView.can_edit) return { disabled: true, reasonKey: "savedViews.saveReadOnly" };
+  return { disabled: !activeView || !dirty, reasonKey: null };
 }
