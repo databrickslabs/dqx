@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BreachMarker } from "@/components/results/breachMarkers";
+import { breachedSeriesAt, breachTimesBySeries, type BreachMarker } from "@/components/results/breachMarkers";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, CircleHelp } from "lucide-react";
@@ -391,6 +391,7 @@ export function TrendTooltip({
   points,
   allSeries,
   colorMap,
+  breachMarkers,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
@@ -404,6 +405,8 @@ export function TrendTooltip({
   /** series name → colour (matches the plotted lines), for the consolidated
    *  swatches. */
   colorMap?: Record<string, string>;
+  /** Per-table breach markers: rows of tables that breached at the hovered run get a ⚠ prefix. */
+  breachMarkers?: BreachMarker[];
   /** Count mode: series name → marker shape, so the tooltip icon matches the
    *  line's marker instead of a generic round dot. */
   seriesShapes?: Record<string, Marker>;
@@ -461,6 +464,7 @@ export function TrendTooltip({
   // row carries the reserved DRAFT_KEY flag. Shown prominently at the top so a
   // draft run reads at a glance without decoding the series values.
   const hoveredRow = points?.find((p) => Number(p.ts) === Number(runKey));
+  const breachedHere = breachedSeriesAt(breachMarkers, runKey == null ? null : Number(runKey));
   const isDraftPoint = hoveredRow?.[DRAFT_KEY] === 1;
   return (
     <div
@@ -503,6 +507,11 @@ export function TrendTooltip({
                 />
               )}
               <span>
+                {breachedHere.has(name) && (
+                  <span aria-hidden style={{ color: p.color }} className="mr-0.5 font-bold">
+                    ⚠
+                  </span>
+                )}
                 {name}: {text}
               </span>
             </li>
@@ -540,10 +549,12 @@ export type OverallStep = { run_date: string; value: number | null };
 /** A recharts dot renderer drawing an "×" at (cx, cy). Used for the member-table
  *  points so they read as recessive marks, distinct from the Average's bold
  *  circular markers. */
-function xMarkerDot(r: number, color: string, opacity = 0.7) {
-  return (props: { cx?: number; cy?: number }) => {
-    const { cx, cy } = props;
+function xMarkerDot(r: number, color: string, opacity = 0.7, suppressAt?: Set<number>) {
+  return (props: { cx?: number; cy?: number; payload?: { ts?: number | string | null } }) => {
+    const { cx, cy, payload } = props;
     if (cx == null || cy == null) return <g key={`${cx}-${cy}`} />;
+    // A breach ⚠ is drawn on this point instead of the ×.
+    if (suppressAt && payload?.ts != null && suppressAt.has(Number(payload.ts))) return <g key={`${cx}-${cy}`} />;
     return (
       <path
         key={`${cx}-${cy}`}
@@ -1062,6 +1073,7 @@ export function ScoreTrendChart({
   // Count mode: clicking a legend item hides/shows that line. Track the hidden
   // series names; each <Line hide> reflects membership.
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const breachTimes = useMemo(() => breachTimesBySeries(breachMarkers), [breachMarkers]);
   const toggleSeries = (name: string) =>
     setHidden((cur) => toggleHidden(cur, name));
   // series name → marker shape, in series order (markers cycle by index). Used
@@ -1342,6 +1354,7 @@ export function ScoreTrendChart({
                     points={points}
                     allSeries={series}
                     colorMap={colorMap}
+                    breachMarkers={breachMarkers}
                   />
                 )}
               />
@@ -1528,7 +1541,7 @@ export function ScoreTrendChart({
                       strokeOpacity={0.55}
                       connectNulls
                       hide={hidden.has(name)}
-                      dot={xMarkerDot(3.5, stroke, 0.7)}
+                      dot={xMarkerDot(3.5, stroke, 0.7, breachTimes.get(name))}
                       activeDot={xMarkerDot(4.5, stroke, 1)}
                       isAnimationActive={false}
                     />
@@ -1571,6 +1584,43 @@ export function ScoreTrendChart({
                 if (!Number.isFinite(x) || m.score == null || !Number.isFinite(m.score)) return null;
                 if (m.series && hidden.has(m.series)) return null;
                 const fill = "oklch(0.70 0.19 60)"; /* deeper amber — more contrast on the plot */
+                if (m.series) {
+                  // Multi-table: the ⚠ sits ON the point in that table's line
+                  // colour (replacing its ×), haloed with the background colour.
+                  const idx = series.indexOf(m.series);
+                  const glyphColor = colorMap?.[m.series] ?? CHART_FALLBACK[Math.max(idx, 0) % CHART_FALLBACK.length];
+                  return (
+                    <ReferenceDot
+                      key={`bm-${m.series}-${m.run_date}`}
+                      x={x}
+                      y={m.score}
+                      r={0}
+                      ifOverflow="hidden"
+                      fill="none"
+                      stroke="none"
+                      shape={(p: { cx?: number; cy?: number }) =>
+                        p.cx == null || p.cy == null ? <g /> : (
+                          <text
+                            x={p.cx}
+                            y={p.cy}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fontSize={14}
+                            fontWeight={700}
+                            fill={glyphColor}
+                            stroke="var(--background)"
+                            strokeWidth={3}
+                            strokeLinejoin="round"
+                            paintOrder="stroke"
+                            style={{ pointerEvents: "none" }}
+                          >
+                            ⚠
+                          </text>
+                        )
+                      }
+                    />
+                  );
+                }
                 return (
                   <ReferenceDot
                     key={`bm-${m.series ?? "all"}-${m.run_date}`}

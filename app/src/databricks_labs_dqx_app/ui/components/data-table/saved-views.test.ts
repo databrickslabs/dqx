@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { SavedViewListOut, SavedViewOut } from "@/lib/api";
 import {
   applyFilterToggle,
+  applyStarOptimistic,
   builtinViewState,
   cleanViewName,
   isDirty,
@@ -351,5 +352,25 @@ describe("value readers", () => {
     expect(oneOf("catalog", allowed, "none")).toBe("catalog");
     expect(oneOf("bogus", allowed, "none")).toBe("none");
     expect(oneOf(null, allowed, "none")).toBe("none");
+  });
+});
+
+describe("applyStarOptimistic", () => {
+  const list: SavedViewListOut = {
+    views: [view({ id: "a", name: "A", starred: false }), view({ id: "b", name: "B", starred: false })],
+    effective_default_id: "a",
+  };
+  it("flips only the targeted view and keeps the rest", () => {
+    const next = applyStarOptimistic(list, "b", true);
+    expect(next.views.map((v) => v.starred)).toEqual([false, true]);
+    expect(next.effective_default_id).toBe("a");
+    expect(list.views[1].starred).toBe(false);
+  });
+  it("re-sorts starred views first via sortViews", () => {
+    const next = applyStarOptimistic(list, "b", true);
+    expect(sortViews(next.views).org.map((v) => v.id)).toEqual(["b", "a"]);
+  });
+  it("returns the same list for an unknown view", () => {
+    expect(applyStarOptimistic(list, "zzz", true)).toBe(list);
   });
 });

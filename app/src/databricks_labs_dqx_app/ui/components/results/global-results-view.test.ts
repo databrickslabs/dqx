@@ -31,9 +31,9 @@ describe("buildGlobalResultsViewDefs", () => {
       "schema",
       "owner",
       "collection",
-      "dqScore",
       "table",
       "rule",
+      "dqScore",
       "outcome",
       "dimension",
       "severity",
@@ -43,9 +43,9 @@ describe("buildGlobalResultsViewDefs", () => {
     expect(state.filters.order.filter((k) => state.filters.visibility[k])).toEqual([
       "catalog",
       "schema",
-      "dqScore",
       "table",
       "rule",
+      "dqScore",
       "outcome",
     ]);
     expect(state.values.dqScore).toBe("all");
@@ -90,8 +90,8 @@ describe("filtersFromViewValues / viewValueChanges", () => {
   it("reports only the changed view keys (never column)", () => {
     const next = { ...EMPTY_FILTERS, table: ["a.b.c"], scoreBucket: "none", column: ["x"] };
     expect(viewValueChanges(EMPTY_FILTERS, next)).toEqual([
-      ["dqScore", "none"],
       ["table", ["a.b.c"]],
+      ["dqScore", "none"],
     ]);
     expect(viewValueChanges(next, next)).toEqual([]);
   });

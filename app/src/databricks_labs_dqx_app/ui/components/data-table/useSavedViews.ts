@@ -41,6 +41,7 @@ import {
   resolveActiveView,
   sanitizeViewValues,
   sortViews,
+  applyStarOptimistic,
   toPayload,
   type ViewDefs,
   type ViewSections,
@@ -280,14 +281,28 @@ export function useSavedViews<C extends string, F extends string>(
     [run, deleteView],
   );
 
+  // Optimistic: the star and section order flip immediately; rolled back on error.
   const setStar = useCallback(
     async (id: string, starred: boolean) => {
-      await run(
-        () => (starred ? starView : unstarView)({ viewId: id }),
-        "savedViews.errors.star",
-      );
+      await queryClient.cancelQueries({ queryKey: [queryKey[0]] });
+      const snapshot = queryClient.getQueryData<{ data: SavedViewListOut }>(queryKey);
+      if (snapshot) {
+        queryClient.setQueryData<{ data: SavedViewListOut }>(queryKey, {
+          ...snapshot,
+          data: applyStarOptimistic(snapshot.data, id, starred),
+        });
+      }
+      try {
+        await (starred ? starView : unstarView)({ viewId: id });
+      } catch (error) {
+        if (snapshot) queryClient.setQueryData(queryKey, snapshot);
+        toast.error(t("savedViews.errors.star"));
+        throw error;
+      } finally {
+        await refetchList();
+      }
     },
-    [run, starView, unstarView],
+    [queryClient, queryKey, refetchList, starView, unstarView, t],
   );
 
   const setMyDefault = useCallback(

@@ -30,3 +30,33 @@ export function perTableBreachMarkers(trendByTable: TrendPointOut[] | undefined)
     ];
   });
 }
+
+/** Epoch-ms of a marker's run_date, or null when it doesn't parse. */
+function runTime(runDate: string | number): number | null {
+  const t = typeof runDate === "number" ? runDate : Date.parse(runDate);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Series (table names) that breached at *runDate* (ISO string or epoch ms). Series-less markers are ignored. */
+export function breachedSeriesAt(markers: BreachMarker[] | undefined, runDate: string | number | null | undefined): Set<string> {
+  const out = new Set<string>();
+  const at = runDate == null ? null : runTime(runDate);
+  if (at == null) return out;
+  for (const m of markers ?? []) {
+    if (m.series && runTime(m.run_date) === at) out.add(m.series);
+  }
+  return out;
+}
+
+/** series -> epoch-ms run times at which that series breached (series-less markers ignored). */
+export function breachTimesBySeries(markers: BreachMarker[] | undefined): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const m of markers ?? []) {
+    const t = runTime(m.run_date);
+    if (!m.series || t == null) continue;
+    const times = out.get(m.series) ?? new Set<number>();
+    times.add(t);
+    out.set(m.series, times);
+  }
+  return out;
+}

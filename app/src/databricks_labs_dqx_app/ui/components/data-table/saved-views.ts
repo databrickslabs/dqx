@@ -386,3 +386,9 @@ export function stringArrayValue(value: ViewValue | undefined): string[] {
 export function oneOf<T extends string>(value: ViewValue | undefined, allowed: readonly T[], fallback: T): T {
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
+
+/** *list* with view *viewId*'s star flag set to *starred* (same list when the view is absent). */
+export function applyStarOptimistic(list: SavedViewListOut, viewId: string, starred: boolean): SavedViewListOut {
+  if (!list.views.some((v) => v.id === viewId)) return list;
+  return { ...list, views: list.views.map((v) => (v.id === viewId ? { ...v, starred } : v)) };
+}
