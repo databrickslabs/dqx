@@ -13,6 +13,7 @@ from databricks.sdk.service.jobs import (
     JobEnvironment,
     JobParameterDefinition,
     JobPermissionLevel,
+    JobPermissions,
     JobRunAs,
     JobSettings,
     PythonWheelTask,
@@ -36,6 +37,17 @@ _MANAGED_TAGS = {"app": "dqx-studio", **_DISCOVERY_TAGS}
 _JOB_NAME = "dqx-studio-task-runner"
 _TASK_KEY = "run_task"
 _ENVIRONMENT_KEY = "default"
+# Every workspace user gets view access (runs, output and errors), never run or manage access.
+_WORKSPACE_USERS_GROUP = "users"
+_VIEW_LEVELS = frozenset(
+    {
+        JobPermissionLevel.CAN_VIEW,
+        JobPermissionLevel.CAN_MANAGE_RUN,
+        JobPermissionLevel.CAN_MANAGE,
+        JobPermissionLevel.IS_OWNER,
+    }
+)
+_MANAGE_LEVELS = frozenset({JobPermissionLevel.CAN_MANAGE, JobPermissionLevel.IS_OWNER})
 # Must stay in sync with ``timeout_seconds`` on the DAB job and
 # ``_IN_FLIGHT_MAX_AGE`` in ``scheduler_service``.
 _TASK_RUNNER_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -75,9 +87,14 @@ class ResolvedJob:
 class TaskRunnerJobManager:
     """Resolve and safely configure the Studio-owned portions of a job."""
 
-    def __init__(self, workspace: WorkspaceClient, setup_user: str | None = None) -> None:
+    def __init__(
+        self, workspace: WorkspaceClient, setup_user: str | None = None, app_application_id: str | None = None
+    ) -> None:
         self.workspace = workspace
         self._setup_user = (setup_user or "").strip() or None
+        # Every workspace principal can view Studio runner jobs, so discovery must only reuse a
+        # tagged job this app created; otherwise one install could pick up another install's job.
+        self._app_application_id = (app_application_id or "").strip().lower() or None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         """Return the configured or tagged task-runner job, creating one if needed."""
@@ -87,11 +104,14 @@ class TaskRunnerJobManager:
         for job in self.workspace.jobs.list(expand_tasks=True):
             settings = getattr(job, "settings", None)
             tags = getattr(settings, "tags", None) or {}
-            if all(tags.get(key) == value for key, value in _DISCOVERY_TAGS.items()):
+            if all(tags.get(key) == value for key, value in _DISCOVERY_TAGS.items()) and self._created_by_app(job):
                 job_id = getattr(job, "job_id", None)
                 if isinstance(job_id, int):
                     return ResolvedJob(job_id=job_id, created=False)
 
+        access_control_list = [_workspace_users_view_access()]
+        if self._setup_user:
+            access_control_list.insert(0, _setup_admin_access(self._setup_user))
         created = self.workspace.jobs.create(
             name=_JOB_NAME,
             max_concurrent_runs=10,
@@ -100,25 +120,42 @@ class TaskRunnerJobManager:
             tasks=[_task_runner_task()],
             parameters=_task_runner_parameters(),
             environments=[_task_runner_environment([])],
-            access_control_list=[_setup_admin_access(self._setup_user)] if self._setup_user else None,
+            access_control_list=access_control_list,
         )
         job_id = getattr(created, "job_id", None)
         if not isinstance(job_id, int):
             raise RuntimeError("Databricks did not return a task-runner job ID.")
         return ResolvedJob(job_id=job_id, created=True)
 
+    def _created_by_app(self, job: object) -> bool:
+        """Whether *job* was created by this app's service principal (always true when the app ID is unknown)."""
+        if self._app_application_id is None:
+            return True
+        creator = (getattr(job, "creator_user_name", None) or "").strip().lower()
+        return creator == self._app_application_id
+
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         """Give the setup administrator management access to a task-runner job."""
         permissions = self.workspace.jobs.get_permissions(str(job_id))
-        for access in permissions.access_control_list or []:
-            if (access.user_name or "").casefold() != user_name.casefold():
-                continue
-            granted_levels = {permission.permission_level for permission in access.all_permissions or []}
-            if granted_levels & {JobPermissionLevel.CAN_MANAGE, JobPermissionLevel.IS_OWNER}:
-                return
+        if _has_any_level(permissions, user_name, _MANAGE_LEVELS, is_group=False):
+            return
         self.workspace.jobs.update_permissions(
             str(job_id),
             access_control_list=[_setup_admin_access(user_name)],
+        )
+
+    def grant_workspace_view(self, job_id: int) -> None:
+        """Let every workspace user view task-runner job *job_id* and its runs, without changing other grants.
+
+        Existing grants are preserved (the update is additive), and nothing is written when the
+        workspace users group already has a view level on the job.
+        """
+        permissions = self.workspace.jobs.get_permissions(str(job_id))
+        if _has_any_level(permissions, _WORKSPACE_USERS_GROUP, _VIEW_LEVELS, is_group=True):
+            return
+        self.workspace.jobs.update_permissions(
+            str(job_id),
+            access_control_list=[_workspace_users_view_access()],
         )
 
     def exists(self, job_id: int) -> bool:
@@ -328,6 +365,23 @@ def _parse_job_id(configured_job_id: str) -> int:
 
 def _setup_admin_access(user_name: str) -> JobAccessControlRequest:
     return JobAccessControlRequest(user_name=user_name, permission_level=JobPermissionLevel.CAN_MANAGE)
+
+
+def _workspace_users_view_access() -> JobAccessControlRequest:
+    return JobAccessControlRequest(group_name=_WORKSPACE_USERS_GROUP, permission_level=JobPermissionLevel.CAN_VIEW)
+
+
+def _has_any_level(
+    permissions: JobPermissions, principal: str, levels: frozenset[JobPermissionLevel], *, is_group: bool
+) -> bool:
+    """Whether *principal* (a user name, or a group when *is_group*) already holds one of *levels*."""
+    for access in permissions.access_control_list or []:
+        name = (access.group_name if is_group else access.user_name) or ""
+        if name.casefold() != principal.casefold():
+            continue
+        if {permission.permission_level for permission in access.all_permissions or []} & levels:
+            return True
+    return False
 
 
 def _task_runner_task() -> Task:

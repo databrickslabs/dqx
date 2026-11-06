@@ -23,6 +23,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     ManageHolderOut,
+    ReferenceGrantPreflightIn,
     ScheduleGrantApplyIn,
     ScheduleGrantApplyOut,
     ScheduleGrantFailureOut,
@@ -32,10 +33,12 @@ from databricks_labs_dqx_app.backend.models import (
     SchedulePreflightTableOut,
 )
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
+    ScheduleGrantApplication,
     ScheduleGrantService,
     TablePreflight,
     WarehouseUnavailableError,
     inspection_failure_detail,
+    reference_table_fqns,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -92,6 +95,58 @@ async def apply_schedule_grants(
     except Exception as e:
         logger.error(f"Applying schedule grants failed ({type(e).__name__})")
         raise HTTPException(status_code=500, detail="Failed to give the scheduler access.")
+    return _apply_out(result)
+
+
+@router.post(
+    "/reference-preflight",
+    response_model=SchedulePreflightOut,
+    operation_id="preflightReferenceGrants",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def preflight_reference_grants(
+    body: ReferenceGrantPreflightIn,
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
+) -> SchedulePreflightOut:
+    """Check whether the task-runner SP can read the tables a rule joins or reads.
+
+    Raw SQL is scanned server-side for FROM / JOIN tables. The rule's own source table is
+    excluded. The check is advisory: it never blocks saving the rule.
+    """
+    fqns = reference_table_fqns(body.table_fqns, body.sql_query, body.source_table_fqn)
+    try:
+        results = await grant_svc.reference_preflight_async(fqns)
+    except Exception as e:
+        logger.error(f"Reference-table grant preflight failed ({type(e).__name__})")
+        raise HTTPException(status_code=500, detail="Failed to check the joined tables' access.")
+    return _preflight_out(results)
+
+
+@router.post(
+    "/reference-apply",
+    response_model=ScheduleGrantApplyOut,
+    operation_id="applyReferenceGrants",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+async def apply_reference_grants(
+    body: ScheduleGrantApplyIn,
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+) -> ScheduleGrantApplyOut:
+    """Run the grants :func:`preflight_reference_grants` lists for these tables, as the signed-in user."""
+    try:
+        result = await grant_svc.apply_reference_grants_async(body.table_fqns, obo_sql)
+    except WarehouseUnavailableError as e:
+        logger.warning(f"Reference-table grants not applied: access check inconclusive ({type(e).__name__})")
+        raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
+    except Exception as e:
+        logger.error(f"Applying reference-table grants failed ({type(e).__name__})")
+        raise HTTPException(status_code=500, detail="Failed to give the task runner access.")
+    return _apply_out(result)
+
+
+def _apply_out(result: ScheduleGrantApplication) -> ScheduleGrantApplyOut:
+    """Convert an applied-grants result to the API response."""
     return ScheduleGrantApplyOut(
         preflight=_preflight_out(result.preflight),
         applied=result.applied,

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronDown, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ReferenceGrantPrompt } from "@/components/common/ReferenceGrantPrompt";
 import { JoinTablePickerModal } from "@/components/rules/lowcode/JoinTablePickerModal";
 import { useGetTableColumns } from "@/lib/api";
 import type { JoinAst, JoinKeyAst, JoinType } from "@/lib/lowcodeAst";
@@ -201,6 +202,7 @@ export function JoinBlock({ join, declaredColumns, onChange, onDelete }: Props) 
           </Button>
         </div>
       )}
+      {table && <ReferenceGrantPrompt tableFqns={[join.target_table]} />}
     </div>
   );
 }

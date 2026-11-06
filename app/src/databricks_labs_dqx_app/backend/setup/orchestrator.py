@@ -170,6 +170,8 @@ class SetupJobs(Protocol):
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None: ...
 
+    def grant_workspace_view(self, job_id: int) -> None: ...
+
     def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep: ...
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None: ...
@@ -958,6 +960,16 @@ class SetupOrchestrator:
             try:
                 if setup_user is not None:
                     await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
+                try:
+                    await asyncio.to_thread(self.jobs.grant_workspace_view, resolved.job_id)
+                except NotFound:
+                    raise
+                except Exception as error:
+                    # Visibility for workspace users is a convenience, not a requirement for running
+                    # checks, so a missing grant never blocks setup.
+                    logger.warning(
+                        f"Could not give workspace users view access to the task-runner job ({type(error).__name__})"
+                    )
                 step = await asyncio.to_thread(
                     partial(
                         self.jobs.validate_run_as,

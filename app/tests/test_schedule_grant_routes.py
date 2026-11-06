@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
+    ReferenceGrantPreflightIn,
     ScheduleConfigIn,
     ScheduleGrantApplyIn,
     SchedulePreflightIn,
@@ -40,7 +41,12 @@ from databricks_labs_dqx_app.backend.models import (
 )
 from databricks_labs_dqx_app.backend.routes.v1.data_products import update_data_product
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import update_monitored_table_schedule
-from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import apply_schedule_grants, preflight_schedule_grants
+from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import (
+    apply_reference_grants,
+    apply_schedule_grants,
+    preflight_reference_grants,
+    preflight_schedule_grants,
+)
 from databricks_labs_dqx_app.backend.routes.v1.schedules import list_schedule_overview, save_schedule
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -632,3 +638,70 @@ class TestScheduleOverviewRoute:
 
         assert exc.value.status_code == 500
         assert exc.value.detail == "Failed to list schedule overview."
+
+
+class TestReferenceGrantRoutes:
+    async def test_preflight_scans_raw_sql_and_excludes_the_source_table(self, grant_svc):
+        grant_svc.reference_preflight_async.return_value = [
+            TablePreflight(fqn="cat.ref.customers", can_manage=True, manage_holders=[]),
+        ]
+        body = ReferenceGrantPreflightIn(
+            table_fqns=["cat.ref.customers"],
+            sql_query="SELECT * FROM {{input_view}} i JOIN cat.ref.customers c ON 1=1 JOIN cat.src.events e ON 1=1",
+            source_table_fqn="cat.src.events",
+        )
+
+        out = await preflight_reference_grants(body, grant_svc)
+
+        grant_svc.reference_preflight_async.assert_awaited_once_with(["cat.ref.customers"])
+        assert [(t.fqn, t.can_manage) for t in out.tables] == [("cat.ref.customers", True)]
+
+    async def test_preflight_reports_a_missing_select_grant_with_its_statement(self, grant_svc):
+        grant_svc.reference_preflight_async.return_value = [
+            TablePreflight(
+                fqn="cat.ref.customers",
+                can_manage=True,
+                manage_holders=[],
+                missing_grants=[
+                    {
+                        "principal": "runner-sp",
+                        "type": "service_principal",
+                        "display_name": "Task runner",
+                        "privilege": "SELECT",
+                        "securable_type": "TABLE",
+                        "securable": "cat.ref.customers",
+                        "remediation": "GRANT SELECT ON TABLE cat.ref.customers TO `runner-sp`;",
+                    }
+                ],
+            ),
+        ]
+
+        out = await preflight_reference_grants(ReferenceGrantPreflightIn(table_fqns=["cat.ref.customers"]), grant_svc)
+
+        (missing,) = out.tables[0].missing_grants
+        assert (missing.privilege, missing.securable) == ("SELECT", "cat.ref.customers")
+        assert missing.statement.startswith("GRANT SELECT ON TABLE")
+
+    async def test_preflight_failure_returns_a_fixed_message(self, grant_svc):
+        grant_svc.reference_preflight_async.side_effect = RuntimeError(_LEAKY)
+
+        with pytest.raises(HTTPException) as exc:
+            await preflight_reference_grants(ReferenceGrantPreflightIn(table_fqns=[FQN]), grant_svc)
+
+        assert exc.value.status_code == 500
+        assert _LEAKY not in str(exc.value.detail)
+
+    async def test_apply_runs_as_the_signed_in_user_and_returns_a_fresh_check(self, grant_svc):
+        executor = create_autospec(SqlExecutor, instance=True)
+        grant_svc.apply_reference_grants_async.return_value = ScheduleGrantApplication(
+            preflight=[TablePreflight(fqn=FQN, can_manage=True, manage_holders=[])],
+            applied=1,
+            total=1,
+            failed=(),
+        )
+
+        out = await apply_reference_grants(ScheduleGrantApplyIn(table_fqns=[FQN]), grant_svc, executor)
+
+        grant_svc.apply_reference_grants_async.assert_awaited_once_with([FQN], executor)
+        assert (out.applied, out.total) == (1, 1)
+        assert out.preflight.tables[0].can_manage is True

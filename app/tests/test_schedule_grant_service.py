@@ -4,7 +4,7 @@ from unittest.mock import create_autospec, patch
 
 import pytest
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import PermissionDenied
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.catalog import (
     CatalogInfo,
     CatalogType,
@@ -42,6 +42,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     inspection_failure_detail,
     inspection_failure_reason,
     manage_block_detail,
+    reference_table_fqns,
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -874,3 +875,146 @@ def test_apply_still_reports_the_grants_that_ran_when_the_recheck_fails(
     # The check taken before the grants is returned, so the commands stay on screen.
     assert [g["remediation"] for g in result.preflight[0].missing_grants] == [g + ";" for g in _PARENT_GRANTS]
     assert "secret detail" not in repr(result)
+
+
+# --- Joined (reference) tables: the task-runner SP must read every table a rule joins -----
+
+RUNNER = "runner-sp"
+REF_FQN = "cat.ref.customers"
+
+
+def _grants_by_kind(privileges: dict[str, list[Privilege]]):
+    """Effective-grants stub: the same privileges for every principal, per securable kind."""
+
+    def get_effective(kind, name, *, principal, page_token=None):
+        return effective(principal, privileges.get(kind, []))
+
+    return get_effective
+
+
+def _runner_ready() -> dict[str, list[Privilege]]:
+    return {"catalog": [Privilege.USE_CATALOG], "schema": [Privilege.USE_SCHEMA], "table": [Privilege.SELECT]}
+
+
+class TestReferenceTableFqns:
+    def test_extracts_joined_tables_from_raw_sql_and_skips_the_input_view_and_ctes(self) -> None:
+        sql = (
+            "WITH recent AS (SELECT * FROM cat.ref.orders) "
+            "SELECT i.id FROM {{input_view}} i "
+            "LEFT JOIN cat.ref.customers c ON i.id = c.id "
+            "-- JOIN cat.ref.commented_out x ON 1=1\n"
+            "JOIN recent r ON r.id = i.id"
+        )
+
+        assert reference_table_fqns([], sql, None) == ["cat.ref.orders", "cat.ref.customers"]
+
+    def test_excludes_the_source_table_and_deduplicates_case_insensitively(self) -> None:
+        sql = "SELECT * FROM {{input_view}} i JOIN CAT.REF.Customers c ON 1=1 JOIN cat.src.events e ON 1=1"
+
+        assert reference_table_fqns(["cat.ref.customers"], sql, "cat.src.events") == ["cat.ref.customers"]
+
+    def test_two_part_and_invalid_names_are_not_checked(self) -> None:
+        sql = "SELECT * FROM ref.customers c JOIN cat.ref.lookup l ON 1=1"
+
+        assert reference_table_fqns(["not a table"], sql, None) == ["cat.ref.lookup"]
+
+    def test_plain_predicate_without_joins_yields_nothing(self) -> None:
+        assert reference_table_fqns([], "amount > 0", None) == []
+
+
+class TestReferencePreflight:
+    def test_table_the_runner_can_read_needs_no_grant(self, service, sp) -> None:
+        sp.grants.get_effective.side_effect = _grants_by_kind(_runner_ready())
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.fqn == REF_FQN
+        assert table.can_manage is True
+        assert table.missing_grants == []
+        assert table.access_unverified is False
+
+    def test_missing_select_is_a_one_click_grant_when_caller_can_manage(self, service, sp, obo) -> None:
+        privileges = _runner_ready() | {"table": []}
+        sp.grants.get_effective.side_effect = _grants_by_kind(privileges)
+        obo.statement_execution.execute_statement.return_value = sql_response(
+            rows=[["alice@example.com", "MANAGE", "TABLE", REF_FQN]]
+        )
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.can_manage is True
+        assert [
+            (g["principal"], g["privilege"], g["securable_type"], g["securable"]) for g in table.missing_grants
+        ] == [(RUNNER, "SELECT", "TABLE", REF_FQN)]
+        assert table.missing_grants[0]["remediation"].startswith("GRANT SELECT ON TABLE ")
+        assert table.manage_holders == []
+
+    def test_missing_select_the_caller_cannot_grant_blocks_and_names_holders(self, service, sp, obo) -> None:
+        sp.grants.get_effective.side_effect = _grants_by_kind(_runner_ready() | {"table": []})
+        obo.statement_execution.execute_statement.return_value = sql_response(
+            rows=[["data-eng", "MANAGE", "TABLE", REF_FQN]]
+        )
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.can_manage is False
+        assert table.missing_grants == []
+        assert [h["principal"] for h in table.manage_holders] == ["data-eng"]
+
+    def test_missing_usage_on_the_schema_is_listed_for_the_runner_only(self, service, sp, obo) -> None:
+        privileges = _runner_ready() | {"schema": []}
+        sp.grants.get_effective.side_effect = _grants_by_kind(privileges)
+        obo.statement_execution.execute_statement.return_value = sql_response(
+            rows=[["alice@example.com", "MANAGE", "TABLE", REF_FQN]]
+        )
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert [(g["principal"], g["privilege"]) for g in table.missing_grants] == [(RUNNER, "USE_SCHEMA")]
+
+    def test_builtin_samples_table_is_never_checked(self, service, sp) -> None:
+        sp.catalogs.get.return_value = CatalogInfo(catalog_type=CatalogType.SYSTEM_CATALOG)
+
+        (table,) = service.reference_preflight(["samples.nyctaxi.trips"])
+
+        assert table.can_manage is True
+        assert table.missing_grants == []
+
+    def test_unreadable_permissions_are_unverified_not_a_denial(self, service, sp, obo) -> None:
+        sp.grants.get_effective.side_effect = PermissionDenied("no grants REST")
+        obo.statement_execution.execute_statement.side_effect = TimeoutError("warehouse cold")
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.access_unverified is True
+        assert table.unverified_reason == "warehouse"
+        assert table.missing_grants == []
+
+    def test_table_that_does_not_exist_is_unverified_instead_of_failing_the_request(self, service, sp, obo) -> None:
+        sp.grants.get_effective.side_effect = NotFound("TABLE_OR_VIEW_NOT_FOUND")
+        obo.statement_execution.execute_statement.side_effect = NotFound("TABLE_OR_VIEW_NOT_FOUND")
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.fqn == REF_FQN
+        assert table.access_unverified is True
+        assert table.unverified_reason == "permissions"
+        assert table.missing_grants == []
+
+
+class TestApplyReferenceGrants:
+    def test_runs_the_select_grant_through_the_callers_executor(self, service, sp, obo) -> None:
+        sp.grants.get_effective.side_effect = _grants_by_kind(_runner_ready() | {"table": []})
+        obo.statement_execution.execute_statement.return_value = sql_response(
+            rows=[["alice@example.com", "MANAGE", "TABLE", REF_FQN]]
+        )
+        executor = create_autospec(SqlExecutor, instance=True)
+
+        result = service.apply_reference_grants([REF_FQN], executor)
+
+        executor.execute_no_schema.assert_called_once()
+        (statement,) = executor.execute_no_schema.call_args.args
+        assert statement.startswith("GRANT SELECT ON TABLE ")
+        assert result.applied == 1
+        assert result.total == 1
+        assert result.failed == ()

@@ -28,6 +28,7 @@ import {
   type UpdateDataProductIn,
 } from "@/lib/api";
 import { useSubmitDataProductWithRationale } from "@/lib/api-custom";
+import { createSaveGate } from "./saveGate";
 import type { OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -227,11 +228,22 @@ export function useEditProductState(product: DataProductOut) {
   const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
   const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
 
-  const invalidate = useCallback(() => {
-    qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
+  /** Refetch the product and related lists. Resolves once the product detail
+   *  (the snapshot `persist` diffs against) has been refetched. */
+  const invalidate = useCallback(async () => {
+    const detail = qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
     qc.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
     qc.invalidateQueries({ queryKey: getListRunSetsQueryKey() });
+    await detail;
   }, [qc, product.product_id]);
+
+  // Save and Submit both diff the buffer against `product`, which only updates
+  // once the post-save refetch lands. The gate keeps them from overlapping, and
+  // `persisting` keeps both buttons disabled until that refetch has landed, so
+  // a quick Submit after Save can't replay Save's removals against a stale
+  // snapshot (which the server rejects as "member not found").
+  const saveGateRef = useRef(createSaveGate());
+  const [persisting, setPersisting] = useState(false);
 
   /** Persist all buffered edits: PATCH name/description/owner/schedule, then
    *  reconcile members (add new, remove dropped, re-add pin-only changes).
@@ -357,38 +369,68 @@ export function useEditProductState(product: DataProductOut) {
     removeGrantMut,
   ]);
 
-  const handleSaveDraft = useCallback(async (): Promise<boolean> => {
-    try {
-      await persist();
-      bypassGuardRef.current = true;
-      resyncRef.current = true;
-      invalidate();
-      toast.success(t("dataProducts.toastSavedDraft"));
-      return true;
-    } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 });
-      return false;
-    }
-  }, [persist, invalidate, t]);
+  /** Run a save-like action through the gate, keeping `persisting` set until
+   *  the product has been refetched. A failed save still refetches (without
+   *  adopting it into the buffer) so a retry diffs against what the server
+   *  actually holds after any partial writes. Returns false if another save
+   *  is already running. */
+  const runPersisting = useCallback(
+    async (work: () => Promise<boolean>): Promise<boolean> => {
+      const result = await saveGateRef.current.run(async () => {
+        setPersisting(true);
+        try {
+          return await work();
+        } finally {
+          setPersisting(false);
+        }
+      });
+      return result ?? false;
+    },
+    [],
+  );
+
+  const handleSaveDraft = useCallback(
+    (): Promise<boolean> =>
+      runPersisting(async () => {
+        try {
+          await persist();
+        } catch (e) {
+          toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 });
+          await invalidate();
+          return false;
+        }
+        bypassGuardRef.current = true;
+        resyncRef.current = true;
+        toast.success(t("dataProducts.toastSavedDraft"));
+        await invalidate();
+        return true;
+      }),
+    [runPersisting, persist, invalidate, t],
+  );
 
   /** Persist any staged edits, then submit the space for review
    *  (draft/rejected -> pending_approval). Mirrors the monitored-table
    *  "Submit for review" flow. Optional change rationale is stored on the
    *  lifecycle event (pending_rationale), not in the comment thread. */
-  const handleSubmit = useCallback(async (rationale?: string | null): Promise<boolean> => {
-    try {
-      await persist();
-      await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
-      bypassGuardRef.current = true;
-      resyncRef.current = true;
-      invalidate();
-      toast.success(t("dataProducts.toastSubmitted"));
-      return true;
-    } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 });
-      return false;
-    }
-  }, [persist, submitMut, product.product_id, invalidate, t]);
+  const handleSubmit = useCallback(
+    (rationale?: string | null): Promise<boolean> =>
+      runPersisting(async () => {
+        try {
+          await persist();
+          await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
+        } catch (e) {
+          toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 });
+          await invalidate();
+          return false;
+        }
+        bypassGuardRef.current = true;
+        resyncRef.current = true;
+        toast.success(t("dataProducts.toastSubmitted"));
+        await invalidate();
+        return true;
+      }),
+    [runPersisting, persist, submitMut, product.product_id, invalidate, t],
+  );
 
   // Called by the approve handlers (the space-level approve banner AND the
   // member-level review popover) after a successful approval — but ONLY when
@@ -406,8 +448,9 @@ export function useEditProductState(product: DataProductOut) {
     resyncRef.current = true;
   }, []);
 
-  // A save touches several endpoints; treat any in flight as "save pending".
-  const savePending = updateMut.isPending || addMut.isPending || removeMut.isPending;
+  // A save touches several endpoints and then refetches; treat the whole
+  // sequence as "save pending" (not just whichever mutation is in flight).
+  const savePending = persisting || updateMut.isPending || addMut.isPending || removeMut.isPending;
 
   return {
     name,

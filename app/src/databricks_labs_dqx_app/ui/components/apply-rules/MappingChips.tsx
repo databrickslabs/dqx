@@ -35,6 +35,7 @@ import {
   columnsForSlot,
 } from "./ColumnPicker";
 import { columnMappingDriftKind } from "./schemaDrift";
+import { completesExistingSet, siblingColumnsForSlot } from "./shared";
 
 const PALETTE = [
   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
@@ -160,6 +161,7 @@ function EditableChip({
   slot,
   columns,
   excludeColumns,
+  isDuplicate,
   onChange,
   onJump,
   onRemove,
@@ -170,6 +172,7 @@ function EditableChip({
   slot: RuleSlot;
   columns: ColumnOut[];
   excludeColumns: string[];
+  isDuplicate: (candidateValue: string) => boolean;
   onChange: (colName: string) => void;
   onJump?: () => void;
   onRemove?: () => void;
@@ -206,6 +209,7 @@ function EditableChip({
         slot={slot}
         matches={matches}
         totalAll={columns.length}
+        isDuplicate={isDuplicate}
         onSelect={(colName) => {
           onChange(colName);
           setOpen(false);
@@ -315,6 +319,7 @@ function PendingSlotChip({
   slot,
   columns,
   excludeColumns,
+  isDuplicate,
   value,
   autoOpen,
   colorClass,
@@ -324,6 +329,7 @@ function PendingSlotChip({
   slot: RuleSlot;
   columns: ColumnOut[];
   excludeColumns: string[];
+  isDuplicate: (candidateValue: string) => boolean;
   value?: string;
   autoOpen: boolean;
   colorClass: string;
@@ -364,6 +370,7 @@ function PendingSlotChip({
             slot={slot}
             matches={matches}
             totalAll={columns.length}
+            isDuplicate={isDuplicate}
             onSelect={(colName) => {
               onSelect(colName);
               setOpen(false);
@@ -399,11 +406,13 @@ function PendingManySlotChip({
   slot,
   columns,
   excludeColumns,
+  isDuplicate,
   onCommit,
 }: {
   slot: RuleSlot;
   columns: ColumnOut[];
   excludeColumns: string[];
+  isDuplicate: (candidateValue: string) => boolean;
   onCommit: (colNames: string[]) => void;
 }) {
   const { t } = useTranslation();
@@ -416,6 +425,7 @@ function PendingManySlotChip({
         value={selected}
         onChange={setSelected}
         excludeColumns={excludeColumns}
+        isDuplicate={isDuplicate}
       />
       <div className="flex justify-end">
         <Button
@@ -533,12 +543,20 @@ export function MappingChips({
 
   const slotNames = slots.map((s) => s.name);
   const n = countNonEmpty(columnMapping, slotNames);
-  // Every column already used anywhere in this rule's mapping — excluded
-  // from a chip's own picker candidates (minus its own current value, see
-  // `EditableChip`) so the same column can't be picked twice across groups.
-  const usedColumns = columnMapping.flatMap((group) =>
-    slotNames.map((s) => group[s]).filter((v): v is string => Boolean(v)),
-  );
+  // Duplicate-set predicate for one slot of one set (existing group or the
+  // in-progress one). Only an exact repeat of another group is blocked; a
+  // column already used by another group stays pickable for this slot.
+  const duplicateCheckFor =
+    (slotName: string, partial: AppliedRuleOutColumnMappingItem, currentValue?: string) =>
+    (candidateValue: string) =>
+      completesExistingSet({
+        slotNames,
+        slotName,
+        candidateValue,
+        partial,
+        existingGroups: columnMapping,
+        currentValue,
+      });
   // The next slot in declaration order still missing a value in the
   // in-progress group — its picker auto-opens as soon as it becomes this,
   // so filling one `cardinality: "one"` slot immediately reveals the next
@@ -647,7 +665,16 @@ export function MappingChips({
                             label={colName}
                             slot={slot}
                             columns={columns}
-                            excludeColumns={usedColumns}
+                            excludeColumns={siblingColumnsForSlot(
+                              columnMapping[groupIdx],
+                              slot.name,
+                              slotNames,
+                            )}
+                            isDuplicate={duplicateCheckFor(
+                              slot.name,
+                              columnMapping[groupIdx],
+                              colName,
+                            )}
                             onChange={(next) =>
                               onChangeGroup(groupIdx, slot.name, next)
                             }
@@ -722,22 +749,26 @@ export function MappingChips({
                   (() => {
                     // Exclude columns already picked for *other* slots in
                     // this same in-progress group — same column can't fill
-                    // two slots of one mapping group.
-                    const pendingSiblingColumns = Object.entries(
-                      pendingValues ?? {},
-                    )
-                      .filter(([slotName]) => slotName !== slot.name)
-                      .flatMap(([, v]) => v.split(","));
-                    const excludeColumns = [
-                      ...usedColumns,
-                      ...pendingSiblingColumns,
-                    ];
+                    // two slots of one mapping group. Columns used by other
+                    // groups stay pickable; exact repeats are disabled.
+                    const pending = pendingValues ?? {};
+                    const excludeColumns = siblingColumnsForSlot(
+                      pending,
+                      slot.name,
+                      slotNames,
+                    );
+                    const isDuplicate = duplicateCheckFor(
+                      slot.name,
+                      pending,
+                      pending[slot.name],
+                    );
                     return slot.cardinality === "many" ? (
                       <PendingManySlotChip
                         key="pending"
                         slot={slot}
                         columns={columns}
                         excludeColumns={excludeColumns}
+                        isDuplicate={isDuplicate}
                         onCommit={(colNames) =>
                           onPendingSelect(slot.name, colNames.join(","))
                         }
@@ -748,6 +779,7 @@ export function MappingChips({
                         slot={slot}
                         columns={columns}
                         excludeColumns={excludeColumns}
+                        isDuplicate={isDuplicate}
                         value={pendingValues?.[slot.name]}
                         autoOpen={slot.name === activePendingSlot}
                         colorClass={paletteAt(columnMapping.length)}

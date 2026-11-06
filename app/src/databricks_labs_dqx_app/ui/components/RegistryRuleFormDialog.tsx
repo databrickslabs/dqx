@@ -46,6 +46,7 @@ import {
   ArrowLeft,
   ChevronDown,
   Code2,
+  ExternalLink,
   LineChart,
   FlaskConical,
   History as HistoryIcon,
@@ -73,6 +74,7 @@ import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExpl
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { CursorTooltip } from "@/components/rules/CursorTooltip";
+import { ReferenceGrantPrompt } from "@/components/common/ReferenceGrantPrompt";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
@@ -96,6 +98,7 @@ import {
   rowStrandedByRetype,
   slotFamilyToLowcode,
   splitTopLevelCommas,
+  sqlCheckFunctionOf,
   sqlEditorShape,
   type RuleGranularity,
   type LowcodeColumnRef,
@@ -1744,6 +1747,9 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   groupBy: "",
   authorKind: "human",
 };
+
+const CROSS_TABLE_SQL_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/#custom-sql";
+const ROW_VS_DATASET_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level/";
 
 export function RegistryRuleFormDialog({
   open,
@@ -3707,6 +3713,9 @@ export function RegistryRuleFormDialog({
   // control until there is input to describe. Native is unaffected: picking a
   // check is picking its level, and `conditionChosen` already requires one.
   const granularityDescribesSomething = conditionChosen && currentModeHasContent();
+  // The row-level / dataset-level switch is shown under exactly this condition.
+  // The SQL editor's "complex query" links reuse it so they appear with the switch.
+  const showGranularityControl = granularityDescribesSomething && granularityFrozenReason === undefined;
 
   // Auto-assign a data type to the ANCHOR (first) low-code column when the
   // author picked an operator from a typed group while the column was still
@@ -4098,7 +4107,7 @@ export function RegistryRuleFormDialog({
                     </div>
                   </div>
                 )}
-                {granularityDescribesSomething && granularityFrozenReason === undefined && (
+                {showGranularityControl && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                       {t("rulesRegistry.granularityLabel")}
@@ -4272,6 +4281,30 @@ export function RegistryRuleFormDialog({
             {/* The "reference columns as {{column_name}}" hint sits BELOW the
                 IF text (item 7), directly above the editor it explains. */}
             <PredicateEditorExplainer />
+            {showGranularityControl && (
+              <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-1.5">
+                <span>{t("rulesRegistry.sqlLearnMoreLabel")}</span>
+                <a
+                  href={CROSS_TABLE_SQL_DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                >
+                  {t("rulesRegistry.sqlLearnMoreCrossTable")}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <span aria-hidden="true">·</span>
+                <a
+                  href={ROW_VS_DATASET_DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                >
+                  {t("rulesRegistry.sqlLearnMoreRowDataset")}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </p>
+            )}
             <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
               <PredicateEditor
                 value={sqlPredicate}
@@ -4287,6 +4320,10 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
+            {/* Any SQL rule can read another table (a full query's JOIN, or a plain
+                condition's subquery), and the task runner reads it either way. The
+                prompt renders nothing until the text names a table. */}
+            <ReferenceGrantPrompt sqlQuery={sqlPredicate} />
             {/* Dataset-level SQL query warning: the query must collapse to one row.
                 Merge-columns picker is in the Advanced section below. */}
             {sqlGranularityIsChoice && sqlGranularity === "dataset" && (
@@ -4575,6 +4612,14 @@ export function RegistryRuleFormDialog({
     mode === "dqx_native"
       ? nativeTestable && functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots) && nativeRequiredParamsFilled
       : testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null);
+  // The check the saved body will materialize to, decided by the same compile the
+  // save path uses, so the Test run picks the builder the job will run.
+  const testCheckFunction =
+    mode === "sql" && sqlTestBody
+      ? sqlCheckFunctionOf(sqlTestBody)
+      : mode === "lowcode"
+        ? sqlCheckFunctionOf(compileLowcodeBody(lowcodeAst, groupBy))
+        : undefined;
   const testTabContent = (
     <div className="space-y-3 pt-2">
       {mode === "dqx_native" && !nativeTestable ? (
@@ -4596,6 +4641,8 @@ export function RegistryRuleFormDialog({
           nativeFunction={mode === "dqx_native" ? functionName : undefined}
           nativeArguments={nativeTestArguments}
           lowcodeAdvanced={lowcodeAdvanced}
+          checkFunction={testCheckFunction}
+          datasetLevel={effectiveGranularity === "dataset"}
           canTest={testCanRun}
         />
       )}

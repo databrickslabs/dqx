@@ -25,11 +25,16 @@ export function PredicateEditorExplainer() {
   };
 
   return (
-    <div className="flex items-start gap-2 text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30">
+    <div className="flex items-center gap-2 text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30">
       <div className="flex-1">
         {t("rulesRegistry.sqlExplainerText")} <code className="font-mono">{"{{column_name}}"}</code>
       </div>
-      <button type="button" onClick={dismiss} aria-label={t("rulesRegistry.sqlExplainerDismiss")}>
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label={t("rulesRegistry.sqlExplainerDismiss")}
+        className="inline-flex shrink-0 items-center justify-center"
+      >
         <X className="h-3.5 w-3.5" />
       </button>
     </div>

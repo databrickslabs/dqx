@@ -241,6 +241,7 @@ class FakeJobs:
     resolved: ResolvedJob = ResolvedJob(job_id=27, created=False)
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
     grant_failure: Exception | None = None
+    view_failure: Exception | None = None
     run_as_failure: Exception | None = None
     job_exists: bool = True
     set_run_as_failure: Exception | None = None
@@ -260,6 +261,11 @@ class FakeJobs:
         self.events.append(f"grant_admin:{job_id}:{user_name}")
         if self.grant_failure is not None:
             raise self.grant_failure
+
+    def grant_workspace_view(self, job_id: int) -> None:
+        self.events.append(f"grant_view:{job_id}")
+        if self.view_failure is not None:
+            raise self.view_failure
 
     def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
@@ -642,6 +648,7 @@ async def test_full_setup_runs_steps_in_documented_order() -> None:
         "storage",
         "warehouse",
         "resolve_job:27",
+        "grant_view:27",
         "validate_run_as:27:app-service-principal",
         "runner:27",
         "publish_wheels",
@@ -654,6 +661,19 @@ async def test_full_setup_runs_steps_in_documented_order() -> None:
         "app_sharing",
         "background:ready",
     ]
+
+
+@pytest.mark.asyncio
+async def test_task_runner_view_grant_failure_does_not_block_setup(caplog: pytest.LogCaptureFixture) -> None:
+    harness = _harness()
+    harness.jobs.view_failure = PermissionDenied("user=secret")
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert "Could not give workspace users view access to the task-runner job (PermissionDenied)" in caplog.text
+    assert "secret" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1043,6 +1063,18 @@ async def test_reconcile_points_to_a_redeploy_when_the_bundle_job_is_deleted() -
     step = report.step(SetupStepId.TASK_RUNNER)
     assert step.code == "task_runner_job_missing"
     assert step.summary.startswith("Studio's task-runner job no longer exists. Redeploy the bundle")
+
+
+@pytest.mark.asyncio
+async def test_deleted_job_during_the_view_grant_is_reported_as_missing_not_swallowed() -> None:
+    """The view grant is best-effort, but a NotFound for a deleted job must still surface."""
+    harness = _harness()
+    harness.jobs.view_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
 
 
 @pytest.mark.asyncio
