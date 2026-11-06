@@ -377,13 +377,13 @@ function XGlyph({ color }: { color?: string }) {
   );
 }
 
-/** The ⚠ breach glyph in `color`, same box as XGlyph so it replaces the × in
- *  the tooltip row of a breached point. */
+/** The ⚠ breach glyph in `color`, layout box matches XGlyph (so row text stays aligned) but the glyph
+ *  itself is ~1.3x and heavier to balance optically against the ×. */
 function BreachGlyph({ color }: { color?: string }) {
   return (
     <span
       aria-hidden
-      className="inline-flex h-[10px] w-[10px] shrink-0 items-center justify-center text-[10px] font-bold leading-none"
+      className="inline-flex h-[10px] w-[10px] shrink-0 items-center justify-center overflow-visible text-[13px] font-black leading-none"
       style={{ color }}
     >
       ⚠
@@ -563,8 +563,8 @@ export type OverallStep = { run_date: string; value: number | null };
  *  points so they read as recessive marks, distinct from the Average's bold
  *  circular markers. At points in `breachAt` (epoch-ms run times where the
  *  series breached) it draws the ⚠ glyph in the series colour instead, so a
- *  breach point never shows both; `active` (hover) enlarges the ⚠ and masks the
- *  static one beneath it so the two never overlap. */
+ *  breach point never shows both; `active` (hover) enlarges the ⚠, centred
+ *  exactly over the static one (no background-filled shape). */
 function xMarkerDot(r: number, color: string, opacity = 0.7, breachAt?: Set<number>, active = false) {
   return (props: { cx?: number; cy?: number; payload?: { ts?: number | string | null } }) => {
     const { cx, cy, payload } = props;
@@ -572,7 +572,6 @@ function xMarkerDot(r: number, color: string, opacity = 0.7, breachAt?: Set<numb
     if (isBreachTime(breachAt, payload?.ts)) {
       return (
         <g key={`${cx}-${cy}`} style={{ pointerEvents: "none" }}>
-          {active && <circle cx={cx} cy={cy} r={10} fill="var(--background)" />}
           <text
             x={cx}
             y={cy}
@@ -582,7 +581,7 @@ function xMarkerDot(r: number, color: string, opacity = 0.7, breachAt?: Set<numb
             fontWeight={700}
             fill={color}
             stroke="var(--background)"
-            strokeWidth={3}
+            strokeWidth={1.5}
             strokeLinejoin="round"
             paintOrder="stroke"
           >
@@ -1647,7 +1646,7 @@ export function ScoreTrendChart({
                             fontWeight={700}
                             fill={glyphColor}
                             stroke="var(--background)"
-                            strokeWidth={3}
+                            strokeWidth={1.5}
                             strokeLinejoin="round"
                             paintOrder="stroke"
                             style={{ pointerEvents: "none" }}
