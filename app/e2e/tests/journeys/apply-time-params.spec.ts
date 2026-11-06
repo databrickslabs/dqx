@@ -51,10 +51,10 @@ test.describe("Apply-time Variable Parameters", () => {
       await expect(page.getByText(ruleName)).toBeVisible({ timeout: 60_000 });
       // Empty → shown (no padlock on this page). Exact match avoids the SQL preview.
       await expect(page.getByText("{{max_length}}", { exact: true })).toBeVisible();
-      await expect(page.getByLabel("max_length")).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "max_length" })).toBeVisible();
       // Filled + locked → hidden.
       await expect(page.getByText("{{note}}", { exact: true })).toHaveCount(0);
-      await expect(page.getByLabel("note")).toHaveCount(0);
+      await expect(page.getByRole("textbox", { name: "note" })).toHaveCount(0);
     });
 
     await test.step("persist an apply-time value via saveAppliedRules", async () => {
@@ -101,7 +101,7 @@ test.describe("Apply-time Variable Parameters", () => {
       await openStudio(page, `/monitored-tables/${table.binding_id}?tab=apply-rules`);
       await expect(page.getByText(unlockedName)).toBeVisible({ timeout: 60_000 });
       await expect(page.getByText("{{note}}", { exact: true })).toBeVisible();
-      await expect(page.getByLabel("note")).toHaveValue("apply-override");
+      await expect(page.getByRole("textbox", { name: "note" })).toHaveValue("apply-override");
     });
   });
 });
