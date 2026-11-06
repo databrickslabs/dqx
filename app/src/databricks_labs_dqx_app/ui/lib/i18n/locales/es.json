@@ -3385,5 +3385,55 @@
     "pickCollectionDescription": "Elige la colección que ejecuta esta programación. Todas sus tablas se ejecutan según la programación.",
     "pickCollectionSearch": "Buscar colecciones",
     "pickCollectionEmpty": "Ninguna colección coincide."
+  },
+  "savedViews": {
+    "title": "Vistas guardadas",
+    "back": "Vistas guardadas",
+    "myViews": "Mis vistas",
+    "organisation": "Organización",
+    "defaultMarker": "predeterminada",
+    "unsavedChanges": "Cambios sin guardar",
+    "reset": "Restablecer",
+    "saveAsNew": "Guardar como nueva…",
+    "save": "Guardar",
+    "rename": "Cambiar nombre…",
+    "setMyDefault": "Usar como mi vista predeterminada",
+    "setOrgDefault": "Usar como predeterminada de la organización",
+    "delete": "Eliminar…",
+    "rowActions": "Acciones de la vista",
+    "star": "Marcar como favorita",
+    "unstar": "Quitar de favoritas",
+    "saveReadOnly": "Solo los administradores pueden cambiar las vistas de la organización. Usa Guardar como nueva.",
+    "dialogTitle": "Guardar como nueva vista",
+    "renameTitle": "Cambiar nombre de la vista",
+    "name": "Nombre",
+    "visibleTo": "Visible para",
+    "onlyMe": "Solo yo",
+    "everyone": "Toda la organización",
+    "everyoneAdminsOnly": "Solo los administradores pueden compartir vistas con la organización",
+    "makeMyDefault": "Usar como mi vista predeterminada",
+    "makeOrgDefault": "Usar como vista predeterminada de la organización",
+    "orgDefaultNeedsEveryone": "Comparte la vista con toda la organización para usarla como predeterminada de la organización",
+    "deleteTitle": "Eliminar vista",
+    "deleteConfirm": "¿Eliminar «{{name}}»? Esta acción no se puede deshacer.",
+    "nameErrors": {
+      "required": "Introduce un nombre",
+      "tooLong": "Usa 80 caracteres o menos",
+      "duplicate": "Ya existe una vista con este nombre"
+    },
+    "reasons": {
+      "orgViewAdminsOnly": "Solo los administradores pueden cambiar las vistas de la organización",
+      "orgDefaultAdminsOnly": "Solo los administradores pueden definir la vista predeterminada de la organización",
+      "orgDefaultOrgViewsOnly": "Solo las vistas de la organización pueden ser la predeterminada de la organización",
+      "alreadyOrgDefault": "Ya es la vista predeterminada de la organización",
+      "alreadyMyDefault": "Ya es tu vista predeterminada"
+    },
+    "errors": {
+      "save": "No se pudo guardar la vista",
+      "rename": "No se pudo cambiar el nombre de la vista",
+      "delete": "No se pudo eliminar la vista",
+      "star": "No se pudo actualizar la favorita",
+      "default": "No se pudo cambiar la vista predeterminada"
+    }
   }
 }

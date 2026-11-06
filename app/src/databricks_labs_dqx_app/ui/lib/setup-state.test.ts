@@ -222,15 +222,9 @@ function leafKeys(value: unknown, prefix = ""): string[] {
     .sort();
 }
 
-/**
- * Key prefixes shipped in English only (English-only policy for new copy): other
- * locales omit them and i18next falls back to English.
- */
-const ENGLISH_ONLY_PREFIXES = ["savedViews."];
-
 describe("locale keys", () => {
   test("match English recursively in every supported locale", () => {
-    const englishKeys = leafKeys(en).filter((key) => !ENGLISH_ONLY_PREFIXES.some((p) => key.startsWith(p)));
+    const englishKeys = leafKeys(en);
 
     expect(englishKeys).toContain("setup.title");
     expect(leafKeys(fr)).toEqual(englishKeys);

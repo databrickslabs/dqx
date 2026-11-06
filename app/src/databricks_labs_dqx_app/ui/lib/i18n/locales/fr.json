@@ -3385,5 +3385,55 @@
     "pickCollectionDescription": "Choisissez la collection exécutée par cette planification. Toutes ses tables s'exécutent selon la planification.",
     "pickCollectionSearch": "Rechercher des collections",
     "pickCollectionEmpty": "Aucune collection ne correspond."
+  },
+  "savedViews": {
+    "title": "Vues enregistrées",
+    "back": "Vues enregistrées",
+    "myViews": "Mes vues",
+    "organisation": "Organisation",
+    "defaultMarker": "par défaut",
+    "unsavedChanges": "Modifications non enregistrées",
+    "reset": "Réinitialiser",
+    "saveAsNew": "Enregistrer comme nouvelle…",
+    "save": "Enregistrer",
+    "rename": "Renommer…",
+    "setMyDefault": "Définir comme ma vue par défaut",
+    "setOrgDefault": "Définir par défaut pour l'organisation",
+    "delete": "Supprimer…",
+    "rowActions": "Actions de la vue",
+    "star": "Ajouter aux favoris",
+    "unstar": "Retirer des favoris",
+    "saveReadOnly": "Seuls les administrateurs peuvent modifier les vues de l'organisation. Utilisez Enregistrer comme nouvelle.",
+    "dialogTitle": "Enregistrer comme nouvelle vue",
+    "renameTitle": "Renommer la vue",
+    "name": "Nom",
+    "visibleTo": "Visible par",
+    "onlyMe": "Moi uniquement",
+    "everyone": "Toute l'organisation",
+    "everyoneAdminsOnly": "Seuls les administrateurs peuvent partager des vues avec l'organisation",
+    "makeMyDefault": "En faire ma vue par défaut",
+    "makeOrgDefault": "En faire la vue par défaut de l'organisation",
+    "orgDefaultNeedsEveryone": "Partagez la vue avec toute l'organisation pour en faire la vue par défaut de l'organisation",
+    "deleteTitle": "Supprimer la vue",
+    "deleteConfirm": "Supprimer « {{name}} » ? Cette action est irréversible.",
+    "nameErrors": {
+      "required": "Saisissez un nom",
+      "tooLong": "80 caractères maximum",
+      "duplicate": "Une vue portant ce nom existe déjà"
+    },
+    "reasons": {
+      "orgViewAdminsOnly": "Seuls les administrateurs peuvent modifier les vues de l'organisation",
+      "orgDefaultAdminsOnly": "Seuls les administrateurs peuvent définir la vue par défaut de l'organisation",
+      "orgDefaultOrgViewsOnly": "Seules les vues de l'organisation peuvent être la vue par défaut de l'organisation",
+      "alreadyOrgDefault": "C'est déjà la vue par défaut de l'organisation",
+      "alreadyMyDefault": "C'est déjà votre vue par défaut"
+    },
+    "errors": {
+      "save": "Impossible d'enregistrer la vue",
+      "rename": "Impossible de renommer la vue",
+      "delete": "Impossible de supprimer la vue",
+      "star": "Impossible de mettre à jour les favoris",
+      "default": "Impossible de modifier la vue par défaut"
+    }
   }
 }

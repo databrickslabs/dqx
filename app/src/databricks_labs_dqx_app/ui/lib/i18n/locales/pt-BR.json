@@ -3385,5 +3385,55 @@
     "pickCollectionDescription": "Escolha a coleção que este agendamento executa. Todas as tabelas dela são executadas no agendamento.",
     "pickCollectionSearch": "Buscar coleções",
     "pickCollectionEmpty": "Nenhuma coleção corresponde."
+  },
+  "savedViews": {
+    "title": "Visualizações salvas",
+    "back": "Visualizações salvas",
+    "myViews": "Minhas visualizações",
+    "organisation": "Organização",
+    "defaultMarker": "padrão",
+    "unsavedChanges": "Alterações não salvas",
+    "reset": "Redefinir",
+    "saveAsNew": "Salvar como nova…",
+    "save": "Salvar",
+    "rename": "Renomear…",
+    "setMyDefault": "Definir como meu padrão",
+    "setOrgDefault": "Definir como padrão da organização",
+    "delete": "Excluir…",
+    "rowActions": "Ações da visualização",
+    "star": "Marcar como favorita",
+    "unstar": "Desmarcar como favorita",
+    "saveReadOnly": "Somente administradores podem alterar visualizações da organização. Use Salvar como nova.",
+    "dialogTitle": "Salvar como nova visualização",
+    "renameTitle": "Renomear visualização",
+    "name": "Nome",
+    "visibleTo": "Visível para",
+    "onlyMe": "Somente eu",
+    "everyone": "Toda a organização",
+    "everyoneAdminsOnly": "Somente administradores podem compartilhar visualizações com a organização",
+    "makeMyDefault": "Tornar esta meu padrão",
+    "makeOrgDefault": "Tornar esta o padrão da organização",
+    "orgDefaultNeedsEveryone": "Compartilhe a visualização com toda a organização para torná-la o padrão da organização",
+    "deleteTitle": "Excluir visualização",
+    "deleteConfirm": "Excluir “{{name}}”? Esta ação não pode ser desfeita.",
+    "nameErrors": {
+      "required": "Informe um nome",
+      "tooLong": "Use até 80 caracteres",
+      "duplicate": "Já existe uma visualização com este nome"
+    },
+    "reasons": {
+      "orgViewAdminsOnly": "Somente administradores podem alterar visualizações da organização",
+      "orgDefaultAdminsOnly": "Somente administradores podem definir o padrão da organização",
+      "orgDefaultOrgViewsOnly": "Somente visualizações da organização podem ser o padrão da organização",
+      "alreadyOrgDefault": "Esta já é o padrão da organização",
+      "alreadyMyDefault": "Esta já é o seu padrão"
+    },
+    "errors": {
+      "save": "Não foi possível salvar a visualização",
+      "rename": "Não foi possível renomear a visualização",
+      "delete": "Não foi possível excluir a visualização",
+      "star": "Não foi possível atualizar a favorita",
+      "default": "Não foi possível alterar o padrão"
+    }
   }
 }
