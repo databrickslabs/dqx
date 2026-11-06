@@ -424,6 +424,7 @@ def _facets(
         outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
     )
 
+
 ScoreBucket = Literal["75-100", "50-75", "25-50", "0-25", "none"]
 
 

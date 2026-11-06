@@ -104,8 +104,7 @@ class SavedViewsService:
         """
         self._ensure_builtin(page)
         rows = self._select_views(
-            f"page_key = '{escape_sql_string(page.value)}' "
-            f"AND (scope = 'org' OR owner = '{escape_sql_string(user)}')"
+            f"page_key = '{escape_sql_string(page.value)}' AND (scope = 'org' OR owner = '{escape_sql_string(user)}')"
         )
         stars = self._star_map(user)
         my_default = self._my_default_id(user, page)
@@ -387,9 +386,7 @@ class SavedViewsService:
         return {str(row["view_id"]): _is_true(row["starred"]) for row in rows}
 
     def _my_default_id(self, user: str, page: SavedViewPage) -> str | None:
-        rows = self._sql.select_dicts(
-            self._defaults, ["view_id"], where={"user_email": user, "page_key": page.value}
-        )
+        rows = self._sql.select_dicts(self._defaults, ["view_id"], where={"user_email": user, "page_key": page.value})
         return rows[0]["view_id"] if rows else None
 
     @staticmethod

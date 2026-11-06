@@ -899,9 +899,7 @@ class TestGlobalUniverseFilters:
         body = client.get("/api/v1/dq-results/global", params=params).json()
         return sorted(g["label"] for g in body["by_table"])
 
-    def test_collection_narrows_to_members_and_never_leaks_inaccessible(
-        self, client, sql_mock, data_products_mock
-    ):
+    def test_collection_narrows_to_members_and_never_leaks_inaccessible(self, client, sql_mock, data_products_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
         data_products_mock.member_fqns.return_value = {"main.sales.orders", "secret.hr.salaries"}
         assert self.labels(client, collection=["p1"]) == ["main.sales.orders"]
