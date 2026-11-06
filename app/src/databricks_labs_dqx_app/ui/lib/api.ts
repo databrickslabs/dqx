@@ -5982,6 +5982,9 @@ table?: string[] | null;
 catalog?: string[] | null;
 schema?: string[] | null;
 outcome?: string[] | null;
+collection?: string[] | null;
+owner?: string[] | null;
+score_bucket?: '75-100' | '50-75' | '25-50' | '0-25' | 'none' | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -24596,6 +24599,11 @@ the By-table cross-filter: a repeatable list of member FQNs, applied
 app-side like the other four facets (the rows it filters are already
 catalog-gated, so an inaccessible value simply matches nothing).
 *outcome* keeps only ``passed`` or ``failed`` checks.
+
+*collection* (data-product ids), *owner* (owner_display_name -> owner ->
+created_by) and *score_bucket* (cached DQ score) narrow the TABLE
+UNIVERSE like *catalog* does: intersected, applied after the catalog
+gate, and to every axis including by_table.
 
 Concurrent member runs of one run set are consolidated onto their
 RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend

@@ -53,6 +53,7 @@ from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
+    MonitoredTableSummary,
 )
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
@@ -870,6 +871,95 @@ class TestGlobalResults:
         resp = client.get("/api/v1/dq-results/global")
         assert resp.status_code == 200
         assert resp.json()["by_table"][0]["binding_id"] is None
+
+
+class TestGlobalUniverseFilters:
+    ROWS = [
+        check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+        check_row("c2", errors=10, total=100, fqn="main.sales.items"),
+        check_row("c3", errors=10, total=100, fqn="dev.sales.users"),
+        check_row("c4", errors=10, total=100, fqn="secret.hr.salaries"),
+    ]
+
+    @staticmethod
+    def summary(fqn, score=None, owner=None, display=None, created_by=None):
+        return MonitoredTableSummary(
+            table=MonitoredTable(
+                binding_id=f"b-{fqn}",
+                table_fqn=fqn,
+                owner=owner,
+                owner_display_name=display,
+                created_by=created_by,
+            ),
+            score=score,
+        )
+
+    def labels(self, client, **params):
+        body = client.get("/api/v1/dq-results/global", params=params).json()
+        return sorted(g["label"] for g in body["by_table"])
+
+    def test_collection_narrows_to_members_and_never_leaks_inaccessible(
+        self, client, sql_mock, data_products_mock
+    ):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b4", "secret.hr.salaries")]
+        )
+        assert self.labels(client, collection=["p1"]) == ["main.sales.orders"]
+
+    def test_unknown_collection_matches_nothing(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        assert self.labels(client, collection=["nope"]) == []
+
+    def test_owner_uses_display_name_then_owner_then_created_by(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_monitored_tables.return_value = [
+            self.summary("main.sales.orders", display="Ada", owner="ada@x.com"),
+            self.summary("main.sales.items", owner="ada@x.com"),
+            self.summary("dev.sales.users", created_by="ada@x.com"),
+        ]
+        assert self.labels(client, owner=["Ada"]) == ["main.sales.orders"]
+        assert self.labels(client, owner=["ada@x.com"]) == ["dev.sales.users", "main.sales.items"]
+
+    def test_score_bucket_none_keeps_only_uncached_tables(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_monitored_tables.return_value = [
+            self.summary("main.sales.orders", score=0.9),
+            self.summary("main.sales.items"),
+        ]
+        assert self.labels(client, score_bucket="none") == ["dev.sales.users", "main.sales.items"]
+
+    def test_score_bucket_boundaries(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_monitored_tables.return_value = [
+            self.summary("main.sales.orders", score=0.75),
+            self.summary("main.sales.items", score=0.7499),
+            self.summary("dev.sales.users", score=0.0),
+        ]
+        assert self.labels(client, score_bucket="75-100") == ["main.sales.orders"]
+        assert self.labels(client, score_bucket="50-75") == ["main.sales.items"]
+        assert self.labels(client, score_bucket="0-25") == ["dev.sales.users"]
+
+    def test_params_intersect(self, client, sql_mock, data_products_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.get.return_value = product_detail(
+            "p1", [("b1", "main.sales.orders"), ("b2", "main.sales.items")]
+        )
+        monitored_tables_mock.list_monitored_tables.return_value = [
+            self.summary("main.sales.orders", score=0.9, display="Ada"),
+            self.summary("main.sales.items", score=0.9, display="Bob"),
+        ]
+        assert self.labels(client, collection=["p1"], owner=["Ada"], score_bucket="75-100") == ["main.sales.orders"]
+        assert self.labels(client, collection=["p1"], owner=["Bob"], score_bucket="0-25") == []
+
+    def test_no_params_does_not_load_monitored_tables(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        assert len(self.labels(client)) == 3
+        monitored_tables_mock.list_monitored_tables.assert_not_called()
+
+    def test_invalid_score_bucket_is_rejected(self, client, sql_mock):
+        sql_dispatch(sql_mock)
+        assert client.get("/api/v1/dq-results/global", params={"score_bucket": "bogus"}).status_code == 422
 
 
 # ---------------------------------------------------------------------------
