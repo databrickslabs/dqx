@@ -93,15 +93,8 @@ def test_app_is_shared_with_audience_and_admins(bundle: dict) -> None:
     assert "genie" in bundle["resources"]["apps"]["dqx-studio"]["user_api_scopes"]
 
 
-def test_dashboard_is_readable_by_audience_and_admins(bundle: dict) -> None:
-    permissions = next(iter(bundle["resources"]["dashboards"].values()))["permissions"]
-    assert {"level": "CAN_READ", "group_name": "${var.studio_user_group}"} in permissions
-    assert {"level": "CAN_READ", "group_name": "${var.admin_group}"} in permissions
-
-
-def test_app_sp_can_manage_bundle_dashboard(bundle: dict) -> None:
-    permissions = next(iter(bundle["resources"]["dashboards"].values()))["permissions"]
-    assert {"level": "CAN_MANAGE", "service_principal_name": _APP_SP} in permissions
+def test_bundle_ships_no_dashboard(bundle: dict) -> None:
+    assert "dashboards" not in bundle["resources"]
 
 
 def test_app_warehouse_binding_grants_can_manage(bundle: dict) -> None:

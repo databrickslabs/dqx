@@ -154,9 +154,6 @@ variables:
           value: "${var.lakebase_database_name}"
         - name: "DQX_LAKEBASE_SCHEMA"
           value: "${var.lakebase_schema_name}"
-        # Starter Insights dashboard; admins can override at runtime via Configuration.
-        - name: "DQX_DEFAULT_DASHBOARD_ID"
-          value: "${resources.dashboards.dqx_quality_overview.id}"
         - name: "DQX_APP_NAME"
           value: "${var.app_name}"
         - name: "DQX_GENIE_SCHEMA"
@@ -297,13 +294,6 @@ resources:
             - USE_SCHEMA
             - SELECT
             - MODIFY
-        # The starter Insights dashboard embeds the deployer's credentials, so the
-        # deployer needs SELECT on the DQX tables (created by the app SP, not the
-        # deployer). Schema-level SELECT covers current + future tables.
-        - principal: ${workspace.current_user.userName}
-          privileges:
-            - USE_SCHEMA
-            - SELECT
       lifecycle:
         prevent_destroy: true
     tmp_schema:
@@ -456,25 +446,6 @@ resources:
         bypassrls: true
       membership_roles:
         - DATABRICKS_SUPERUSER
-
-  dashboards:
-    dqx_quality_overview:
-      display_name: "[${bundle.target}] DQX Quality Overview"
-      file_path: ./dashboards/dqx_quality_overview.lvdash.json
-      warehouse_id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
-      dataset_catalog: ${var.catalog_name}
-      dataset_schema: ${var.schema_name}
-      embed_credentials: true
-      # Share the aggregate dashboard only with the configured audience. The app SP
-      # keeps CAN_MANAGE: the bundle replaces the ACL on deploy and setup's access
-      # step must read (and additively share) the dashboard to reach READY.
-      permissions:
-        - level: CAN_MANAGE
-          service_principal_name: ${resources.apps.dqx-studio.service_principal_client_id}
-        - level: CAN_READ
-          group_name: ${var.studio_user_group}
-        - level: CAN_READ
-          group_name: ${var.admin_group}
 
   jobs:
     dqx_task_runner:
