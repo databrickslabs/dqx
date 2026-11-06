@@ -33,7 +33,7 @@ test.describe("Schedule approval notice", () => {
     // Leave the table in draft / pending — do not approve.
     expect((await studio.getMonitoredTable(table.binding_id)).status).not.toBe("approved");
 
-    await openStudio(page, `/monitored-tables/${table.binding_id}?tab=scheduling`);
+    await openStudio(page, `/monitored-tables/${table.binding_id}?tab=schedule`);
     await expect(page.getByRole("heading", { name: "Won't run until approved" })).toBeVisible({
       timeout: 60_000,
     });
