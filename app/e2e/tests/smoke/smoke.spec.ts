@@ -7,9 +7,10 @@ import { openStudio, sidebarLinks } from "../../support/ui";
 // Read-only smoke checks for a deployed Studio. Safe to run against any
 // deployment: nothing here creates, edits, or runs anything.
 //
-// The target must be a real DQX Studio instance with setup finished (catalog,
-// prefix, user group, task runner). There is no mocked backend; until setup is
-// complete the "ready deployment" tests fail and list the pending steps.
+// The target must be a real DQX Studio instance; there is no mocked backend.
+// This project depends on the setup project, which completes the setup wizard
+// first. If setup still isn't complete (e.g. run with --no-deps), the "ready
+// deployment" tests fail and list the pending steps.
 
 function expectedStudioVersion(): string {
   const pyproject = readFileSync(join(__dirname, "..", "..", "..", "pyproject.toml"), "utf8");
