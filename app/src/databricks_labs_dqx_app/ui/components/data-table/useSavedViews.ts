@@ -21,6 +21,7 @@ import {
   useRenameSavedView,
   useSetMySavedViewDefault,
   useSetOrgSavedViewDefault,
+  useShareSavedView,
   useStarSavedView,
   useUnstarSavedView,
   useUpdateSavedView,
@@ -93,6 +94,8 @@ export interface SavedViewsMenuConfig {
   setStar: (id: string, starred: boolean) => Promise<void>;
   setMyDefault: (id: string | null) => Promise<void>;
   setOrgDefault: (id: string) => Promise<void>;
+  /** Moves the caller's own personal view into the organisation section (admins only). */
+  share: (id: string) => Promise<void>;
 }
 
 export interface UseSavedViewsResult<C extends string, F extends string> extends SavedViewsMenuConfig {
@@ -192,6 +195,7 @@ export function useSavedViews<C extends string, F extends string>(
   const { mutateAsync: unstarView } = useUnstarSavedView();
   const { mutateAsync: setMyDefaultView } = useSetMySavedViewDefault();
   const { mutateAsync: setOrgDefaultView } = useSetOrgSavedViewDefault();
+  const { mutateAsync: shareView } = useShareSavedView();
 
   const refetchList = useCallback(
     () => queryClient.invalidateQueries({ queryKey }),
@@ -325,6 +329,19 @@ export function useSavedViews<C extends string, F extends string>(
     [run, setOrgDefaultView, pageKey],
   );
 
+  // A 409 means an org view already uses this name; `run` leaves duplicate names to the caller.
+  const share = useCallback(
+    async (id: string) => {
+      try {
+        await run(() => shareView({ viewId: id }), "savedViews.errors.share");
+      } catch (error) {
+        if (isDuplicateViewNameError(error)) toast.error(t("savedViews.errors.shareDuplicate"));
+        throw error;
+      }
+    },
+    [run, shareView, t],
+  );
+
   // -- layout surface -----------------------------------------------------
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const columnDefs = defs.columns ?? NO_COLUMNS;
@@ -430,6 +447,7 @@ export function useSavedViews<C extends string, F extends string>(
       setStar,
       setMyDefault,
       setOrgDefault,
+      share,
     }),
     [
       loading,
@@ -447,6 +465,7 @@ export function useSavedViews<C extends string, F extends string>(
       setStar,
       setMyDefault,
       setOrgDefault,
+      share,
     ],
   );
 

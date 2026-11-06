@@ -264,6 +264,53 @@ class SavedViewsService:
         self._sql.delete(self._views, where={"id": view_id})
         logger.info(f"Deleted saved view {view_id}")
 
+    def share_view(self, view_id: str, *, user: str, is_admin: bool) -> SavedViewOut:
+        """Move an admin's own personal view into the org scope.
+
+        The view keeps its id, so stars and personal defaults pointing at it keep working.
+
+        Args:
+            view_id: Personal view to share.
+            user: Caller email.
+            is_admin: Whether the caller is an admin.
+
+        Returns:
+            The view, now org-scoped and without an owner.
+
+        Raises:
+            SavedViewForbiddenError: The caller is not an admin.
+            SavedViewNotFoundError: The view is missing or not visible (including other users' personal views).
+            SavedViewValidationError: The view is built in or already an org view.
+            SavedViewConflictError: An org view on the page already uses this name.
+        """
+        if not is_admin:
+            raise SavedViewForbiddenError("Only admins can share views with the organisation")
+        row = self._get_visible(view_id, user)
+        if _is_true(row["is_builtin"]) or row["scope"] != SavedViewScope.USER.value:
+            raise SavedViewValidationError("Only a personal view can be shared")
+        if row["owner"] != user:
+            raise SavedViewNotFoundError("Saved view not found")
+        page = SavedViewPage(str(row["page_key"]))
+        self._ensure_builtin(page)
+        self._ensure_name_free(page, SavedViewScope.ORG, None, str(row["name"]), exclude_id=view_id)
+        try:
+            self._sql.update(
+                self._views,
+                updates={
+                    "scope": SavedViewScope.ORG.value,
+                    "owner": None,
+                    "updated_by": user,
+                    "updated_at": RawSql("current_timestamp()"),
+                },
+                where={"id": view_id},
+            )
+        except Exception as error:
+            if _is_unique_violation(error):
+                raise SavedViewConflictError("An org view with this name already exists") from error
+            raise
+        logger.info(f"Shared saved view {view_id} with the organisation")
+        return self._out_for(view_id, user=user, is_admin=is_admin)
+
     def set_starred(self, view_id: str, starred: bool, *, user: str, is_admin: bool) -> SavedViewOut:
         """Star or unstar a visible view for the caller.
 

@@ -7,6 +7,7 @@ import {
   cleanViewName,
   isDirty,
   MAX_VIEW_STRING_LENGTH,
+  myDefaultTarget,
   oneOf,
   optionsSanitizer,
   rowActions,
@@ -234,34 +235,75 @@ describe("view names", () => {
 });
 
 describe("rowActions", () => {
-  it("omits rename and delete on the builtin view", () => {
-    const a = rowActions(view({ is_builtin: true, can_edit: true }), true);
+  const disabled = (reasonKey: string) => ({ enabled: false, reasonKey });
+  const enabled = { enabled: true, reasonKey: null };
+  const personal = (over: Partial<SavedViewOut> = {}) =>
+    view({ id: "p1", scope: "user", can_edit: true, can_set_org_default: false, ...over });
+
+  it("personal view, admin: share shown, org default absent", () => {
+    const a = rowActions(personal(), true, "builtin:p");
+    expect(a.rename).toEqual(enabled);
+    expect(a.delete).toEqual(enabled);
+    expect(a.share).toEqual(enabled);
+    expect(a.setOrgDefault).toBeNull();
+    expect(a.setMyDefault).toEqual(enabled);
+  });
+
+  it("personal view, non-admin: neither share nor org default is shown", () => {
+    const a = rowActions(personal(), false, "builtin:p");
+    expect(a.share).toBeNull();
+    expect(a.setOrgDefault).toBeNull();
+    expect(a.rename).toEqual(enabled);
+  });
+
+  it("org view, admin: org default enabled, no share", () => {
+    const a = rowActions(view({ id: "o1", scope: "org" }), true, "builtin:p");
+    expect(a.setOrgDefault).toEqual(enabled);
+    expect(a.share).toBeNull();
+  });
+
+  it("org view, non-admin: edits and org default disabled with reasons, no share", () => {
+    const a = rowActions(view({ id: "o1", scope: "org", can_edit: false, can_set_org_default: false }), false, "builtin:p");
+    expect(a.rename).toEqual(disabled("savedViews.reasons.orgViewAdminsOnly"));
+    expect(a.delete).toEqual(disabled("savedViews.reasons.orgViewAdminsOnly"));
+    expect(a.setOrgDefault).toEqual(disabled("savedViews.reasons.orgDefaultAdminsOnly"));
+    expect(a.setMyDefault).toEqual(enabled);
+    expect(a.share).toBeNull();
+  });
+
+  it("org view that is already the org default: org default disabled", () => {
+    const a = rowActions(view({ id: "o1", scope: "org", is_org_default: true }), true, "p1");
+    expect(a.setOrgDefault).toEqual(disabled("savedViews.reasons.alreadyOrgDefault"));
+  });
+
+  it("builtin view: no rename, delete or share; org default kept", () => {
+    const a = rowActions(view({ id: "builtin:p", is_builtin: true, can_edit: false }), true, "o1");
     expect(a.rename).toBeNull();
     expect(a.delete).toBeNull();
+    expect(a.share).toBeNull();
+    expect(a.setOrgDefault).toEqual(enabled);
   });
 
-  it("disables org-view edits for non-admins with a reason", () => {
-    const a = rowActions(view({ scope: "org", can_edit: false, can_set_org_default: false }), false);
-    expect(a.rename).toEqual({ enabled: false, reasonKey: "savedViews.reasons.orgViewAdminsOnly" });
-    expect(a.delete).toEqual({ enabled: false, reasonKey: "savedViews.reasons.orgViewAdminsOnly" });
-    expect(a.setOrgDefault).toEqual({ enabled: false, reasonKey: "savedViews.reasons.orgDefaultAdminsOnly" });
-    expect(a.setMyDefault).toEqual({ enabled: true, reasonKey: null });
+  it("disables Set as my default on the effective default even without a personal pick", () => {
+    const builtin = view({ id: "builtin:p", is_builtin: true, can_edit: false, is_org_default: true });
+    expect(rowActions(builtin, false, "builtin:p").setMyDefault).toEqual(disabled("savedViews.reasons.alreadyMyDefault"));
   });
 
-  it("only org views can be the org default", () => {
-    const a = rowActions(view({ scope: "user", can_edit: true, can_set_org_default: false }), true);
-    expect(a.rename?.enabled).toBe(true);
-    expect(a.setOrgDefault).toEqual({ enabled: false, reasonKey: "savedViews.reasons.orgDefaultOrgViewsOnly" });
+  it("enables Set as my default on a view that is not the effective default", () => {
+    const stale = personal({ is_my_default: true });
+    expect(rowActions(stale, false, "builtin:p").setMyDefault).toEqual(enabled);
+    expect(rowActions(personal(), false, "p1").setMyDefault).toEqual(disabled("savedViews.reasons.alreadyMyDefault"));
+  });
+});
+
+describe("myDefaultTarget", () => {
+  it("clears the personal pointer when the view is the org default", () => {
+    expect(myDefaultTarget(view({ id: "o1", is_org_default: true }))).toBeNull();
   });
 
-  it("disables defaults that are already set", () => {
-    const a = rowActions(view({ is_my_default: true, is_org_default: true }), true);
-    expect(a.setMyDefault).toEqual({ enabled: false, reasonKey: "savedViews.reasons.alreadyMyDefault" });
-    expect(a.setOrgDefault).toEqual({ enabled: false, reasonKey: "savedViews.reasons.alreadyOrgDefault" });
-  });
-
-  it("enables org default for admins on org views", () => {
-    expect(rowActions(view({ scope: "org" }), true).setOrgDefault).toEqual({ enabled: true, reasonKey: null });
+  it("points at the view otherwise", () => {
+    expect(myDefaultTarget(view({ id: "o1" }))).toBe("o1");
+    expect(myDefaultTarget(view({ id: "p1", scope: "user" }))).toBe("p1");
   });
 });
 

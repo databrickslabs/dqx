@@ -475,3 +475,88 @@ def test_list_survives_org_view_named_default_with_builtin_missing(sql):
     assert heal.endswith("ON CONFLICT DO NOTHING")
     assert "ON CONFLICT (id)" not in heal
     assert [v.id for v in out.views] == ["v1"]
+
+
+# ---------------------------------------------------------------- share
+
+
+def apply_updates_to(store):
+    """Make sql.update mutate the fake store so re-reads see the new row."""
+
+    def update(_table, *, updates, where, **_kwargs):
+        for row in store.views:
+            if row["id"] == where["id"]:
+                row.update({k: v for k, v in updates.items() if k in row})
+
+    return update
+
+
+def test_share_requires_admin(sql):
+    svc = make_service(sql, Store([BUILTIN, view_row("mine", scope="user", owner="a@x")]))
+    with pytest.raises(SavedViewForbiddenError):
+        svc.share_view("mine", user="a@x", is_admin=False)
+    sql.update.assert_not_called()
+
+
+def test_share_other_users_personal_view_is_not_found(sql):
+    svc = make_service(sql, Store([BUILTIN, view_row("theirs", scope="user", owner="b@x")]))
+    with pytest.raises(SavedViewNotFoundError):
+        svc.share_view("theirs", user="admin@x", is_admin=True)
+    sql.update.assert_not_called()
+
+
+@pytest.mark.parametrize("view_id", ["org1", "builtin:monitored_tables"])
+def test_share_org_or_builtin_view_is_validation_error(sql, view_id):
+    svc = make_service(sql, Store([BUILTIN, view_row("org1")]))
+    with pytest.raises(SavedViewValidationError):
+        svc.share_view(view_id, user="admin@x", is_admin=True)
+    sql.update.assert_not_called()
+
+
+def test_share_name_clash_with_org_view_is_conflict_case_insensitive(sql):
+    store = Store(
+        [BUILTIN, view_row("org1", name="Sales"), view_row("mine", scope="user", owner="admin@x", name="sales")]
+    )
+    svc = make_service(sql, store)
+    with pytest.raises(SavedViewConflictError):
+        svc.share_view("mine", user="admin@x", is_admin=True)
+    sql.update.assert_not_called()
+
+
+def test_share_name_clash_with_builtin_default_is_conflict(sql):
+    store = Store([BUILTIN, view_row("mine", scope="user", owner="admin@x", name="default")])
+    with pytest.raises(SavedViewConflictError):
+        make_service(sql, store).share_view("mine", user="admin@x", is_admin=True)
+
+
+def test_share_unique_violation_maps_to_conflict(sql):
+    class UniqueViolation(Exception):
+        sqlstate = "23505"
+
+    svc = make_service(sql, Store([BUILTIN, view_row("mine", scope="user", owner="admin@x")]))
+    sql.update.side_effect = UniqueViolation("duplicate key")
+    with pytest.raises(SavedViewConflictError):
+        svc.share_view("mine", user="admin@x", is_admin=True)
+
+
+def test_share_moves_view_to_org_keeping_id(sql):
+    store = Store(
+        [BUILTIN, view_row("mine", scope="user", owner="admin@x", name="Sales")],
+        stars=[{"view_id": "mine", "starred": "true"}],
+        my_default="mine",
+    )
+    svc = make_service(sql, store)
+    sql.update.side_effect = apply_updates_to(store)
+    out = svc.share_view("mine", user="admin@x", is_admin=True)
+    kwargs = sql.update.call_args.kwargs
+    assert kwargs["where"] == {"id": "mine"}
+    assert kwargs["updates"]["scope"] == "org"
+    assert kwargs["updates"]["owner"] is None
+    assert kwargs["updates"]["updated_by"] == "admin@x"
+    assert "updated_at" in kwargs["updates"]
+    assert out.id == "mine"
+    assert out.scope == SavedViewScope.ORG
+    assert out.starred is True and out.is_my_default is True
+    assert out.can_set_org_default is True
+    listing = svc.list_views(PAGE, user="other@x", is_admin=False)
+    assert "mine" in [v.id for v in listing.views]

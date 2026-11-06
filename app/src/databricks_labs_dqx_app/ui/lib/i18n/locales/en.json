@@ -3414,6 +3414,7 @@
     "rename": "Rename…",
     "setMyDefault": "Set as my default",
     "setOrgDefault": "Set as org default",
+    "share": "Share with organisation",
     "delete": "Delete…",
     "rowActions": "View actions",
     "star": "Star view",
@@ -3440,7 +3441,6 @@
     "reasons": {
       "orgViewAdminsOnly": "Only admins can change organisation views",
       "orgDefaultAdminsOnly": "Only admins can set the org default",
-      "orgDefaultOrgViewsOnly": "Only organisation views can be the org default",
       "alreadyOrgDefault": "This is already the org default",
       "alreadyMyDefault": "This is already your default"
     },
@@ -3449,7 +3449,9 @@
       "rename": "Couldn't rename the view",
       "delete": "Couldn't delete the view",
       "star": "Couldn't update the star",
-      "default": "Couldn't change the default"
+      "default": "Couldn't change the default",
+      "share": "Couldn't share the view",
+      "shareDuplicate": "An organisation view with this name already exists. Rename it first."
     }
   }
 }

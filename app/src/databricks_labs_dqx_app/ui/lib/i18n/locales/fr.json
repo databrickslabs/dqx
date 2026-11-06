@@ -3414,6 +3414,7 @@
     "rename": "Renommer…",
     "setMyDefault": "Définir comme ma vue par défaut",
     "setOrgDefault": "Définir par défaut pour l'organisation",
+    "share": "Partager avec l'organisation",
     "delete": "Supprimer…",
     "rowActions": "Actions de la vue",
     "star": "Ajouter aux favoris",
@@ -3440,7 +3441,6 @@
     "reasons": {
       "orgViewAdminsOnly": "Seuls les administrateurs peuvent modifier les vues de l'organisation",
       "orgDefaultAdminsOnly": "Seuls les administrateurs peuvent définir la vue par défaut de l'organisation",
-      "orgDefaultOrgViewsOnly": "Seules les vues de l'organisation peuvent être la vue par défaut de l'organisation",
       "alreadyOrgDefault": "C'est déjà la vue par défaut de l'organisation",
       "alreadyMyDefault": "C'est déjà votre vue par défaut"
     },
@@ -3449,7 +3449,9 @@
       "rename": "Impossible de renommer la vue",
       "delete": "Impossible de supprimer la vue",
       "star": "Impossible de mettre à jour les favoris",
-      "default": "Impossible de modifier la vue par défaut"
+      "default": "Impossible de modifier la vue par défaut",
+      "share": "Impossible de partager la vue",
+      "shareDuplicate": "Une vue de l'organisation porte déjà ce nom. Renommez-la d'abord."
     }
   }
 }

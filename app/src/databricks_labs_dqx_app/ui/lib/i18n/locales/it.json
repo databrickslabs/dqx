@@ -3414,6 +3414,7 @@
     "rename": "Rinomina…",
     "setMyDefault": "Imposta come mia predefinita",
     "setOrgDefault": "Imposta come predefinita dell'organizzazione",
+    "share": "Condividi con l'organizzazione",
     "delete": "Elimina…",
     "rowActions": "Azioni della vista",
     "star": "Aggiungi ai preferiti",
@@ -3440,7 +3441,6 @@
     "reasons": {
       "orgViewAdminsOnly": "Solo gli amministratori possono modificare le viste dell'organizzazione",
       "orgDefaultAdminsOnly": "Solo gli amministratori possono impostare la predefinita dell'organizzazione",
-      "orgDefaultOrgViewsOnly": "Solo le viste dell'organizzazione possono essere la predefinita dell'organizzazione",
       "alreadyOrgDefault": "È già la predefinita dell'organizzazione",
       "alreadyMyDefault": "È già la tua predefinita"
     },
@@ -3449,7 +3449,9 @@
       "rename": "Impossibile rinominare la vista",
       "delete": "Impossibile eliminare la vista",
       "star": "Impossibile aggiornare i preferiti",
-      "default": "Impossibile modificare la predefinita"
+      "default": "Impossibile modificare la predefinita",
+      "share": "Impossibile condividere la vista",
+      "shareDuplicate": "Esiste già una vista dell'organizzazione con questo nome. Rinominala prima."
     }
   }
 }

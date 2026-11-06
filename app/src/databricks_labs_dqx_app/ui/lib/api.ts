@@ -23123,6 +23123,68 @@ export const useDeleteSavedView = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
+ * Move the caller's own personal view into the org scope (admin only).
+ * @summary Share Saved View
+ */
+export const shareSavedView = (
+    viewId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/saved-views/${viewId}/share`,undefined,options
+    );
+  }
+
+
+
+export const getShareSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext> => {
+
+const mutationKey = ['shareSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof shareSavedView>>, {viewId: string}> = (props) => {
+          const {viewId} = props ?? {};
+
+          return  shareSavedView(viewId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ShareSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof shareSavedView>>>
+    
+    export type ShareSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Share Saved View
+ */
+export const useShareSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof shareSavedView>>,
+        TError,
+        {viewId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getShareSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Star a saved view for the caller.
  * @summary Star Saved View
  */

@@ -119,6 +119,17 @@ def delete_saved_view(view_id: str, svc: ServiceDep, email: EmailDep, role: Curr
     return Response(status_code=204)
 
 
+@router.post(
+    "/{view_id}/share",
+    response_model=SavedViewOut,
+    operation_id="shareSavedView",
+    dependencies=[require_role(UserRole.ADMIN)],
+)
+def share_saved_view(view_id: str, svc: ServiceDep, email: EmailDep, role: CurrentUserRole) -> SavedViewOut:
+    """Move the caller's own personal view into the org scope (admin only)."""
+    return _call(lambda: svc.share_view(view_id, user=email, is_admin=role == UserRole.ADMIN))
+
+
 @router.put("/{view_id}/star", response_model=SavedViewOut, operation_id="starSavedView", dependencies=_ROLES)
 def star_saved_view(view_id: str, svc: ServiceDep, email: EmailDep, role: CurrentUserRole) -> SavedViewOut:
     """Star a saved view for the caller."""

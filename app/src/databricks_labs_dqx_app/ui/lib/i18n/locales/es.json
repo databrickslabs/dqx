@@ -3414,6 +3414,7 @@
     "rename": "Cambiar nombre…",
     "setMyDefault": "Usar como mi vista predeterminada",
     "setOrgDefault": "Usar como predeterminada de la organización",
+    "share": "Compartir con la organización",
     "delete": "Eliminar…",
     "rowActions": "Acciones de la vista",
     "star": "Marcar como favorita",
@@ -3440,7 +3441,6 @@
     "reasons": {
       "orgViewAdminsOnly": "Solo los administradores pueden cambiar las vistas de la organización",
       "orgDefaultAdminsOnly": "Solo los administradores pueden definir la vista predeterminada de la organización",
-      "orgDefaultOrgViewsOnly": "Solo las vistas de la organización pueden ser la predeterminada de la organización",
       "alreadyOrgDefault": "Ya es la vista predeterminada de la organización",
       "alreadyMyDefault": "Ya es tu vista predeterminada"
     },
@@ -3449,7 +3449,9 @@
       "rename": "No se pudo cambiar el nombre de la vista",
       "delete": "No se pudo eliminar la vista",
       "star": "No se pudo actualizar la favorita",
-      "default": "No se pudo cambiar la vista predeterminada"
+      "default": "No se pudo cambiar la vista predeterminada",
+      "share": "No se pudo compartir la vista",
+      "shareDuplicate": "Ya existe una vista de la organización con este nombre. Cámbiale el nombre primero."
     }
   }
 }

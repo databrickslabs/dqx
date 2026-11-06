@@ -277,31 +277,53 @@ export interface ActionState {
   reasonKey: string | null;
 }
 
-/** The actions in a saved view's ⋯ menu. Rename and Delete are null (not shown) on the built-in view. */
+/**
+ * The actions in a saved view's ⋯ menu. A null action is not shown: Rename and Delete on the
+ * built-in view, Set as org default on personal views, and Share with organisation everywhere
+ * except an admin's own personal views.
+ */
 export interface RowActions {
   rename: ActionState | null;
   delete: ActionState | null;
   setMyDefault: ActionState;
-  setOrgDefault: ActionState;
+  setOrgDefault: ActionState | null;
+  share: ActionState | null;
 }
 
 const ENABLED: ActionState = { enabled: true, reasonKey: null };
 const disabledBecause = (reasonKey: string): ActionState => ({ enabled: false, reasonKey });
 
-/** Which row actions *view* allows for the current user. */
-export function rowActions(view: SavedViewOut, isAdmin: boolean): RowActions {
+/**
+ * Which row actions *view* allows for the current user. *effectiveDefaultId* is the view the
+ * user gets by default (their own pick, else the org default), so Set as my default is disabled
+ * on it even when the user never picked one.
+ */
+export function rowActions(view: SavedViewOut, isAdmin: boolean, effectiveDefaultId: string | null): RowActions {
   const edit = view.can_edit ? ENABLED : disabledBecause("savedViews.reasons.orgViewAdminsOnly");
-  let setOrgDefault: ActionState = ENABLED;
-  if (view.is_org_default) setOrgDefault = disabledBecause("savedViews.reasons.alreadyOrgDefault");
-  else if (!isAdmin) setOrgDefault = disabledBecause("savedViews.reasons.orgDefaultAdminsOnly");
-  else if (view.scope !== "org" || !view.can_set_org_default)
-    setOrgDefault = disabledBecause("savedViews.reasons.orgDefaultOrgViewsOnly");
+  const isOrgView = view.scope === "org";
+  let setOrgDefault: ActionState | null = null;
+  if (isOrgView) {
+    if (view.is_org_default) setOrgDefault = disabledBecause("savedViews.reasons.alreadyOrgDefault");
+    else if (!isAdmin || !view.can_set_org_default)
+      setOrgDefault = disabledBecause("savedViews.reasons.orgDefaultAdminsOnly");
+    else setOrgDefault = ENABLED;
+  }
   return {
     rename: view.is_builtin ? null : edit,
     delete: view.is_builtin ? null : edit,
-    setMyDefault: view.is_my_default ? disabledBecause("savedViews.reasons.alreadyMyDefault") : ENABLED,
+    setMyDefault: view.id === effectiveDefaultId ? disabledBecause("savedViews.reasons.alreadyMyDefault") : ENABLED,
     setOrgDefault,
+    share: !isOrgView && !view.is_builtin && isAdmin && view.can_edit ? ENABLED : null,
   };
+}
+
+/**
+ * The personal-default pointer to store when the user picks Set as my default on *view*:
+ * null (follow the org default, including its future changes) when *view* is the org default,
+ * otherwise the view's id.
+ */
+export function myDefaultTarget(view: SavedViewOut): string | null {
+  return view.is_org_default ? null : view.id;
 }
 
 /** Whether Save is disabled and, when the active view is read-only, the i18n key of the reason. */

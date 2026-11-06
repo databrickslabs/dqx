@@ -158,3 +158,30 @@ def test_org_default_requires_admin(svc):
     body = {"page": "schedules", "view_id": "v1"}
     assert _client(svc).put("/api/v1/saved-views/defaults/org", json=body).status_code == 403
     assert _client(svc, UserRole.ADMIN).put("/api/v1/saved-views/defaults/org", json=body).status_code == 200
+
+
+def test_share_requires_admin(svc):
+    svc.share_view.return_value = _view()
+    assert _client(svc).post("/api/v1/saved-views/v1/share").status_code == 403
+    svc.share_view.assert_not_called()
+
+
+def test_admin_share_ok(svc):
+    svc.share_view.return_value = _view()
+    resp = _client(svc, UserRole.ADMIN).post("/api/v1/saved-views/v1/share")
+    assert resp.status_code == 200
+    svc.share_view.assert_called_once_with("v1", user="u@x", is_admin=True)
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (SavedViewNotFoundError("nope"), 404),
+        (SavedViewValidationError("already org"), 422),
+        (SavedViewConflictError("dup"), 409),
+        (SavedViewForbiddenError("no"), 403),
+    ],
+)
+def test_share_maps_service_errors(svc, error, status):
+    svc.share_view.side_effect = error
+    assert _client(svc, UserRole.ADMIN).post("/api/v1/saved-views/v1/share").status_code == status

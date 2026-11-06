@@ -3414,6 +3414,7 @@
     "rename": "Renomear…",
     "setMyDefault": "Definir como meu padrão",
     "setOrgDefault": "Definir como padrão da organização",
+    "share": "Compartilhar com a organização",
     "delete": "Excluir…",
     "rowActions": "Ações da visualização",
     "star": "Marcar como favorita",
@@ -3440,7 +3441,6 @@
     "reasons": {
       "orgViewAdminsOnly": "Somente administradores podem alterar visualizações da organização",
       "orgDefaultAdminsOnly": "Somente administradores podem definir o padrão da organização",
-      "orgDefaultOrgViewsOnly": "Somente visualizações da organização podem ser o padrão da organização",
       "alreadyOrgDefault": "Esta já é o padrão da organização",
       "alreadyMyDefault": "Esta já é o seu padrão"
     },
@@ -3449,7 +3449,9 @@
       "rename": "Não foi possível renomear a visualização",
       "delete": "Não foi possível excluir a visualização",
       "star": "Não foi possível atualizar a favorita",
-      "default": "Não foi possível alterar o padrão"
+      "default": "Não foi possível alterar o padrão",
+      "share": "Não foi possível compartilhar a visualização",
+      "shareDuplicate": "Já existe uma visualização da organização com este nome. Renomeie-a primeiro."
     }
   }
 }

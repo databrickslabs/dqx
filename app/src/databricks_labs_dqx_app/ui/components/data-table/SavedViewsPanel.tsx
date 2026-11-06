@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { RenameViewDialog } from "./RenameViewDialog";
 import { DisabledReason, SaveViewDialog } from "./SaveViewDialog";
 import { TruncatedLabel } from "./TruncatedLabel";
-import { rowActions, saveDisabledReason, type ActionState } from "./saved-views";
+import { myDefaultTarget, rowActions, saveDisabledReason, type ActionState } from "./saved-views";
 import type { SavedViewsMenuConfig } from "./useSavedViews";
 
 /** A dialog the Saved Views page asks its host to open (dialogs live outside the menu). */
@@ -108,7 +108,7 @@ function ViewRow({
 }) {
   const { t } = useTranslation();
   const active = config.activeView?.id === view.id;
-  const actions = rowActions(view, config.isAdmin);
+  const actions = rowActions(view, config.isAdmin, config.effectiveDefaultId);
   return (
     <div className={cn("flex items-center rounded-sm", active && "bg-muted")}>
       <DropdownMenuItem
@@ -154,16 +154,27 @@ function ViewRow({
               state={actions.setMyDefault}
               label={t("savedViews.setMyDefault")}
               onSelect={() => {
-                config.setMyDefault(view.id).catch(ignoreFailure);
+                config.setMyDefault(myDefaultTarget(view)).catch(ignoreFailure);
               }}
             />
-            <ActionItem
-              state={actions.setOrgDefault}
-              label={t("savedViews.setOrgDefault")}
-              onSelect={() => {
-                config.setOrgDefault(view.id).catch(ignoreFailure);
-              }}
-            />
+            {actions.setOrgDefault && (
+              <ActionItem
+                state={actions.setOrgDefault}
+                label={t("savedViews.setOrgDefault")}
+                onSelect={() => {
+                  config.setOrgDefault(view.id).catch(ignoreFailure);
+                }}
+              />
+            )}
+            {actions.share && (
+              <ActionItem
+                state={actions.share}
+                label={t("savedViews.share")}
+                onSelect={() => {
+                  config.share(view.id).catch(ignoreFailure);
+                }}
+              />
+            )}
             {actions.delete && (
               <>
                 <DropdownMenuSeparator />
