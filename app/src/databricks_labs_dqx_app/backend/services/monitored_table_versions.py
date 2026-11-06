@@ -56,12 +56,22 @@ from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import AppliedRule, MonitoredTableVersion
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    MonitoredTableDetail,
+    MonitoredTableService,
+)
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical(value: Any) -> str:
+    """A comparable form of a frozen or live field: JSON with sorted keys (empty mapping/tags = none)."""
+    if value in ({}, []):
+        value = None
+    return json.dumps(value, sort_keys=True, default=str)
 
 
 class MonitoredTableVersionService:
@@ -282,6 +292,56 @@ class MonitoredTableVersionService:
             return []
         applied = [self._ref_to_applied(binding_id, ref) for ref in refs if isinstance(ref, dict)]
         return self._materializer.render_applied_checks(table_fqn, applied)
+
+    def changed_since_version(self, binding_id: str, version: int, detail: MonitoredTableDetail | None = None) -> bool:
+        """Whether *binding_id*'s applied rules differ from its frozen *version*.
+
+        Save-as-draft only persists the applied rules: it neither materializes
+        nor changes the table's status, which rolls up from its checks. So an
+        approved table with a saved edit still reads ``approved`` and the frozen
+        version keeps running — and a removal leaves no check to review at all.
+        This compares what a run would use: the set of applied rules and, per
+        rule, its rule, column mapping, severity override, pass threshold, tags
+        and version pin. A field a legacy snapshot didn't record isn't compared.
+        False when there is no frozen *version*. Pass *detail* when the caller has
+        already loaded the table, to skip reading it again. (A newer approved
+        version of a rule reaches the table through
+        :meth:`Materializer.rematerialize_for_rule`.)
+        """
+        if version <= 0:
+            return False
+        e = escape_sql_string(binding_id)
+        state_text = self._sql.select_json_text("state_json")
+        rows = self._sql.query(
+            f"SELECT {state_text} FROM {self._versions_table} "  # noqa: S608
+            f"WHERE binding_id = '{e}' AND version = {int(version)}"
+        )
+        if detail is None:
+            detail = self._monitored_tables.get(binding_id)
+        if not rows or detail is None:
+            return False
+        state = self._parse_state(rows[0][0])
+        refs = {str(ref.get("applied_rule_id")): ref for ref in state.get("rule_refs") or [] if isinstance(ref, dict)}
+        pins = {str(a.get("applied_rule_id")): a for a in state.get("applied_rules") or [] if isinstance(a, dict)}
+        current = {str(s.applied_rule.id): s.applied_rule for s in detail.applied_rules}
+        if set(refs) != set(current):
+            return True
+        for applied_id, applied in current.items():
+            ref = refs[applied_id]
+            live = {
+                "rule_id": applied.rule_id,
+                "column_mapping": applied.column_mapping,
+                "severity_override": applied.severity_override,
+                "pass_threshold": applied.pass_threshold,
+                "user_metadata": applied.user_metadata,
+            }
+            for key, value in live.items():
+                if key in ref and _canonical(ref[key]) != _canonical(value):
+                    return True
+            frozen_pin = pins.get(applied_id, {})
+            if "pinned_version" in frozen_pin and frozen_pin["pinned_version"] != applied.pinned_version:
+                return True
+        return False
 
     def snapshot_counts_many(self, pins: list[tuple[str, int]]) -> dict[tuple[str, int], tuple[int, int]]:
         """Return ``(applied_rule_count, check_count)`` per frozen *(binding_id, version)* pin.

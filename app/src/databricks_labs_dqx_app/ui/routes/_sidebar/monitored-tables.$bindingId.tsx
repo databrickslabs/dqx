@@ -599,7 +599,10 @@ function MonitoredTableDetailPage() {
   // Nothing to resubmit: Save-as-draft is already disabled (no staged
   // edits) and this version is already approved, so "Submit for review"
   // would just be a no-op re-approval request (item 11).
-  const submitDisabledNoChanges = !isDirty && table.status === "approved";
+  // A removal-only edit leaves every remaining check approved, so the status alone
+  // can't tell it apart from "nothing to submit" — the backend compares the rule set
+  // with the approved version (unapproved_rule_changes).
+  const submitDisabledNoChanges = !isDirty && table.status === "approved" && !detail.unapproved_rule_changes;
 
   // Require-draft-run gate (issues B2-12 / B2-118): when the admin setting is
   // on, block submit until a draft run has been recorded for this table AND

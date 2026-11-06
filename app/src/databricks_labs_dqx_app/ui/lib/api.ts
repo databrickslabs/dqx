@@ -2515,6 +2515,8 @@ export interface ModelServicesOut {
 export interface MonitoredTableDetailOut {
   table: MonitoredTableOut;
   applied_rules?: AppliedRuleOut[];
+  /** The table's applied rules differ from its approved version (a rule added or removed, or a mapping, severity override, pass threshold, tag or version pin changed). Runs keep using the approved version until the table is submitted and approved. */
+  unapproved_rule_changes?: boolean;
 }
 
 export type MonitoredTableOutOwner = string | null;
