@@ -433,6 +433,32 @@ class TestWriteSqlQuarantineRecords:
 # ---------------------------------------------------------------------------
 
 
+class TestJsonDumps:
+    """``_json_dumps`` serialises the sample rows written to ``sample_invalid_json``."""
+
+    def test_serialises_geospatial_values_as_hex_wkb(self, runner_module):
+        class _GeoValue:
+            """Same shape as pyspark.sql.types.Geometry / Geography (WKB bytes plus SRID)."""
+
+            def __init__(self, wkb: bytes, srid: int):
+                self._wkb, self._srid = wkb, srid
+
+            def getBytes(self) -> bytes:  # noqa: N802 - mirrors the PySpark API
+                return self._wkb
+
+            def getSrid(self) -> int:  # noqa: N802 - mirrors the PySpark API
+                return self._srid
+
+        point_wkb = bytes.fromhex("0101000000000000000000F03F0000000000000040")  # POINT(1 2)
+        rows = [{"location": _GeoValue(point_wkb, 4326), "id": 1}]
+
+        assert json.loads(runner_module._json_dumps(rows)) == [{"location": point_wkb.hex().upper(), "id": 1}]
+
+    def test_still_rejects_unsupported_objects(self, runner_module):
+        with pytest.raises(TypeError):
+            runner_module._json_dumps([{"value": object()}])
+
+
 class TestParseJobRunId:
     def test_none_and_empty_return_none(self, runner_module):
         assert runner_module._parse_job_run_id(None) is None
