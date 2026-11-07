@@ -2184,7 +2184,7 @@
     "saveAndPublishButton": "Salva e pubblica",
     "submitting": "Invio in corso…",
     "submitDisabledNoChangesHint": "Nessuna modifica da inviare — i controlli di questa tabella sono già approvati.",
-    "submitDisabledNeedsAttentionHint_one": "Correggi la regola che richiede attenzione in Applica regole prima di inviare.",
+    "submitDisabledNeedsAttentionHint_one": "Correggi la {{count}} regola che richiede attenzione in Applica regole prima di inviare.",
     "submitDisabledNeedsAttentionHint_other": "Correggi le {{count}} regole che richiedono attenzione in Applica regole prima di inviare.",
     "submitDisabledNeedsDraftRunHint": "È necessaria un'esecuzione in bozza prima di inviare per la revisione",
     "submitDisabledStaleDraftRunHint": "Non puoi inviare per l'approvazione senza prima eseguire la tua bozza",

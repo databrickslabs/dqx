@@ -2184,7 +2184,7 @@
     "saveAndPublishButton": "Enregistrer et publier",
     "submitting": "Soumission…",
     "submitDisabledNoChangesHint": "Aucune modification à soumettre — les contrôles de cette table sont déjà approuvés.",
-    "submitDisabledNeedsAttentionHint_one": "Corrigez la règle qui nécessite votre attention dans Appliquer des règles avant de soumettre.",
+    "submitDisabledNeedsAttentionHint_one": "Corrigez la {{count}} règle qui nécessite votre attention dans Appliquer des règles avant de soumettre.",
     "submitDisabledNeedsAttentionHint_other": "Corrigez les {{count}} règles qui nécessitent votre attention dans Appliquer des règles avant de soumettre.",
     "submitDisabledNeedsDraftRunHint": "Une exécution brouillon est requise avant de soumettre pour revue",
     "submitDisabledStaleDraftRunHint": "Vous ne pouvez pas soumettre pour approbation sans d'abord exécuter votre brouillon",

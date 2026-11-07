@@ -670,9 +670,7 @@ class ApplyRulesService:
                     entry.column_mapping,
                     stored_params,
                     bind_all=binds_every_parameter(rule.mode),
-                    overridable=set(
-                        get_overridable_parameters(rule.user_metadata, rule.definition.parameters)
-                    ),
+                    overridable=set(get_overridable_parameters(rule.user_metadata, rule.definition.parameters)),
                 )
             except InvalidParameterValueError as exc:
                 raise InvalidAppliedParameterError(str(exc)) from exc
