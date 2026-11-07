@@ -1,0 +1,61 @@
+# Reusable job: works out which CI boundaries a change affects (see .github/scripts/changed-boundaries.sh).
+#
+# Pull requests get only the boundaries their changed paths touch. Every other event gets all of
+# them, but only push.yml runs on pushes to main and in the merge queue: the workspace workflows
+# (acceptance, anomaly, mcp) run their suites on pull requests only, and nightly.yml runs them in
+# full. Fork PRs get none: their code is not checked out on the protected runners, matching the
+# per-workflow fork gates.
+name: changes
+
+on:
+  workflow_call:
+    outputs:
+      boundaries:
+        description: JSON array of affected boundaries
+        value: ${{ jobs.detect.outputs.boundaries }}
+      core:
+        value: ${{ jobs.detect.outputs.core }}
+      studio:
+        value: ${{ jobs.detect.outputs.studio }}
+      anomaly:
+        value: ${{ jobs.detect.outputs.anomaly }}
+      mcp:
+        value: ${{ jobs.detect.outputs.mcp }}
+      docs:
+        value: ${{ jobs.detect.outputs.docs }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    env:
+      IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+    outputs:
+      boundaries: ${{ steps.detect.outputs.boundaries }}
+      core: ${{ steps.detect.outputs.core }}
+      studio: ${{ steps.detect.outputs.studio }}
+      anomaly: ${{ steps.detect.outputs.anomaly }}
+      mcp: ${{ steps.detect.outputs.mcp }}
+      docs: ${{ steps.detect.outputs.docs }}
+    steps:
+      - name: Checkout
+        if: env.IS_FORK_PR != 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed boundaries
+        id: detect
+        if: env.IS_FORK_PR != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            .github/scripts/changed-boundaries.sh "$BASE_SHA"
+          else
+            .github/scripts/changed-boundaries.sh --all
+          fi

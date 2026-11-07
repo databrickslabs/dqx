@@ -18,6 +18,9 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   not-a-fork:
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -27,10 +30,13 @@ jobs:
       - run: echo "Not a fork PR, proceeding"
 
   ci:
-    # Fork-gate is applied per-step via `env.IS_FORK_PR` so the matrix expands and each
-    # leaf (ci (3.10), ci (3.11), ci (3.12)) reports its own check. A job-level `if:`
-    # skips the job before matrix expansion and emits only a single `ci` check, leaving
-    # the required `ci (X.Y)` contexts in "Expected — Waiting for status to be reported".
+    # Gated per-step via `env.RUN_UNIT` so the matrix expands and each leaf (ci (3.10),
+    # ci (3.11), ci (3.12)) reports its own check. A job-level `if:` skips the job before
+    # matrix expansion and emits only a single `ci` check, leaving the required `ci (X.Y)`
+    # contexts in "Expected — Waiting for status to be reported". Fork PRs get no
+    # boundaries from `changes`, so their steps are skipped too. The anomaly boundary runs
+    # the unit suite because its unit tests (tests/unit/test_anomaly_*) live there.
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
@@ -42,18 +48,18 @@ jobs:
       id-token: write
     env:
       UV_PYTHON: ${{ matrix.pyVersion }}
-      IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+      RUN_UNIT: ${{ needs.changes.outputs.core == 'true' || needs.changes.outputs.anomaly == 'true' }}
     steps:
       - name: Checkout
-        if: env.IS_FORK_PR != 'true'
+        if: env.RUN_UNIT == 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup environment
-        if: env.IS_FORK_PR != 'true'
+        if: env.RUN_UNIT == 'true'
         uses: ./.github/actions/setup-env
 
       - name: Run unit tests
-        if: env.IS_FORK_PR != 'true'
+        if: env.RUN_UNIT == 'true'
         env:
           # Lets the watchdog's SIGABRT print a stack for every thread of every process.
           PYTHONFAULTHANDLER: "1"
@@ -78,12 +84,13 @@ jobs:
         # Skip on `push: main` — main-branch coverage is published by nightly.yml which
         # runs the full test set (unit + integration + anomaly + e2e). Publishing only
         # unit coverage here would overwrite codecov's main baseline with a lower number.
-        if: env.IS_FORK_PR != 'true' && matrix.pyVersion == '3.12' && github.event_name != 'push'
+        if: env.RUN_UNIT == 'true' && matrix.pyVersion == '3.12' && github.event_name != 'push'
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
           flags: unit
 
+  # Not gated: fmt/lint covers every boundary (black and ruff also run over app/ and mcp-server/).
   fmt:
     needs: not-a-fork
     runs-on:
@@ -105,7 +112,8 @@ jobs:
         run: git diff --exit-code
 
   docs:
-    needs: not-a-fork
+    needs: [not-a-fork, changes]
+    if: needs.changes.outputs.docs == 'true'
     name: Build Docusaurus
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -132,8 +140,12 @@ jobs:
       - name: Build website
         run: make docs-build
 
+      - name: Validate skills manifest
+        run: make test-skills
+
   app:
-    needs: not-a-fork
+    needs: [not-a-fork, changes]
+    if: needs.changes.outputs.studio == 'true'
     name: Build and Check App
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -181,7 +193,8 @@ jobs:
         working-directory: .
 
   mcp:
-    needs: not-a-fork
+    needs: [not-a-fork, changes]
+    if: needs.changes.outputs.mcp == 'true'
     name: Build and Check MCP Server
     runs-on:
       group: databrickslabs-protected-runner-group
@@ -200,3 +213,19 @@ jobs:
 
       - name: Run MCP server tests
         run: make mcp-test
+
+  # Single stable check for branch protection: passes when every job above passed or was
+  # skipped because its boundary did not change.
+  summary:
+    needs: [changes, ci, fmt, docs, app, mcp]
+    if: always()
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in *" failure "* | *" cancelled "*) exit 1 ;; esac
