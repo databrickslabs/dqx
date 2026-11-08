@@ -44,7 +44,9 @@ test.describe("Schedules", () => {
       await expect.poll(async () => (await studio.tableSchedule(table.binding_id))?.cron ?? null).not.toBeNull();
     });
 
-    const row = page.getByRole("row").filter({ hasText: tableName });
+    // Match the fully qualified name: a bare "customer" also matches other rows
+    // on the schedules page (e.g. "Customer 360" collection).
+    const row = page.getByRole("row").filter({ has: page.getByRole("cell", { name: TABLE }) });
 
     await test.step("the schedule is listed as active", async () => {
       await openStudio(page, "/schedules");
