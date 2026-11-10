@@ -9,10 +9,13 @@ from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.setup.audience import StudioAudience, resolve_audience
 from databricks_labs_dqx_app.backend.setup.storage import DEFAULT_PREFIX, StudioStorage, derive_storage
 
-_CATALOG_KEY = "setup_catalog"
-_PREFIX_KEY = "setup_prefix"
-_AUDIENCE_KEY = "setup_audience_group"
-_LOCK_KEY = "setup_storage_locked"
+SETUP_SETTING_KEY_PREFIX = "setup_"
+"""Prefix of every application setting setup owns; a database reset keeps these keys."""
+
+_CATALOG_KEY = f"{SETUP_SETTING_KEY_PREFIX}catalog"
+_PREFIX_KEY = f"{SETUP_SETTING_KEY_PREFIX}prefix"
+_AUDIENCE_KEY = f"{SETUP_SETTING_KEY_PREFIX}audience_group"
+_LOCK_KEY = f"{SETUP_SETTING_KEY_PREFIX}storage_locked"
 
 
 class ConfigurationSource(str, Enum):
