@@ -246,6 +246,29 @@ class TestPromptCompletionForUnwatchedRuns:
         assert "status = 'FAILED'" in attempts[1]
         score_cache.refresh_all_for_tables.assert_called_once_with(["main.sales.orders"])
 
+    def test_finished_job_missing_from_the_listing_is_dropped_after_two_lookups(self, make_scheduler):
+        # The bounded completed-runs listing no longer holds r1's job, so the tick
+        # can't tell how it ended: it leaves the row alone and, after a second
+        # empty lookup, stops tracking it. The daily tmp-view sweep then marks
+        # the row (TestSweepStaleTmpViews.test_marks_a_running_row_whose_job_ended).
+        svc, mocks, score_cache, _monitored = _completion_scheduler(
+            make_scheduler, rows=[("r1", "main.sales.orders", "", "RUNNING")]
+        )
+
+        def row_lookups() -> int:
+            return sum(1 for c in mocks.sql.query.call_args_list if c.args and "WHERE run_id IN" in c.args[0])
+
+        svc.refresh_scores_for_completed_runs(self.NOW)
+        svc.refresh_scores_for_completed_runs(self.LATER)
+        svc.refresh_scores_for_completed_runs(self.LATER + timedelta(minutes=1))
+        lookups = row_lookups()
+        assert lookups == 2
+
+        svc.refresh_scores_for_completed_runs(self.LATER + timedelta(minutes=2))
+        assert row_lookups() == lookups  # dropped: no further lookups
+        assert _updates(mocks) == []
+        score_cache.refresh_all_for_tables.assert_not_called()
+
     def test_ended_job_without_a_message_gets_a_generic_one(self, make_scheduler):
         svc, mocks, _score_cache, _monitored = _completion_scheduler(
             make_scheduler,

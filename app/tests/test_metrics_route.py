@@ -115,6 +115,21 @@ class TestParseCheckMetrics:
         assert by_name["filtered"].evaluated_count == 100
         assert by_name["unfiltered"].evaluated_count is None
 
+    @pytest.mark.parametrize("evaluated", ["{not json", json.dumps({"check_name": "filtered"})])
+    def test_corrupt_evaluated_payload_falls_back_and_warns(self, metrics_utils_module, evaluated, caplog):
+        raw = json.dumps([{"check_name": "filtered", "error_count": 1, "warning_count": 0}])
+        with caplog.at_level("WARNING"):
+            out = metrics_utils_module.parse_check_metrics(raw, evaluated)
+        assert out[0].evaluated_count is None
+        assert "check_evaluated_rows metric is not a JSON array" in caplog.text
+
+    def test_absent_evaluated_payload_does_not_warn(self, metrics_utils_module, caplog):
+        raw = json.dumps([{"check_name": "unfiltered", "error_count": 1, "warning_count": 0}])
+        with caplog.at_level("WARNING"):
+            out = metrics_utils_module.parse_check_metrics(raw, None)
+        assert out[0].evaluated_count is None
+        assert caplog.text == ""
+
     def test_duplicate_evaluated_entries_keep_the_max(self, metrics_utils_module):
         # Matches the score view's MAX(evaluated_count) per check, whatever the entry order.
         raw = json.dumps([{"check_name": "dup", "error_count": 1, "warning_count": 0}])

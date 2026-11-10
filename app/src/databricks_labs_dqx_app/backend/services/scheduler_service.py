@@ -2551,11 +2551,11 @@ class SchedulerService:
             return
         self._next_tmp_view_sweep_at = now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
         try:
-            await asyncio.to_thread(self._sweep_stale_tmp_views)
+            await asyncio.to_thread(self.sweep_stale_tmp_views)
         except Exception:
             logger.exception("Tmp-view sweep failed (non-fatal)")
 
-    def _sweep_stale_tmp_views(self) -> None:
+    def sweep_stale_tmp_views(self) -> None:
         """Reap tmp views left behind when status polling never ran ``drop_view``.
 
         Three sources:

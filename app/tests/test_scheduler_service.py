@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 import pytest
+from databricks.sdk.service.jobs import Run, RunLifeCycleState, RunResultState, RunState
 
 from databricks_labs_dqx_app.backend.services.binding_run_service import (
     BindingRunError,
@@ -432,11 +433,54 @@ class TestSweepStaleTmpViews:
             [],  # running validation
         ]
 
-        svc._sweep_stale_tmp_views()
+        svc.sweep_stale_tmp_views()
 
         mocks.tmp.execute.assert_called_once()
         sql = mocks.tmp.execute.call_args.args[0]
         assert "tmp_view_dead" in sql
+
+    @staticmethod
+    def _abandoned_validation_run(mocks: SimpleNamespace, life_cycle: str, result: str | None) -> None:
+        """One RUNNING validation row (run r1, job run 42) whose job is in *life_cycle* / *result*."""
+
+        def query(stmt: str, *a: object, **k: object) -> list[tuple[str, ...]]:
+            if "dq_validation_runs" in stmt and "status = 'RUNNING'" in stmt:
+                return [("r1", "main.dqx_tmp.tmp_view_r1", "42")]
+            return []
+
+        mocks.sql.query.side_effect = query
+        mocks.ws.jobs.get_run.return_value = Run(
+            state=RunState(
+                life_cycle_state=RunLifeCycleState(life_cycle),
+                result_state=RunResultState(result) if result else None,
+                state_message="boom",
+            )
+        )
+
+    def test_marks_a_running_row_whose_job_ended(self, gc_scheduler):
+        # The fallback for a finished run the scheduler stopped tracking
+        # (e.g. its job fell out of the bounded completed-runs listing).
+        svc, mocks = gc_scheduler
+        self._abandoned_validation_run(mocks, "TERMINATED", "FAILED")
+
+        svc.sweep_stale_tmp_views()
+
+        mocks.ws.jobs.get_run.assert_called_once_with(42)
+        updates = [c.args[0] for c in mocks.sql.execute.call_args_list if c.args and "UPDATE" in c.args[0]]
+        assert len(updates) == 1
+        mocks.sql.fqn.assert_called_with("dq_validation_runs")
+        assert "status = 'FAILED'" in updates[0]
+        assert "WHERE run_id = 'r1' AND status = 'RUNNING'" in updates[0]
+        assert "tmp_view_r1" in mocks.tmp.execute.call_args.args[0]
+
+    def test_leaves_a_row_whose_job_is_still_running(self, gc_scheduler):
+        svc, mocks = gc_scheduler
+        self._abandoned_validation_run(mocks, "RUNNING", None)
+
+        svc.sweep_stale_tmp_views()
+
+        assert not [c for c in mocks.sql.execute.call_args_list if c.args and "UPDATE" in c.args[0]]
+        mocks.tmp.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_maybe_sweep_advances_schedule(self, gc_scheduler):

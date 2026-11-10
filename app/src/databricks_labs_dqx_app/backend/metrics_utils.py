@@ -6,10 +6,13 @@ helpers inside one route module.
 """
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from databricks_labs_dqx_app.backend.models import CheckMetricBreakdown
+
+logger = logging.getLogger(__name__)
 
 
 def catalog_of(fqn: str) -> str:
@@ -75,16 +78,20 @@ def _parse_evaluated_counts(raw: Any) -> dict[str, int]:
 
     Tolerant of an absent or corrupt payload (empty map) and of malformed
     entries (skipped), so a bad value only drops the evaluated count — the
-    check then falls back to the table's input rows. A check listed more than
-    once keeps its largest count, matching the score view's MAX.
+    check then falls back to the table's input rows. Only the task runner
+    writes this payload, so a corrupt one is logged as a warning. A check
+    listed more than once keeps its largest count, matching the score view's MAX.
     """
     if not raw:
         return {}
     try:
         items = json.loads(raw) if isinstance(raw, str) else raw
     except (json.JSONDecodeError, TypeError):
-        return {}
+        items = None
     if not isinstance(items, list):
+        logger.warning(
+            "The check_evaluated_rows metric is not a JSON array; filtered checks fall back to the table's input rows"
+        )
         return {}
     out: dict[str, int] = {}
     for item in items:
