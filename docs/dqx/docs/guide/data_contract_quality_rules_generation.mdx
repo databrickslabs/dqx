@@ -21,7 +21,7 @@ DQX enables the generation of data quality rules directly from data contracts th
 The data contract-based quality rules generation is available via the `DQGenerator` class and supports generation of the following rule types:
 
 - **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema when `generate_schema_validation=True` (default), derived from the contract's schema definition. Use `strict_schema_validation=True` (default) for exact column set, order, and types; set to `False` for permissive validation (expected columns with compatible types, extra columns allowed).
-- **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
+- **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, length, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
 
@@ -50,9 +50,9 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
 - **Schema Validation**: Generates one `has_valid_schema` rule per schema when enabled (default strict; optional permissive)
-- **Full Support**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength)
+- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength, format); other options such as `exclusiveMinimum` or `exclusiveMaximum` are ignored
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
-- **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
+- **Version Compatibility**: Loads ODCS v3.x contracts (v3.0.x and later); versions before v3.0 are not supported
 
 DQX leverages the `datacontract-cli` library to parse and validate contracts, ensuring full compatibility with the ODCS ecosystem.
 
@@ -64,7 +64,7 @@ To use the data contract-based quality rules generation feature, you need to ins
 pip install 'databricks-labs-dqx[datacontract]'
 ```
 
-This will install the required packages including `datacontract-cli` for ODCS contract parsing and validation.
+This will install the required packages including `datacontract-cli` (version 1.2 or later, below 2.0) for ODCS contract parsing and validation.
 
 <Admonition type="info" title="Optional: LLM Support for Text-Based Rules">
 If your contracts include text-based quality expectations (natural language descriptions), you'll also need to install the LLM dependencies:
@@ -120,6 +120,8 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
     # Load contract using datacontract-cli
     contract = DataContract(data_contract_file="/path/to/contract.yaml")
+    # or from a YAML string: DataContract(data_contract_str=contract_yaml)
+    # or from a parsed ODCS model: DataContract(data_contract=odcs_model)
 
     # Generate rules from contract object
     rules = generator.generate_rules_from_contract(contract=contract)
@@ -182,9 +184,15 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
-| `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
+| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp or time; `datetime` is also accepted for compatibility) | Date, time, and timestamp formats such as `yyyy-MM-dd` or `HH:mm:ss` |
+| `enum` | Not supported directly | None; use `pattern` or a `type: library` quality rule | Status codes, categories |
 
-**Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
+<Admonition type="info" title="Formatting date and time values">
+`format` is defined by ODCS as a Java `DateTimeFormatter` pattern (e.g. `"yyyy-MM-dd'T'HH:mm:ss"`) and is passed to the generated 
+check unchanged. It must be one of Spark's [datetime patterns](https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html).
+A Python `strftime` pattern (e.g. `"%Y-%m-%d"`) generates no rule and logs a warning. Any other invalid pattern (e.g. `"YYYY"`)
+will fail when checks run.
+</Admonition>
 
 ### Example Contract with Predefined Rules
 
@@ -530,7 +538,7 @@ If you don't have LLM dependencies installed or want to skip text processing:
         process_text_rules=False  # Skip LLM processing
     )
 
-    # Text expectations will be logged as warnings and skipped
+    # Text expectations are skipped with a logged message
     ```
   </TabItem>
 </Tabs>
@@ -551,7 +559,7 @@ Treat that as a starting point. The five metrics cover the common cases, but not
 This five-metric surface is intentionally closed: DQX does not plan to grow this mapping into a general ODCS interpreter for arbitrary quality vocabularies.
 </Admonition>
 
-Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
+Every `type: library` entry is processed whenever `generate_rules_from_contract` runs, unless disabled with `process_library_rules=False` (default `True`), matching the `generate_predefined_rules`/`process_text_rules` opt-out pattern used elsewhere. When disabled, library entries are skipped and logged with their count. An entry that DQX cannot map is skipped with a logged warning instead of failing the whole contract (see [Malformed and Unrecognized Entries](#malformed-and-unrecognized-entries)).
 
 <Admonition type="note" title="Where the ODCS spec is silent">
 Several of the mapping decisions below are not settled by the ODCS spec text. Where that's the case, DQX follows the interpretation already established by other ODCS-compliant tooling rather than inventing its own reading, so a contract produces the same verdict regardless of which tool evaluates it. Each judgment call is called out explicitly where it applies: `duplicateValues`'s counting unit and `invalidValues`'s combined-condition handling of `validValues` + `pattern`. Bound inclusivity for `mustBeBetween`/`mustNotBeBetween` is a different case — the spec is inconsistent rather than silent — and is covered under [Threshold Fields and the SQL Fallback](#threshold-fields-and-the-sql-fallback).
@@ -798,7 +806,7 @@ If a contract's `type: library` entries misbehave, or you'd rather express quali
     # Skip type: library processing, generate only predefined/explicit/text rules
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        process_library_rules=False  # Skip library metric mapping
+        process_library_rules=False  # Skip library metric mapping; logs an info line
     )
     ```
   </TabItem>
@@ -872,7 +880,7 @@ Here's a complete example showing contract-based rule generation with every rule
               pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Predefined: regex_match
           
           - name: temperature
-            logicalType: decimal
+            logicalType: number
             physicalType: decimal(5,2)
             required: true           # Predefined: is_not_null
             logicalTypeOptions:
@@ -1108,7 +1116,7 @@ schema:
         logicalTypeOptions:
           pattern: '^[a-zA-Z0-9._%+-]+@.+$'
       - name: lifetime_value
-        logicalType: decimal
+        logicalType: number
         physicalType: decimal(18,2)
         logicalTypeOptions:
           minimum: 0
@@ -1207,7 +1215,7 @@ pip install 'databricks-labs-dqx[datacontract]'
   ```bash
   datacontract lint /path/to/contract.yaml
   ```
-- Ensure your contract follows ODCS v3.x specification (`kind: DataContract`, `apiVersion: v3.0.x`)
+- Ensure your contract follows ODCS v3.x specification (`kind: DataContract`, `apiVersion: v3.x`)
 - Check that constraints are in `logicalTypeOptions` for ODCS v3.x
 - Review the [ODCS specification](https://bitol-io.github.io/open-data-contract-standard/)
 
@@ -1229,7 +1237,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 - Verify field constraints are properly defined in the contract
 - Check that `generate_predefined_rules=True` (default)
 - Review supported constraint types in the [Predefined Rule Generation](#predefined-rule-generation) section
-- Some constraints may require specific formats (e.g., `format: '%Y-%m-%d'` for dates)
+- `format` must be a Spark datetime pattern (e.g., `format: 'yyyy-MM-dd'`). A Python `strftime` pattern such as `'%Y-%m-%d'` generates no rule and logs a warning
 
 ### Explicit Rules Not Recognized
 
@@ -1254,7 +1262,9 @@ pip install 'databricks-labs-dqx[datacontract]'
 
 - The data contract feature requires the `datacontract-cli` library which increases package size.
 - Text-based rule generation requires LLM dependencies and network access to the model endpoint.
-- Only ODCS v3.0.x format is currently supported (earlier versions are not supported).
+- `type: sql` quality entries are not supported yet. They are skipped with a warning, as is any other quality entry that does not become a rule (e.g. `type: custom` with an engine other than `dqx`, or `type: text` without the LLM dependencies).
+- Quality entries on nested properties (e.g. `addr.zip` inside an `object` property) do not become rules yet. Each one is skipped with a warning naming its dotted path.
+- Entries skipped because of `process_library_rules=False` or `process_text_rules=False` are not warned about; an info line per option reports how many were skipped.
 - Dataset-level checks beyond the `rowCount` and `duplicateValues` library metrics must be defined as explicit DQX rules (custom quality checks).
 - Generated rules quality depends on the completeness and correctness of the contract definition.
 - Complex business logic (text based rules) may still require manual rule definition or refinement.
