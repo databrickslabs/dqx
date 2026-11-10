@@ -208,7 +208,7 @@ These are skipped with a warning, so a contract value is never evaluated as a SQ
 A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number` (exact up to 2<sup>53</sup>). Without a logical type, it follows the bounds. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
 
 <Admonition type="note" title="Previous behavior">
-In DQX v0.17.1 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
+In DQX v0.17.2 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
 </Admonition>
 
 ### Example Contract with Predefined Rules
