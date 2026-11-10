@@ -92,7 +92,7 @@ export function ScoreBox({
    *  this run's pass rate breached its threshold. Any other value = no icon. */
   breachCriticality?: string | null;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const reduce = useReducedMotion();
   // B2-83: make the count-up directional off the same `trend` signal that drives
   // the up/down arrow. A declined score (trend "down") counts DOWN from 100%;
@@ -109,7 +109,7 @@ export function ScoreBox({
   // Render the subtitle once, complete: while the check / rule counts load the
   // line keeps its height but stays invisible (no "X / Y tests passed" flash).
   const countsPending = scopeCounts === undefined && combineTestCounts(counts).total != null;
-  const testCounts = countsPending ? "" : formatTestCounts(t, counts, scopeCounts);
+  const testCounts = countsPending ? "" : formatTestCounts(t, i18n.resolvedLanguage ?? "en", counts, scopeCounts);
   return (
     <div
       className="rounded-lg p-4 text-center text-white"

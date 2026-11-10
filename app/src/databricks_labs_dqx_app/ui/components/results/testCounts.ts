@@ -21,17 +21,19 @@ export type CheckRuleCounts = { checkCount: number; ruleCount: number };
  * Score-box subtitle: one combined line over row + table tests, e.g.
  * "16 / 21 tests passed across 2 checks and 2 rules". Without *scope* (the
  * check / rule counts are not loaded) it is just "16 / 21 tests passed";
- * "" when nothing was tested.
+ * "" when nothing was tested. Numbers are formatted in *locale*, the app's
+ * selected language, so they match the translated copy around them.
  */
 export function formatTestCounts(
   t: Translate,
+  locale: string,
   counts: TestCounts,
   scope?: CheckRuleCounts | null,
 ): string {
   const { failed, total } = combineTestCounts(counts);
   if (total == null) return "";
-  const passed = Math.max(0, total - (failed ?? 0)).toLocaleString();
-  const totalText = total.toLocaleString();
+  const passed = Math.max(0, total - (failed ?? 0)).toLocaleString(locale);
+  const totalText = total.toLocaleString(locale);
   if (!scope) return t("resultsUi.testsPassed", { passed, total: totalText });
   return t("resultsUi.testsPassedAcross", {
     passed,

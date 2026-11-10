@@ -28,6 +28,7 @@ describe("formatTestCounts", () => {
     expect(
       formatTestCounts(
         t,
+        "en",
         { failedTests: 4, totalTests: 20, tableFailedTests: 1, tableTotalTests: 1 },
         { checkCount: 2, ruleCount: 2 },
       ),
@@ -36,40 +37,40 @@ describe("formatTestCounts", () => {
 
   it("uses the singular for one check and one rule", () => {
     expect(
-      formatTestCounts(t, { failedTests: 3, totalTests: 10 }, { checkCount: 1, ruleCount: 1 }),
+      formatTestCounts(t, "en", { failedTests: 3, totalTests: 10 }, { checkCount: 1, ruleCount: 1 }),
     ).toBe("7 / 10 tests passed across 1 check and 1 rule");
     expect(
-      formatTestCounts(t, { tableFailedTests: 0, tableTotalTests: 3 }, { checkCount: 3, ruleCount: 1 }),
+      formatTestCounts(t, "en", { tableFailedTests: 0, tableTotalTests: 3 }, { checkCount: 3, ruleCount: 1 }),
     ).toBe("3 / 3 tests passed across 3 checks and 1 rule");
   });
 
-  it("formats large totals with locale separators", () => {
-    expect(
-      formatTestCounts(
-        t,
-        { failedTests: 10_000, totalTests: 1_000_000, tableFailedTests: 1, tableTotalTests: 1 },
-        { checkCount: 4, ruleCount: 2 },
-      ),
-    ).toBe(
-      `${(990_000).toLocaleString()} / ${(1_000_001).toLocaleString()} tests passed across 4 checks and 2 rules`,
+  it("formats large totals in the app's locale, not the browser's", () => {
+    const counts = { failedTests: 10_000, totalTests: 1_000_000, tableFailedTests: 1, tableTotalTests: 1 };
+    const scope = { checkCount: 4, ruleCount: 2 };
+    expect(formatTestCounts(t, "en", counts, scope)).toBe(
+      "990,000 / 1,000,001 tests passed across 4 checks and 2 rules",
+    );
+    expect(formatTestCounts(t, "de", counts, scope)).toBe(
+      "990.000 / 1.000.001 tests passed across 4 checks and 2 rules",
     );
   });
 
   it("falls back to the plain line when check / rule counts are unavailable", () => {
     const counts = { failedTests: 4, totalTests: 20, tableFailedTests: 1, tableTotalTests: 1 };
-    expect(formatTestCounts(t, counts)).toBe("16 / 21 tests passed");
-    expect(formatTestCounts(t, counts, null)).toBe("16 / 21 tests passed");
+    expect(formatTestCounts(t, "en", counts)).toBe("16 / 21 tests passed");
+    expect(formatTestCounts(t, "en", counts, null)).toBe("16 / 21 tests passed");
   });
 
   it("treats a null failed count as zero failures", () => {
-    expect(formatTestCounts(t, { failedTests: null, totalTests: 5 })).toBe("5 / 5 tests passed");
+    expect(formatTestCounts(t, "en", { failedTests: null, totalTests: 5 })).toBe("5 / 5 tests passed");
   });
 
   it("returns an empty string when nothing was tested", () => {
-    expect(formatTestCounts(t, {})).toBe("");
+    expect(formatTestCounts(t, "en", {})).toBe("");
     expect(
       formatTestCounts(
         t,
+        "en",
         { failedTests: null, totalTests: 0, tableFailedTests: null, tableTotalTests: null },
         { checkCount: 0, ruleCount: 0 },
       ),
