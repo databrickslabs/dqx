@@ -50,7 +50,7 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
 - **Schema Validation**: Generates one `has_valid_schema` rule per schema when enabled (default strict; optional permissive)
-- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength, format); other options such as `exclusiveMinimum` or `exclusiveMaximum` are ignored
+- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, maxLength, format); other options such as `multipleOf` or `maxItems` are ignored
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
 - **Version Compatibility**: Loads ODCS v3.x contracts (v3.0.x and later); versions before v3.0 are not supported
 
