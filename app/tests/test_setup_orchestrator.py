@@ -307,6 +307,19 @@ class FakeMigrationRunner:
 @dataclass
 class FakeAppSettings:
     events: list[str]
+    saved_job_id: int | None = None
+
+    def saved_task_runner_job_id(self) -> int | None:
+        self.events.append("read_saved_job")
+        return self.saved_job_id
+
+    def save_task_runner_job_id(self, job_id: int) -> None:
+        self.events.append(f"save_job:{job_id}")
+        self.saved_job_id = job_id
+
+    def forget_task_runner_job_id(self) -> None:
+        self.events.append("forget_job")
+        self.saved_job_id = None
 
     def record_setup_completion(self, job_id: int, completed_at: datetime, user_name: str | None) -> None:
         assert completed_at.tzinfo is not None
@@ -1173,6 +1186,56 @@ async def test_discovered_job_becomes_runtime_state_before_external_action() -> 
     assert "resolve_job:discover" in harness.events
     assert "grant_admin:81:admin@example.com" in harness.events
     assert not any(event.startswith("persist:") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_job_created_without_a_bundle_is_saved_before_anything_else_can_fail() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+
+    await harness.orchestrator.reconcile()
+
+    assert harness.events.index("save_job:81") == harness.events.index("resolve_job:discover") + 1
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_the_saved_job_instead_of_creating_one() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.orchestrator.app_settings.saved_job_id = 55
+    harness.jobs.resolved = ResolvedJob(job_id=55, created=False)
+
+    await harness.orchestrator.reconcile()
+
+    assert "resolve_job:55" in harness.events
+    assert "resolve_job:discover" not in harness.events
+    assert not any(event.startswith("save_job:") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_deleted_saved_job_is_forgotten_so_verify_creates_a_new_one() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.orchestrator.app_settings.saved_job_id = 55
+    harness.jobs.resolved = ResolvedJob(job_id=55, created=False)
+    harness.jobs.view_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
+    assert harness.orchestrator.app_settings.saved_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_bundle_job_ignores_the_saved_job_id() -> None:
+    harness = _harness()
+    harness.orchestrator.app_settings.saved_job_id = 55
+
+    await harness.orchestrator.reconcile()
+
+    assert "resolve_job:27" in harness.events
+    assert not any(event in harness.events for event in ("read_saved_job", "forget_job")) and not any(
+        event.startswith("save_job:") for event in harness.events
+    )
 
 
 @pytest.mark.asyncio

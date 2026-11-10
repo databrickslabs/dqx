@@ -20,7 +20,8 @@ Scope decisions:
   ``dq_migrations`` version tracker) must survive so the app keeps working
   without a redeploy/re-migrate.
 - ``dq_app_settings`` is cleared EXCEPT the two in-flight job-status keys
-  (``reset_database_status`` / ``demo_content_status``), then the fresh-install
+  (``reset_database_status`` / ``demo_content_status``) and the saved
+  task-runner job ID (``setup_task_runner_job_id``), then the fresh-install
   DEFAULT content it held is immediately RE-PROVISIONED in the same request
   by re-running the app's first-boot seed routines (see
   :meth:`DatabaseResetService._reprovision_defaults`). A "full reset" returns
@@ -53,7 +54,10 @@ from databricks_labs_dqx_app.backend.migrations import (
     ANALYTICAL_TABLE_NAMES,
     OLTP_TABLE_NAMES,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.app_settings_service import (
+    SETUP_TASK_RUNNER_JOB_ID_KEY,
+    AppSettingsService,
+)
 from databricks_labs_dqx_app.backend.services.reset_status import RESET_STATUS_KEY
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
@@ -87,7 +91,9 @@ _SETTINGS_KEY_COLUMN = "setting_key"
 # in-flight status keys (imported from their owning modules, never hardcoded);
 # every other setting is still cleared and re-seeded, so this keeps ZERO
 # long-term reset history — it only keeps the live status alive mid-operation.
-_PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY)
+# The saved task-runner job ID is setup state, not data: Studio finds its job only by this
+# ID, so clearing it would make the next start create a second runner job.
+_PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY, SETUP_TASK_RUNNER_JOB_ID_KEY)
 
 
 @dataclass(frozen=True)

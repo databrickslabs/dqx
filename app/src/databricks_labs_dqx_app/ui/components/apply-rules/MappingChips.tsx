@@ -417,6 +417,9 @@ function PendingManySlotChip({
 }) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<string[]>([]);
+  // The picker only hides columns whose addition would repeat a set, so unchecking
+  // can still land on one; check the final selection too.
+  const repeatsExistingSet = selected.length > 0 && isDuplicate(selected.join(","));
   return (
     <div className="flex flex-col gap-1.5 w-full max-w-xs">
       <MultiColumnPicker
@@ -431,7 +434,7 @@ function PendingManySlotChip({
         <Button
           size="sm"
           variant="secondary"
-          disabled={selected.length === 0}
+          disabled={selected.length === 0 || repeatsExistingSet}
           onClick={() => onCommit(selected)}
         >
           {t("monitoredTables.applyButton")}

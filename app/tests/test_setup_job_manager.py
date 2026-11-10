@@ -81,70 +81,19 @@ def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
     manager.workspace.jobs.create.assert_not_called()
 
 
-def test_resolve_rediscovers_tagged_job_before_create(manager: TaskRunnerJobManager) -> None:
-    """A retry reuses a tagged job instead of creating a second runner."""
+def test_resolve_without_a_job_id_creates_one_and_never_looks_for_an_existing_job(
+    manager: TaskRunnerJobManager,
+) -> None:
+    """Every principal can see every Studio runner job, so an existing tagged job is never adopted."""
     manager.workspace.jobs.list.return_value = [managed_job(job_id=43)]
+    manager.workspace.jobs.create.return_value.job_id = 44
 
-    assert manager.resolve(None) == ResolvedJob(job_id=43, created=False)
-    manager.workspace.jobs.create.assert_not_called()
-
-
-def test_resolve_skips_tagged_job_created_by_another_app() -> None:
-    """Another Studio install's runner is visible to every workspace principal, but is never reused."""
-    workspace = MagicMock(name="WorkspaceClient")
-    other = managed_job(job_id=50)
-    other.creator_user_name = "other-app-sp"
-    own = managed_job(job_id=51)
-    own.creator_user_name = "THIS-APP-SP"
-    workspace.jobs.list.return_value = [other, own]
-    manager = TaskRunnerJobManager(workspace=workspace, app_application_id="this-app-sp")
-
-    assert manager.resolve(None) == ResolvedJob(job_id=51, created=False)
-    workspace.jobs.create.assert_not_called()
-
-
-def test_resolve_creates_its_own_job_when_only_another_apps_job_exists() -> None:
-    workspace = MagicMock(name="WorkspaceClient")
-    other = managed_job(job_id=50)
-    other.creator_user_name = "other-app-sp"
-    workspace.jobs.list.return_value = [other]
-    workspace.jobs.create.return_value.job_id = 52
-    manager = TaskRunnerJobManager(workspace=workspace, app_application_id="this-app-sp")
-
-    assert manager.resolve(None) == ResolvedJob(job_id=52, created=True)
-
-
-def test_resolve_rediscovers_and_upgrades_legacy_managed_job(manager: TaskRunnerJobManager) -> None:
-    """An upgraded installation reuses its legacy job and adds the ownership tag."""
-    legacy_job = Job(
-        job_id=45,
-        settings=JobSettings(
-            tags={
-                "owner": "data-platform",
-                "dqx_studio_managed": "true",
-                "dqx_component": "task_runner",
-            }
-        ),
-    )
-    manager.workspace.jobs.list.return_value = [legacy_job]
-    manager.workspace.jobs.get.return_value = legacy_job
-
-    resolved = manager.resolve(None)
-    manager.configure(resolved.job_id, ["/Volumes/c/s/v/runner.whl"])
-
-    assert resolved == ResolvedJob(job_id=45, created=False)
-    manager.workspace.jobs.create.assert_not_called()
-    settings = manager.workspace.jobs.update.call_args.kwargs["new_settings"]
-    assert settings.tags == {
-        "owner": "data-platform",
-        "app": "dqx-studio",
-        "dqx_studio_managed": "true",
-        "dqx_component": "task_runner",
-    }
+    assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
+    manager.workspace.jobs.list.assert_not_called()
 
 
 def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJobManager) -> None:
-    """A first reconciliation creates a discoverable job the setup admin can manage."""
+    """A first reconciliation creates a labelled job the setup admin can manage."""
     manager.workspace.jobs.create.return_value.job_id = 44
 
     assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)

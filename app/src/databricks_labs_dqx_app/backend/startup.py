@@ -391,7 +391,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             pg_migrations=PgMigrationRunner(pg_executor),
             configuration=_ConfigurationResolver(conf, configuration_store),
             binder=binder,
-            jobs=TaskRunnerJobManager(sp_ws, app_application_id=app_sp_id),
+            jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
             app_sp_id=app_sp_id,
             overrides=SetupOverrides(app_settings),

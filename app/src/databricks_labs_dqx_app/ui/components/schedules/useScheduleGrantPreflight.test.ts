@@ -30,6 +30,28 @@ describe("splitPreflightTables", () => {
     expect(result.hasGrantIssue).toBe(true);
   });
 
+  it("a table missing usage grants and an ungrantable SELECT is reported both ways", () => {
+    const result = splitPreflightTables([
+      {
+        fqn: "c.s.both",
+        can_manage: false,
+        manage_holders: [{ principal: "data-eng", type: "group" }],
+        missing_grants: [
+          {
+            principal: "runner-sp",
+            display_name: "dqx-task-runner-sp",
+            privilege: "USE_SCHEMA",
+            securable_type: "SCHEMA",
+            securable: "c.s",
+            statement: "GRANT USE_SCHEMA ON SCHEMA `c`.`s` TO `runner-sp`;",
+          },
+        ],
+      },
+    ]);
+    expect(result.missingGrantTables.map((t) => t.fqn)).toEqual(["c.s.both"]);
+    expect(result.blockedTables.map((t) => t.fqn)).toEqual(["c.s.both"]);
+  });
+
   it("an unverified table alone still blocks the save", () => {
     const result = splitPreflightTables([
       { fqn: "c.s.unknown", can_manage: false, access_unverified: true },

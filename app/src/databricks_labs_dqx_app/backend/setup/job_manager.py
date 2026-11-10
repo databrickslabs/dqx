@@ -32,8 +32,9 @@ from databricks_labs_dqx_app.backend.setup.models import (
 
 logger = logging.getLogger(__name__)
 
-_DISCOVERY_TAGS = {"dqx_studio_managed": "true", "dqx_component": "task_runner"}
-_MANAGED_TAGS = {"app": "dqx-studio", **_DISCOVERY_TAGS}
+# Labels only: Studio finds its job by saved ID, never by tag, since every workspace
+# principal can see every Studio runner job.
+_MANAGED_TAGS = {"app": "dqx-studio", "dqx_studio_managed": "true", "dqx_component": "task_runner"}
 _JOB_NAME = "dqx-studio-task-runner"
 _TASK_KEY = "run_task"
 _ENVIRONMENT_KEY = "default"
@@ -90,27 +91,18 @@ class ResolvedJob:
 class TaskRunnerJobManager:
     """Resolve and safely configure the Studio-owned portions of a job."""
 
-    def __init__(
-        self, workspace: WorkspaceClient, setup_user: str | None = None, app_application_id: str | None = None
-    ) -> None:
+    def __init__(self, workspace: WorkspaceClient, setup_user: str | None = None) -> None:
         self.workspace = workspace
         self._setup_user = (setup_user or "").strip() or None
-        # Every workspace principal can view Studio runner jobs, so discovery must only reuse a
-        # tagged job this app created; otherwise one install could pick up another install's job.
-        self._app_application_id = (app_application_id or "").strip().lower() or None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
-        """Return the configured or tagged task-runner job, creating one if needed."""
+        """Return the configured task-runner job, or create one when there is none.
+
+        Existing jobs are never looked up by name or tag: every workspace principal can view
+        every Studio runner job, so a lookup could pick up another installation's job.
+        """
         if configured_job_id:
             return ResolvedJob(job_id=_parse_job_id(configured_job_id), created=False)
-
-        for job in self.workspace.jobs.list(expand_tasks=True):
-            settings = getattr(job, "settings", None)
-            tags = getattr(settings, "tags", None) or {}
-            if all(tags.get(key) == value for key, value in _DISCOVERY_TAGS.items()) and self._created_by_app(job):
-                job_id = getattr(job, "job_id", None)
-                if isinstance(job_id, int):
-                    return ResolvedJob(job_id=job_id, created=False)
 
         access_control_list = [_workspace_users_view_access()]
         if self._setup_user:
@@ -129,13 +121,6 @@ class TaskRunnerJobManager:
         if not isinstance(job_id, int):
             raise RuntimeError("Databricks did not return a task-runner job ID.")
         return ResolvedJob(job_id=job_id, created=True)
-
-    def _created_by_app(self, job: object) -> bool:
-        """Whether *job* was created by this app's service principal (always true when the app ID is unknown)."""
-        if self._app_application_id is None:
-            return True
-        creator = (getattr(job, "creator_user_name", None) or "").strip().lower()
-        return creator == self._app_application_id
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
         """Give the setup administrator management access to a task-runner job."""

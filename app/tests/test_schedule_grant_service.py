@@ -972,6 +972,30 @@ class TestReferencePreflight:
 
         assert [(g["principal"], g["privilege"]) for g in table.missing_grants] == [(RUNNER, "USE_SCHEMA")]
 
+    def test_missing_usage_and_an_ungrantable_select_are_both_reported(self, service, sp, obo) -> None:
+        """The author sees the usage grant to run and who can grant SELECT, before running anything."""
+        sp.grants.get_effective.side_effect = _grants_by_kind(_runner_ready() | {"schema": [], "table": []})
+        obo.statement_execution.execute_statement.return_value = sql_response(
+            rows=[["data-eng", "MANAGE", "TABLE", REF_FQN]]
+        )
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.can_manage is False
+        assert [(g["principal"], g["privilege"]) for g in table.missing_grants] == [(RUNNER, "USE_SCHEMA")]
+        assert [h["principal"] for h in table.manage_holders] == ["data-eng"]
+
+    @pytest.mark.parametrize("parent", ["schema", "catalog"])
+    def test_select_inherited_from_a_parent_needs_no_table_grant(self, service, sp, parent) -> None:
+        privileges = _runner_ready() | {"table": []}
+        privileges[parent] = [*privileges[parent], Privilege.SELECT]
+        sp.grants.get_effective.side_effect = _grants_by_kind(privileges)
+
+        (table,) = service.reference_preflight([REF_FQN])
+
+        assert table.can_manage is True
+        assert table.missing_grants == []
+
     def test_builtin_samples_table_is_never_checked(self, service, sp) -> None:
         sp.catalogs.get.return_value = CatalogInfo(catalog_type=CatalogType.SYSTEM_CATALOG)
 

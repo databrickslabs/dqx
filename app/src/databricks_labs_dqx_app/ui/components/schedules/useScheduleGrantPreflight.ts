@@ -45,8 +45,13 @@ export function splitPreflightTables(
   const hasMissingGrants = (table: SchedulePreflightTableOut) => (table.missing_grants ?? []).length > 0;
   const unverifiedTables = tables.filter((table) => table.access_unverified);
   const missingGrantTables = tables.filter((table) => !table.access_unverified && hasMissingGrants(table));
+  // A table can be both: missing usage grants the author can run, and a SELECT only
+  // the named MANAGE holders can grant.
   const blockedTables = tables.filter(
-    (table) => !table.can_manage && !table.access_unverified && !hasMissingGrants(table),
+    (table) =>
+      !table.can_manage &&
+      !table.access_unverified &&
+      (!hasMissingGrants(table) || (table.manage_holders ?? []).length > 0),
   );
   const hasGrantIssue = blockedTables.length > 0 || missingGrantTables.length > 0 || unverifiedTables.length > 0;
   return { blockedTables, missingGrantTables, unverifiedTables, hasGrantIssue };

@@ -165,7 +165,13 @@ class SetupMigrations(Protocol):
 
 
 class SetupCompletionStore(Protocol):
-    """Post-migration setup completion persistence surface."""
+    """Setup state saved in Lakebase: the task-runner job ID and the completion audit."""
+
+    def saved_task_runner_job_id(self) -> int | None: ...
+
+    def save_task_runner_job_id(self, job_id: int) -> None: ...
+
+    def forget_task_runner_job_id(self) -> None: ...
 
     def record_setup_completion(
         self,
@@ -923,10 +929,21 @@ class SetupOrchestrator:
         reader_ws: WorkspaceClient | None,
         reader_sql: SqlExecutor | None,
     ) -> SetupStep:
-        configured = str(self.runtime.job_id) if self.runtime.job_id is not None else self.bootstrap.job_id
         try:
+            # The job is only ever used by ID: the bundle's, else the one setup saved. Without
+            # either a new job is created, and its ID saved before anything else can fail.
+            configured = str(self.runtime.job_id) if self.runtime.job_id is not None else self.bootstrap.job_id
+            saved = (
+                None
+                if self.job_managed_by_deployment
+                else await asyncio.to_thread(self.app_settings.saved_task_runner_job_id)
+            )
+            if configured is None and saved is not None:
+                configured = str(saved)
             resolved = await asyncio.to_thread(self.jobs.resolve, configured)
             self.runtime.job_id = resolved.job_id
+            if not self.job_managed_by_deployment and saved != resolved.job_id:
+                await asyncio.to_thread(self.app_settings.save_task_runner_job_id, resolved.job_id)
             try:
                 if setup_user is not None:
                     await asyncio.to_thread(self.jobs.grant_setup_admin, resolved.job_id, setup_user)
@@ -953,6 +970,8 @@ class SetupOrchestrator:
                 if await asyncio.to_thread(self.jobs.exists, resolved.job_id):
                     raise
                 self.runtime.job_id = None
+                if not self.job_managed_by_deployment:
+                    await asyncio.to_thread(self.app_settings.forget_task_runner_job_id)
                 return _failed(
                     SetupStepId.TASK_RUNNER,
                     "task_runner_job_missing",

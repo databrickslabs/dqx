@@ -2301,13 +2301,18 @@ export function RegistryRuleFormDialog({
   // claim a granularity DQX won't honour. Native takes the check's registered
   // `rule_type`; the visual builder asks the compiled body; SQL is the author's
   // choice, forced back to row-level when the text is only a predicate.
+  // Compiled once per builder change; granularity and the Test tab both read it.
+  const compiledLowcodeBody = useMemo(
+    () => (mode === "lowcode" ? compileLowcodeBody(lowcodeAst, groupBy) : null),
+    [mode, lowcodeAst, groupBy],
+  );
   const effectiveGranularity: RuleGranularity =
     mode === "dqx_native"
       ? selectedFn?.rule_type === "dataset"
         ? "dataset"
         : "row"
-      : mode === "lowcode"
-        ? bodyGranularity(compileLowcodeBody(lowcodeAst, groupBy))
+      : compiledLowcodeBody
+        ? bodyGranularity(compiledLowcodeBody)
         : sqlGranularityIsChoice
           ? sqlGranularity
           : "row";
@@ -4617,8 +4622,8 @@ export function RegistryRuleFormDialog({
   const testCheckFunction =
     mode === "sql" && sqlTestBody
       ? sqlCheckFunctionOf(sqlTestBody)
-      : mode === "lowcode"
-        ? sqlCheckFunctionOf(compileLowcodeBody(lowcodeAst, groupBy))
+      : compiledLowcodeBody
+        ? sqlCheckFunctionOf(compiledLowcodeBody)
         : undefined;
   const testTabContent = (
     <div className="space-y-3 pt-2">
