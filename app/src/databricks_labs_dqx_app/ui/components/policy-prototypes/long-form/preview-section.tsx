@@ -6,50 +6,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { mockPreview, ruleById, type Policy } from "./model";
 
-function StatTile({
-  value,
-  one,
-  many,
-  sub,
-  tone,
-  onClick,
-  active,
-}: {
-  value: number;
-  one: string;
-  many: string;
-  sub?: string;
-  tone?: "warn";
-  onClick?: () => void;
-  active?: boolean;
-}) {
-  const body = (
-    <>
-      <div className={cn("text-xl font-semibold tabular-nums", tone === "warn" && "text-amber-700 dark:text-amber-300")}>
-        {value}
-      </div>
-      <div className="text-xs text-muted-foreground">{value === 1 ? one : many}</div>
-      {sub && <div className="mt-0.5 text-[11px] text-muted-foreground/80">{sub}</div>}
-    </>
-  );
-  const cls = "rounded-lg border bg-card px-3 py-2.5 text-left";
-  if (!onClick) return <div className={cls}>{body}</div>;
+function StatTile({ value, one, many }: { value: number; one: string; many: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(cls, "transition-colors hover:border-foreground/30", active && "border-primary bg-primary/5")}
-    >
-      {body}
-    </button>
+    <div className="rounded-lg border bg-card px-3 py-2.5">
+      <div className="text-xl font-semibold tabular-nums">{value}</div>
+      <div className="text-xs text-muted-foreground">{value === 1 ? one : many}</div>
+    </div>
   );
 }
 
-/** Mock table owners (the real preview returns each skipped table's owner). */
-function tableOwner(fqn: string): string {
-  return fqn.includes(".crm.") ? "crm-owners" : fqn.includes(".finance.") ? "finance-admins" : "data-eng";
-}
 
 function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
   const entries = Object.entries(mapping);
@@ -71,7 +36,6 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
   const deferred = useDeferredValue(current);
   const preview = useMemo(() => mockPreview(deferred), [deferred]);
   const [showTables, setShowTables] = useState(false);
-  const [accessOnly, setAccessOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (fqn: string) =>
@@ -87,8 +51,7 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
     .map((t) => ({ ...t, attachments: t.attachments.filter((a) => a.status === "auto") }))
     .filter((t) => t.attachments.length > 0);
   const active = withMatches.filter((t) => !t.skipped_reason);
-  const needsAccess = withMatches.filter((t) => t.skipped_reason);
-  const listed = accessOnly ? needsAccess : active;
+  const listed = active;
   const columns = active.reduce(
     (n, t) =>
       n + new Set(t.attachments.filter((a) => a.status === "auto").flatMap((a) => Object.values(a.mapping).flat())).size,
@@ -129,20 +92,6 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
           {!tableLevel && <StatTile value={columns} one="column matched" many="columns matched" />}
           {current.register_tables && (
             <StatTile value={toRegister} one="new table to monitor" many="new tables to monitor" />
-          )}
-          {needsAccess.length > 0 && (
-            <StatTile
-              value={needsAccess.length}
-              one="table needs access"
-              many="tables need access"
-              sub="Ask the owner for Apply"
-              tone="warn"
-              active={accessOnly}
-              onClick={() => {
-                setAccessOnly((v) => !v);
-                setShowTables(true);
-              }}
-            />
           )}
         </div>
         {preview.truncated && (
@@ -192,11 +141,7 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
                       </TableCell>
                       <TableCell className="px-2 font-mono text-xs">{t.table_fqn}</TableCell>
                       <TableCell className="px-2 text-xs">
-                        {t.skipped_reason ? (
-                          <span className="text-amber-700 dark:text-amber-300">
-                            Needs access · ask <span className="font-medium">{tableOwner(t.table_fqn)}</span> for Apply
-                          </span>
-                        ) : t.monitored ? (
+                        {t.monitored ? (
                           <span className="text-muted-foreground">Monitored</span>
                         ) : (
                           <span className="text-muted-foreground">Will be added (draft, unscheduled)</span>
