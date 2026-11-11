@@ -436,9 +436,38 @@ class TestIsSuppressed:
         sql.query.return_value = []
         assert svc.is_suppressed("b1", "r1", "h1") is False
 
-    def test_false_when_lookup_fails(self, svc, sql):
+    def test_lookup_failure_fails_closed(self, svc, sql):
         sql.query.side_effect = RuntimeError("boom")
-        assert svc.is_suppressed("b1", "r1", "h1") is False
+        with pytest.raises(RuntimeError):
+            svc.is_suppressed("b1", "r1", "h1")
+
+    def test_attach_does_not_insert_when_suppression_lookup_fails(self, svc, sql, registry):
+        # Fail closed: an unreadable tombstone must never let a removed mapping come back.
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [[["b1"]], RuntimeError("boom")]
+        with pytest.raises(RuntimeError):
+            svc.attach_policy_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x", "p1")
+        sql.execute.assert_not_called()
+
+
+class TestListSuppressedKeys:
+    def test_returns_rule_and_hash_pairs_in_one_query(self, svc, sql):
+        sql.query.return_value = [["r1", "h1"], ["r2", "h2"]]
+        assert svc.list_suppressed_keys("b1") == {("r1", "h1"), ("r2", "h2")}
+        assert sql.query.call_count == 1
+        query = sql.query.call_args[0][0]
+        assert "dq_tag_auto_suppressions" in query
+        assert "binding_id = 'b1'" in query
+
+    def test_escapes_binding_id(self, svc, sql):
+        sql.query.return_value = []
+        svc.list_suppressed_keys("b'1")
+        assert "binding_id = 'b''1'" in sql.query.call_args[0][0]
+
+    def test_lookup_failure_raises(self, svc, sql):
+        sql.query.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            svc.list_suppressed_keys("b1")
 
 
 # ---------------------------------------------------------------------------

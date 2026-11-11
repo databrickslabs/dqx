@@ -30,9 +30,12 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.policy_apply_service import (
+    MAX_AMBIGUOUS_PER_RUN,
+    MAX_REGISTRATIONS_PER_RUN,
     ActingUser,
     ApplyResult,
     PolicyApplyService,
+    RuleNotFoundError,
 )
 from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, TableSnapshot
 from databricks_labs_dqx_app.backend.services.policy_snapshot import PolicySnapshotReader, SnapshotResult
@@ -109,6 +112,7 @@ class World:
     grants: set[tuple[str, Privilege]] = field(default_factory=set)
     applied: dict[str, list[AppliedRule]] = field(default_factory=dict)
     suppressed: set[tuple[str, str, str]] = field(default_factory=set)
+    suppression_unreadable: set[str] = field(default_factory=set)
     registered: list[str] = field(default_factory=list)
     register_fails: set[str] = field(default_factory=set)
     attach_fails: set[str] = field(default_factory=set)
@@ -122,7 +126,12 @@ class World:
         self.bindings[table_fqn] = binding_id
         return MonitoredTable(binding_id=binding_id, table_fqn=table_fqn, created_by=user_email)
 
-    def service(self) -> PolicyApplyService:
+    def suppressed_keys(self, binding_id: str) -> set[tuple[str, str]]:
+        if binding_id in self.suppression_unreadable:
+            raise RuntimeError("suppression lookup failed")
+        return {(r, h) for b, r, h in self.suppressed if b == binding_id}
+
+    def service(self, **caps: int) -> PolicyApplyService:
         register: Callable[[str, str], MonitoredTable] = self.register_table
         return PolicyApplyService(
             policies=self.policies,
@@ -132,6 +141,7 @@ class World:
             permissions=self.permissions,
             snapshots=self.snapshots,
             register_table=register,
+            **caps,
         )
 
     def set_tables(self, *tables: TableSnapshot) -> None:
@@ -175,6 +185,7 @@ def world() -> World:
     )
     w.apply_rules.list_applied.side_effect = lambda binding_id: list(w.applied.get(binding_id, []))
     w.apply_rules.is_suppressed.side_effect = lambda b, r, h: (b, r, h) in w.suppressed
+    w.apply_rules.list_suppressed_keys.side_effect = w.suppressed_keys
 
     def attach(
         binding_id: str, rule_id: str, mapping: list[dict[str, str]], user_email: str, policy_id: str
@@ -510,3 +521,71 @@ def test_snapshot_failure_never_raises(world: World) -> None:
     world.snapshots.for_scope.side_effect = RuntimeError("warehouse down")
     world.policies.get.return_value = _policy()
     assert world.service().run_policy("p1", AUTHOR) == ApplyResult(attached=0, registered=0, ambiguous=[])
+
+
+def test_suppression_lookup_failure_fails_closed(world: World) -> None:
+    world.bindings = {"c.s.flaky": "b-flaky", "c.s.ok": "b-ok"}
+    world.grants = {("b-flaky", Privilege.APPLY), ("b-ok", Privilege.APPLY)}
+    world.suppression_unreadable = {"b-flaky"}
+    world.set_tables(_snap("c.s.flaky", _col("email", "pii")), _snap("c.s.ok", _col("email", "pii")))
+    world.policies.get.return_value = _policy()
+
+    result = world.service().run_policy("p1", AUTHOR)
+
+    assert _attached(world) == [("b-ok", {"column": "email"})]
+    assert result.attached == 1
+
+
+def test_suppressions_read_once_per_binding(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", *[_col(f"c{i}", "pii") for i in range(5)]))
+    world.policies.get.return_value = _policy()
+
+    assert world.service().run_policy("p1", AUTHOR).attached == 5
+    world.apply_rules.list_suppressed_keys.assert_called_once_with("b1")
+    world.apply_rules.is_suppressed.assert_not_called()
+
+
+def test_registration_is_capped_per_run(world: World) -> None:
+    world.set_tables(*[_snap(f"c.s.t{i}", _col("email", "pii")) for i in range(5)])
+    world.policies.get.return_value = _policy(register_tables=True)
+
+    result = world.service(max_registrations_per_run=2).run_policy("p1", AUTHOR)
+
+    assert world.registered == ["c.s.t0", "c.s.t1"]
+    assert result.registered == 2
+    assert result.registration_capped is True
+    assert result.registrations_skipped == 3
+    assert result.attached == 2
+    assert MAX_REGISTRATIONS_PER_RUN == 200
+
+
+def test_registration_not_capped_under_limit(world: World) -> None:
+    world.set_tables(_snap("c.s.t0", _col("email", "pii")))
+    world.policies.get.return_value = _policy(register_tables=True)
+    result = world.service().run_policy("p1", AUTHOR)
+    assert result.registration_capped is False
+    assert result.registrations_skipped == 0
+
+
+def test_ambiguous_capped_per_run(world: World) -> None:
+    world.registry.get_rule.side_effect = lambda rule_id: _rule(rule_id, slots=["a", "b"])
+    world.bindings = {f"c.s.t{i}": f"b{i}" for i in range(3)}
+    world.grants = {(f"b{i}", Privilege.APPLY) for i in range(3)}
+    columns = [_col(f"a{i}", "pii") for i in range(6)] + [_col(f"z{i}", "tel") for i in range(6)]
+    world.set_tables(*[_snap(f"c.s.t{i}", *columns) for i in range(3)])
+    world.policies.get.return_value = _policy(conditions={"a": ["pii"], "b": ["tel"]})
+
+    capped = world.service(max_ambiguous_per_run=30).run_policy("p1", AUTHOR)
+    assert len(capped.ambiguous) == 30
+    # Default run cap still keeps the per-(policy, table) cap of 20.
+    assert len(world.service().run_policy("p1", AUTHOR).ambiguous) == 60
+    assert MAX_AMBIGUOUS_PER_RUN == 500
+
+
+def test_preview_missing_rule_raises_before_snapshot(world: World) -> None:
+    world.registry.get_rule.side_effect = lambda rule_id: None
+    with pytest.raises(RuleNotFoundError):
+        world.service().preview("missing", _policy_in(), AUTHOR)
+    world.snapshots.for_scope.assert_not_called()

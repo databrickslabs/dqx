@@ -12,9 +12,12 @@ approved), so a policy only ever reaches tables that user may apply rules to:
   then owns the new binding.
 
 Mappings a user deliberately removed (suppression tombstones) and mappings
-already applied are never attached again. ``ambiguous`` matches are returned as
-suggestions; ``partial`` matches are dropped. Trigger paths are best-effort:
-one failing table, registration or attach is logged (ids only) and skipped.
+already applied are never attached again; when the tombstones of a binding
+cannot be read, nothing is attached there (fail closed). ``ambiguous`` matches
+are returned as suggestions; ``partial`` matches are dropped. Trigger paths are
+best-effort: one failing table, registration or attach is logged (ids only) and
+skipped. Each run registers at most ``MAX_REGISTRATIONS_PER_RUN`` tables and
+returns at most ``MAX_AMBIGUOUS_PER_RUN`` ambiguous matches.
 """
 
 import logging
@@ -37,8 +40,14 @@ from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePol
 logger = logging.getLogger(__name__)
 
 MAX_AMBIGUOUS_PER_TABLE = 20
+MAX_AMBIGUOUS_PER_RUN = 500
+MAX_REGISTRATIONS_PER_RUN = 200
 _BINDING_LOOKUP_CHUNK = 500
 _PREVIEW_POLICY_ID = ""
+
+
+class RuleNotFoundError(LookupError):
+    """Raised by :meth:`PolicyApplyService.preview` when the rule does not exist."""
 
 
 @dataclass(frozen=True)
@@ -72,6 +81,8 @@ class ApplyResult:
     attached: int
     registered: int
     ambiguous: list[PolicyMatch]  # surfaced as suggestions
+    registration_capped: bool = False  # True when MAX_REGISTRATIONS_PER_RUN stopped further registrations
+    registrations_skipped: int = 0  # not-yet-monitored matching tables left unregistered by the cap
 
 
 _EMPTY_RESULT = ApplyResult(attached=0, registered=0, ambiguous=[])
@@ -79,12 +90,24 @@ _EMPTY_RESULT = ApplyResult(attached=0, registered=0, ambiguous=[])
 
 @dataclass
 class _Totals:
+    max_registrations: int
+    max_ambiguous: int
     attached: int = 0
     registered: int = 0
+    registrations_skipped: int = 0
     ambiguous: list[PolicyMatch] = field(default_factory=list)
 
+    def ambiguous_room(self) -> int:
+        return min(MAX_AMBIGUOUS_PER_TABLE, max(self.max_ambiguous - len(self.ambiguous), 0))
+
     def result(self) -> ApplyResult:
-        return ApplyResult(attached=self.attached, registered=self.registered, ambiguous=list(self.ambiguous))
+        return ApplyResult(
+            attached=self.attached,
+            registered=self.registered,
+            ambiguous=list(self.ambiguous),
+            registration_capped=self.registrations_skipped > 0,
+            registrations_skipped=self.registrations_skipped,
+        )
 
 
 def _mapping_hash(match: PolicyMatch) -> str:
@@ -92,6 +115,7 @@ def _mapping_hash(match: PolicyMatch) -> str:
 
 
 def _matched_columns(matches: list[PolicyMatch]) -> set[str]:
+    # A "many" slot is bound by the policy engine as one comma-joined column list; split it back here.
     columns: set[str] = set()
     for match in matches:
         for bound in match.column_mapping.values():
@@ -108,6 +132,7 @@ class _UserGate:
         self._apply_rules = apply_rules
         self._can_apply: dict[str, bool] = {}
         self._applied: dict[str, set[tuple[str, str]]] = {}
+        self._suppressed: dict[str, set[tuple[str, str]] | None] = {}  # None = unreadable -> attach nothing
 
     def can_apply(self, binding_id: str) -> bool:
         cached = self._can_apply.get(binding_id)
@@ -120,6 +145,7 @@ class _UserGate:
         """A binding the user just registered: they own it and nothing is applied yet."""
         self._can_apply[binding_id] = True
         self._applied[binding_id] = set()
+        self._suppressed[binding_id] = set()
 
     def _check(self, binding_id: str) -> bool:
         object_type = ObjectType.MONITORED_TABLE.value
@@ -148,12 +174,22 @@ class _UserGate:
             self._applied[binding_id] = keys
         return keys
 
+    def _suppressed_keys(self, binding_id: str) -> set[tuple[str, str]] | None:
+        if binding_id not in self._suppressed:
+            try:
+                self._suppressed[binding_id] = self._apply_rules.list_suppressed_keys(binding_id)
+            except Exception:  # fail closed: unreadable tombstones block every attach on this binding
+                logger.warning(f"Suppression lookup failed for binding {binding_id}; attaching nothing", exc_info=True)
+                self._suppressed[binding_id] = None
+        return self._suppressed[binding_id]
+
     def is_new(self, binding_id: str, match: PolicyMatch) -> bool:
         """Not already applied on the binding and not deliberately removed (suppressed)."""
-        mapping_hash = _mapping_hash(match)
-        if (match.rule_id, mapping_hash) in self._applied_keys(binding_id):
+        key = (match.rule_id, _mapping_hash(match))
+        if key in self._applied_keys(binding_id):
             return False
-        return not self._apply_rules.is_suppressed(binding_id, match.rule_id, mapping_hash)
+        suppressed = self._suppressed_keys(binding_id)
+        return suppressed is not None and key not in suppressed
 
     def fresh(self, binding_id: str, matches: list[PolicyMatch], limit: int | None = None) -> list[PolicyMatch]:
         """New matches for the binding, deduplicated by mapping, at most *limit*."""
@@ -185,6 +221,9 @@ class PolicyApplyService:
         permissions: PermissionsService,
         snapshots: PolicySnapshotReader,
         register_table: Callable[[str, str], MonitoredTable],
+        *,
+        max_registrations_per_run: int = MAX_REGISTRATIONS_PER_RUN,
+        max_ambiguous_per_run: int = MAX_AMBIGUOUS_PER_RUN,
     ) -> None:
         self._policies = policies
         self._registry = registry
@@ -193,6 +232,8 @@ class PolicyApplyService:
         self._permissions = permissions
         self._snapshots = snapshots
         self._register_table = register_table
+        self._max_registrations = max_registrations_per_run
+        self._max_ambiguous = max_ambiguous_per_run
 
     # ------------------------------------------------------------------
     # Preview (dry run)
@@ -205,11 +246,16 @@ class PolicyApplyService:
         draft rule's policy. Only ``auto`` matches on tables the user can apply rules to
         (or would register) are included; already-applied and suppressed mappings are
         left out.
+
+        Unlike the trigger methods, preview may raise: it backs an interactive request.
+
+        Raises:
+            RuleNotFoundError: *rule_id* does not exist (checked before any snapshot read).
         """
         rule = self._registry.get_rule(rule_id)
-        snapshot = self._snapshots.for_scope(body.scope)
         if rule is None:
-            return PolicyPreview([], 0, 0, 0, snapshot.truncated, list(snapshot.unreadable_catalogs))
+            raise RuleNotFoundError(f"Registry rule '{rule_id}' not found.")
+        snapshot = self._snapshots.for_scope(body.scope)
         policy = RulePolicy(**body.model_dump(), policy_id=_PREVIEW_POLICY_ID, rule_id=rule_id)
         gate = _UserGate(user, self._permissions, self._apply_rules)
         bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
@@ -255,7 +301,7 @@ class PolicyApplyService:
             return _EMPTY_RESULT
         if policy is None:
             raise RulePolicyNotFoundError(f"Rule policy '{policy_id}' not found.")
-        totals = _Totals()
+        totals = self._totals()
         try:
             rule = self._approved_rule(policy.rule_id)
             if rule is not None:
@@ -266,7 +312,7 @@ class PolicyApplyService:
 
     def run_rule(self, rule_id: str, user: ActingUser) -> ApplyResult:
         """Evaluate every policy of *rule_id* across its scope (after the rule is approved)."""
-        totals = _Totals()
+        totals = self._totals()
         try:
             rule = self._approved_rule(rule_id)
             if rule is None:
@@ -284,7 +330,7 @@ class PolicyApplyService:
 
     def evaluate_binding(self, binding_id: str, user: ActingUser) -> ApplyResult:
         """Evaluate every policy that reaches one monitored table (on open or register)."""
-        totals = _Totals()
+        totals = self._totals()
         try:
             self._run_binding(binding_id, user, totals, attach=True)
         except Exception:  # best-effort trigger: opening or registering a table must never fail on this
@@ -293,7 +339,7 @@ class PolicyApplyService:
 
     def ambiguous_for_binding(self, binding_id: str, user: ActingUser) -> list[PolicyMatch]:
         """Ambiguous policy pairings on one monitored table, offered as suggestions (nothing attached)."""
-        totals = _Totals()
+        totals = self._totals()
         try:
             self._run_binding(binding_id, user, totals, attach=False)
         except Exception:  # best-effort: suggestions are optional
@@ -303,6 +349,9 @@ class PolicyApplyService:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _totals(self) -> _Totals:
+        return _Totals(max_registrations=self._max_registrations, max_ambiguous=self._max_ambiguous)
 
     def _approved_rule(self, rule_id: str) -> RegistryRule | None:
         rule = self._registry.get_rule(rule_id)
@@ -360,6 +409,9 @@ class PolicyApplyService:
         if binding_id is None:
             if not attach or not autos or not policy.register_tables or not can_register_tables(user.role):
                 return
+            if totals.registered >= totals.max_registrations:
+                totals.registrations_skipped += 1
+                return
             binding_id = self._register(policy, table.table_fqn, user)
             if binding_id is None:
                 return
@@ -373,7 +425,9 @@ class PolicyApplyService:
                 if self._attach(binding_id, match, user):
                     gate.mark_applied(binding_id, match)
                     totals.attached += 1
-        totals.ambiguous.extend(gate.fresh(binding_id, ambiguous, MAX_AMBIGUOUS_PER_TABLE))
+        room = totals.ambiguous_room()
+        if ambiguous and room:
+            totals.ambiguous.extend(gate.fresh(binding_id, ambiguous, room))
 
     def _register(self, policy: RulePolicy, table_fqn: str, user: ActingUser) -> str | None:
         try:

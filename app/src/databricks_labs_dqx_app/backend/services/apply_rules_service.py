@@ -572,29 +572,26 @@ class ApplyRulesService:
     def is_suppressed(self, binding_id: str, rule_id: str, mapping_hash: str) -> bool:
         """Return whether ``(binding_id, rule_id, mapping_hash)`` has a suppression tombstone.
 
-        Best-effort existence check: a transient read failure logs a warning and
-        returns ``False`` so it never blocks a legitimate attach — the worst case
-        is one extra reconcile of an auto row, which the sweep would attach again
-        anyway.
+        Fails closed: a read failure propagates, so a caller can never attach a
+        mapping the owner removed just because the tombstone was unreadable.
         """
         e_binding = escape_sql_string(binding_id)
         e_rule = escape_sql_string(rule_id)
         e_hash = escape_sql_string(mapping_hash)
         sql = (
-            f"SELECT 1 FROM {self._suppressions_table} "  # noqa: S608
+            f"SELECT 1 FROM {self._suppressions_table} "
             f"WHERE binding_id = '{e_binding}' AND rule_id = '{e_rule}' AND mapping_hash = '{e_hash}'"
         )
-        try:
-            rows = self._sql.query(sql)
-        except Exception:
-            logger.warning(
-                "Suppression lookup failed for rule %s on binding %s; treating as not suppressed",
-                rule_id,
-                binding_id,
-                exc_info=True,
-            )
-            return False
-        return bool(rows)
+        return bool(self._sql.query(sql))
+
+    def list_suppressed_keys(self, binding_id: str) -> set[tuple[str, str]]:
+        """Return every suppressed ``(rule_id, mapping_hash)`` on *binding_id* in one query.
+
+        Fails closed: a read failure propagates (callers must then attach nothing).
+        """
+        e_binding = escape_sql_string(binding_id)
+        sql = f"SELECT rule_id, mapping_hash FROM {self._suppressions_table} " f"WHERE binding_id = '{e_binding}'"
+        return {(str(row[0]), str(row[1])) for row in self._sql.query(sql) if row and row[0] and row[1]}
 
     def _record_suppression(self, binding_id: str, rule_id: str, mapping_hash: str, user_email: str | None) -> None:
         """Upsert a suppression tombstone for ``(binding_id, rule_id, mapping_hash)``.
