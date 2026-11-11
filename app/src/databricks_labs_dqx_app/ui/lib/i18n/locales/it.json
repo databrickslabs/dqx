@@ -2928,6 +2928,8 @@
     "suppressedFineGrainedControls": "I record con errori sono nascosti perché questa tabella usa controlli di accesso granulari (un filtro di righe o una maschera di colonne), che il campione non può riprodurre fedelmente."
   },
   "resultsUi": {
+    "columnsPicker": "Colonne ({{shown}}/{{total}})",
+    "columnsShowAll": "Mostra tutte le colonne",
     "overallScoreLabel": "Punteggio complessivo",
     "scoreTrendUpAria": "Il punteggio è migliorato rispetto all'esecuzione precedente",
     "scoreTrendDownAria": "Il punteggio è peggiorato rispetto all'esecuzione precedente",

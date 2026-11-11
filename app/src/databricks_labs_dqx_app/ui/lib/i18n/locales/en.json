@@ -2928,6 +2928,8 @@
     "suppressedFineGrainedControls": "Failing records are hidden because this table uses fine-grained access controls (a row filter or column mask), which the sample cannot faithfully reproduce."
   },
   "resultsUi": {
+    "columnsPicker": "Columns ({{shown}}/{{total}})",
+    "columnsShowAll": "Show all columns",
     "overallScoreLabel": "Overall score",
     "scoreTrendUpAria": "Score improved vs the previous run",
     "scoreTrendDownAria": "Score fell vs the previous run",

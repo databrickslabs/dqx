@@ -2928,6 +2928,8 @@
     "suppressedFineGrainedControls": "Les enregistrements en échec sont masqués, car cette table utilise des contrôles d'accès granulaires (filtre de lignes ou masque de colonnes) que l'échantillon ne peut pas reproduire fidèlement."
   },
   "resultsUi": {
+    "columnsPicker": "Colonnes ({{shown}}/{{total}})",
+    "columnsShowAll": "Afficher toutes les colonnes",
     "overallScoreLabel": "Score global",
     "scoreTrendUpAria": "Le score s'est amélioré par rapport à l'exécution précédente",
     "scoreTrendDownAria": "Le score a baissé par rapport à l'exécution précédente",
