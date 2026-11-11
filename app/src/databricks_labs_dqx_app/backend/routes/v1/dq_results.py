@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_run_set_service,
     get_score_cache_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.models import (
     SeverityOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
@@ -212,7 +214,8 @@ def _fetch_check_rows(
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
@@ -258,7 +261,8 @@ def _fetch_asof_check_rows(
     conds.extend(_catalog_gate_predicates(allowed_catalogs))
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
         f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
@@ -636,6 +640,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
         rates = [m.pass_rate for m in members if m.pass_rate is not None]
         failed = [m.failed_tests for m in members if m.failed_tests is not None]
         totals = [m.total_tests for m in members if m.total_tests is not None]
+        table_failed = [m.table_failed_tests for m in members if m.table_failed_tests is not None]
+        table_totals = [m.table_total_tests for m in members if m.table_total_tests is not None]
         # A batch breaches if any member run breached; carries the worst.
         batch_crit: str | None = None
         for m in members:
@@ -648,6 +654,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
                 pass_rate=sum(rates) / len(rates) if rates else None,
                 failed_tests=sum(failed) if failed else None,
                 total_tests=sum(totals) if totals else None,
+                table_failed_tests=sum(table_failed) if table_failed else None,
+                table_total_tests=sum(table_totals) if table_totals else None,
                 # A batch is 'draft' only if every member is a draft run;
                 # any published member makes it a published batch.
                 run_mode=(
@@ -696,7 +704,9 @@ def _runs_from_metric_view(
     stmt = (
         f"SELECT run_id, CAST(run_time AS STRING) AS run_ts, run_mode, "
         f"MEASURE(score) AS pass_rate, MEASURE(failed_tests) AS failed_tests, "
-        f"MEASURE(total_tests) AS total_tests "
+        f"MEASURE(total_tests) AS total_tests, "
+        f"MEASURE(table_failed_tests) AS table_failed_tests, "
+        f"MEASURE(table_total_tests) AS table_total_tests "
         f"FROM {mv} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"GROUP BY run_id, run_time, run_mode "
@@ -710,6 +720,8 @@ def _runs_from_metric_view(
             pass_rate=safe_float(row.get("pass_rate")),
             failed_tests=safe_int(row.get("failed_tests")),
             total_tests=safe_int(row.get("total_tests")),
+            table_failed_tests=safe_int(row.get("table_failed_tests")),
+            table_total_tests=safe_int(row.get("table_total_tests")),
             run_mode=row.get("run_mode"),
             breached=breaches.get(row.get("run_id")) is not None,
             breach_criticality=breaches.get(row.get("run_id")),
@@ -863,6 +875,7 @@ def get_global_results(
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -889,7 +902,11 @@ def get_global_results(
     Concurrent member runs of one run set are consolidated onto their
     RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
     markers align; *as_of_batch* caps to a chosen batch's instant.
+
+    Signals the scheduler on the way in (the Results page load), so a run
+    started with no page watching gets its score refreshed promptly.
     """
+    wake.signal()
     _validate_run_id(run_id)
     _validate_run_id(as_of_batch)
     _validate_table_facet(table)

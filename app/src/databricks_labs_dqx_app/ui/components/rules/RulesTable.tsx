@@ -51,6 +51,7 @@ import {
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
 import type { RegistryRuleOut } from "@/lib/api";
+import type { RuleLevel } from "@/lib/rule-taxonomy";
 
 /** Column keys that carry a comparable value and can drive client sort. */
 export type RulesTableSortKey =
@@ -67,7 +68,7 @@ export type RulesTableSortKey =
   | "modified"
   | "mode";
 
-type ColumnKey = RulesTableSortKey | "appliedTables" | "actions";
+type ColumnKey = RulesTableSortKey | "appliedTables" | "level" | "actions";
 
 interface ColumnDef {
   labelKey: string;
@@ -91,6 +92,8 @@ interface ColumnDef {
 
 interface RulesTableRenderContext {
   labelDefinitions: LabelColorDefinition[];
+  /** Row / table scoring level; null while the check-function list is still loading. */
+  levelForRule: (rule: RegistryRuleOut) => RuleLevel | null;
   isExpanded: (ruleId: string) => boolean;
   onToggleExpanded: (ruleId: string) => void;
 }
@@ -213,6 +216,16 @@ function ModifiedTimestampCell({
         ) : null}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function LevelCell({ level }: { level: RuleLevel | null }) {
+  const { t } = useTranslation();
+  if (!level) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="text-muted-foreground">
+      {level === "table" ? t("rulesRegistry.levelTable") : t("rulesRegistry.levelRow")}
+    </span>
   );
 }
 
@@ -393,6 +406,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (r) => <ModeBadge mode={r.mode} />,
   },
+  level: {
+    labelKey: "rulesRegistry.colLevel",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 90,
+    sortable: false,
+    renderHeader: (label) => label,
+    renderCell: (r, ctx) => <LevelCell level={ctx.levelForRule(r)} />,
+  },
   dimension: {
     labelKey: "rulesRegistry.colDimension",
     toggleable: true,
@@ -447,6 +469,7 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "modified",
   "createdBy",
   "mode",
+  "level",
   "dimension",
   "severity",
   "actions",
@@ -547,6 +570,8 @@ export interface RulesTableProps<F extends string = string> {
   groupForRule?: (rule: RegistryRuleOut) => RulesTableGroup;
   /** Expands every group (e.g. while searching, so matches are never hidden). */
   forceGroupsExpanded?: boolean;
+  /** Resolves a rule's row / table level for the Level column; omit (or return null) while unknown. */
+  levelForRule?: (rule: RegistryRuleOut) => RuleLevel | null;
   sortKey: RulesTableSortKey | null;
   sortDir: "asc" | "desc";
   onHeaderClick: (key: RulesTableSortKey) => void;
@@ -580,6 +605,7 @@ export function RulesTable<F extends string = string>({
   labelDefinitions,
   groupForRule,
   forceGroupsExpanded = false,
+  levelForRule,
   sortKey,
   sortDir,
   onHeaderClick,
@@ -595,6 +621,7 @@ export function RulesTable<F extends string = string>({
   const ctx = useMemo<RulesTableRenderContext>(
     () => ({
       labelDefinitions,
+      levelForRule: levelForRule ?? (() => null),
       isExpanded: (ruleId) => expandedRuleIds.has(ruleId),
       onToggleExpanded: (ruleId) =>
         setExpandedRuleIds((prev) => {
@@ -604,7 +631,7 @@ export function RulesTable<F extends string = string>({
           return next;
         }),
     }),
-    [labelDefinitions, expandedRuleIds],
+    [labelDefinitions, levelForRule, expandedRuleIds],
   );
   const showSelection = !!selection;
   const selectableCount = selection?.selectableRuleIds.size ?? 0;
@@ -628,7 +655,7 @@ export function RulesTable<F extends string = string>({
   });
 
   function handleHeaderClick(key: ColumnKey) {
-    if (key === "actions" || key === "appliedTables" || !COLUMNS[key].sortable) return;
+    if (key === "actions" || key === "appliedTables" || key === "level" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
