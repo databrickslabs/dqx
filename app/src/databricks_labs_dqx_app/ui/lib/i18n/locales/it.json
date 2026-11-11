@@ -1663,7 +1663,7 @@
     "granularityMergeColumnsPlaceholder": "Scegli le colonne chiave",
     "granularityMergeColumnsRequired": "Il SQL per riga richiede almeno una colonna di unione, altrimenti il controllo fallisce in esecuzione.",
     "granularityMergeColumnsMissingFromQuery": "La query non seleziona {{columns}}. Aggiungila alla lista SELECT, altrimenti non può essere riassociata alle righe.",
-    "granularityAggregateWarning": "Il SQL per tabella deve aggregare a esattamente una riga. Una query che restituisce una riga per ogni riga di input fallisce in esecuzione.",
+    "granularityAggregateWarning": "Il SQL a livello di tabella deve aggregare a esattamente una riga. Una query che restituisce una riga per ogni riga di input fallisce in esecuzione.",
     "sqlJoinsConflict": "Dichiara il join nella scheda qui sotto oppure scrivilo nella query, non entrambi. Farlo in due modi produce SQL non valido.",
     "sqlMissingInputView": "Questa query usa colonne della tabella controllata ma non la legge mai. Aggiungi FROM {{token}}: quel segnaposto diventa la tabella monitorata quando la regola viene eseguita.",
     "shortlistMatchesCustomCondition": "Soddisfa la condizione personalizzata",
