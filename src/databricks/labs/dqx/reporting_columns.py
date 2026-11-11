@@ -38,13 +38,18 @@ def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] 
     Returns:
         DataFrame with the merged column (array of structs) and source info columns dropped.
     """
-    info_cols = [c for c in (info_col_names or []) if c in df.columns]
+    if not info_col_names:
+        # Nothing to merge. Return before reading df.columns, which costs a schema analysis RPC on Spark Connect.
+        return df
 
-    if not info_cols and dest_name not in df.columns:
+    df_columns = df.columns
+    info_cols = [c for c in info_col_names if c in df_columns]
+
+    if not info_cols and dest_name not in df_columns:
         return df
 
     new_structs = F.array(*[F.col(c) for c in info_cols])
-    if dest_name in df.columns:
+    if dest_name in df_columns:
         result_col = F.concat(F.col(dest_name), new_structs)
     else:
         result_col = new_structs
