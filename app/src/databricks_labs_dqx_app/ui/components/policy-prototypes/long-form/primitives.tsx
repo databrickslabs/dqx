@@ -126,18 +126,3 @@ export function FamilyBadge({ family }: { family: string }) {
     </span>
   );
 }
-
-export function ActionBadge({ action }: { action: "auto_apply" | "suggest" }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
-        action === "auto_apply"
-          ? "border-primary/30 bg-primary/10 text-primary"
-          : "border-border bg-muted text-muted-foreground",
-      )}
-    >
-      {action === "auto_apply" ? "Apply automatically" : "Suggest only"}
-    </span>
-  );
-}

@@ -82,15 +82,15 @@ export function scopeSummary(scope: PolicyScope): string {
 }
 
 // ── Conditions ───────────────────────────────────────────────────────────────
-export type TableSubject = "catalog_tag" | "schema_tag" | "table_tag" | "table_owner" | "table_name";
-export type ColumnSubject = "column_tag" | "column_name";
-export type Subject = TableSubject | ColumnSubject;
-export type Operator = "has_tag" | "not_has_tag" | "is" | "is_not" | "like" | "not_like";
+/** Table conditions pick the object; column conditions are always about the column. */
+export type TableObject = "catalog" | "schema" | "table";
+export type ConditionObject = TableObject | "column";
+export type Predicate = "has_tag" | "not_has_tag" | "has_name" | "name_like" | "has_owner";
 
 export interface ConditionRow {
   combinator: null | "AND" | "OR";
-  subject: Subject;
-  operator: Operator;
+  object: ConditionObject;
+  predicate: Predicate;
   value: string;
 }
 
@@ -98,63 +98,33 @@ export interface ConditionExpr {
   rows: ConditionRow[];
 }
 
-export const TABLE_SUBJECTS: TableSubject[] = ["catalog_tag", "schema_tag", "table_tag", "table_owner", "table_name"];
-export const COLUMN_SUBJECTS: ColumnSubject[] = ["column_tag", "column_name"];
+export const TABLE_OBJECTS: TableObject[] = ["catalog", "schema", "table"];
+export const TABLE_PREDICATES: Predicate[] = ["has_tag", "not_has_tag", "has_name", "name_like", "has_owner"];
+export const COLUMN_PREDICATES: Predicate[] = ["has_tag", "not_has_tag", "has_name", "name_like"];
 
-export const SUBJECT_LABEL: Record<Subject, string> = {
-  catalog_tag: "Catalog tag",
-  schema_tag: "Schema tag",
-  table_tag: "Table tag",
-  table_owner: "Table owner",
-  table_name: "Table name",
-  column_tag: "Tag",
-  column_name: "Name",
+export const OBJECT_LABEL: Record<ConditionObject, string> = {
+  catalog: "Catalog",
+  schema: "Schema",
+  table: "Table",
+  column: "Column",
 };
 
-export function isTagSubject(s: Subject): boolean {
-  return s.endsWith("_tag");
+export const PREDICATE_LABEL: Record<Predicate, string> = {
+  has_tag: "has tag",
+  not_has_tag: "does not have tag",
+  has_name: "has name",
+  name_like: "name is like",
+  has_owner: "has owner",
+};
+
+/** Which kind of value input a predicate takes. */
+export function valueKind(p: Predicate): "tag" | "name" | "owner" {
+  if (p === "has_tag" || p === "not_has_tag") return "tag";
+  return p === "has_owner" ? "owner" : "name";
 }
 
-export function operatorsFor(subject: Subject): Operator[] {
-  if (isTagSubject(subject)) return ["has_tag", "not_has_tag"];
-  if (subject === "table_owner") return ["is", "is_not"];
-  return ["is", "is_not", "like", "not_like"];
-}
-
-export function operatorLabel(subject: Subject, op: Operator): string {
-  if (subject === "column_tag") return op === "has_tag" ? "is" : "is not";
-  const labels: Record<Operator, string> = {
-    has_tag: "has tag",
-    not_has_tag: "does not have tag",
-    is: "is",
-    is_not: "is not",
-    like: "is like",
-    not_like: "is not like",
-  };
-  return labels[op];
-}
-
-export function defaultRow(subject: Subject, combinator: ConditionRow["combinator"] = null): ConditionRow {
-  return { combinator, subject, operator: operatorsFor(subject)[0], value: "" };
-}
-
-/** Print a ConditionExpr in the expression-view syntax. A bare tag key matches any value. */
-export function printExpr(expr: ConditionExpr): string {
-  const fn = (r: ConditionRow): string => {
-    const level = r.subject.split("_")[0];
-    const neg = r.operator === "not_has_tag" || r.operator === "is_not" || r.operator === "not_like";
-    let core: string;
-    if (isTagSubject(r.subject)) {
-      const [k, v] = r.value.split("=");
-      core = v === undefined ? `hasTag(${level}, '${k}')` : `hasTagValue(${level}, '${k}', '${v}')`;
-    } else if (r.operator === "like" || r.operator === "not_like") {
-      core = `nameLike(${level}, '${r.value}')`;
-    } else {
-      core = r.subject === "table_owner" ? `ownerIs('${r.value}')` : `nameIs(${level}, '${r.value}')`;
-    }
-    return neg ? `NOT ${core}` : core;
-  };
-  return expr.rows.map((r, i) => (i === 0 ? fn(r) : `${r.combinator ?? "AND"} ${fn(r)}`)).join(" ");
+export function defaultRow(object: ConditionObject, combinator: ConditionRow["combinator"] = null): ConditionRow {
+  return { combinator, object, predicate: "has_tag", value: "" };
 }
 
 export type TableCondition =
@@ -174,14 +144,14 @@ export function defaultColumnCondition(rule: LfRule): ColumnCondition {
   return { kind: "tags", tags: [...rule.tags] };
 }
 
-/** Custom-condition prefill: Tag is <rule tag> OR Name is like <slot pattern>. */
+/** Custom-condition prefill: has tag <rule tag> OR name is like <slot pattern>. */
 export function defaultColumnBuilder(rule: LfRule, slot: MockSlot): ColumnCondition {
   return {
     kind: "builder",
     expr: {
       rows: [
-        { combinator: null, subject: "column_tag", operator: "has_tag", value: rule.tags[0] ?? "" },
-        { combinator: "OR", subject: "column_name", operator: "like", value: slotNameHint(slot.name, true) },
+        { combinator: null, object: "column", predicate: "has_tag", value: rule.tags[0] ?? "" },
+        { combinator: "OR", object: "column", predicate: "name_like", value: slotNameHint(slot.name, true) },
       ],
     },
   };
@@ -193,7 +163,6 @@ export interface Policy {
   rule_id: string;
   name: string;
   description: string;
-  action: "auto_apply" | "suggest";
   scope: PolicyScope;
   register_tables: boolean;
   table_condition: TableCondition;
@@ -208,7 +177,6 @@ export function emptyPolicy(ruleId: string): Policy {
     rule_id: ruleId,
     name: "",
     description: "",
-    action: "auto_apply",
     scope: allScope(),
     register_tables: false,
     table_condition: { kind: "none" },
@@ -241,7 +209,6 @@ export const MOCK_POLICIES: Policy[] = [
     rule_id: "r-email",
     name: "PII emails in prod",
     description: "Every column tagged class=email in prod gets a format check.",
-    action: "auto_apply",
     scope: { catalogs: ["prod"], schemas: [ALL], tables: [ALL] },
     register_tables: false,
     table_condition: { kind: "none" },
@@ -253,7 +220,6 @@ export const MOCK_POLICIES: Policy[] = [
     rule_id: "r-email",
     name: "CRM contact emails",
     description: "",
-    action: "suggest",
     scope: { catalogs: ["prod"], schemas: ["prod.crm"], tables: [ALL] },
     register_tables: true,
     table_condition: { kind: "tags", tags: ["tier=gold"] },
@@ -262,8 +228,8 @@ export const MOCK_POLICIES: Policy[] = [
         kind: "builder",
         expr: {
           rows: [
-            { combinator: null, subject: "column_tag", operator: "has_tag", value: "class=email" },
-            { combinator: "OR", subject: "column_name", operator: "like", value: "%email%" },
+            { combinator: null, object: "column", predicate: "has_tag", value: "class=email" },
+            { combinator: "OR", object: "column", predicate: "name_like", value: "%email%" },
           ],
         },
       },
@@ -275,7 +241,6 @@ export const MOCK_POLICIES: Policy[] = [
     rule_id: "r-notnull",
     name: "PII emails in prod",
     description: "",
-    action: "auto_apply",
     scope: { catalogs: ["prod"], schemas: [ALL], tables: [ALL] },
     register_tables: false,
     table_condition: { kind: "none" },
@@ -287,13 +252,20 @@ export const MOCK_POLICIES: Policy[] = [
     rule_id: "r-daterange",
     name: "Gold-tier date ranges",
     description: "",
-    action: "suggest",
     scope: { catalogs: ["prod"], schemas: ["prod.sales", "prod.finance"], tables: [ALL] },
     register_tables: true,
-    table_condition: { kind: "tags", tags: ["tier=gold"] },
+    table_condition: {
+      kind: "builder",
+      expr: {
+        rows: [
+          { combinator: null, object: "table", predicate: "has_tag", value: "tier=gold" },
+          { combinator: "AND", object: "schema", predicate: "has_owner", value: "data-eng" },
+        ],
+      },
+    },
     column_conditions: {
-      start: { kind: "builder", expr: { rows: [{ combinator: null, subject: "column_name", operator: "like", value: "%start%" }] } },
-      end: { kind: "builder", expr: { rows: [{ combinator: null, subject: "column_name", operator: "like", value: "%end%" }] } },
+      start: { kind: "builder", expr: { rows: [{ combinator: null, object: "column", predicate: "name_like", value: "%start%" }] } },
+      end: { kind: "builder", expr: { rows: [{ combinator: null, object: "column", predicate: "name_like", value: "%end%" }] } },
     },
     pair_by_tag: "pair",
   },

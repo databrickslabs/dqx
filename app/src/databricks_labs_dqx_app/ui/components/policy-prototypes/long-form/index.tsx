@@ -16,8 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { MOCK_POLICIES, canModifyRule, copyForRule, emptyPolicy, mockPreview, scopeSummary, type Policy } from "./model";
-import { ActionBadge } from "./primitives";
+import { MOCK_POLICIES, canModifyRule, emptyPolicy, mockPreview, scopeSummary, type Policy } from "./model";
 import { PolicyForm } from "./policy-form";
 
 function OwnerGate({ allowed, children }: { allowed: boolean; children: ReactNode }) {
@@ -41,7 +40,7 @@ function PolicyCard({ policy, onOpen, onDelete }: { policy: Policy; onOpen: () =
     const p = mockPreview(policy);
     toast.promise(new Promise((resolve) => setTimeout(resolve, 900)), {
       loading: `Re-scanning "${policy.name}"…`,
-      success: `Re-scan finished · ${p.matched_monitored} tables matched, ${p.attachments} ${policy.action === "suggest" ? "suggestions" : "attachments"}`,
+      success: `Re-scan finished · ${p.matched_monitored} tables matched, ${p.attachments} attachments`,
     });
   };
 
@@ -68,7 +67,6 @@ function PolicyCard({ policy, onOpen, onDelete }: { policy: Policy; onOpen: () =
       <div className="min-w-0 space-y-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{policy.name}</span>
-          <ActionBadge action={policy.action} />
         </div>
         {policy.description && <p className="text-sm text-muted-foreground">{policy.description}</p>}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -121,17 +119,18 @@ export function Prototype({ ruleId }: { ruleId: string }) {
         readOnly={!canModifyRule(editing.policy.rule_id)}
         takenNames={takenNames}
         onCancel={() => setEditing(null)}
-        onSave={(policy, alsoFor) => {
+        onSave={(policy, copies) => {
           const stamp = Date.now();
           const saved: Policy = { ...policy, policy_id: policy.policy_id ?? `p-${stamp}` };
+          const created = copies.map((c, i) => ({ ...c, policy_id: `p-${stamp}-${i}` }));
+          const n = created.length;
           if (editing.isEdit) {
-            setPolicies((prev) => prev.map((p) => (p.policy_id === saved.policy_id ? saved : p)));
-            toast.success(`Saved "${saved.name}"`);
+            setPolicies((prev) => [...prev.map((p) => (p.policy_id === saved.policy_id ? saved : p)), ...created]);
+            toast.success(n > 0 ? `Saved "${saved.name}" and created ${n} ${n === 1 ? "copy" : "copies"}` : `Saved "${saved.name}"`);
           } else {
-            const copies = alsoFor.map((rid, i) => ({ ...copyForRule(saved, rid), policy_id: `p-${stamp}-${i}` }));
-            setPolicies((prev) => [...prev, saved, ...copies]);
+            setPolicies((prev) => [...prev, saved, ...created]);
             const matched = mockPreview(saved).matched_monitored;
-            toast.success(copies.length > 0 ? `Created ${copies.length + 1} policies` : `Created "${saved.name}"`, {
+            toast.success(n > 0 ? `Created ${n + 1} policies` : `Created "${saved.name}"`, {
               description: `Evaluating ${matched} matching ${matched === 1 ? "table" : "tables"} in the background.`,
             });
           }

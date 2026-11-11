@@ -55,7 +55,7 @@ export function RulePickerDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="w-[min(92vw,900px)] !max-w-[min(92vw,900px)]">
         <DialogHeader>
-          <DialogTitle>Also create for other rules</DialogTitle>
+          <DialogTitle>Add rules</DialogTitle>
           <DialogDescription>
             Each selected rule gets its own copy of this policy.
           </DialogDescription>

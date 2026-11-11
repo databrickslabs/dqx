@@ -1,24 +1,23 @@
 // THROWAWAY prototype — condition row builder modelled on rules/lowcode/LowcodeRow + FilterBuilder.
-import { useState } from "react";
-import { Braces, ListTree, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { MOCK_PRINCIPALS } from "../mock";
 import {
-  SUBJECT_LABEL,
+  COLUMN_PREDICATES,
+  OBJECT_LABEL,
+  PREDICATE_LABEL,
+  TABLE_OBJECTS,
+  TABLE_PREDICATES,
   defaultRow,
-  isTagSubject,
-  operatorLabel,
-  operatorsFor,
-  printExpr,
   slotNameHint,
+  valueKind,
   type ConditionExpr,
   type ConditionRow,
-  type Subject,
+  type Predicate,
+  type TableObject,
 } from "./model";
 import { TagSingleSelect } from "./tag-picker";
 
@@ -56,10 +55,11 @@ function ValueCell({
   onChange: (v: string) => void;
   slotName?: string;
 }) {
-  if (isTagSubject(row.subject)) {
+  const kind = valueKind(row.predicate);
+  if (kind === "tag") {
     return <TagSingleSelect value={row.value} onChange={onChange} mode="any" placeholder="Select tag" />;
   }
-  if (row.subject === "table_owner") {
+  if (kind === "owner") {
     return (
       <Select value={row.value || undefined} onValueChange={onChange}>
         <SelectTrigger className="h-8 w-full text-xs">
@@ -75,35 +75,36 @@ function ValueCell({
       </Select>
     );
   }
-  const like = row.operator === "like" || row.operator === "not_like";
-  const base = row.subject === "column_name" && slotName ? slotName : "orders";
+  const like = row.predicate === "name_like";
+  const placeholder = slotName ? slotNameHint(slotName, like) : like ? "%_tmp" : "sales";
   return (
     <Input
       value={row.value}
       onChange={(e) => onChange(e.target.value)}
-      placeholder={slotNameHint(base, like)}
+      placeholder={placeholder}
       className="h-8 font-mono text-xs"
     />
   );
 }
 
-/** Rows of [subject] [operator] [value] joined by AND/OR, with a {x} toggle to an expression view. */
+/**
+ * Rows joined by AND/OR. Table level: [object] [predicate] [value]. Column level (*slotName* set):
+ * the object is the column itself, so rows are [predicate] [value].
+ */
 export function ConditionBuilder({
   expr,
   onChange,
-  subjects,
+  level,
   slotName,
-  invalid,
 }: {
   expr: ConditionExpr;
   onChange: (next: ConditionExpr) => void;
-  subjects: Subject[];
+  level: "table" | "column";
   /** Column conditions: slot name used for name placeholders. */
   slotName?: string;
-  invalid?: boolean;
 }) {
-  const [exprView, setExprView] = useState(false);
-  const [text, setText] = useState("");
+  const isTable = level === "table";
+  const predicates = isTable ? TABLE_PREDICATES : COLUMN_PREDICATES;
 
   const update = (i: number, row: ConditionRow) => {
     const rows = expr.rows.slice();
@@ -115,116 +116,79 @@ export function ConditionBuilder({
     if (rows.length > 0) rows[0] = { ...rows[0], combinator: null };
     onChange({ rows });
   };
-  const add = () => onChange({ rows: [...expr.rows, defaultRow(subjects[0], expr.rows.length === 0 ? null : "AND")] });
+  const add = () =>
+    onChange({ rows: [...expr.rows, defaultRow(isTable ? "table" : "column", expr.rows.length === 0 ? null : "AND")] });
 
-  const toggleView = () => {
-    if (!exprView) setText(printExpr(expr));
-    setExprView((v) => !v);
-  };
+  const setPredicate = (row: ConditionRow, predicate: Predicate): ConditionRow => ({
+    ...row,
+    predicate,
+    value: valueKind(predicate) === valueKind(row.predicate) ? row.value : "",
+  });
 
   return (
-    <div className={cn("rounded-lg border bg-card p-3", invalid && "border-destructive")}>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-          {exprView ? "Expression" : "Conditions"}
-        </span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant={exprView ? "secondary" : "ghost"}
-              size="sm"
-              onClick={toggleView}
-              className="h-7 gap-1.5 px-2 font-mono text-xs"
-              aria-pressed={exprView}
-            >
-              {exprView ? <ListTree className="h-3.5 w-3.5" /> : <Braces className="h-3.5 w-3.5" />}
-              {exprView ? "Builder" : "{x}"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{exprView ? "Edit with the builder" : "Edit as expression"}</TooltipContent>
-        </Tooltip>
+    <div className="rounded-lg border bg-card p-3">
+      <div className="mb-2 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">Conditions</div>
+      <div className="space-y-1.5">
+        {expr.rows.map((row, i) => (
+          <div
+            key={i}
+            className={cn(
+              "grid items-center gap-2",
+              isTable
+                ? "grid-cols-[64px_7rem_10rem_minmax(0,1fr)_32px] max-lg:grid-cols-[56px_1fr_1fr_1fr_32px]"
+                : "grid-cols-[64px_10rem_minmax(0,1fr)_32px] max-lg:grid-cols-[56px_1fr_1fr_32px]",
+            )}
+          >
+            {i === 0 ? (
+              <span className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">If</span>
+            ) : (
+              <div className="justify-self-end pr-1">
+                <CombinatorPill
+                  value={row.combinator ?? "AND"}
+                  onToggle={() => update(i, { ...row, combinator: (row.combinator ?? "AND") === "AND" ? "OR" : "AND" })}
+                />
+              </div>
+            )}
+            {isTable && (
+              <Select value={row.object} onValueChange={(o) => update(i, { ...row, object: o as TableObject })}>
+                <SelectTrigger className="h-8 w-full text-xs" aria-label="Object">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TABLE_OBJECTS.map((o) => (
+                    <SelectItem key={o} value={o} className="text-xs">
+                      {OBJECT_LABEL[o]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Select value={row.predicate} onValueChange={(p) => update(i, setPredicate(row, p as Predicate))}>
+              <SelectTrigger className="h-8 w-full text-xs" aria-label="Condition">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {predicates.map((p) => (
+                  <SelectItem key={p} value={p} className="text-xs">
+                    {PREDICATE_LABEL[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <ValueCell row={row} slotName={slotName} onChange={(v) => update(i, { ...row, value: v })} />
+            {expr.rows.length > 1 ? (
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove condition" onClick={() => remove(i)}>
+                <X className="h-4 w-4" />
+              </Button>
+            ) : (
+              <span aria-hidden />
+            )}
+          </div>
+        ))}
+        <Button type="button" variant="outline" size="sm" className="mt-1 h-7 text-xs" onClick={add}>
+          <Plus className="mr-1 h-3.5 w-3.5" /> Add condition
+        </Button>
       </div>
-
-      {exprView ? (
-        <div className="space-y-2">
-          <Textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            spellCheck={false}
-            className="font-mono text-xs leading-relaxed"
-          />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Functions: <code className="font-mono">hasTag(level, 'key')</code>,{" "}
-            <code className="font-mono">hasTagValue(level, 'key', 'value')</code>,{" "}
-            <code className="font-mono">ownerIs('principal')</code>,{" "}
-            <code className="font-mono">nameIs(level, 'name')</code>,{" "}
-            <code className="font-mono">nameLike(level, '%pattern')</code>. Join with AND / OR; prefix NOT to negate.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-1.5">
-          {expr.rows.map((row, i) => (
-            <div
-              key={i}
-              className="grid grid-cols-[64px_9rem_10rem_minmax(0,1fr)_32px] items-center gap-2 max-lg:grid-cols-[56px_1fr_1fr_1fr_32px]"
-            >
-              {i === 0 ? (
-                <span className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">If</span>
-              ) : (
-                <div className="justify-self-end pr-1">
-                  <CombinatorPill
-                    value={row.combinator ?? "AND"}
-                    onToggle={() => update(i, { ...row, combinator: (row.combinator ?? "AND") === "AND" ? "OR" : "AND" })}
-                  />
-                </div>
-              )}
-              <Select
-                value={row.subject}
-                onValueChange={(s) => update(i, defaultRow(s as Subject, row.combinator))}
-              >
-                <SelectTrigger className="h-8 w-full text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {subjects.map((s) => (
-                    <SelectItem key={s} value={s} className="text-xs">
-                      {SUBJECT_LABEL[s]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={row.operator}
-                onValueChange={(op) => update(i, { ...row, operator: op as ConditionRow["operator"], value: "" })}
-              >
-                <SelectTrigger className="h-8 w-full text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {operatorsFor(row.subject).map((op) => (
-                    <SelectItem key={op} value={op} className="text-xs">
-                      {operatorLabel(row.subject, op)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <ValueCell row={row} slotName={slotName} onChange={(v) => update(i, { ...row, value: v })} />
-              {expr.rows.length > 1 ? (
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove condition" onClick={() => remove(i)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              ) : (
-                <span aria-hidden />
-              )}
-            </div>
-          ))}
-          <Button type="button" variant="outline" size="sm" className="mt-1 h-7 text-xs" onClick={add}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add condition
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

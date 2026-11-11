@@ -1,6 +1,6 @@
 // THROWAWAY prototype — variant A policy form: one long ABAC-style page. A policy is 1:1 with a rule.
 import { useState } from "react";
-import { ArrowLeft, Ban, Bell, Lock, Plus, SlidersHorizontal, Tag, Tags, WandSparkles, X } from "lucide-react";
+import { ArrowLeft, Ban, Lock, Plus, SlidersHorizontal, Tag, Tags, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -9,9 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { MultiSelectPopover, type MultiSelectOption } from "@/components/monitored-tables/MultiSelectPopover";
 import {
   ALL,
-  COLUMN_SUBJECTS,
   MOCK_CATALOGS,
-  TABLE_SUBJECTS,
+  copyForRule,
   defaultColumnBuilder,
   defaultColumnCondition,
   defaultRow,
@@ -114,7 +113,7 @@ function SlotConditionEditor({
         }}
         options={[
           { value: "tags", label: "Columns matching selected tags", icon: Tags },
-          { value: "builder", label: "Columns matching custom condition", icon: SlidersHorizontal },
+          { value: "builder", label: "Custom condition", icon: SlidersHorizontal },
         ]}
       />
       {value.kind === "tags" ? (
@@ -123,11 +122,79 @@ function SlotConditionEditor({
         <ConditionBuilder
           expr={value.expr}
           onChange={(expr) => onChange({ kind: "builder", expr })}
-          subjects={COLUMN_SUBJECTS}
+          level="column"
           slotName={slot.name}
         />
       )}
     </div>
+  );
+}
+
+// ── Column conditions for one rule: one block per slot, plus pairing for multi-slot rules ──
+interface ColumnSettings {
+  column_conditions: Policy["column_conditions"];
+  pair_by_tag: Policy["pair_by_tag"];
+}
+
+function RuleColumnConditions({
+  rule,
+  value,
+  onChange,
+}: {
+  rule: LfRule;
+  value: ColumnSettings;
+  onChange: (next: ColumnSettings) => void;
+}) {
+  if (rule.slots.length === 0) return <p className="text-sm text-muted-foreground">Runs on whole tables.</p>;
+  const slotCond = (slot: MockSlot): ColumnCondition => value.column_conditions[slot.name] ?? defaultColumnCondition(rule);
+  return (
+    <>
+      {rule.slots.map((slot) => (
+        <SlotConditionEditor
+          key={slot.name}
+          rule={rule}
+          slot={slot}
+          value={slotCond(slot)}
+          onChange={(c) => onChange({ ...value, column_conditions: { ...value.column_conditions, [slot.name]: c } })}
+        />
+      ))}
+      {rule.slots.length >= 2 && (
+        <div className="space-y-2 rounded-lg border bg-muted/20 p-4">
+          <div className="text-sm font-medium">Pair columns by tag</div>
+          <p className="text-xs text-muted-foreground">Pairs columns that share this tag's value. Defaults to pairing by name.</p>
+          <TagSingleSelect
+            className="max-w-xs"
+            value={value.pair_by_tag ?? ""}
+            onChange={(v) => onChange({ ...value, pair_by_tag: v || null })}
+            mode="key"
+            placeholder="Pair by name (default)"
+            clearable
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function RuleChip({ rule, current, onRemove }: { rule: LfRule; current?: boolean; onRemove?: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-md border bg-card py-1 pr-1 pl-2.5 text-sm">
+      <span className="font-medium">{rule.name}</span>
+      {current && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">this rule</span>}
+      {rule.status !== "approved" && <StatusBadge status={rule.status} />}
+      {onRemove ? (
+        <button
+          type="button"
+          aria-label={`Remove ${rule.name}`}
+          onClick={onRemove}
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <span className="w-1" aria-hidden />
+      )}
+    </span>
   );
 }
 
@@ -146,11 +213,12 @@ export function PolicyForm({
   readOnly?: boolean;
   takenNames: string[];
   onCancel: () => void;
-  /** *alsoFor* = extra rule ids that each get an independent copy (create only). */
-  onSave: (policy: Policy, alsoFor: string[]) => void;
+  /** *copies* = new, independent policies for the other rules added in the Rules section. */
+  onSave: (policy: Policy, copies: Policy[]) => void;
 }) {
   const [draft, setDraft] = useState<Policy>(initial);
-  const [alsoFor, setAlsoFor] = useState<string[]>([]);
+  /** Other rules, each with its own column settings; shared fields come from *draft* at save time. */
+  const [extras, setExtras] = useState<({ rule_id: string } & ColumnSettings)[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -158,16 +226,28 @@ export function PolicyForm({
   const errors = submitted ? validate(draft, takenNames) : {};
   const set = <K extends keyof Policy>(key: K, value: Policy[K]) => setDraft((d) => ({ ...d, [key]: value }));
 
-  const slotCond = (slot: MockSlot): ColumnCondition =>
-    draft.column_conditions[slot.name] ?? (rule ? defaultColumnCondition(rule) : { kind: "tags", tags: [] });
-  const setSlotCond = (slot: string, c: ColumnCondition) =>
-    setDraft((d) => ({ ...d, column_conditions: { ...d.column_conditions, [slot]: c } }));
+  const copies: Policy[] = extras.map((e) => ({
+    ...copyForRule(draft, e.rule_id),
+    column_conditions: e.column_conditions,
+    pair_by_tag: e.pair_by_tag,
+  }));
+
+  const addRules = (ids: string[]) =>
+    setExtras((prev) => [
+      ...prev,
+      ...ids.map((rid) => {
+        const c = copyForRule(draft, rid);
+        return { rule_id: rid, column_conditions: c.column_conditions, pair_by_tag: c.pair_by_tag };
+      }),
+    ]);
+  const setExtra = (rid: string, next: ColumnSettings) =>
+    setExtras((prev) => prev.map((e) => (e.rule_id === rid ? { rule_id: rid, ...next } : e)));
 
   const setTableKind = (kind: TableCondition["kind"]) => {
     if (kind === draft.table_condition.kind) return;
     set(
       "table_condition",
-      kind === "none" ? { kind } : kind === "tags" ? { kind, tags: [] } : { kind, expr: { rows: [defaultRow("table_tag")] } },
+      kind === "none" ? { kind } : kind === "tags" ? { kind, tags: [] } : { kind, expr: { rows: [defaultRow("table")] } },
     );
   };
 
@@ -177,10 +257,27 @@ export function PolicyForm({
       document.getElementById("policy-section-name")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    onSave({ ...draft, name: draft.name.trim() }, alsoFor);
+    const name = draft.name.trim();
+    onSave({ ...draft, name }, copies.map((c) => ({ ...c, name })));
   };
 
-  const otherRules = alsoFor.map(ruleById).filter((r): r is LfRule => !!r);
+  const n = extras.length;
+  const saveLabel = isEdit
+    ? n === 0
+      ? "Save"
+      : `Save and create ${n} ${n === 1 ? "copy" : "copies"}`
+    : n === 0
+      ? "Create policy"
+      : `Create ${n + 1} policies`;
+
+  const ruleGroups = [
+    { rule, value: { column_conditions: draft.column_conditions, pair_by_tag: draft.pair_by_tag }, onChange: (v: ColumnSettings) => setDraft((d) => ({ ...d, ...v })) },
+    ...extras.map((e) => ({
+      rule: ruleById(e.rule_id),
+      value: { column_conditions: e.column_conditions, pair_by_tag: e.pair_by_tag },
+      onChange: (v: ColumnSettings) => setExtra(e.rule_id, v),
+    })),
+  ].filter((g): g is { rule: LfRule; value: ColumnSettings; onChange: (v: ColumnSettings) => void } => !!g.rule);
 
   return (
     <div className="pb-4">
@@ -236,10 +333,38 @@ export function PolicyForm({
         </FormSection>
         <Separator />
 
-        {/* 2. Scope */}
+        {/* 2. Rules */}
+        <FormSection title="Rules" description="Each rule gets its own copy of this policy.">
+          <div className="flex flex-wrap items-center gap-2">
+            {rule && <RuleChip rule={rule} current />}
+            {extras.map((e) => {
+              const r = ruleById(e.rule_id);
+              return r ? (
+                <RuleChip
+                  key={r.rule_id}
+                  rule={r}
+                  onRemove={() => setExtras((prev) => prev.filter((x) => x.rule_id !== r.rule_id))}
+                />
+              ) : null;
+            })}
+          </div>
+          <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPickerOpen(true)}>
+            <Plus className="h-4 w-4" /> Add rules
+          </Button>
+          <RulePickerDialog
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            selectedRuleIds={extras.map((e) => e.rule_id)}
+            excludeRuleId={draft.rule_id}
+            onAdd={addRules}
+          />
+        </FormSection>
+        <Separator />
+
+        {/* 3. Scope */}
         <FormSection
           title="Scope"
-          description="Where the policy looks. It only attaches to tables where you hold APPLY or MANAGE."
+          description="Where the policy looks. Only tables you can apply rules to are changed."
         >
           <ScopePicker value={draft.scope} onChange={(scope) => set("scope", scope)} />
           <label className="flex cursor-pointer items-start gap-2.5 rounded-md border bg-card p-3">
@@ -257,7 +382,7 @@ export function PolicyForm({
         </FormSection>
         <Separator />
 
-        {/* 3. Table conditions */}
+        {/* 4. Table conditions */}
         <FormSection title="Table conditions" description="Optionally narrow which tables in scope the policy applies to.">
           <ChoiceTiles
             ariaLabel="Table condition"
@@ -266,7 +391,7 @@ export function PolicyForm({
             options={[
               { value: "none", label: "No condition", icon: Ban, info: "Every table in scope is considered." },
               { value: "tags", label: "Tables matching selected tags", icon: Tag },
-              { value: "builder", label: "Tables matching custom condition", icon: SlidersHorizontal },
+              { value: "builder", label: "Custom condition", icon: SlidersHorizontal },
             ]}
           />
           {draft.table_condition.kind === "tags" && (
@@ -276,122 +401,30 @@ export function PolicyForm({
             <ConditionBuilder
               expr={draft.table_condition.expr}
               onChange={(expr) => set("table_condition", { kind: "builder", expr })}
-              subjects={TABLE_SUBJECTS}
+              level="table"
             />
           )}
         </FormSection>
         <Separator />
 
-        {/* 4. Column conditions */}
-        {rule && (
-          <>
-            <FormSection title="Column conditions" description="Which columns fill each of the rule's inputs.">
-              {rule.slots.length === 0 ? (
-                <p className="text-sm text-muted-foreground">This rule runs on whole tables.</p>
-              ) : (
-                <>
-                  {rule.slots.map((slot) => (
-                    <SlotConditionEditor
-                      key={slot.name}
-                      rule={rule}
-                      slot={slot}
-                      value={slotCond(slot)}
-                      onChange={(c) => setSlotCond(slot.name, c)}
-                    />
-                  ))}
-                  {rule.slots.length >= 2 && (
-                    <div className="space-y-2 rounded-lg border bg-muted/20 p-4">
-                      <div className="text-sm font-medium">Pair columns by tag</div>
-                      <p className="text-xs text-muted-foreground">
-                        Pairs columns that share this tag's value. Defaults to pairing by name.
-                      </p>
-                      <TagSingleSelect
-                        className="max-w-xs"
-                        value={draft.pair_by_tag ?? ""}
-                        onChange={(v) => set("pair_by_tag", v || null)}
-                        mode="key"
-                        placeholder="Pair by name (default)"
-                        clearable
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </FormSection>
-            <Separator />
-          </>
-        )}
-
-        {/* 5. Action */}
-        <FormSection title="Action" description="What happens when a table or column matches.">
-          <ChoiceTiles
-            ariaLabel="Action on match"
-            value={draft.action}
-            onChange={(v) => set("action", v)}
-            options={[
-              {
-                value: "auto_apply",
-                label: "Apply automatically",
-                icon: WandSparkles,
-                info: "The rule is attached straight away and marked “via policy”. Ambiguous matches are still suggested.",
-              },
-              {
-                value: "suggest",
-                label: "Suggest only",
-                icon: Bell,
-                info: "Matches appear as suggestions on each table. A table owner decides whether to attach them.",
-              },
-            ]}
-          />
+        {/* 5. Column conditions (one group per rule when there are several) */}
+        <FormSection title="Column conditions" description="Which columns fill each of the rule's inputs.">
+          {ruleGroups.length === 1 ? (
+            <RuleColumnConditions rule={ruleGroups[0].rule} value={ruleGroups[0].value} onChange={ruleGroups[0].onChange} />
+          ) : (
+            ruleGroups.map((g) => (
+              <div key={g.rule.rule_id} className="space-y-3">
+                <div className="text-sm font-semibold">{g.rule.name}</div>
+                <RuleColumnConditions rule={g.rule} value={g.value} onChange={g.onChange} />
+              </div>
+            ))
+          )}
         </FormSection>
         <Separator />
 
-        {/* 6. Also create for other rules (create only) */}
-        {!isEdit && (
-          <>
-            <FormSection
-              title="Also create for other rules"
-              description="Creates a separate, identical policy for each rule. Each can then be edited on its own."
-            >
-              {otherRules.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {otherRules.map((r) => (
-                    <span
-                      key={r.rule_id}
-                      className="inline-flex items-center gap-2 rounded-md border bg-card py-1 pr-1 pl-2.5 text-sm"
-                    >
-                      <span className="font-medium">{r.name}</span>
-                      {r.status !== "approved" && <StatusBadge status={r.status} />}
-                      <button
-                        type="button"
-                        aria-label={`Remove ${r.name}`}
-                        onClick={() => setAlsoFor((prev) => prev.filter((id) => id !== r.rule_id))}
-                        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPickerOpen(true)}>
-                <Plus className="h-4 w-4" /> Add rules
-              </Button>
-              <RulePickerDialog
-                open={pickerOpen}
-                onOpenChange={setPickerOpen}
-                selectedRuleIds={alsoFor}
-                excludeRuleId={draft.rule_id}
-                onAdd={(ids) => setAlsoFor((prev) => [...prev, ...ids])}
-              />
-            </FormSection>
-            <Separator />
-          </>
-        )}
-
-        {/* 7. Preview */}
+        {/* 6. Preview */}
         <FormSection title="Preview" description="Tables and columns this policy would match.">
-          <PreviewSection draft={draft} />
+          <PreviewSection policies={[draft, ...copies]} />
         </FormSection>
       </fieldset>
 
@@ -403,13 +436,7 @@ export function PolicyForm({
           </Button>
         ) : (
           <>
-            <Button onClick={submit}>
-              {isEdit
-                ? "Save"
-                : alsoFor.length > 0
-                  ? `Create ${alsoFor.length + 1} policies`
-                  : "Create policy"}
-            </Button>
+            <Button onClick={submit}>{saveLabel}</Button>
             <Button variant="outline" onClick={onCancel}>
               Cancel
             </Button>

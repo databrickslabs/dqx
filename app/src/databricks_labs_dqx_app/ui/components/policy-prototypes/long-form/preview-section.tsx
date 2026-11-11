@@ -4,43 +4,28 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { mockPreview, type Policy, type PreviewAttachment } from "./model";
+import { mockPreview, ruleById, type Policy, type PreviewAttachment } from "./model";
 
-function Stat({ label, value, tone }: { label: string; value: number; tone?: "warn" | "muted" }) {
-  return (
-    <div className="rounded-lg border bg-card px-3 py-2.5">
-      <div
-        className={cn(
-          "text-xl font-semibold tabular-nums",
-          tone === "warn" && value > 0 && "text-amber-600 dark:text-amber-400",
-          tone === "muted" && "text-muted-foreground",
-        )}
-      >
-        {value}
-      </div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
+function AttachmentStatus({ a, skipped }: { a: PreviewAttachment; skipped: boolean }) {
+  const label = skipped
+    ? "Not attached · skipped"
+    : a.status === "partial"
+      ? "Not attached · incomplete match"
+      : a.status === "ambiguous"
+        ? "Not attached — several possible columns; shown as a suggestion on the table"
+        : "Will attach";
+  const tone = skipped
+    ? "bg-muted text-muted-foreground ring-border"
+    : a.status === "auto"
+      ? "bg-emerald-500/10 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300"
+      : a.status === "ambiguous"
+        ? "bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-300"
+        : "bg-muted text-muted-foreground ring-border";
+  return <span className={cn("inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ring-1", tone)}>{label}</span>;
 }
 
-function AttachmentStatus({ a, action }: { a: PreviewAttachment; action: Policy["action"] }) {
-  const label =
-    a.status === "partial"
-      ? "Partial · not attached"
-      : a.status === "ambiguous" || action === "suggest"
-        ? "Will be suggested"
-        : "Will attach";
-  const tone =
-    a.status === "partial"
-      ? "bg-muted text-muted-foreground ring-border"
-      : a.status === "ambiguous" || action === "suggest"
-        ? "bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-300"
-        : "bg-emerald-500/10 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300";
-  return (
-    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap ring-1", tone)}>
-      {label}
-    </span>
-  );
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
@@ -57,8 +42,10 @@ function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
   );
 }
 
-export function PreviewSection({ draft }: { draft: Policy }) {
-  const deferred = useDeferredValue(draft);
+export function PreviewSection({ policies }: { policies: Policy[] }) {
+  const [ruleId, setRuleId] = useState(policies[0].rule_id);
+  const current = policies.find((p) => p.rule_id === ruleId) ?? policies[0];
+  const deferred = useDeferredValue(current);
   const preview = useMemo(() => mockPreview(deferred), [deferred]);
   const [showTables, setShowTables] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -71,20 +58,68 @@ export function PreviewSection({ draft }: { draft: Policy }) {
       return next;
     });
 
+  const active = preview.tables.filter((t) => !t.skipped_reason);
+  const columns = active.reduce(
+    (n, t) =>
+      n + new Set(t.attachments.filter((a) => a.status === "auto").flatMap((a) => Object.values(a.mapping).flat())).size,
+    0,
+  );
+  const toRegister = current.register_tables ? active.filter((t) => !t.monitored).length : 0;
+  const tableLevel = (ruleById(current.rule_id)?.slots.length ?? 0) === 0;
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Stat label="Monitored tables matched" value={preview.matched_monitored} />
-        <Stat label={draft.action === "suggest" ? "Suggestions" : "Attachments"} value={preview.attachments} />
-        <Stat label="Tables to register" value={draft.register_tables ? preview.to_register : 0} tone="muted" />
-        <Stat label="Skipped · no APPLY or MANAGE" value={preview.skipped} tone="warn" />
-        <Stat label="Ambiguous · suggested" value={preview.ambiguous} tone="warn" />
-      </div>
-      {preview.truncated && (
-        <p className="text-xs text-amber-700 dark:text-amber-300">
-          Preview stopped at 5,000 candidate tables. Narrow the scope for a complete count.
-        </p>
+      {policies.length > 1 && (
+        <div role="tablist" aria-label="Preview for rule" className="flex flex-wrap gap-1.5">
+          {policies.map((p) => {
+            const on = p.rule_id === current.rule_id;
+            return (
+              <button
+                key={p.rule_id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setRuleId(p.rule_id)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  on
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                )}
+              >
+                {ruleById(p.rule_id)?.name ?? p.rule_id}
+              </button>
+            );
+          })}
+        </div>
       )}
+      <div className="space-y-1 rounded-lg border bg-card px-4 py-3">
+        <p className="text-sm">
+          <span className="font-semibold tabular-nums">
+            {plural(active.length, "table", "tables")}
+            {!tableLevel && ` · ${plural(columns, "column", "columns")}`}
+          </span>{" "}
+          would get this rule
+          {toRegister > 0 && (
+            <>
+              , <span className="font-semibold tabular-nums">{toRegister}</span> not yet monitored would be added
+            </>
+          )}
+          .
+        </p>
+        {preview.skipped > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {preview.skipped === 1
+              ? "1 matching table is skipped because you can't apply rules to it."
+              : `${preview.skipped} matching tables are skipped because you can't apply rules to them.`}
+          </p>
+        )}
+        {preview.truncated && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Preview stopped at 5,000 candidate tables. Narrow the scope for a complete count.
+          </p>
+        )}
+      </div>
 
       <Button
         type="button"
@@ -95,7 +130,7 @@ export function PreviewSection({ draft }: { draft: Policy }) {
         aria-expanded={showTables}
       >
         {showTables ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-        {showTables ? "Hide matched tables" : `Show ${preview.tables.length} matched tables`}
+        {showTables ? "Hide matching tables" : `Show ${preview.tables.length} matching tables`}
       </Button>
 
       {showTables && (
@@ -106,7 +141,7 @@ export function PreviewSection({ draft }: { draft: Policy }) {
                 <TableHead className="w-8 px-2" />
                 <TableHead className="px-2">Table</TableHead>
                 <TableHead className="px-2">State</TableHead>
-                <TableHead className="px-2 text-right">Rules</TableHead>
+                <TableHead className="px-2 text-right">Attachments</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -125,14 +160,15 @@ export function PreviewSection({ draft }: { draft: Policy }) {
                       <TableCell className="px-2 font-mono text-xs">{t.table_fqn}</TableCell>
                       <TableCell className="px-2 text-xs">
                         {t.skipped_reason ? (
-                          <span className="text-amber-700 dark:text-amber-300">Skipped · {t.skipped_reason}</span>
+                          <span className="text-muted-foreground">Skipped · you can't apply rules here</span>
                         ) : t.monitored ? (
                           <span className="text-muted-foreground">Monitored</span>
                         ) : (
-                          <span className="text-muted-foreground">Will be registered (draft, unscheduled)</span>
+                          <span className="text-muted-foreground">Will be added (draft, unscheduled)</span>
                         )}
                       </TableCell>
-                      <TableCell className="px-2 text-right text-xs tabular-nums">{t.attachments.length}</TableCell>
+                      <TableCell className="px-2 text-right text-xs tabular-nums">{t.skipped_reason ? 0 : t.attachments.filter((a) => a.status === "auto").length}
+                      </TableCell>
                     </TableRow>
                     {open && (
                       <TableRow className="hover:bg-transparent">
@@ -154,7 +190,7 @@ export function PreviewSection({ draft }: { draft: Policy }) {
                                       <Mapping mapping={a.mapping} />
                                     </td>
                                     <td className="px-3 py-1.5">
-                                      <AttachmentStatus a={a} action={draft.action} />
+                                      <AttachmentStatus a={a} skipped={!!t.skipped_reason} />
                                     </td>
                                     <td className="px-3 py-1.5 text-muted-foreground">{a.reason}</td>
                                   </tr>
