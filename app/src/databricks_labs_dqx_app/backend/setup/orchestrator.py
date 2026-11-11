@@ -980,7 +980,13 @@ class SetupOrchestrator:
                 try:
                     await asyncio.to_thread(self.jobs.grant_workspace_view, resolved.job_id)
                 except NotFound:
-                    raise
+                    # NotFound can also mean an unknown principal; only a job that is really gone propagates
+                    # to the deleted-job handling below.
+                    if not await asyncio.to_thread(self.jobs.exists, resolved.job_id):
+                        raise
+                    logger.warning(
+                        f"Could not give workspace users view access to the task-runner job ({NotFound.__name__})"
+                    )
                 except Exception as error:
                     # Visibility for workspace users is a convenience, not a requirement for running
                     # checks, so a missing grant never blocks setup.

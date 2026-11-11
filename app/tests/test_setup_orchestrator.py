@@ -690,6 +690,21 @@ async def test_task_runner_view_grant_failure_does_not_block_setup(caplog: pytes
 
 
 @pytest.mark.asyncio
+async def test_task_runner_view_grant_not_found_does_not_fail_step_while_job_exists(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A NotFound from the view grant can name an unknown principal; the job still exists, so setup carries on."""
+    harness = _harness()
+    harness.jobs.view_failure = NotFound("principal does not exist")
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert report.step(SetupStepId.TASK_RUNNER).code != "task_runner_reconciliation_failed"
+    assert "Could not give workspace users view access to the task-runner job (NotFound)" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_configuration_binds_resources_built_from_bootstrap_and_storage() -> None:
     harness = _harness()
 
