@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pyspark.sql.types import DataType
 
 # The runner lives in ``app/tasks/src``, which is a separate uv project.
 # Add it to sys.path so we can import it without depending on
@@ -66,7 +67,7 @@ class TestObserverRunName:
 class TestComputeFingerprint:
     def test_empty_checks_returns_none(self, runner_module):
         assert runner_module._compute_fingerprint([]) is None
-        assert runner_module._compute_fingerprint(None) is None  # type: ignore[arg-type]
+        assert runner_module._compute_fingerprint(None) is None
 
     def test_returns_hex_string_for_valid_checks(self, runner_module):
         checks = [
@@ -112,7 +113,7 @@ class TestComputeFingerprint:
 class TestValidateCustomMetrics:
     def test_empty_returns_empty(self, runner_module):
         assert runner_module._validate_custom_metrics([]) == []
-        assert runner_module._validate_custom_metrics(None) == []  # type: ignore[arg-type]
+        assert runner_module._validate_custom_metrics(None) == []
 
     def test_keeps_well_formed_entries(self, runner_module):
         exprs = [
@@ -429,34 +430,112 @@ class TestWriteSqlQuarantineRecords:
 
 
 # ---------------------------------------------------------------------------
-# _parse_job_run_id — {{job.run_id}} run-context parsing (B2-69)
+# _jsonable / _row_json / _sample_rows — sample_invalid_json built in Spark
 # ---------------------------------------------------------------------------
 
 
-class TestJsonDumps:
-    """``_json_dumps`` serialises the sample rows written to ``sample_invalid_json``."""
+def _spark_type(name: str) -> DataType:
+    """A Spark type that only reports *name* as its type name (GEOMETRY, GEOGRAPHY, TIME).
 
-    def test_serialises_geospatial_values_as_hex_wkb(self, runner_module):
-        class _GeoValue:
-            """Same shape as pyspark.sql.types.Geometry / Geography (WKB bytes plus SRID)."""
+    Stands in for types that not every PySpark build used by the tests defines.
+    """
 
-            def __init__(self, wkb: bytes, srid: int):
-                self._wkb, self._srid = wkb, srid
+    class _NamedType(DataType):
+        def typeName(self) -> str:  # type: ignore[override]  # noqa: N802 - mirrors the PySpark API
+            return name
 
-            def getBytes(self) -> bytes:  # noqa: N802 - mirrors the PySpark API
-                return self._wkb
+    return _NamedType()
 
-            def getSrid(self) -> int:  # noqa: N802 - mirrors the PySpark API
-                return self._srid
 
-        point_wkb = bytes.fromhex("0101000000000000000000F03F0000000000000040")  # POINT(1 2)
-        rows = [{"location": _GeoValue(point_wkb, 4326), "id": 1}]
+class TestSampleRowJson:
+    """``_jsonable`` / ``_row_json`` build the ``sample_invalid_json`` payload in Spark.
 
-        assert json.loads(runner_module._json_dumps(rows)) == [{"location": point_wkb.hex().upper(), "id": 1}]
+    The expressions are built with Spark Connect columns, so no Spark session is needed; the tests
+    check the generated expression rather than running it.
+    """
 
-    def test_still_rejects_unsupported_objects(self, runner_module):
-        with pytest.raises(TypeError):
-            runner_module._json_dumps([{"value": object()}])
+    def test_geometry_is_serialised_as_hex_ewkb(self, runner_module):
+        from pyspark.sql import functions as F
+
+        expr = runner_module._jsonable(F.col("location"), _spark_type("geometry"))
+
+        assert str(expr) == "Column<'hex(CallFunction('st_asewkb', location))'>"
+
+    def test_geography_is_serialised_as_hex_wkb(self, runner_module):
+        from pyspark.sql import functions as F
+
+        expr = runner_module._jsonable(F.col("area"), _spark_type("geography"))
+
+        assert str(expr) == "Column<'hex(CallFunction('st_asbinary', area))'>"
+
+    def test_time_is_cast_to_string(self, runner_module):
+        from pyspark.sql import functions as F
+
+        expr = runner_module._jsonable(F.col("t"), _spark_type("time"))
+
+        assert str(expr) == "Column<'CAST(t AS STRING)'>"
+
+    def test_other_types_are_left_to_to_json(self, runner_module):
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import DateType, DecimalType, TimestampType
+
+        for t in (TimestampType(), DateType(), DecimalType(10, 2)):
+            assert str(runner_module._jsonable(F.col("v"), t)) == str(F.col("v"))
+
+    def test_nested_geospatial_values_are_converted(self, runner_module):
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import ArrayType, MapType, StringType, StructField, StructType
+
+        geometry = _spark_type("geometry")
+        array_expr = str(runner_module._jsonable(F.col("a"), ArrayType(geometry)))
+        map_expr = str(runner_module._jsonable(F.col("m"), MapType(StringType(), geometry)))
+        struct_type = StructType([StructField("g", geometry), StructField("id", StringType())])
+        struct_expr = str(runner_module._jsonable(F.col("s"), struct_type))
+
+        assert "transform(a" in array_expr and "st_asewkb" in array_expr
+        assert "transform_values(m" in map_expr and "st_asewkb" in map_expr
+        assert "st_asewkb" in struct_expr and "CASE WHEN" in struct_expr.upper()
+
+    def test_row_json_keeps_null_fields(self, runner_module):
+        from pyspark.sql.types import LongType, StructField, StructType
+
+        df = MagicMock(name="df")
+        df.schema = StructType([StructField("id", LongType()), StructField("location", _spark_type("geometry"))])
+
+        expr = str(runner_module._row_json(df))
+
+        assert expr == (
+            "Column<'to_json(struct(`id` AS id, hex(CallFunction('st_asewkb', `location`)) AS location), "
+            "map(ignoreNullFields, false))'>"
+        )
+
+    def test_row_json_quotes_top_level_column_names(self, runner_module):
+        from pyspark.sql.types import LongType, StructField, StructType
+
+        df = MagicMock(name="df")
+        df.schema = StructType([StructField("a.b", LongType()), StructField("x`y", LongType())])
+
+        expr = str(runner_module._row_json(df))
+
+        # Dots and backticks stay part of one top-level column name instead of a nested field reference.
+        assert expr == "Column<'to_json(struct(`a.b` AS a.b, `x``y` AS x`y), map(ignoreNullFields, false))'>"
+
+    def test_sample_rows_parses_the_json_built_in_spark(self, runner_module):
+        df = MagicMock(name="df")
+        df.schema.fields = []
+        df.limit.return_value.select.return_value.collect.return_value = [
+            ('{"id":1,"location":"0101000020E6100000000000000000F03F0000000000000040","note":null}',)
+        ]
+
+        rows = runner_module._sample_rows(df)
+
+        df.limit.assert_called_once_with(10)
+        assert rows == [{"id": 1, "location": "0101000020E6100000000000000000F03F0000000000000040", "note": None}]
+
+
+# ---------------------------------------------------------------------------
+# _parse_job_run_id — {{job.run_id}} run-context parsing (B2-69)
+# ---------------------------------------------------------------------------
 
 
 class TestParseJobRunId:

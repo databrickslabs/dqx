@@ -21,7 +21,9 @@ from decimal import Decimal
 from typing import Any, cast
 
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import ArrayType, DataType, MapType, StructType
 
 logger = logging.getLogger("dqx_task_runner")
 
@@ -165,17 +167,52 @@ def _validate_run_id(run_id: str) -> str:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-def _is_geospatial_value(o: Any) -> bool:
-    """Whether *o* is a Spark GEOMETRY / GEOGRAPHY value (*pyspark.sql.types.Geometry* / *Geography*).
+def _jsonable(c: Column, t: DataType) -> Column:
+    """Convert *c* of type *t* into a value that *to_json* can serialise.
 
-    Matched by shape (WKB bytes plus SRID) rather than by class, because not every PySpark build used by
-    the runner exposes those classes.
+    GEOMETRY and GEOGRAPHY values become hex-encoded EWKB / WKB and TIME values become strings. Arrays,
+    maps and structs are converted element by element, so nested values are covered too. Everything else
+    is left to *to_json*, which already formats dates, timestamps and decimals.
     """
-    return callable(getattr(o, "getBytes", None)) and callable(getattr(o, "getSrid", None))
+    if t.typeName() == "geometry":
+        return F.hex(F.call_function("st_asewkb", c))
+    if t.typeName() == "geography":
+        return F.hex(F.call_function("st_asbinary", c))
+    if t.typeName() == "time":
+        return c.cast("string")
+    if isinstance(t, ArrayType):
+        return F.transform(c, lambda x: _jsonable(x, t.elementType))
+    if isinstance(t, MapType):
+        return F.transform_values(c, lambda _, v: _jsonable(v, t.valueType))
+    if isinstance(t, StructType):
+        return F.when(c.isNotNull(), F.struct(*[_jsonable(c[f.name], f.dataType).alias(f.name) for f in t.fields]))
+    return c
+
+
+def _quote_column_name(name: str) -> str:
+    """Quote *name* so *F.col* resolves it as one top-level column, even when it contains dots or backticks."""
+    return "`" + name.replace("`", "``") + "`"
+
+
+def _row_json(df: DataFrame) -> Column:
+    """Serialise each row of *df* to a JSON object in Spark, keeping null fields."""
+    return F.to_json(
+        F.struct(*[_jsonable(F.col(_quote_column_name(f.name)), f.dataType).alias(f.name) for f in df.schema.fields]),
+        {"ignoreNullFields": "false"},
+    )
+
+
+def _sample_rows(df: DataFrame, limit: int = 10) -> list[dict[str, Any]]:
+    """Collect up to *limit* rows of *df* as JSON-ready dicts.
+
+    The JSON is built in Spark rather than by converting collected Python objects, so column types the
+    Python *json* module cannot handle (GEOMETRY, GEOGRAPHY, BINARY, ...) do not fail the run.
+    """
+    return [json.loads(r[0]) for r in df.limit(limit).select(_row_json(df)).collect()]
 
 
 class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles datetime, decimal and geospatial values."""
+    """Custom JSON encoder that handles datetime objects."""
 
     def default(self, o: Any) -> Any:
         if isinstance(o, datetime):
@@ -184,10 +221,6 @@ class DateTimeEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, Decimal):
             return float(o)
-        if _is_geospatial_value(o):
-            # Native GEOMETRY / GEOGRAPHY values collected from Spark. Serialise as hex-encoded WKB,
-            # the same text form Postgres/PostGIS uses, so sample rows of geospatial tables stay readable.
-            return o.getBytes().hex().upper()
         return super().default(o)
 
 
@@ -244,8 +277,6 @@ def _stamp_run_provenance(
     to the same instant — keeping both on the warehouse clock and making their
     difference exactly *duration_seconds*.
     """
-    from pyspark.sql import functions as F
-
     stamped = result_row.withColumn("updated_at", F.current_timestamp())
     if duration_seconds is not None and duration_seconds > 0:
         elapsed_ms = int(round(duration_seconds * 1000))
@@ -613,8 +644,7 @@ def _run_dryrun(
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
-        sample_rows = invalid_df.limit(10).collect()
-        sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
+        sample_invalid = _sample_rows(invalid_df)
 
     result_row = spark.createDataFrame(
         [
@@ -728,7 +758,7 @@ def _run_dryrun_sql_check(
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
-        sample_rows = violation_df.limit(10).collect()
+        sample_rows = _sample_rows(violation_df)
         # Stamp a synthesised ``_errors`` payload that matches DQX's
         # ``dq_result_item_schema`` (list of ``{name, message, ...}``
         # structs) so the per-row Errors column renders the violation
@@ -736,7 +766,7 @@ def _run_dryrun_sql_check(
         # because the run was a preview (no quarantine written) or
         # because the caller lacks the role to read ``dq_quarantine_records``.
         err_payload = [{"name": str(check_name), "message": "SQL check violation"}]
-        sample_invalid = [{**row.asDict(recursive=True), "_errors": err_payload} for row in sample_rows]
+        sample_invalid = [{**row, "_errors": err_payload} for row in sample_rows]
 
     # SQL checks treat every violation as an error (no warning concept), so
     # ``error_rows == invalid_rows`` and ``warning_rows == 0``.
@@ -843,8 +873,6 @@ def _write_quarantine_records(
     row payload becomes a typed JSON value (queryable with
     ``variant_get``) rather than an opaque STRING.
     """
-    from pyspark.sql import functions as F
-
     invalid_count = invalid_df.count()
     if invalid_count == 0:
         logger.info("No invalid rows to quarantine (run_id=%s)", run_id)
@@ -918,8 +946,6 @@ def _write_sql_quarantine_records(
     Returns the number of rows actually persisted (``0`` if ``invalid_count``
     is zero, ``min(invalid_count, max_rows)`` otherwise).
     """
-    from pyspark.sql import functions as F
-
     if invalid_count <= 0:
         logger.info("No SQL violations to quarantine (run_id=%s)", run_id)
         return 0
