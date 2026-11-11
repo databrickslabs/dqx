@@ -924,6 +924,26 @@ export interface ClusterOut {
   state: string;
 }
 
+export type ColumnConditionKind = typeof ColumnConditionKind[keyof typeof ColumnConditionKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ColumnConditionKind = {
+  tags: 'tags',
+  builder: 'builder',
+} as const;
+
+export type ColumnConditionExpr = ConditionExpr | null;
+
+/**
+ * Column-level condition for one rule slot: tags or a condition builder.
+ */
+export interface ColumnCondition {
+  kind?: ColumnConditionKind;
+  tags?: string[];
+  expr?: ColumnConditionExpr;
+}
+
 export type ColumnOutComment = string | null;
 
 export interface ColumnOut {
@@ -983,6 +1003,56 @@ export interface ComputeSettingsOut {
   /** True when an admin override is set. */
   warehouse_is_override?: boolean;
   jobs_compute?: JobsComputeModel;
+}
+
+/**
+ * An ordered list of condition rows joined by their combinators.
+ */
+export interface ConditionExpr {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  rows: ConditionRow[];
+}
+
+export type ConditionRowCombinator = 'AND' | 'OR' | null;
+
+export type ConditionRowObject = typeof ConditionRowObject[keyof typeof ConditionRowObject];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConditionRowObject = {
+  catalog: 'catalog',
+  schema: 'schema',
+  table: 'table',
+  column: 'column',
+} as const;
+
+export type ConditionRowPredicate = typeof ConditionRowPredicate[keyof typeof ConditionRowPredicate];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConditionRowPredicate = {
+  has_tag: 'has_tag',
+  not_has_tag: 'not_has_tag',
+  has_name: 'has_name',
+  name_like: 'name_like',
+  has_owner: 'has_owner',
+} as const;
+
+/**
+ * One row of a condition builder: *object* *predicate* *value*.
+ */
+export interface ConditionRow {
+  combinator?: ConditionRowCombinator;
+  object: ConditionRowObject;
+  predicate: ConditionRowPredicate;
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  value: string;
 }
 
 export interface ConfigIn {
@@ -1169,6 +1239,24 @@ export interface CreateRoleMappingIn {
   role: string;
   /** Databricks workspace group name */
   group_name: string;
+}
+
+export type CreateRulePoliciesInColumnConditionsByRule = {[key: string]: {[key: string]: ColumnCondition}};
+
+/**
+ * Create the same policy for one or more rules (one policy per rule, all or nothing).
+
+*column_conditions_by_rule* overrides *policy.column_conditions* for the rules it lists,
+since slot names differ between rules.
+ */
+export interface CreateRulePoliciesIn {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  rule_ids: string[];
+  policy: RulePolicyIn;
+  column_conditions_by_rule?: CreateRulePoliciesInColumnConditionsByRule;
 }
 
 export interface CustomMetricsIn {
@@ -2891,6 +2979,30 @@ export interface PermissionsDefaultInheritOut {
   enabled: boolean;
 }
 
+export type PolicyScopeCatalogs = string[] | '*';
+
+export type PolicyScopeSchemas = string[] | '*';
+
+export type PolicyScopeTables = string[] | '*';
+
+/**
+ * Where a policy applies: catalogs, schemas (cat.sch) and tables (cat.sch.tbl).
+ */
+export interface PolicyScope {
+  catalogs?: PolicyScopeCatalogs;
+  schemas?: PolicyScopeSchemas;
+  tables?: PolicyScopeTables;
+}
+
+/**
+ * Dry-run a policy definition for one rule.
+ */
+export interface PreviewRulePolicyIn {
+  /** @minLength 1 */
+  rule_id: string;
+  policy: RulePolicyIn;
+}
+
 export interface PrewarmIn {
   start?: boolean;
 }
@@ -3734,6 +3846,101 @@ export interface RuleParameter {
   type: RuleParameterType;
   /** Concrete value or default */
   value?: RuleParameterValue;
+}
+
+export type RulePolicyInDescription = string | null;
+
+export type RulePolicyInColumnConditions = {[key: string]: ColumnCondition};
+
+/**
+ * Request body for creating or updating a rule policy.
+ */
+export interface RulePolicyIn {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  description?: RulePolicyInDescription;
+  scope?: PolicyScope;
+  table_condition?: TableCondition;
+  column_conditions?: RulePolicyInColumnConditions;
+  register_tables?: boolean;
+}
+
+export type RulePolicyOutDescription = string | null;
+
+export type RulePolicyOutColumnConditions = {[key: string]: ColumnCondition};
+
+export type RulePolicyOutCreatedBy = string | null;
+
+export type RulePolicyOutCreatedAt = string | null;
+
+export type RulePolicyOutUpdatedBy = string | null;
+
+export type RulePolicyOutUpdatedAt = string | null;
+
+/**
+ * A stored rule policy plus how many tables it has attached its rule to.
+ */
+export interface RulePolicyOut {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  description?: RulePolicyOutDescription;
+  scope?: PolicyScope;
+  table_condition?: TableCondition;
+  column_conditions?: RulePolicyOutColumnConditions;
+  register_tables?: boolean;
+  policy_id: string;
+  rule_id: string;
+  created_by?: RulePolicyOutCreatedBy;
+  created_at?: RulePolicyOutCreatedAt;
+  updated_by?: RulePolicyOutUpdatedBy;
+  updated_at?: RulePolicyOutUpdatedAt;
+  tables_matched?: number;
+}
+
+export type RulePolicyPreviewMappingOutColumnMapping = {[key: string]: string};
+
+/**
+ * One mapping the policy would attach: slot name to column (or comma-joined columns).
+ */
+export interface RulePolicyPreviewMappingOut {
+  column_mapping: RulePolicyPreviewMappingOutColumnMapping;
+  reason: string;
+}
+
+/**
+ * What saving a policy would attach for the calling user.
+ */
+export interface RulePolicyPreviewOut {
+  tables_matched: number;
+  columns_matched: number;
+  new_tables: number;
+  truncated: boolean;
+  unreadable_catalogs?: string[];
+  tables: RulePolicyPreviewTableOut[];
+}
+
+/**
+ * A table the policy would attach to; *monitored* is False when it would be registered first.
+ */
+export interface RulePolicyPreviewTableOut {
+  table_fqn: string;
+  monitored: boolean;
+  mappings: RulePolicyPreviewMappingOut[];
+}
+
+/**
+ * Result of re-evaluating a policy.
+ */
+export interface RulePolicyRunOut {
+  attached: number;
+  registered: number;
+  registration_capped: boolean;
 }
 
 export type RuleScoreOutOverallScore = number | null;
@@ -4896,6 +5103,27 @@ export interface SuggestedRuleMappingOut {
   explanation?: string;
 }
 
+export type TableConditionKind = typeof TableConditionKind[keyof typeof TableConditionKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const TableConditionKind = {
+  none: 'none',
+  tags: 'tags',
+  builder: 'builder',
+} as const;
+
+export type TableConditionExpr = ConditionExpr | null;
+
+/**
+ * Table-level condition: none, a list of tags, or a condition builder.
+ */
+export interface TableCondition {
+  kind?: TableConditionKind;
+  tags?: string[];
+  expr?: TableConditionExpr;
+}
+
 export type TableDataOutRowsItem = {[key: string]: string | null};
 
 export type TableDataOutGeneratedSql = string | null;
@@ -5725,6 +5953,14 @@ export type SubmitRegistryRuleBody = LifecycleRationaleIn | null;
 export type ApproveRegistryRuleBody = LifecycleRationaleIn | null;
 
 export type RejectRegistryRuleBody = LifecycleRationaleIn | null;
+
+export type ListRulePoliciesParams = {
+/**
+ * Registry rule whose policies to list
+ * @minLength 1
+ */
+rule_id: string;
+};
 
 export type ListMonitoredTablesParams = {
 /**
@@ -16658,7 +16894,7 @@ export const useUpdateRegistryRule = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * Delete a registry rule.
+ * Delete a registry rule and its rule policies.
 
 Blocked (409) when the rule is currently applied to one or more
 monitored tables — remove every application first via the Apply Rules
@@ -17425,6 +17661,620 @@ export const useBackfillRuleEmbeddings = <TError = AxiosError<HTTPValidationErro
       > => {
 
       const mutationOptions = getBackfillRuleEmbeddingsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List the policies of one registry rule.
+ * @summary List Rule Policies
+ */
+export const listRulePolicies = (
+    params: ListRulePoliciesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyOut[]>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/rule-policies`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListRulePoliciesQueryKey = (params?: ListRulePoliciesParams,) => {
+    return [
+    `/api/v1/rule-policies`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListRulePoliciesQueryOptions = <TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(params: ListRulePoliciesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRulePoliciesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRulePolicies>>> = ({ signal }) => listRulePolicies(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRulePoliciesQueryResult = NonNullable<Awaited<ReturnType<typeof listRulePolicies>>>
+export type ListRulePoliciesQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRulePolicies<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRulePolicies>>,
+          TError,
+          Awaited<ReturnType<typeof listRulePolicies>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRulePolicies<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRulePolicies>>,
+          TError,
+          Awaited<ReturnType<typeof listRulePolicies>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRulePolicies<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Rule Policies
+ */
+
+export function useListRulePolicies<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRulePoliciesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListRulePoliciesSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(params: ListRulePoliciesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListRulePoliciesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRulePolicies>>> = ({ signal }) => listRulePolicies(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListRulePoliciesSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listRulePolicies>>>
+export type ListRulePoliciesSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListRulePoliciesSuspense<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRulePoliciesSuspense<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListRulePoliciesSuspense<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Rule Policies
+ */
+
+export function useListRulePoliciesSuspense<TData = Awaited<ReturnType<typeof listRulePolicies>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListRulePoliciesParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listRulePolicies>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListRulePoliciesSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Create one policy per rule in *rule_ids*, all or nothing, then evaluate each.
+
+MODIFY is checked on every rule and every rule's column conditions are
+validated before anything is written. If a create fails part-way, the
+policies already created by this request are deleted again.
+ * @summary Create Rule Policies
+ */
+export const createRulePolicies = (
+    createRulePoliciesIn: CreateRulePoliciesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyOut[]>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-policies`,
+      createRulePoliciesIn,options
+    );
+  }
+
+
+
+export const getCreateRulePoliciesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRulePolicies>>, TError,{data: CreateRulePoliciesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof createRulePolicies>>, TError,{data: CreateRulePoliciesIn}, TContext> => {
+
+const mutationKey = ['createRulePolicies'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createRulePolicies>>, {data: CreateRulePoliciesIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createRulePolicies(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateRulePoliciesMutationResult = NonNullable<Awaited<ReturnType<typeof createRulePolicies>>>
+    export type CreateRulePoliciesMutationBody = CreateRulePoliciesIn
+    export type CreateRulePoliciesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Create Rule Policies
+ */
+export const useCreateRulePolicies = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRulePolicies>>, TError,{data: CreateRulePoliciesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createRulePolicies>>,
+        TError,
+        {data: CreateRulePoliciesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateRulePoliciesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Get one rule policy.
+ * @summary Get Rule Policy
+ */
+export const getRulePolicy = (
+    policyId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/rule-policies/${policyId}`,options
+    );
+  }
+
+
+
+
+export const getGetRulePolicyQueryKey = (policyId?: string,) => {
+    return [
+    `/api/v1/rule-policies/${policyId}`
+    ] as const;
+    }
+
+    
+export const getGetRulePolicyQueryOptions = <TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(policyId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRulePolicyQueryKey(policyId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRulePolicy>>> = ({ signal }) => getRulePolicy(policyId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(policyId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRulePolicyQueryResult = NonNullable<Awaited<ReturnType<typeof getRulePolicy>>>
+export type GetRulePolicyQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRulePolicy<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRulePolicy>>,
+          TError,
+          Awaited<ReturnType<typeof getRulePolicy>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulePolicy<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRulePolicy>>,
+          TError,
+          Awaited<ReturnType<typeof getRulePolicy>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulePolicy<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rule Policy
+ */
+
+export function useGetRulePolicy<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRulePolicyQueryOptions(policyId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRulePolicySuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(policyId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRulePolicyQueryKey(policyId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRulePolicy>>> = ({ signal }) => getRulePolicy(policyId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRulePolicySuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRulePolicy>>>
+export type GetRulePolicySuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRulePolicySuspense<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulePolicySuspense<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRulePolicySuspense<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Rule Policy
+ */
+
+export function useGetRulePolicySuspense<TData = Awaited<ReturnType<typeof getRulePolicy>>, TError = AxiosError<HTTPValidationError>>(
+ policyId: string, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRulePolicy>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRulePolicySuspenseQueryOptions(policyId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Replace a policy's definition, then evaluate it.
+ * @summary Update Rule Policy
+ */
+export const updateRulePolicy = (
+    policyId: string,
+    rulePolicyIn: RulePolicyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/rule-policies/${policyId}`,
+      rulePolicyIn,options
+    );
+  }
+
+
+
+export const getUpdateRulePolicyMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRulePolicy>>, TError,{policyId: string;data: RulePolicyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateRulePolicy>>, TError,{policyId: string;data: RulePolicyIn}, TContext> => {
+
+const mutationKey = ['updateRulePolicy'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRulePolicy>>, {policyId: string;data: RulePolicyIn}> = (props) => {
+          const {policyId,data} = props ?? {};
+
+          return  updateRulePolicy(policyId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateRulePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof updateRulePolicy>>>
+    export type UpdateRulePolicyMutationBody = RulePolicyIn
+    export type UpdateRulePolicyMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Rule Policy
+ */
+export const useUpdateRulePolicy = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRulePolicy>>, TError,{policyId: string;data: RulePolicyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateRulePolicy>>,
+        TError,
+        {policyId: string;data: RulePolicyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateRulePolicyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a policy. Rules it already attached stay attached.
+ * @summary Delete Rule Policy
+ */
+export const deleteRulePolicy = (
+    policyId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/rule-policies/${policyId}`,options
+    );
+  }
+
+
+
+export const getDeleteRulePolicyMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRulePolicy>>, TError,{policyId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteRulePolicy>>, TError,{policyId: string}, TContext> => {
+
+const mutationKey = ['deleteRulePolicy'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteRulePolicy>>, {policyId: string}> = (props) => {
+          const {policyId} = props ?? {};
+
+          return  deleteRulePolicy(policyId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteRulePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteRulePolicy>>>
+    
+    export type DeleteRulePolicyMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Rule Policy
+ */
+export const useDeleteRulePolicy = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRulePolicy>>, TError,{policyId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteRulePolicy>>,
+        TError,
+        {policyId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteRulePolicyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Show what saving *policy* for *rule_id* would attach for the calling user (nothing is written).
+ * @summary Preview Rule Policy
+ */
+export const previewRulePolicy = (
+    previewRulePolicyIn: PreviewRulePolicyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyPreviewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-policies/preview`,
+      previewRulePolicyIn,options
+    );
+  }
+
+
+
+export const getPreviewRulePolicyMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewRulePolicy>>, TError,{data: PreviewRulePolicyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof previewRulePolicy>>, TError,{data: PreviewRulePolicyIn}, TContext> => {
+
+const mutationKey = ['previewRulePolicy'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewRulePolicy>>, {data: PreviewRulePolicyIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewRulePolicy(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewRulePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof previewRulePolicy>>>
+    export type PreviewRulePolicyMutationBody = PreviewRulePolicyIn
+    export type PreviewRulePolicyMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preview Rule Policy
+ */
+export const usePreviewRulePolicy = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewRulePolicy>>, TError,{data: PreviewRulePolicyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewRulePolicy>>,
+        TError,
+        {data: PreviewRulePolicyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreviewRulePolicyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Re-evaluate a policy across its scope and attach anything new.
+ * @summary Rescan Rule Policy
+ */
+export const rescanRulePolicy = (
+    policyId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RulePolicyRunOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/rule-policies/${policyId}/rescan`,undefined,options
+    );
+  }
+
+
+
+export const getRescanRulePolicyMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rescanRulePolicy>>, TError,{policyId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof rescanRulePolicy>>, TError,{policyId: string}, TContext> => {
+
+const mutationKey = ['rescanRulePolicy'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rescanRulePolicy>>, {policyId: string}> = (props) => {
+          const {policyId} = props ?? {};
+
+          return  rescanRulePolicy(policyId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RescanRulePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof rescanRulePolicy>>>
+    
+    export type RescanRulePolicyMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Rescan Rule Policy
+ */
+export const useRescanRulePolicy = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rescanRulePolicy>>, TError,{policyId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rescanRulePolicy>>,
+        TError,
+        {policyId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRescanRulePolicyMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

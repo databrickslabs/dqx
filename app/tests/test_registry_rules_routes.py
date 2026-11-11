@@ -787,10 +787,12 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 0
+        policies = MagicMock()
         result = delete_registry_rule(
             "r1",
             svc=svc,
             apply_rules=apply_rules,
+            policies=policies,
             user_email="alice@x",
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
@@ -798,6 +800,25 @@ class TestDelete:
         )
         assert result == {"status": "deleted", "rule_id": "r1"}
         svc.delete.assert_called_once_with("r1", "alice@x")
+        policies.delete_for_rule.assert_called_once_with("r1")
+
+    def test_delete_succeeds_when_policy_cascade_fails(self):
+        svc = MagicMock()
+        apply_rules = MagicMock()
+        apply_rules.count_applications_for_rule.return_value = 0
+        policies = MagicMock()
+        policies.delete_for_rule.side_effect = RuntimeError("boom")
+        result = delete_registry_rule(
+            "r1",
+            svc=svc,
+            apply_rules=apply_rules,
+            policies=policies,
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        assert result == {"status": "deleted", "rule_id": "r1"}
 
     def test_delete_missing_rule_raises_404(self):
         svc = MagicMock()
@@ -809,6 +830,7 @@ class TestDelete:
                 "r1",
                 svc=svc,
                 apply_rules=apply_rules,
+                policies=MagicMock(),
                 user_email="alice@x",
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
@@ -820,11 +842,13 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 2
+        policies = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             delete_registry_rule(
                 "r1",
                 svc=svc,
                 apply_rules=apply_rules,
+                policies=policies,
                 user_email="alice@x",
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
@@ -832,6 +856,7 @@ class TestDelete:
             )
         assert excinfo.value.status_code == 409
         svc.delete.assert_not_called()
+        policies.delete_for_rule.assert_not_called()
 
 
 class TestLifecycleRoutes:

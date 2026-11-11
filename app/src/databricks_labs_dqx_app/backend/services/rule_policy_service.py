@@ -16,6 +16,12 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 logger = logging.getLogger(__name__)
 
 _TRUE_TEXT = frozenset({"true", "t", "1"})
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Whether *exc* is a database unique-constraint violation (psycopg and SQL errors expose *sqlstate*)."""
+    return getattr(exc, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE
 
 
 class RulePolicyNotFoundError(LookupError):
@@ -78,6 +84,25 @@ class RulePolicyService:
         self._ensure_name_unique(rule_id, name)
         policy_id = str(uuid4())
         now = datetime.now(UTC).isoformat()
+        try:
+            self._insert(policy_id, rule_id, name, body, user_email)
+        except Exception as exc:
+            # A concurrent save of the same name slips past the pre-check; the unique index catches it.
+            if _is_unique_violation(exc):
+                raise DuplicatePolicyNameError(f"This rule already has a policy named '{name}'.") from exc
+            raise
+        logger.info("Created rule policy %s for rule %s", policy_id, rule_id)
+        return RulePolicy(
+            **body.model_dump(),
+            policy_id=policy_id,
+            rule_id=rule_id,
+            created_by=user_email,
+            created_at=now,
+            updated_by=user_email,
+            updated_at=now,
+        ).model_copy(update={"name": name})
+
+    def _insert(self, policy_id: str, rule_id: str, name: str, body: RulePolicyIn, user_email: str) -> None:
         self._sql.insert(
             self._table,
             values={
@@ -93,16 +118,6 @@ class RulePolicyService:
                 "updated_at": RawSql("current_timestamp()"),
             },
         )
-        logger.info("Created rule policy %s for rule %s", policy_id, rule_id)
-        return RulePolicy(
-            **body.model_dump(),
-            policy_id=policy_id,
-            rule_id=rule_id,
-            created_by=user_email,
-            created_at=now,
-            updated_by=user_email,
-            updated_at=now,
-        ).model_copy(update={"name": name})
 
     def update(self, policy_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
         """Replace a policy's definition; created_* fields are preserved.
@@ -116,18 +131,23 @@ class RulePolicyService:
             raise RulePolicyNotFoundError(f"Rule policy '{policy_id}' not found.")
         name = body.name.strip()
         self._ensure_name_unique(existing.rule_id, name, exclude_policy_id=policy_id)
-        self._sql.update(
-            self._table,
-            updates={
-                "name": name,
-                "description": body.description,
-                **self._json_values(body),
-                "register_tables": body.register_tables,
-                "updated_by": user_email,
-                "updated_at": RawSql("current_timestamp()"),
-            },
-            where={"policy_id": policy_id},
-        )
+        try:
+            self._sql.update(
+                self._table,
+                updates={
+                    "name": name,
+                    "description": body.description,
+                    **self._json_values(body),
+                    "register_tables": body.register_tables,
+                    "updated_by": user_email,
+                    "updated_at": RawSql("current_timestamp()"),
+                },
+                where={"policy_id": policy_id},
+            )
+        except Exception as exc:
+            if _is_unique_violation(exc):
+                raise DuplicatePolicyNameError(f"This rule already has a policy named '{name}'.") from exc
+            raise
         logger.info("Updated rule policy %s", policy_id)
         refreshed = self.get(policy_id)
         if refreshed is None:

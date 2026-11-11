@@ -27,6 +27,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_permissions_service,
     get_registry_service,
     get_rule_embeddings_service,
+    get_rule_policy_service,
     get_tag_reconcile_service,
     require_role,
 )
@@ -65,6 +66,7 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
 )
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
 router = APIRouter()
@@ -518,12 +520,13 @@ def delete_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    policies: Annotated[RulePolicyService, Depends(get_rule_policy_service)],
     user_email: CurrentUser,
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Delete a registry rule.
+    """Delete a registry rule and its rule policies.
 
     Blocked (409) when the rule is currently applied to one or more
     monitored tables — remove every application first via the Apply Rules
@@ -551,7 +554,6 @@ def delete_registry_rule(
                 ),
             )
         svc.delete(rule_id, user_email)
-        return {"status": "deleted", "rule_id": rule_id}
     except HTTPException:
         raise
     except RuntimeError as e:
@@ -559,6 +561,11 @@ def delete_registry_rule(
     except Exception as e:
         logger.error(f"Failed to delete registry rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete registry rule: {e}")
+    try:
+        policies.delete_for_rule(rule_id)
+    except Exception:  # best-effort: orphaned policies attach nothing (their rule is gone)
+        logger.warning(f"Could not delete rule policies of deleted rule {rule_id}", exc_info=True)
+    return {"status": "deleted", "rule_id": rule_id}
 
 
 # ------------------------------------------------------------------

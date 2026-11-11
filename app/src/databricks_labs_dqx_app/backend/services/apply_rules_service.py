@@ -783,6 +783,33 @@ class ApplyRulesService:
         rows = self._sql.query(sql)
         return int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
 
+    def count_bindings_by_policy(self, policy_ids: list[str]) -> dict[str, int]:
+        """Count, per rule policy, the distinct bindings holding an applied row stamped with it.
+
+        One grouped query over ``dq_applied_rules`` filtering ``user_metadata.policy_id``.
+        Every requested id is present in the result; ids with no applied rows map to 0.
+        """
+        unique = list(dict.fromkeys(policy_ids))
+        counts = {policy_id: 0 for policy_id in unique}
+        if not unique:
+            return counts
+        policy_expr = self._policy_id_expr()
+        in_list = ", ".join(f"'{escape_sql_string(policy_id)}'" for policy_id in unique)
+        sql = (
+            f"SELECT {policy_expr} AS policy_id, COUNT(DISTINCT binding_id) FROM {self._table} "
+            f"WHERE {policy_expr} IN ({in_list}) GROUP BY {policy_expr}"
+        )
+        for row in self._sql.query(sql):
+            if row and row[0] in counts:
+                counts[row[0]] = int(row[1]) if row[1] is not None else 0
+        return counts
+
+    def _policy_id_expr(self) -> str:
+        """SQL text of ``user_metadata.policy_id`` on this executor's dialect."""
+        if self._sql.dialect == "postgres":
+            return f"(user_metadata ->> '{POLICY_ID_KEY}')"
+        return f"get_json_object({self._sql.select_json_text('user_metadata')}, '$.{POLICY_ID_KEY}')"
+
     def get_applied(self, applied_rule_id: str) -> AppliedRule | None:
         """Get a single applied rule by id."""
         e = escape_sql_string(applied_rule_id)

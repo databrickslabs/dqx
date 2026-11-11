@@ -25,6 +25,7 @@ from .registry_models import ScheduleKind as RegistryScheduleKind
 from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
 from .registry_models import MAX_SCHEDULE_SAMPLE_SIZE
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .policy_models import ColumnCondition, RulePolicy, RulePolicyIn
 from .rule_enums import RuleSource, RuleStatus
 from .setup.models import GrantErrorCode
 from .sql_utils import validate_fqn
@@ -3237,3 +3238,86 @@ class BrandingOut(BaseModel):
     logos: BrandingLogosOut
     custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
     edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Rule policies
+# ---------------------------------------------------------------------------
+
+MAX_RULES_PER_POLICY_CREATE = 50
+
+
+class CreateRulePoliciesIn(BaseModel):
+    """Create the same policy for one or more rules (one policy per rule, all or nothing).
+
+    *column_conditions_by_rule* overrides *policy.column_conditions* for the rules it lists,
+    since slot names differ between rules.
+    """
+
+    rule_ids: list[str] = Field(min_length=1, max_length=MAX_RULES_PER_POLICY_CREATE)
+    policy: RulePolicyIn
+    column_conditions_by_rule: dict[str, dict[str, ColumnCondition]] = Field(default_factory=dict)
+
+    @field_validator("rule_ids")
+    @classmethod
+    def _unique_rule_ids(cls, value: list[str]) -> list[str]:
+        if any(not rule_id for rule_id in value):
+            raise ValueError("Rule ids must not be empty.")
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def _conditions_for_listed_rules(self) -> "CreateRulePoliciesIn":
+        if set(self.column_conditions_by_rule) - set(self.rule_ids):
+            raise ValueError("column_conditions_by_rule may only list rules in rule_ids.")
+        return self
+
+
+class PreviewRulePolicyIn(BaseModel):
+    """Dry-run a policy definition for one rule."""
+
+    rule_id: str = Field(min_length=1)
+    policy: RulePolicyIn
+
+
+class RulePolicyOut(RulePolicy):
+    """A stored rule policy plus how many tables it has attached its rule to."""
+
+    tables_matched: int = 0
+
+    @classmethod
+    def from_domain(cls, policy: RulePolicy, tables_matched: int) -> "RulePolicyOut":
+        return cls(**policy.model_dump(), tables_matched=tables_matched)
+
+
+class RulePolicyPreviewMappingOut(BaseModel):
+    """One mapping the policy would attach: slot name to column (or comma-joined columns)."""
+
+    column_mapping: ColumnMappingGroup
+    reason: str
+
+
+class RulePolicyPreviewTableOut(BaseModel):
+    """A table the policy would attach to; *monitored* is False when it would be registered first."""
+
+    table_fqn: str
+    monitored: bool
+    mappings: list[RulePolicyPreviewMappingOut]
+
+
+class RulePolicyPreviewOut(BaseModel):
+    """What saving a policy would attach for the calling user."""
+
+    tables_matched: int
+    columns_matched: int
+    new_tables: int
+    truncated: bool
+    unreadable_catalogs: list[str] = Field(default_factory=list)
+    tables: list[RulePolicyPreviewTableOut]
+
+
+class RulePolicyRunOut(BaseModel):
+    """Result of re-evaluating a policy."""
+
+    attached: int
+    registered: int
+    registration_capped: bool

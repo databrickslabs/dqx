@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import hashlib
 import os
 from collections.abc import Callable
@@ -69,6 +70,10 @@ from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
 from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
+from .services.monitored_table_registration import register_table
+from .services.policy_apply_service import ActingUser, PolicyApplyService
+from .services.policy_snapshot import PolicySnapshotReader
+from .services.rule_policy_service import RulePolicyService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
 # Process-wide OLTP executor. Constructed once at app startup by
@@ -1530,3 +1535,69 @@ __all__ = [
     "get_user_catalog_names",
     "rt",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Rule policies
+# ---------------------------------------------------------------------------
+
+
+async def get_rule_policy_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> RulePolicyService:
+    """Create a RulePolicyService routed at the OLTP executor."""
+    return RulePolicyService(sql=sql)
+
+
+async def get_policy_snapshot_reader(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+) -> PolicySnapshotReader:
+    """Create a PolicySnapshotReader that reads Unity Catalog on-behalf-of the caller.
+
+    Both the information_schema queries and the "All catalogs" listing run as the
+    calling user, so a policy only ever sees tables that user can see.
+    """
+
+    def _list_catalogs() -> list[str]:
+        return sorted(c.name for c in obo_ws.catalogs.list() if c.name)
+
+    return PolicySnapshotReader(sql=obo_sql, list_catalogs=_list_catalogs)
+
+
+async def get_policy_apply_service(
+    policies: Annotated[RulePolicyService, Depends(get_rule_policy_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    snapshots: Annotated[PolicySnapshotReader, Depends(get_policy_snapshot_reader)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+) -> PolicyApplyService:
+    """Create a PolicyApplyService for the calling user.
+
+    Registration of matching tables goes through the same helper as the register
+    route, reading the table's UC owner via the caller's OBO discovery service.
+    """
+    register = functools.partial(register_table, monitored_tables=monitored_tables, discovery=discovery)
+    return PolicyApplyService(
+        policies=policies,
+        registry=registry,
+        monitored_tables=monitored_tables,
+        apply_rules=apply_rules,
+        permissions=perms,
+        snapshots=snapshots,
+        register_table=register,
+    )
+
+
+async def get_acting_user(
+    email: Annotated[str, Depends(get_user_email)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+) -> ActingUser:
+    """The calling user as the identity a rule policy evaluation runs for."""
+    return ActingUser(email=email, role=role, principal_ids=principal_ids)
+
+
+CurrentActingUser = Annotated[ActingUser, Depends(get_acting_user)]

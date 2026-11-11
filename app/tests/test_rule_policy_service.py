@@ -193,3 +193,31 @@ def test_delete_for_rule_with_no_policies_skips_delete(svc, sql):
 
     assert svc.delete_for_rule("r1") == 0
     assert not any(s.strip().startswith("DELETE") for s in _executed_sql(sql))
+
+
+class _UniqueViolation(Exception):
+    """Stands in for psycopg's UniqueViolation (SQLSTATE 23505) raised by a concurrent save."""
+
+    sqlstate = "23505"
+
+
+def test_create_concurrent_duplicate_maps_unique_violation(svc, sql):
+    sql.execute.side_effect = _UniqueViolation("duplicate key value violates unique constraint")
+
+    with pytest.raises(DuplicatePolicyNameError):
+        svc.create("r1", _body(), "alice@example.com")
+
+
+def test_update_concurrent_duplicate_maps_unique_violation(svc, sql):
+    sql.query_dicts.return_value = [_row()]
+    sql.execute.side_effect = _UniqueViolation("duplicate key value violates unique constraint")
+
+    with pytest.raises(DuplicatePolicyNameError):
+        svc.update("p1", _body("Taken"), "bob@example.com")
+
+
+def test_create_other_db_errors_propagate(svc, sql):
+    sql.execute.side_effect = RuntimeError("connection lost")
+
+    with pytest.raises(RuntimeError):
+        svc.create("r1", _body(), "alice@example.com")

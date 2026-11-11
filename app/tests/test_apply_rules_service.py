@@ -903,3 +903,34 @@ class TestColumnPassThresholds:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[], user_metadata={})
         out = AppliedRuleOut.from_domain(applied)
         assert out.column_pass_thresholds == {}
+
+
+# ---------------------------------------------------------------------------
+# count_bindings_by_policy
+# ---------------------------------------------------------------------------
+
+
+class TestCountBindingsByPolicy:
+    def test_one_grouped_query_with_missing_ids_zero(self, svc, sql):
+        sql.query.return_value = [["p1", "3"]]
+
+        assert svc.count_bindings_by_policy(["p1", "p2"]) == {"p1": 3, "p2": 0}
+        assert sql.query.call_count == 1
+        query = sql.query.call_args[0][0]
+        assert "COUNT(DISTINCT binding_id)" in query
+        assert "dq_applied_rules" in query
+        assert "get_json_object(to_json(user_metadata), '$.policy_id')" in query
+        assert "IN ('p1', 'p2')" in query
+
+    def test_postgres_uses_json_text_operator(self, svc, sql):
+        sql.dialect = "postgres"
+        svc.count_bindings_by_policy(["p1"])
+        assert "(user_metadata ->> 'policy_id')" in sql.query.call_args[0][0]
+
+    def test_escapes_ids(self, svc, sql):
+        svc.count_bindings_by_policy(["p'1"])
+        assert "'p''1'" in sql.query.call_args[0][0]
+
+    def test_empty_list_skips_query(self, svc, sql):
+        assert svc.count_bindings_by_policy([]) == {}
+        sql.query.assert_not_called()
