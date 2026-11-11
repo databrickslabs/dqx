@@ -4,8 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { mockPreview, type PolicyDraft, type PreviewAttachment } from "../mock";
-import { ruleById } from "./primitives";
+import { mockPreview, type Policy, type PreviewAttachment } from "./model";
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: "warn" | "muted" }) {
   return (
@@ -24,7 +23,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "wa
   );
 }
 
-function AttachmentStatus({ a, action }: { a: PreviewAttachment; action: PolicyDraft["action"] }) {
+function AttachmentStatus({ a, action }: { a: PreviewAttachment; action: Policy["action"] }) {
   const label =
     a.status === "partial"
       ? "Partial · not attached"
@@ -58,7 +57,7 @@ function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
   );
 }
 
-export function PreviewSection({ draft }: { draft: PolicyDraft }) {
+export function PreviewSection({ draft }: { draft: Policy }) {
   const deferred = useDeferredValue(draft);
   const preview = useMemo(() => mockPreview(deferred), [deferred]);
   const [showTables, setShowTables] = useState(false);
@@ -71,14 +70,6 @@ export function PreviewSection({ draft }: { draft: PolicyDraft }) {
       else next.add(fqn);
       return next;
     });
-
-  if (draft.rule_ids.length === 0 || !draft.scope.some((s) => s.catalog)) {
-    return (
-      <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-        Add at least one rule and a scope catalog to preview matches.
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -151,7 +142,6 @@ export function PreviewSection({ draft }: { draft: PolicyDraft }) {
                             <table className="w-full text-xs">
                               <thead className="text-left text-muted-foreground">
                                 <tr className="border-b">
-                                  <th className="px-3 py-1.5 font-medium">Rule</th>
                                   <th className="px-3 py-1.5 font-medium">Column mapping</th>
                                   <th className="px-3 py-1.5 font-medium">Result</th>
                                   <th className="px-3 py-1.5 font-medium">Reason</th>
@@ -160,7 +150,6 @@ export function PreviewSection({ draft }: { draft: PolicyDraft }) {
                               <tbody>
                                 {t.attachments.map((a, i) => (
                                   <tr key={i} className="border-b last:border-0 align-top">
-                                    <td className="px-3 py-1.5 font-medium">{ruleById(a.rule_id)?.name ?? a.rule_id}</td>
                                     <td className="px-3 py-1.5">
                                       <Mapping mapping={a.mapping} />
                                     </td>

@@ -7,23 +7,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { MOCK_PRINCIPALS } from "../mock";
 import {
-  MOCK_PRINCIPALS,
-  OPERATOR_LABEL,
   SUBJECT_LABEL,
+  defaultRow,
+  isTagSubject,
+  operatorLabel,
   operatorsFor,
   printExpr,
+  slotNameHint,
   type ConditionExpr,
   type ConditionRow,
-  type ConditionSubject,
-} from "../mock";
+  type Subject,
+} from "./model";
 import { TagSingleSelect } from "./tag-picker";
-
-const COLUMN_TYPES = ["string", "int", "bigint", "double", "decimal", "date", "timestamp", "boolean"];
-
-export function defaultRow(subject: ConditionSubject, combinator: ConditionRow["combinator"] = null): ConditionRow {
-  return { combinator, subject, operator: operatorsFor(subject)[0], value: "" };
-}
 
 function CombinatorPill({ value, onToggle }: { value: "AND" | "OR"; onToggle: () => void }) {
   return (
@@ -50,27 +47,26 @@ function CombinatorPill({ value, onToggle }: { value: "AND" | "OR"; onToggle: ()
   );
 }
 
-function ValueCell({ row, onChange }: { row: ConditionRow; onChange: (v: string) => void }) {
-  if (row.subject.endsWith("_tag")) {
-    const keyOnly = row.operator === "has_tag" || row.operator === "not_has_tag";
-    return (
-      <TagSingleSelect
-        value={row.value}
-        onChange={onChange}
-        mode={keyOnly ? "key" : "keyValue"}
-        placeholder={keyOnly ? "Select tag key" : "Select key=value"}
-      />
-    );
+function ValueCell({
+  row,
+  onChange,
+  slotName,
+}: {
+  row: ConditionRow;
+  onChange: (v: string) => void;
+  slotName?: string;
+}) {
+  if (isTagSubject(row.subject)) {
+    return <TagSingleSelect value={row.value} onChange={onChange} mode="any" placeholder="Select tag" />;
   }
-  if (row.subject === "table_owner" || row.subject === "column_type") {
-    const options = row.subject === "table_owner" ? MOCK_PRINCIPALS : COLUMN_TYPES;
+  if (row.subject === "table_owner") {
     return (
       <Select value={row.value || undefined} onValueChange={onChange}>
         <SelectTrigger className="h-8 w-full text-xs">
-          <SelectValue placeholder={row.subject === "table_owner" ? "Select principal" : "Select type"} />
+          <SelectValue placeholder="Select principal" />
         </SelectTrigger>
         <SelectContent>
-          {options.map((o) => (
+          {MOCK_PRINCIPALS.map((o) => (
             <SelectItem key={o} value={o} className="font-mono text-xs">
               {o}
             </SelectItem>
@@ -80,11 +76,12 @@ function ValueCell({ row, onChange }: { row: ConditionRow; onChange: (v: string)
     );
   }
   const like = row.operator === "like" || row.operator === "not_like";
+  const base = row.subject === "column_name" && slotName ? slotName : "orders";
   return (
     <Input
       value={row.value}
       onChange={(e) => onChange(e.target.value)}
-      placeholder={like ? (row.subject === "column_name" ? "%_email" : "%_tmp") : "Exact name"}
+      placeholder={slotNameHint(base, like)}
       className="h-8 font-mono text-xs"
     />
   );
@@ -95,11 +92,14 @@ export function ConditionBuilder({
   expr,
   onChange,
   subjects,
+  slotName,
   invalid,
 }: {
   expr: ConditionExpr;
   onChange: (next: ConditionExpr) => void;
-  subjects: ConditionSubject[];
+  subjects: Subject[];
+  /** Column conditions: slot name used for name placeholders. */
+  slotName?: string;
   invalid?: boolean;
 }) {
   const [exprView, setExprView] = useState(false);
@@ -159,8 +159,8 @@ export function ConditionBuilder({
             Functions: <code className="font-mono">hasTag(level, 'key')</code>,{" "}
             <code className="font-mono">hasTagValue(level, 'key', 'value')</code>,{" "}
             <code className="font-mono">ownerIs('principal')</code>,{" "}
-            <code className="font-mono">nameLike(level, '%pattern')</code>. Join with AND / OR; prefix NOT to negate. LIKE
-            wildcards only.
+            <code className="font-mono">nameIs(level, 'name')</code>,{" "}
+            <code className="font-mono">nameLike(level, '%pattern')</code>. Join with AND / OR; prefix NOT to negate.
           </p>
         </div>
       ) : (
@@ -168,7 +168,7 @@ export function ConditionBuilder({
           {expr.rows.map((row, i) => (
             <div
               key={i}
-              className="grid grid-cols-[64px_10rem_12rem_minmax(0,1fr)_32px] items-center gap-2 max-lg:grid-cols-[56px_1fr_1fr_1fr_32px]"
+              className="grid grid-cols-[64px_9rem_10rem_minmax(0,1fr)_32px] items-center gap-2 max-lg:grid-cols-[56px_1fr_1fr_1fr_32px]"
             >
               {i === 0 ? (
                 <span className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">If</span>
@@ -182,7 +182,7 @@ export function ConditionBuilder({
               )}
               <Select
                 value={row.subject}
-                onValueChange={(s) => update(i, defaultRow(s as ConditionSubject, row.combinator))}
+                onValueChange={(s) => update(i, defaultRow(s as Subject, row.combinator))}
               >
                 <SelectTrigger className="h-8 w-full text-xs">
                   <SelectValue />
@@ -205,12 +205,12 @@ export function ConditionBuilder({
                 <SelectContent>
                   {operatorsFor(row.subject).map((op) => (
                     <SelectItem key={op} value={op} className="text-xs">
-                      {OPERATOR_LABEL[op]}
+                      {operatorLabel(row.subject, op)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <ValueCell row={row} onChange={(v) => update(i, { ...row, value: v })} />
+              <ValueCell row={row} slotName={slotName} onChange={(v) => update(i, { ...row, value: v })} />
               {expr.rows.length > 1 ? (
                 <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove condition" onClick={() => remove(i)}>
                   <X className="h-4 w-4" />

@@ -7,25 +7,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { MOCK_RULES } from "../mock";
+import { RULES } from "./model";
 import { FamilyBadge, StatusBadge } from "./primitives";
 
 export function RulePickerDialog({
   open,
   onOpenChange,
   selectedRuleIds,
+  excludeRuleId,
   onAdd,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedRuleIds: string[];
+  /** The policy's own rule; not offered. */
+  excludeRuleId: string;
   onAdd: (ruleIds: string[]) => void;
 }) {
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const already = useMemo(() => new Set(selectedRuleIds), [selectedRuleIds]);
 
-  const rows = MOCK_RULES.filter((r) => {
+  const rows = RULES.filter((r) => r.rule_id !== excludeRuleId).filter((r) => {
     const q = search.trim().toLowerCase();
     return !q || r.name.toLowerCase().includes(q) || r.dimension.includes(q) || r.rule_id.includes(q);
   });
@@ -52,9 +55,9 @@ export function RulePickerDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="w-[min(92vw,900px)] !max-w-[min(92vw,900px)]">
         <DialogHeader>
-          <DialogTitle>Add rules to policy</DialogTitle>
+          <DialogTitle>Also create for other rules</DialogTitle>
           <DialogDescription>
-            Pick the rules this policy attaches. Draft rules are attached only once approved.
+            Each selected rule gets its own copy of this policy.
           </DialogDescription>
         </DialogHeader>
 

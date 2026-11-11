@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MOCK_RULES, type MockRule, type MockSlot } from "../mock";
+import type { MockRule } from "../mock";
 
 /** ABAC-style section: title + description on the left third, fields on the right two thirds. */
 export function FormSection({
@@ -37,7 +37,7 @@ export interface TileOption<T extends string> {
   value: T;
   label: string;
   icon: LucideIcon;
-  info: ReactNode;
+  info?: ReactNode;
 }
 
 /** Large bordered choice tiles with an icon above the label and an info line for the selected option. */
@@ -87,7 +87,7 @@ export function ChoiceTiles<T extends string>({
           );
         })}
       </div>
-      {selected && (
+      {selected?.info && (
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>{selected.info}</span>
@@ -100,14 +100,6 @@ export function ChoiceTiles<T extends string>({
 export function FieldError({ message }: { message?: string }) {
   if (!message) return null;
   return <p className="text-xs font-medium text-destructive">{message}</p>;
-}
-
-export function ruleById(id: string): MockRule | undefined {
-  return MOCK_RULES.find((r) => r.rule_id === id);
-}
-
-export function slotSummary(slot: MockSlot): string {
-  return `${slot.family === "any" ? "any type" : slot.family} · ${slot.cardinality === "one" ? "one column" : "one or more columns"}`;
 }
 
 export function StatusBadge({ status }: { status: MockRule["status"] }) {
@@ -126,6 +118,7 @@ export function StatusBadge({ status }: { status: MockRule["status"] }) {
   );
 }
 
+/** Same styling as FamilyBadge in apply-rules/MappingChips. */
 export function FamilyBadge({ family }: { family: string }) {
   return (
     <span className="inline-block shrink-0 rounded border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
