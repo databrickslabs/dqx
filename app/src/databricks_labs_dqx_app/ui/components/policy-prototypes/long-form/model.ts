@@ -200,7 +200,6 @@ export interface Policy {
   /** slot name -> condition */
   column_conditions: Record<string, ColumnCondition>;
   pair_by_tag: string | null;
-  owner?: string;
 }
 
 export function emptyPolicy(ruleId: string): Policy {
@@ -248,7 +247,6 @@ export const MOCK_POLICIES: Policy[] = [
     table_condition: { kind: "none" },
     column_conditions: { email: { kind: "tags", tags: ["class=email"] } },
     pair_by_tag: null,
-    owner: CURRENT_USER,
   },
   {
     policy_id: "p-2",
@@ -271,7 +269,6 @@ export const MOCK_POLICIES: Policy[] = [
       },
     },
     pair_by_tag: null,
-    owner: "data-eng@example.com",
   },
   {
     policy_id: "p-3",
@@ -284,7 +281,6 @@ export const MOCK_POLICIES: Policy[] = [
     table_condition: { kind: "none" },
     column_conditions: { column: { kind: "tags", tags: ["class=email"] } },
     pair_by_tag: null,
-    owner: CURRENT_USER,
   },
   {
     policy_id: "p-4",
@@ -300,7 +296,6 @@ export const MOCK_POLICIES: Policy[] = [
       end: { kind: "builder", expr: { rows: [{ combinator: null, subject: "column_name", operator: "like", value: "%end%" }] } },
     },
     pair_by_tag: "pair",
-    owner: "data-eng@example.com",
   },
 ];
 
@@ -358,4 +353,9 @@ export function mockPreview(policy: Policy): PolicyPreview {
     truncated: false,
     tables,
   };
+}
+
+/** Mock of the rule's Permissions: policies are editable by anyone with MODIFY on their rule. */
+export function canModifyRule(ruleId: string): boolean {
+  return MOCK_RULES.find((r) => r.rule_id === ruleId)?.owner === CURRENT_USER;
 }

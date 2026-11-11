@@ -1,7 +1,7 @@
 // THROWAWAY prototype — variant A "Long form": Policies tab list + faithful ABAC single-page form.
 // A policy is 1:1 with a rule. Mock data only (./model.ts). Not production code; hardcoded English is intentional.
 import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { Plus, RefreshCw, ShieldCheck, Trash2, User } from "lucide-react";
+import { Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { CURRENT_USER, MOCK_POLICIES, copyForRule, emptyPolicy, mockPreview, scopeSummary, type Policy } from "./model";
+import { MOCK_POLICIES, canModifyRule, copyForRule, emptyPolicy, mockPreview, scopeSummary, type Policy } from "./model";
 import { ActionBadge } from "./primitives";
 import { PolicyForm } from "./policy-form";
 
@@ -27,13 +27,13 @@ function OwnerGate({ allowed, children }: { allowed: boolean; children: ReactNod
       <TooltipTrigger asChild>
         <span className="inline-flex cursor-not-allowed">{children}</span>
       </TooltipTrigger>
-      <TooltipContent>Only the policy owner or an admin can edit</TooltipContent>
+      <TooltipContent>You need Modify on this rule to change its policies</TooltipContent>
     </Tooltip>
   );
 }
 
 function PolicyCard({ policy, onOpen, onDelete }: { policy: Policy; onOpen: () => void; onDelete: () => void }) {
-  const canEdit = policy.owner === CURRENT_USER;
+  const canEdit = canModifyRule(policy.rule_id);
   const matched = mockPreview(policy).matched_monitored;
 
   const rescan = (e: MouseEvent) => {
@@ -73,10 +73,6 @@ function PolicyCard({ policy, onOpen, onDelete }: { policy: Policy; onOpen: () =
         {policy.description && <p className="text-sm text-muted-foreground">{policy.description}</p>}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="font-mono">{scopeSummary(policy.scope)}</span>
-          <span className="inline-flex items-center gap-1">
-            <User className="h-3 w-3" />
-            {policy.owner}
-          </span>
           <span>
             <span className="font-medium text-foreground tabular-nums">{matched}</span> {matched === 1 ? "table" : "tables"}{" "}
             matched
@@ -122,7 +118,7 @@ export function Prototype({ ruleId }: { ruleId: string }) {
       <PolicyForm
         initial={editing.policy}
         isEdit={editing.isEdit}
-        readOnly={editing.isEdit && editing.policy.owner !== CURRENT_USER}
+        readOnly={!canModifyRule(editing.policy.rule_id)}
         takenNames={takenNames}
         onCancel={() => setEditing(null)}
         onSave={(policy, alsoFor) => {

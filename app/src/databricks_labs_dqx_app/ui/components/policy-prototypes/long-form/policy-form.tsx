@@ -10,7 +10,6 @@ import { MultiSelectPopover, type MultiSelectOption } from "@/components/monitor
 import {
   ALL,
   COLUMN_SUBJECTS,
-  CURRENT_USER,
   MOCK_CATALOGS,
   TABLE_SUBJECTS,
   defaultColumnBuilder,
@@ -143,7 +142,7 @@ export function PolicyForm({
 }: {
   initial: Policy;
   isEdit: boolean;
-  /** Non-owner: every field is disabled and there is no save. */
+  /** No MODIFY on the rule: every field is disabled and there is no save. */
   readOnly?: boolean;
   takenNames: string[];
   onCancel: () => void;
@@ -178,7 +177,7 @@ export function PolicyForm({
       document.getElementById("policy-section-name")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    onSave({ ...draft, name: draft.name.trim(), owner: draft.owner ?? CURRENT_USER }, alsoFor);
+    onSave({ ...draft, name: draft.name.trim() }, alsoFor);
   };
 
   const otherRules = alsoFor.map(ruleById).filter((r): r is LfRule => !!r);
@@ -201,7 +200,7 @@ export function PolicyForm({
       {readOnly && (
         <div className="mb-2 flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           <Lock className="h-4 w-4 shrink-0" />
-          Only the policy owner or an admin can edit
+          You need Modify on this rule to change its policies
         </div>
       )}
       <Separator />
