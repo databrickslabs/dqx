@@ -2346,7 +2346,7 @@
     "ruleAlreadyApplied": "Già applicata",
     "previousPageLabel": "Pagina precedente",
     "nextPageLabel": "Pagina successiva",
-    "createRuleInlineHint": "Seleziona una regola esistente oppure <link>creane una nuova</link>.",
+    "createRuleInlineHint": "Seleziona una regola esistente oppure <createLink>creane una nuova</createLink>.",
     "addSelectedRulesButton_one": "Applica regola",
     "addSelectedRulesButton_other": "Applica {{count}} regole",
     "slotColumnLabel": "Colonna per \"{{slot}}\"",
