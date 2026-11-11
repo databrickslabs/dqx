@@ -4,33 +4,51 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { mockPreview, ruleById, type Policy, type PreviewAttachment } from "./model";
+import { mockPreview, ruleById, type Policy } from "./model";
 
-function AttachmentStatus({ a, skipped }: { a: PreviewAttachment; skipped: boolean }) {
-  const label = skipped
-    ? "Not attached · skipped"
-    : a.status === "partial"
-      ? "Not attached · incomplete match"
-      : a.status === "ambiguous"
-        ? "Not attached — several possible columns; shown as a suggestion on the table"
-        : "Will attach";
-  const tone = skipped
-    ? "bg-muted text-muted-foreground ring-border"
-    : a.status === "auto"
-      ? "bg-emerald-500/10 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300"
-      : a.status === "ambiguous"
-        ? "bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-300"
-        : "bg-muted text-muted-foreground ring-border";
-  return <span className={cn("inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ring-1", tone)}>{label}</span>;
+function StatTile({
+  value,
+  one,
+  many,
+  sub,
+  tone,
+  onClick,
+  active,
+}: {
+  value: number;
+  one: string;
+  many: string;
+  sub?: string;
+  tone?: "warn";
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const body = (
+    <>
+      <div className={cn("text-xl font-semibold tabular-nums", tone === "warn" && "text-amber-700 dark:text-amber-300")}>
+        {value}
+      </div>
+      <div className="text-xs text-muted-foreground">{value === 1 ? one : many}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-muted-foreground/80">{sub}</div>}
+    </>
+  );
+  const cls = "rounded-lg border bg-card px-3 py-2.5 text-left";
+  if (!onClick) return <div className={cls}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(cls, "transition-colors hover:border-foreground/30", active && "border-primary bg-primary/5")}
+    >
+      {body}
+    </button>
+  );
 }
 
-function StatTile({ value, label, muted }: { value: number; label: string; muted?: boolean }) {
-  return (
-    <div className="rounded-lg border bg-card px-3 py-2.5">
-      <div className={cn("text-xl font-semibold tabular-nums", muted && "text-muted-foreground")}>{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
+/** Mock table owners (the real preview returns each skipped table's owner). */
+function tableOwner(fqn: string): string {
+  return fqn.includes(".crm.") ? "crm-owners" : fqn.includes(".finance.") ? "finance-admins" : "data-eng";
 }
 
 function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
@@ -53,6 +71,7 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
   const deferred = useDeferredValue(current);
   const preview = useMemo(() => mockPreview(deferred), [deferred]);
   const [showTables, setShowTables] = useState(false);
+  const [accessOnly, setAccessOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (fqn: string) =>
@@ -63,7 +82,13 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
       return next;
     });
 
-  const active = preview.tables.filter((t) => !t.skipped_reason);
+  // Only what WILL be attached: confident ("auto") attachments, on tables that have at least one.
+  const withMatches = preview.tables
+    .map((t) => ({ ...t, attachments: t.attachments.filter((a) => a.status === "auto") }))
+    .filter((t) => t.attachments.length > 0);
+  const active = withMatches.filter((t) => !t.skipped_reason);
+  const needsAccess = withMatches.filter((t) => t.skipped_reason);
+  const listed = accessOnly ? needsAccess : active;
   const columns = active.reduce(
     (n, t) =>
       n + new Set(t.attachments.filter((a) => a.status === "auto").flatMap((a) => Object.values(a.mapping).flat())).size,
@@ -100,11 +125,24 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
       )}
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <StatTile value={active.length} label="Tables matched" />
-          {!tableLevel && <StatTile value={columns} label="Columns matched" />}
-          {current.register_tables && <StatTile value={toRegister} label="New tables to monitor" />}
-          {preview.skipped > 0 && (
-            <StatTile value={preview.skipped} label="Skipped — you can't apply rules there" muted />
+          <StatTile value={active.length} one="table matched" many="tables matched" />
+          {!tableLevel && <StatTile value={columns} one="column matched" many="columns matched" />}
+          {current.register_tables && (
+            <StatTile value={toRegister} one="new table to monitor" many="new tables to monitor" />
+          )}
+          {needsAccess.length > 0 && (
+            <StatTile
+              value={needsAccess.length}
+              one="table needs access"
+              many="tables need access"
+              sub="Ask the owner for Apply"
+              tone="warn"
+              active={accessOnly}
+              onClick={() => {
+                setAccessOnly((v) => !v);
+                setShowTables(true);
+              }}
+            />
           )}
         </div>
         {preview.truncated && (
@@ -123,7 +161,9 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
         aria-expanded={showTables}
       >
         {showTables ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-        {showTables ? "Hide matching tables" : `Show ${preview.tables.length} matching tables`}
+        {showTables
+          ? "Hide matching tables"
+          : `Show ${listed.length} matching ${listed.length === 1 ? "table" : "tables"}`}
       </Button>
 
       {showTables && (
@@ -134,11 +174,11 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
                 <TableHead className="w-8 px-2" />
                 <TableHead className="px-2">Table</TableHead>
                 <TableHead className="px-2">State</TableHead>
-                <TableHead className="px-2 text-right">Attachments</TableHead>
+                <TableHead className="px-2 text-right">Columns</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {preview.tables.map((t) => {
+              {listed.map((t) => {
                 const open = expanded.has(t.table_fqn);
                 return (
                   <Fragment key={t.table_fqn}>
@@ -153,14 +193,16 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
                       <TableCell className="px-2 font-mono text-xs">{t.table_fqn}</TableCell>
                       <TableCell className="px-2 text-xs">
                         {t.skipped_reason ? (
-                          <span className="text-muted-foreground">Skipped · you can't apply rules here</span>
+                          <span className="text-amber-700 dark:text-amber-300">
+                            Needs access · ask <span className="font-medium">{tableOwner(t.table_fqn)}</span> for Apply
+                          </span>
                         ) : t.monitored ? (
                           <span className="text-muted-foreground">Monitored</span>
                         ) : (
                           <span className="text-muted-foreground">Will be added (draft, unscheduled)</span>
                         )}
                       </TableCell>
-                      <TableCell className="px-2 text-right text-xs tabular-nums">{t.skipped_reason ? 0 : t.attachments.filter((a) => a.status === "auto").length}
+                      <TableCell className="px-2 text-right text-xs tabular-nums">{new Set(t.attachments.flatMap((x) => Object.values(x.mapping).flat())).size || "—"}
                       </TableCell>
                     </TableRow>
                     {open && (
@@ -172,8 +214,7 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
                               <thead className="text-left text-muted-foreground">
                                 <tr className="border-b">
                                   <th className="px-3 py-1.5 font-medium">Column mapping</th>
-                                  <th className="px-3 py-1.5 font-medium">Result</th>
-                                  <th className="px-3 py-1.5 font-medium">Reason</th>
+                                  <th className="px-3 py-1.5 font-medium">Matched on</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -181,9 +222,6 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
                                   <tr key={i} className="border-b last:border-0 align-top">
                                     <td className="px-3 py-1.5">
                                       <Mapping mapping={a.mapping} />
-                                    </td>
-                                    <td className="px-3 py-1.5">
-                                      <AttachmentStatus a={a} skipped={!!t.skipped_reason} />
                                     </td>
                                     <td className="px-3 py-1.5 text-muted-foreground">{a.reason}</td>
                                   </tr>
