@@ -3468,7 +3468,8 @@
       "star": "Impossibile aggiornare i preferiti",
       "default": "Impossibile modificare la predefinita",
       "share": "Impossibile condividere la vista",
-      "shareDuplicate": "Esiste già una vista dell'organizzazione con questo nome. Rinominala prima."
+      "shareDuplicate": "Esiste già una vista dell'organizzazione con questo nome. Rinominala prima.",
+      "payloadTooLarge": "Questa vista è troppo grande per essere salvata. Rimuovi alcuni valori dei filtri e riprova."
     }
   }
 }

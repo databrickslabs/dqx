@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { SavedViewListOut, SavedViewOut } from "@/lib/api";
+import type { SavedViewListOut, SavedViewOut, SavedViewPayload } from "@/lib/api";
 import {
   applyFilterToggle,
   applyStarOptimistic,
@@ -7,6 +7,8 @@ import {
   canSubmitViewName,
   cleanViewName,
   isDirty,
+  isWithinPayloadLimit,
+  MAX_VIEW_PAYLOAD_CHARS,
   MAX_VIEW_STRING_LENGTH,
   myDefaultTarget,
   oneOf,
@@ -124,7 +126,13 @@ describe("isDirty / toPayload", () => {
     const p = toPayload({ ...state, values: { ...state.values, status: "x".repeat(600), tags: ["y".repeat(600)] } }, defs);
     expect(MAX_VIEW_STRING_LENGTH).toBe(512);
     expect(p.values?.status).toBe("x".repeat(512));
-    expect(p.values?.tags).toEqual(["y".repeat(600)]);
+    expect(p.values?.tags).toEqual(["y".repeat(512)]);
+  });
+
+  it("clamps every list item, not just the first", () => {
+    const state = builtinViewState(defs);
+    const p = toPayload({ ...state, values: { ...state.values, tags: ["a".repeat(600), "short", "b".repeat(513)] } }, defs);
+    expect(p.values?.tags).toEqual(["a".repeat(512), "short", "b".repeat(512)]);
   });
 
   it("clamps by code point so a surrogate pair is never split", () => {
@@ -138,6 +146,35 @@ describe("isDirty / toPayload", () => {
     const state = builtinViewState(defs);
     const p = toPayload({ ...state, values: { ...state.values, status: "x".repeat(512) } }, defs);
     expect(p.values?.status).toBe("x".repeat(512));
+  });
+});
+
+describe("isWithinPayloadLimit", () => {
+  // Serialised size of a payload whose only value is an empty string, so the
+  // boundary tests below can pad exactly to the server's cap.
+  const payloadWith = (value: string): SavedViewPayload => ({
+    v: 1,
+    filters: { order: [], visibility: {} },
+    values: { q: value },
+  });
+  const overhead = JSON.stringify({ ...payloadWith(""), columns: null }).length;
+
+  it("accepts a payload exactly at the cap and rejects one character over", () => {
+    expect(isWithinPayloadLimit(payloadWith("x".repeat(MAX_VIEW_PAYLOAD_CHARS - overhead)))).toBe(true);
+    expect(isWithinPayloadLimit(payloadWith("x".repeat(MAX_VIEW_PAYLOAD_CHARS - overhead + 1)))).toBe(false);
+  });
+
+  it("stays over the cap for a long list even after its items are clamped", () => {
+    const state = builtinViewState(defs);
+    const tags = Array.from({ length: 100 }, (_, i) => `${i}`.padEnd(600, "y"));
+    const payload = toPayload({ ...state, values: { ...state.values, tags } }, defs);
+    expect(payload.values?.tags).toHaveLength(100);
+    expect(isWithinPayloadLimit(payload)).toBe(false);
+  });
+
+  it("accepts a typical filter selection", () => {
+    const state = builtinViewState(defs);
+    expect(isWithinPayloadLimit(toPayload({ ...state, values: { ...state.values, tags: ["a", "b"] } }, defs))).toBe(true);
   });
 });
 

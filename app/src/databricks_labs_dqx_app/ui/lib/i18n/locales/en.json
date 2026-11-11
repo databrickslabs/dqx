@@ -3468,7 +3468,8 @@
       "star": "Couldn't update the star",
       "default": "Couldn't change the default",
       "share": "Couldn't share the view",
-      "shareDuplicate": "An organisation view with this name already exists. Rename it first."
+      "shareDuplicate": "An organisation view with this name already exists. Rename it first.",
+      "payloadTooLarge": "This view is too large to save. Remove some filter values and try again."
     }
   }
 }

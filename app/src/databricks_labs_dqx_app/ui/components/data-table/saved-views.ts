@@ -140,6 +140,9 @@ function sameValue(a: ViewValue, b: ViewValue): boolean {
 /** Longest string value the server accepts in a saved view (its MAX_STRING_LENGTH). */
 export const MAX_VIEW_STRING_LENGTH = 512;
 
+/** Largest serialised view payload the server accepts (its MAX_PAYLOAD_JSON_CHARS). */
+export const MAX_VIEW_PAYLOAD_CHARS = 16_384;
+
 /** Cuts *value* to {@link MAX_VIEW_STRING_LENGTH} code points (the server counts code points). */
 function clampViewString(value: string): string {
   if (value.length <= MAX_VIEW_STRING_LENGTH) return value;
@@ -148,7 +151,8 @@ function clampViewString(value: string): string {
 
 /**
  * Serialises state for storage. With *defs*, values equal to their empty value are omitted.
- * String values are clamped to {@link MAX_VIEW_STRING_LENGTH} so an over-long search can't be rejected.
+ * String values and list items are clamped to {@link MAX_VIEW_STRING_LENGTH} so an over-long
+ * search or filter value can't be rejected.
  */
 export function toPayload<C extends string, F extends string>(
   state: ViewState<C, F>,
@@ -158,7 +162,11 @@ export function toPayload<C extends string, F extends string>(
   for (const [key, value] of Object.entries(state.values)) {
     const empty = defs?.emptyValues[key as F];
     if (empty !== undefined && sameValue(value, empty)) continue;
-    values[key] = Array.isArray(value) ? [...value] : typeof value === "string" ? clampViewString(value) : value;
+    values[key] = Array.isArray(value)
+      ? value.map((item) => clampViewString(item))
+      : typeof value === "string"
+        ? clampViewString(value)
+        : value;
   }
   const payload: SavedViewPayload = {
     v: 1,
@@ -169,6 +177,14 @@ export function toPayload<C extends string, F extends string>(
     payload.columns = { order: [...state.columns.order], visibility: { ...state.columns.visibility } };
   }
   return payload;
+}
+
+/**
+ * True when *payload* serialises within the server's size cap (it rejects anything larger).
+ * The server serialises an unset *columns* as `null`, so it is counted the same way here.
+ */
+export function isWithinPayloadLimit(payload: SavedViewPayload): boolean {
+  return JSON.stringify({ ...payload, columns: payload.columns ?? null }).length <= MAX_VIEW_PAYLOAD_CHARS;
 }
 
 function stableStringify(value: unknown): string {

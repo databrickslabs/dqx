@@ -3468,7 +3468,8 @@
       "star": "Não foi possível atualizar a favorita",
       "default": "Não foi possível alterar o padrão",
       "share": "Não foi possível compartilhar a visualização",
-      "shareDuplicate": "Já existe uma visualização da organização com este nome. Renomeie-a primeiro."
+      "shareDuplicate": "Já existe uma visualização da organização com este nome. Renomeie-a primeiro.",
+      "payloadTooLarge": "Esta visualização é grande demais para ser salva. Remova alguns valores de filtro e tente novamente."
     }
   }
 }

@@ -3468,7 +3468,8 @@
       "star": "No se pudo actualizar la favorita",
       "default": "No se pudo cambiar la vista predeterminada",
       "share": "No se pudo compartir la vista",
-      "shareDuplicate": "Ya existe una vista de la organización con este nombre. Cámbiale el nombre primero."
+      "shareDuplicate": "Ya existe una vista de la organización con este nombre. Cámbiale el nombre primero.",
+      "payloadTooLarge": "Esta vista es demasiado grande para guardarla. Quita algunos valores de filtro e inténtalo de nuevo."
     }
   }
 }

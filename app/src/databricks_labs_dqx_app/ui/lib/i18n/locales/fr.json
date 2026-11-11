@@ -3468,7 +3468,8 @@
       "star": "Impossible de mettre à jour les favoris",
       "default": "Impossible de modifier la vue par défaut",
       "share": "Impossible de partager la vue",
-      "shareDuplicate": "Une vue de l'organisation porte déjà ce nom. Renommez-la d'abord."
+      "shareDuplicate": "Une vue de l'organisation porte déjà ce nom. Renommez-la d'abord.",
+      "payloadTooLarge": "Cette vue est trop volumineuse pour être enregistrée. Retirez quelques valeurs de filtre et réessayez."
     }
   }
 }

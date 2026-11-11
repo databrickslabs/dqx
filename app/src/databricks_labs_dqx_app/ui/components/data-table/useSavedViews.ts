@@ -38,6 +38,7 @@ import {
   builtinViewState,
   cleanViewName,
   isDirty,
+  isWithinPayloadLimit,
   reconcileView,
   resolveActiveView,
   sanitizeViewValues,
@@ -237,16 +238,28 @@ export function useSavedViews<C extends string, F extends string>(
 
   const reset = useCallback(() => setWorking(saved), [saved]);
 
+  /**
+   * The working state as a payload to store. An over-size payload is reported with its own toast
+   * and rejected before any request, so the server's generic validation error is never surfaced.
+   */
+  const payloadToStore = useCallback(() => {
+    const payload = toPayload(working, defs);
+    if (!isWithinPayloadLimit(payload)) {
+      toast.error(t("savedViews.errors.payloadTooLarge"));
+      throw new Error("Saved view payload exceeds the server size limit");
+    }
+    return payload;
+  }, [working, defs, t]);
+
   const save = useCallback(async () => {
     if (!activeView) return;
-    await run(
-      () => updateView({ viewId: activeView.id, data: { payload: toPayload(working, defs) } }),
-      "savedViews.errors.save",
-    );
-  }, [activeView, working, defs, run, updateView]);
+    const payload = payloadToStore();
+    await run(() => updateView({ viewId: activeView.id, data: { payload } }), "savedViews.errors.save");
+  }, [activeView, payloadToStore, run, updateView]);
 
   const saveAsNew = useCallback(
     async (input: SaveAsNewInput) => {
+      const payload = payloadToStore();
       const created = await run(
         () =>
           createView({
@@ -254,7 +267,7 @@ export function useSavedViews<C extends string, F extends string>(
               page: pageKey,
               name: cleanViewName(input.name),
               scope: input.scope,
-              payload: toPayload(working, defs),
+              payload,
               make_my_default: input.makeMyDefault,
               make_org_default: input.scope === "org" && input.makeOrgDefault,
             },
@@ -264,7 +277,7 @@ export function useSavedViews<C extends string, F extends string>(
       // Keep the working state: it is now exactly what the new view holds.
       setActiveId(created.data.id);
     },
-    [pageKey, working, defs, run, createView],
+    [pageKey, payloadToStore, run, createView],
   );
 
   const rename = useCallback(
