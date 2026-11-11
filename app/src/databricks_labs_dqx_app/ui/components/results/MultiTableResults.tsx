@@ -643,9 +643,11 @@ export function MultiTableResultsSection({
     ? filteredTableRows.length
     : (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
-  // is keyed on that. Map it back to the full FQN to resolve the table.
+  // is keyed on that. Map it back to the full FQN to resolve the table. Base rows
+  // are included too: in "All" scope the box also shows greyed base rows that the
+  // other filters exclude, and clicking one must still resolve its FQN.
   const fqnByFriendly = new Map(
-    (results?.by_table ?? [])
+    [...(baseResults?.by_table ?? []), ...(results?.by_table ?? [])]
       .map((g) => g.label)
       .filter((l): l is string => l != null)
       .map((fqn) => [friendlyTableName(fqn), fqn] as const),
