@@ -41,7 +41,7 @@ Operations the app owns and manages run as the app's own service principal:
 - **Rules catalog CRUD** (reading and writing rules in Lakebase Postgres)
 - **Schema migrations** (creating and evolving Delta analytical and Lakebase application tables)
 - **App settings** (reading and writing settings in Lakebase Postgres)
-- **Wheel upload** — on startup the app uploads DQX wheels to the `<prefix>.wheels` UC volume and patches the task-runner job environment
+- **Wheel upload** — on startup the app uploads the task-runner wheel (which pins DQX) to the `<prefix>.wheels` UC volume and patches the task-runner job environment
 
 This ensures:
 - Users only see data they have permission to access
@@ -87,7 +87,7 @@ Genie audience access requires space `CAN_RUN`, Consumer access or Databricks SQ
 
 ### Startup Wheel Sync
 
-On every cold start the FastAPI lifespan (`backend/app.py`) hashes the locally bundled DQX wheels, compares against a `.wheels_hash` marker on the UC volume, uploads any changed wheels, and patches the task-runner job's `environments` dependencies to point at the new versions. This keeps the app process and the job's serverless environment version-locked.
+On every cold start the FastAPI lifespan (`backend/app.py`) hashes the bundled task-runner wheel, compares against a `.wheels_hash` marker on the UC volume, uploads it if it changed, and sets it as the task-runner job's only `environments` dependency. The wheel pins the same published DQX as the app, so the app process and the job's serverless environment stay version-locked.
 
 ### Routing
 
@@ -120,7 +120,7 @@ For DAB, the schemas, wheels volume, and Lakebase Postgres **project** are decla
  │   ├── dq_schedule_configs_history  (OLTP*) schedule change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state
  │   ├── dq_migrations                ← Delta migration version tracker
- │   └── wheels (UC volume)           ← DQX + task-runner wheels uploaded at app startup
+ │   └── wheels (UC volume)           ← task-runner wheel (pins DQX) uploaded at app startup
  ├── <prefix>_tmp                     ← temp views created via OBO for profiler/dryrun jobs
  ├── <prefix>_genie                   ← derived views exposed to Genie
  └── <prefix>_demo                    ← demo source tables
