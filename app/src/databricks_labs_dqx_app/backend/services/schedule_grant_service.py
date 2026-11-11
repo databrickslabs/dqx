@@ -268,6 +268,11 @@ def reference_table_fqns(table_fqns: list[str], sql_query: str | None, source_fq
 # system catalog counts; an ordinary catalog that happens to be named "samples" doesn't.
 _SAMPLES_CATALOG = "samples"
 
+# Privileges that cover everything on a securable. OWN and OWNERSHIP are the names SHOW GRANTS
+# reports for ownership (the SDK's Privilege enum has no such member), so they stay.
+_ALL_OR_OWNERSHIP_PRIVILEGES = frozenset({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"})
+_READ_PRIVILEGES = frozenset({"SELECT"}) | _ALL_OR_OWNERSHIP_PRIVILEGES
+
 
 # A service principal appears in UC grants as its application id: a bare UUID.
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
@@ -521,10 +526,13 @@ class ScheduleGrantService:
                 "The SQL warehouse didn't answer while inspecting schedule privileges.", reason="warehouse"
             ) from None
 
-    def _effective_privileges(self, kind: str, name: str, principal: str) -> set[str]:
+    def _effective_privileges(self, kind: str, name: str, principal: str, satisfying: frozenset[str]) -> set[str]:
         """Inspect a principal's effective privileges on a securable (*kind* is CATALOG, SCHEMA or TABLE).
 
-        Reads via the app's REST grants API, falling back to the caller's SQL.
+        Reads via the app's REST grants API, falling back to the caller's SQL. *satisfying* names the
+        privileges the caller needs. Direct grants that include one of them are returned as they are;
+        otherwise group-granted privileges are merged in, so a SELECT granted to a group isn't lost
+        behind a direct USE SCHEMA.
         """
         privileges: set[str] = set()
         page_token: str | None = None
@@ -550,7 +558,7 @@ class ScheduleGrantService:
                 for row in rows
                 if row["principal"].strip().casefold() == principal.casefold()
             }
-            if direct.intersection({"USE_CATALOG", "USE_SCHEMA", "ALL_PRIVILEGES", "OWN", "OWNERSHIP"}):
+            if direct & satisfying:
                 return direct
             principals = self._scheduler_principals(principal)
             # A principal-filtered SHOW may omit grants to its groups. Inspect
@@ -622,7 +630,7 @@ class ScheduleGrantService:
         return self._scheduler_principals_cache[principal]
 
     def _parent_owner(self, kind: str, name: str, principal: str) -> bool:
-        """Check ownership of the exact parent, without impersonating the runner."""
+        """Check ownership of the exact securable (TABLE, SCHEMA or CATALOG), without impersonating the runner."""
         inspected = False
         owners: set[str] = set()
         for ws in (self._sp_ws, self._obo):
@@ -644,9 +652,12 @@ class ScheduleGrantService:
         key = (ws, kind, name)
         if key not in self._parent_owner_cache:
             try:
-                self._parent_owner_cache[key] = (
-                    ws.catalogs.get(name).owner if kind == "CATALOG" else ws.schemas.get(name).owner
-                )
+                if kind == "CATALOG":
+                    self._parent_owner_cache[key] = ws.catalogs.get(name).owner
+                elif kind == "SCHEMA":
+                    self._parent_owner_cache[key] = ws.schemas.get(name).owner
+                else:
+                    self._parent_owner_cache[key] = ws.tables.get(name).owner
             except Exception:
                 # A failed metadata lookup must not look like an ownerless parent.
                 self._parent_owner_cache[key] = PrivilegeInspectionError("Could not inspect source-parent ownership.")
@@ -665,7 +676,9 @@ class ScheduleGrantService:
             return cached
         try:
             try:
-                privileges = self._effective_privileges(kind, name, principal)
+                privileges = self._effective_privileges(
+                    kind, name, principal, frozenset({required}) | _ALL_OR_OWNERSHIP_PRIVILEGES
+                )
             except PrivilegeInspectionError:
                 # Positive ownership still proves usage when grant inspection fails.
                 if not self._parent_owner(kind, name, principal):
@@ -674,7 +687,7 @@ class ScheduleGrantService:
             else:
                 allowed = (
                     required in privileges
-                    or bool(privileges.intersection({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"}))
+                    or bool(privileges.intersection(_ALL_OR_OWNERSHIP_PRIVILEGES))
                     or self._parent_owner(kind, name, principal)
                 )
         except PrivilegeInspectionError as error:
@@ -1001,19 +1014,22 @@ class ScheduleGrantService:
         return runner_id
 
     def _principal_can_select(self, fqn: str, principal: str) -> bool:
-        """Return whether *principal* can read *fqn* (SELECT, or a broader table privilege).
+        """Return whether *principal* can read *fqn*: SELECT or a broader privilege, or owning it.
 
         Inspected, not probed: only the signed-in caller's and the app SP's access can be
         tested directly, so the runner's grants are read from the grants API. SELECT granted
         on the schema or catalog is inherited by the table; the parents are also read because
-        the SQL fallback for the table lists only grants made directly on it.
+        the SQL fallback for the table lists only grants made directly on it. Ownership of the
+        table or a parent counts too, as it does for usage.
         """
-        readable = {"SELECT", "ALL_PRIVILEGES", "OWN", "OWNERSHIP"}
         catalog, schema, _table = fqn.split(".", 2)
-        return any(
-            self._effective_privileges(kind, name, principal).intersection(readable)
-            for kind, name in (("TABLE", fqn), ("SCHEMA", f"{catalog}.{schema}"), ("CATALOG", catalog))
-        )
+        securables = (("TABLE", fqn), ("SCHEMA", f"{catalog}.{schema}"), ("CATALOG", catalog))
+        if any(
+            self._effective_privileges(kind, name, principal, _READ_PRIVILEGES).intersection(_READ_PRIVILEGES)
+            for kind, name in securables
+        ):
+            return True
+        return any(self._parent_owner(kind, name, principal) for kind, name in securables)
 
     def _reference_check(self, fqn: str) -> TablePreflight:
         """Check one joined table for the task-runner SP; raises when it can't be verified."""

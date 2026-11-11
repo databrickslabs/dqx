@@ -396,6 +396,63 @@ def test_same_runner_readable_shortcut(
     assert service.grant_select_to_schedulers(FQN) == []
 
 
+def test_group_select_counts_when_runner_has_direct_usage_and_rest_is_unavailable(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    """A direct USE SCHEMA must not hide a SELECT the runner gets through a group on the schema."""
+    sp.grants.get_effective.side_effect = PermissionDenied("not visible")
+    sp.service_principals.list.side_effect = lambda *, filter: iter(
+        [ServicePrincipal(application_id=filter.split('"')[1], groups=[ComplexValue(display="data-eng")])]
+    )
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    grants = {
+        ("runner-sp", "CATALOG"): [["runner-sp", "USE CATALOG", "CATALOG", "cat"]],
+        ("runner-sp", "SCHEMA"): [["runner-sp", "USE SCHEMA", "SCHEMA", "cat.sch"]],
+        (None, "SCHEMA"): [["data-eng", "SELECT", "SCHEMA", "cat.sch"]],
+    }
+
+    def sql(*, statement: str, **kwargs: object) -> StatementResponse:
+        if not statement.startswith("SHOW GRANTS"):
+            return sql_response()
+        kind = next(k for k in ("CATALOG", "SCHEMA", "TABLE") if f" ON {k} " in statement)
+        principal = "runner-sp" if "`runner-sp`" in statement else None
+        return sql_response(rows=grants.get((principal, kind), []))
+
+    obo.statement_execution.execute_statement.side_effect = sql
+    result = service.reference_preflight([FQN])[0]
+    assert not result.access_unverified
+    assert result.missing_grants == []
+
+
+@pytest.mark.parametrize("securable", ["table", "schema"])
+def test_runner_owning_the_table_or_schema_counts_as_readable(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, securable: str
+) -> None:
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(
+        principal, [] if kind == securable else [Privilege.USE_CATALOG if kind == "catalog" else Privilege.USE_SCHEMA]
+    )
+    owned = {"owner": "runner-sp"}
+    if securable == "table":
+        sp.tables.get.return_value = TableInfo(**owned)
+    else:
+        sp.schemas.get.return_value = SchemaInfo(**owned)
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    result = service.reference_preflight([FQN])[0]
+    assert result.missing_grants == []
+
+
+def test_runner_not_owning_the_table_still_needs_select(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient
+) -> None:
+    sp.grants.get_effective.side_effect = lambda kind, name, *, principal, page_token=None: effective(
+        principal, [] if kind == "table" else [Privilege.USE_CATALOG if kind == "catalog" else Privilege.USE_SCHEMA]
+    )
+    sp.tables.get.return_value = TableInfo(owner="someone-else@example.com")
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    result = service.reference_preflight([FQN])[0]
+    assert [g["privilege"] for g in result.missing_grants] == ["SELECT"]
+
+
 def test_polling_via_public_read_probe(service: ScheduleGrantService, obo: WorkspaceClient) -> None:
     obo.statement_execution.execute_statement.return_value = StatementResponse(statement_id="statement-1")
     obo.statement_execution.get_statement.return_value = sql_response()
