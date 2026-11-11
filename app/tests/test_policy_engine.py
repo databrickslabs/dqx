@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from databricks_labs_dqx_app.backend.policy_models import (
     ColumnCondition,
     ConditionExpr,
@@ -18,25 +20,37 @@ from databricks_labs_dqx_app.backend.services.policy_engine import (
 )
 
 
-def snap(columns=(), table_tags=(), owner=None, catalog_owner=None, schema_owner=None, catalog_tags=(), fqn="c.s.t"):
+def snap(
+    columns: Iterable[ColumnSnapshot] = (),
+    table_tags: Iterable[str] = (),
+    owner: str | None = None,
+    catalog_owner: str | None = None,
+    schema_owner: str | None = None,
+    catalog_tags: Iterable[str] = (),
+    fqn: str = "c.s.t",
+) -> TableSnapshot:
     return TableSnapshot(
         fqn, owner, catalog_owner, schema_owner, tuple(catalog_tags), (), tuple(table_tags), tuple(columns)
     )
 
 
-def col(name, type_name="STRING", *tags):
+def col(name: str, type_name: str = "STRING", *tags: str) -> ColumnSnapshot:
     return ColumnSnapshot(name, type_name, tuple(tags))
 
 
-def row(obj, pred, value, comb=None):
+def row(obj: str, pred: str, value: str, comb: str | None = None) -> ConditionRow:
     return ConditionRow(combinator=comb, object=obj, predicate=pred, value=value)
 
 
-def tcond(*rows):
+def tcond(*rows: ConditionRow) -> TableCondition:
     return TableCondition(kind="builder", expr=ConditionExpr(rows=list(rows)))
 
 
-def policy(column_conditions=None, scope=None, table_condition=None):
+def policy(
+    column_conditions: dict[str, ColumnCondition] | None = None,
+    scope: PolicyScope | None = None,
+    table_condition: TableCondition | None = None,
+) -> RulePolicy:
     return RulePolicy(
         name="p",
         policy_id="p1",
@@ -47,11 +61,11 @@ def policy(column_conditions=None, scope=None, table_condition=None):
     )
 
 
-def tag_cond(*tags):
+def tag_cond(*tags: str) -> ColumnCondition:
     return ColumnCondition(kind="tags", tags=list(tags))
 
 
-def slot(name, position=0, family="any", cardinality="one"):
+def slot(name: str, position: int = 0, family: str = "any", cardinality: str = "one") -> RuleSlot:
     return RuleSlot(name=name, family=family, position=position, cardinality=cardinality)
 
 
@@ -173,14 +187,60 @@ def test_two_slots_tie_is_ambiguous():
     p = policy({"a": tag_cond("s"), "b": tag_cond("e")})
     s = snap([col("start_ts", "TIMESTAMP", "s"), col("end_a", "TIMESTAMP", "e"), col("end_b", "TIMESTAMP", "e")])
     out = evaluate(p, [slot("a"), slot("b", 1)], s)
-    assert out and all(m.status == "ambiguous" for m in out)
+    assert all(m.status == "ambiguous" and m.reason == "several possible columns" for m in out)
+    assert sorted(m.column_mapping["b"] for m in out) == ["end_a", "end_b"]
+    assert {m.column_mapping["a"] for m in out} == {"start_ts"}
+
+
+def test_two_by_two_all_tie_yields_no_auto():
+    p = policy({"a": tag_cond("s"), "b": tag_cond("e")})
+    s = snap(
+        [
+            col("order_start", "DATE", "s"),
+            col("order_begin", "DATE", "s"),
+            col("order_end", "DATE", "e"),
+            col("order_stop", "DATE", "e"),
+        ]
+    )
+    out = evaluate(p, [slot("a"), slot("b", 1)], s)
+    assert len(out) == 4
+    assert all(m.status == "ambiguous" for m in out)
 
 
 def test_column_never_fills_two_slots():
     p = policy({"a": tag_cond("k"), "b": tag_cond("k")})
     out = evaluate(p, [slot("a"), slot("b", 1)], snap([col("only", "STRING", "k")]))
-    assert not any(m.status == "auto" for m in out)
-    assert all(len(set(m.column_mapping.values())) == len(m.column_mapping) for m in out)
+    assert len(out) == 1
+    assert out[0].status == "partial"
+    assert out[0].column_mapping == {"a": "only"}
+    assert out[0].reason == "no candidate for b"
+
+
+def test_two_many_slots_do_not_share_columns():
+    p = policy({"a": tag_cond("k"), "b": tag_cond("k")})
+    s = snap([col("x", "STRING", "k"), col("y", "STRING", "k")])
+    out = evaluate(p, [slot("a", cardinality="many"), slot("b", 1, cardinality="many")], s)
+    assert len(out) == 1
+    assert out[0].column_mapping == {"a": "x,y"}
+    assert out[0].status == "partial"
+
+
+def test_one_slot_plus_many_slot_binds_remaining():
+    p = policy({"a": tag_cond("one"), "b": tag_cond("k")})
+    s = snap([col("x", "STRING", "one", "k"), col("y", "STRING", "k"), col("z", "STRING", "k")])
+    out = evaluate(p, [slot("a"), slot("b", 1, cardinality="many")], s)
+    assert len(out) == 1 and out[0].status == "auto"
+    assert out[0].column_mapping == {"a": "x", "b": "y,z"}
+
+
+def test_one_slot_with_several_candidates_plus_many_slot_one_match_each():
+    p = policy({"a": tag_cond("one"), "b": tag_cond("m")})
+    s = snap(
+        [col("x1", "STRING", "one"), col("x2", "STRING", "one"), col("m1", "STRING", "m"), col("m2", "STRING", "m")]
+    )
+    out = evaluate(p, [slot("a"), slot("b", 1, cardinality="many")], s)
+    assert [m.column_mapping for m in out] == [{"a": "x1", "b": "m1,m2"}, {"a": "x2", "b": "m1,m2"}]
+    assert all(m.status == "auto" for m in out)
 
 
 def test_too_many_combinations_is_single_ambiguous():

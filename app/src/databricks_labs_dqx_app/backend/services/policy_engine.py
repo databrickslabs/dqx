@@ -190,35 +190,70 @@ def _condition_reason(cond: ColumnCondition) -> str:
     return "matched " + ", ".join(cond.tags) if cond.kind == "tags" else "matched condition"
 
 
-def _pair_by_name(
-    policy: RulePolicy, table_fqn: str, slots: list[RuleSlot], candidates: list[list[ColumnSnapshot]]
-) -> list[PolicyMatch]:
-    """Pair one candidate per slot by shared name stems; ambiguous when the stems don't decide."""
-    if math.prod(len(c) for c in candidates) > MAX_COMBINATIONS:
-        return [_match(policy, table_fqn, {}, "ambiguous", "too many possible column combinations")]
-    remaining = [combo for combo in itertools.product(*candidates) if len({c.name for c in combo}) == len(combo)]
-    scored = [(combo, _score(combo)) for combo in remaining]
-    matches: list[PolicyMatch] = []
-    while scored:
-        best_combo, best_score = max(scored, key=lambda item: item[1])
-        best_names = {c.name for c in best_combo}
-        tied = any(
-            score == best_score and combo is not best_combo and best_names & {c.name for c in combo}
-            for combo, score in scored
-        )
-        mapping = {slot.name: col.name for slot, col in zip(slots, best_combo)}
-        if best_score >= 1 and not tied:
-            matches.append(_match(policy, table_fqn, mapping, "auto", f"paired by name {_stem(best_combo)}"))
-        else:
-            matches.append(_match(policy, table_fqn, mapping, "ambiguous", "several possible columns"))
-        scored = [(c, s) for c, s in scored if not best_names & {col.name for col in c}]
-    return matches
-
-
 def _match(
     policy: RulePolicy, table_fqn: str, mapping: ColumnMappingGroup, status: MatchStatus, reason: str
 ) -> PolicyMatch:
     return PolicyMatch(policy.policy_id, policy.rule_id, table_fqn, mapping, status, reason)
+
+
+def _pair_by_name(
+    policy: RulePolicy, table_fqn: str, slots: list[RuleSlot], candidates: list[list[ColumnSnapshot]]
+) -> list[PolicyMatch]:
+    """Pair one candidate per slot by shared name stems.
+
+    A pick is ``auto`` only when it scores at least 1 and no other remaining combination with the
+    same score shares a column with it. Otherwise the whole connected group of combinations that
+    share columns with the tied ones is emitted as ``ambiguous`` alternatives, so no ``auto`` is
+    ever derived from columns involved in a tie.
+    """
+    if math.prod(len(c) for c in candidates) > MAX_COMBINATIONS:
+        return [_match(policy, table_fqn, {}, "ambiguous", "too many possible column combinations")]
+    scored = [
+        (combo, _score(combo), frozenset(c.name for c in combo))
+        for combo in itertools.product(*candidates)
+        if len({c.name for c in combo}) == len(combo)
+    ]
+    matches: list[PolicyMatch] = []
+    while scored:
+        best = max(scored, key=lambda item: item[1])
+        tied = [item for item in scored if item[1] == best[1] and item[2] & best[2]]
+        if best[1] >= 1 and len(tied) == 1:
+            mapping = {slot.name: c.name for slot, c in zip(slots, best[0])}
+            matches.append(_match(policy, table_fqn, mapping, "auto", f"paired by name {_stem(best[0])}"))
+            consumed = best[2]
+        else:
+            group = list(tied)
+            grown = True
+            while grown:
+                names = frozenset().union(*(item[2] for item in group))
+                extra = [item for item in scored if item not in group and item[2] & names]
+                group.extend(extra)
+                grown = bool(extra)
+            for combo, _, _ in group:
+                mapping = {slot.name: c.name for slot, c in zip(slots, combo)}
+                matches.append(_match(policy, table_fqn, mapping, "ambiguous", "several possible columns"))
+            consumed = frozenset().union(*(item[2] for item in group))
+        scored = [item for item in scored if not item[2] & consumed]
+    return matches
+
+
+def _bind_many_slots(
+    match: PolicyMatch, many: list[tuple[RuleSlot, list[ColumnSnapshot]]], one_names: set[str]
+) -> PolicyMatch:
+    """Bind each many-slot to its candidates not already used by the match or an earlier many-slot."""
+    used: set[str] = {name for slot_name, name in match.column_mapping.items() if slot_name in one_names}
+    mapping = dict(match.column_mapping)
+    status = match.status
+    reason = match.reason
+    for slot, cols in many:
+        rest = [c.name for c in cols if c.name not in used]
+        if not rest:
+            if status == "auto":
+                status, reason = "partial", f"no candidate for {slot.name}"
+            continue
+        mapping[slot.name] = ",".join(rest)
+        used.update(rest)
+    return PolicyMatch(match.policy_id, match.rule_id, match.table_fqn, mapping, status, reason)
 
 
 def evaluate(policy: RulePolicy, slots: list[RuleSlot], snap: TableSnapshot) -> list[PolicyMatch]:
@@ -244,13 +279,13 @@ def evaluate(policy: RulePolicy, slots: list[RuleSlot], snap: TableSnapshot) -> 
             ]
         )
 
-    def bound(slot: RuleSlot, cols: list[ColumnSnapshot]) -> str:
+    def bound(cols: list[ColumnSnapshot]) -> str:
         return ",".join(c.name for c in cols)
 
     empty = next((slot for slot, cols in zip(ordered, candidates) if not cols), None)
     if empty is not None:
         filled = {
-            slot.name: bound(slot, cols)
+            slot.name: bound(cols)
             for slot, cols in zip(ordered, candidates)
             if cols and (slot.cardinality == "many" or len(cols) == 1)
         }
@@ -260,41 +295,34 @@ def evaluate(policy: RulePolicy, slots: list[RuleSlot], snap: TableSnapshot) -> 
         slot, cols = ordered[0], candidates[0]
         reason = _condition_reason(policy.column_conditions[slot.name])
         if slot.cardinality == "many":
-            return [_match(policy, snap.table_fqn, {slot.name: bound(slot, cols)}, "auto", reason)]
+            return [_match(policy, snap.table_fqn, {slot.name: bound(cols)}, "auto", reason)]
         return [_match(policy, snap.table_fqn, {slot.name: c.name}, "auto", reason) for c in cols]
 
-    one_idx = [i for i, s in enumerate(ordered) if s.cardinality == "one"]
-    many_idx = [i for i, s in enumerate(ordered) if s.cardinality == "many"]
+    one = [(s, c) for s, c in zip(ordered, candidates) if s.cardinality == "one"]
+    many = [(s, c) for s, c in zip(ordered, candidates) if s.cardinality == "many"]
 
-    if all(len(candidates[i]) == 1 for i in one_idx):
-        chosen = [candidates[i][0] for i in one_idx]
-        if len({c.name for c in chosen}) == len(chosen):
-            used = {c.name for c in chosen}
-            mapping = {ordered[i].name: candidates[i][0].name for i in one_idx}
-            for i in many_idx:
-                rest = [c for c in candidates[i] if c.name not in used]
-                if not rest:
-                    return [_match(policy, snap.table_fqn, mapping, "partial", f"no candidate for {ordered[i].name}")]
-                mapping[ordered[i].name] = bound(ordered[i], rest)
-            return [_match(policy, snap.table_fqn, mapping, "auto", "single candidate per input")]
+    if not one:
+        return [_bind_many_slots(_match(policy, snap.table_fqn, {}, "auto", "all candidates"), many, set())]
 
-    if len(one_idx) < 2:
-        return [_match(policy, snap.table_fqn, {}, "ambiguous", "several possible columns")]
+    if len(one) == 1:
+        slot, cols = one[0]
+        reason = _condition_reason(policy.column_conditions[slot.name])
+        return [
+            _bind_many_slots(_match(policy, snap.table_fqn, {slot.name: c.name}, "auto", reason), many, {slot.name})
+            for c in cols
+        ]
 
-    one_slots = [ordered[i] for i in one_idx]
-    paired = _pair_by_name(policy, snap.table_fqn, one_slots, [candidates[i] for i in one_idx])
-    if not many_idx:
-        return paired
-    result: list[PolicyMatch] = []
-    for match in paired:
-        mapping = dict(match.column_mapping)
-        used = set(mapping.values())
-        status = match.status
-        for i in many_idx:
-            rest = [c for c in candidates[i] if c.name not in used]
-            if rest and mapping:
-                mapping[ordered[i].name] = bound(ordered[i], rest)
-            else:
-                status = "partial" if status == "auto" else status
-        result.append(PolicyMatch(match.policy_id, match.rule_id, match.table_fqn, mapping, status, match.reason))
-    return result
+    if all(len(cols) == 1 for _, cols in one):
+        seen: set[str] = set()
+        mapping: ColumnMappingGroup = {}
+        for slot, cols in one:
+            if cols[0].name in seen:
+                return [_match(policy, snap.table_fqn, mapping, "partial", f"no candidate for {slot.name}")]
+            seen.add(cols[0].name)
+            mapping[slot.name] = cols[0].name
+        single = _match(policy, snap.table_fqn, mapping, "auto", "single candidate per input")
+        return [_bind_many_slots(single, many, set(mapping))]
+
+    paired = _pair_by_name(policy, snap.table_fqn, [s for s, _ in one], [c for _, c in one])
+    one_names = {s.name for s, _ in one}
+    return [m if not m.column_mapping else _bind_many_slots(m, many, one_names) for m in paired]
