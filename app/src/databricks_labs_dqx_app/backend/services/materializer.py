@@ -85,6 +85,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.sql_check_function import sql_check_function
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
@@ -332,7 +333,7 @@ def render_check(
         check_inner: dict[str, Any] = {"function": function, "arguments": arguments}
     elif mode in ("sql", "lowcode"):
         negate = version.polarity == "fail"
-        if "sql_query" in body:
+        if sql_check_function(body) == "sql_query":
             query = _substitute_text(str(body.get("sql_query", "")), group, definition.slots)
             # Comments (e.g. a leading `-- explanation` block, item 6) are inert
             # at runtime; strip them before the keyword scan so their prose can't

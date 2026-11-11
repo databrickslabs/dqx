@@ -3261,6 +3261,35 @@ export interface RecordPendingApplicationIn {
 }
 
 /**
+ * Raw SQL rule text to scan
+ */
+export type ReferenceGrantPreflightInSqlQuery = string | null;
+
+/**
+ * The rule's own table, excluded from the check
+ */
+export type ReferenceGrantPreflightInSourceTableFqn = string | null;
+
+/**
+ * Body of ``POST /schedule-grants/reference-preflight``: the tables a rule reads besides its source.
+
+*table_fqns* are the join targets the low-code builder picked. *sql_query* is a raw SQL
+rule's text; its FROM / JOIN tables are extracted server-side. *source_table_fqn* is the
+rule's own table and is never checked.
+ */
+export interface ReferenceGrantPreflightIn {
+  /**
+   * Joined table names
+   * @maxItems 100
+   */
+  table_fqns?: string[];
+  /** Raw SQL rule text to scan */
+  sql_query?: ReferenceGrantPreflightInSqlQuery;
+  /** The rule's own table, excluded from the check */
+  source_table_fqn?: ReferenceGrantPreflightInSourceTableFqn;
+}
+
+/**
  * Body of ``POST /dq-results/refresh-scores`` (``refreshDqScores``).
  */
 export interface RefreshScoresIn {
@@ -3911,6 +3940,8 @@ export type RuleTestRunInAdhoc = AdhocRunIn | null;
 
 export type RuleTestRunInTable = TableRunIn | null;
 
+export type RuleTestRunInCheckFunction = 'sql_query' | 'sql_expression' | null;
+
 export interface RuleTestRunIn {
   mode: RuleTestRunInMode;
   predicate?: string;
@@ -3927,6 +3958,7 @@ export interface RuleTestRunIn {
    */
   display_cap?: number;
   lowcode_advanced?: boolean;
+  check_function?: RuleTestRunInCheckFunction;
 }
 
 export interface RuleTestRunOut {
@@ -31463,6 +31495,135 @@ export const useApplyScheduleGrants = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getApplyScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Check whether the task-runner SP can read the tables a rule joins or reads.
+
+Raw SQL is scanned server-side for FROM / JOIN tables. The rule's own source table is
+excluded. The check is advisory: it never blocks saving the rule.
+ * @summary Preflight Reference Grants
+ */
+export const preflightReferenceGrants = (
+    referenceGrantPreflightIn: ReferenceGrantPreflightIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SchedulePreflightOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/reference-preflight`,
+      referenceGrantPreflightIn,options
+    );
+  }
+
+
+
+export const getPreflightReferenceGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext> => {
+
+const mutationKey = ['preflightReferenceGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightReferenceGrants>>, {data: ReferenceGrantPreflightIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightReferenceGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightReferenceGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof preflightReferenceGrants>>>
+    export type PreflightReferenceGrantsMutationBody = ReferenceGrantPreflightIn
+    export type PreflightReferenceGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preflight Reference Grants
+ */
+export const usePreflightReferenceGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightReferenceGrants>>,
+        TError,
+        {data: ReferenceGrantPreflightIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreflightReferenceGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run the grants :func:`preflight_reference_grants` lists for these tables, as the signed-in user.
+ * @summary Apply Reference Grants
+ */
+export const applyReferenceGrants = (
+    scheduleGrantApplyIn: ScheduleGrantApplyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScheduleGrantApplyOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/reference-apply`,
+      scheduleGrantApplyIn,options
+    );
+  }
+
+
+
+export const getApplyReferenceGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext> => {
+
+const mutationKey = ['applyReferenceGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyReferenceGrants>>, {data: ScheduleGrantApplyIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyReferenceGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyReferenceGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applyReferenceGrants>>>
+    export type ApplyReferenceGrantsMutationBody = ScheduleGrantApplyIn
+    export type ApplyReferenceGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Reference Grants
+ */
+export const useApplyReferenceGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyReferenceGrants>>,
+        TError,
+        {data: ScheduleGrantApplyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyReferenceGrantsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

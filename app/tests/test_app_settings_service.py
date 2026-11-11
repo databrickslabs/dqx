@@ -44,6 +44,33 @@ class TestRunReviewStatusReadIsSideEffectFree:
         sql_executor_mock.upsert.assert_not_called()
 
 
+@pytest.mark.parametrize(("stored", "expected"), [("42", 42), (None, None), ("", None), ("0", None), ("x1", None)])
+def test_saved_task_runner_job_id_ignores_missing_or_unusable_values(settings_service, stored, expected) -> None:
+    service, sql_executor_mock = settings_service
+    sql_executor_mock.query.return_value = [] if stored is None else [[stored]]
+
+    assert service.saved_task_runner_job_id() == expected
+
+
+def test_save_task_runner_job_id_writes_the_setup_job_key(settings_service) -> None:
+    service, sql_executor_mock = settings_service
+
+    service.save_task_runner_job_id(42)
+
+    write = sql_executor_mock.upsert.call_args.kwargs
+    assert write["key_cols"] == {"setting_key": "setup_task_runner_job_id"}
+    assert write["value_cols"]["setting_value"] == "42"
+
+
+def test_forget_task_runner_job_id_deletes_the_setup_job_key(settings_service) -> None:
+    service, sql_executor_mock = settings_service
+
+    service.forget_task_runner_job_id()
+
+    (statement,) = sql_executor_mock.execute.call_args.args
+    assert "setting_key = 'setup_task_runner_job_id'" in statement
+
+
 def test_record_setup_completion_persists_fixed_sanitized_audit_keys(settings_service) -> None:
     service, sql_executor_mock = settings_service
 

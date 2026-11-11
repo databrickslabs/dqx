@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { MutationObserver, QueryClient } from "@tanstack/react-query";
+import { hashKey, MutationObserver, QueryClient } from "@tanstack/react-query";
 import { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from "axios";
 import {
   applyScheduleGrantsCallbacks,
   applyScheduleGrantsFailure,
   missingGrantTableFqns,
+  grantApplyResultFor,
+  referenceGrantPreflightQueryKey,
   scheduleGrantApplyResult,
   scheduleGrantPreflightQueryKey,
   scheduleGrantsRecheckFailure,
@@ -26,6 +28,28 @@ describe("splitPreflightTables", () => {
     expect(result.blockedTables.map((t) => t.fqn)).toEqual(["c.s.denied"]);
     expect(result.unverifiedTables.map((t) => t.fqn)).toEqual(["c.s.unknown"]);
     expect(result.hasGrantIssue).toBe(true);
+  });
+
+  it("a table missing usage grants and an ungrantable SELECT is reported both ways", () => {
+    const result = splitPreflightTables([
+      {
+        fqn: "c.s.both",
+        can_manage: false,
+        manage_holders: [{ principal: "data-eng", type: "group" }],
+        missing_grants: [
+          {
+            principal: "runner-sp",
+            display_name: "dqx-task-runner-sp",
+            privilege: "USE_SCHEMA",
+            securable_type: "SCHEMA",
+            securable: "c.s",
+            statement: "GRANT USE_SCHEMA ON SCHEMA `c`.`s` TO `runner-sp`;",
+          },
+        ],
+      },
+    ]);
+    expect(result.missingGrantTables.map((t) => t.fqn)).toEqual(["c.s.both"]);
+    expect(result.blockedTables.map((t) => t.fqn)).toEqual(["c.s.both"]);
   });
 
   it("an unverified table alone still blocks the save", () => {
@@ -290,5 +314,30 @@ describe("a run whose re-check failed", () => {
 
     expect(queryClient.getQueryData(queryKey)).toEqual(cached);
     expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("reference (joined-table) grant preflight", () => {
+  it("keys the check by both the joined tables and the raw SQL text", () => {
+    const base = referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 1 FROM c.s.a");
+
+    expect(hashKey(base)).toBe(hashKey(referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 1 FROM c.s.a")));
+    expect(hashKey(base)).not.toBe(hashKey(referenceGrantPreflightQueryKey(["c.s.a"], "SELECT 2 FROM c.s.a")));
+    expect(hashKey(base)).not.toBe(hashKey(scheduleGrantPreflightQueryKey(["c.s.a"])));
+  });
+
+  it("shows a run's outcome only under the check it was started for", () => {
+    const queryKey = referenceGrantPreflightQueryKey(["c.s.a"], "");
+    const apply = {
+      isSuccess: false,
+      isError: true,
+      isPending: false,
+      data: undefined,
+      error: new Error("boom"),
+      context: { queryKey: referenceGrantPreflightQueryKey(["c.s.b"], "") },
+    };
+
+    expect(grantApplyResultFor(apply, queryKey).applyOutcome).toBeNull();
+    expect(grantApplyResultFor({ ...apply, context: { queryKey } }, queryKey).applyOutcome).not.toBeNull();
   });
 });

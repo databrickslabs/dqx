@@ -9,6 +9,7 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
 from databricks.sdk.errors.base import DatabricksError
+from databricks.sdk.service.iam import Group
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from databricks_labs_dqx_app.backend.config import AppConfig
@@ -96,20 +97,31 @@ def _catalog_exists(reader_ws: WorkspaceClient, catalog: str) -> bool:
     return True
 
 
-def _group_exists(sp_ws: WorkspaceClient, group: str) -> bool:
-    """Whether a workspace group named *group* exists; unexpected SDK failures raise HTTP 502."""
+_WORKSPACE_LOCAL_GROUP_TYPE = "WorkspaceGroup"
+
+
+def _find_group(sp_ws: WorkspaceClient, group: str) -> Group | None:
+    """The workspace group named *group* (with its type), or None; unexpected SDK failures raise HTTP 502."""
     try:
         matches = list(
             sp_ws.groups.list(
-                filter=f"displayName eq {json.dumps(group, ensure_ascii=False)}", attributes="id,displayName"
+                filter=f"displayName eq {json.dumps(group, ensure_ascii=False)}", attributes="id,displayName,meta"
             )
         )
     except NotFound:
-        return False
+        return None
     except DatabricksError as error:
         logger.warning(f"Group existence check failed: {type(error).__name__}")
         raise _error(status.HTTP_502_BAD_GATEWAY, "group_check_failed") from None
-    return any((match.display_name or "").casefold() == group.casefold() for match in matches)
+    return next((match for match in matches if (match.display_name or "").casefold() == group.casefold()), None)
+
+
+def _is_workspace_group(group: Group) -> bool:
+    """Whether *group* is local to the workspace, which Unity Catalog cannot grant to.
+
+    A group whose type is missing from the SCIM response is not treated as workspace-local.
+    """
+    return group.meta is not None and group.meta.resource_type == _WORKSPACE_LOCAL_GROUP_TYPE
 
 
 MAX_LISTED_GROUPS = 1000
@@ -185,8 +197,11 @@ async def configure_setup(
     choices = SetupChoices(catalog=storage.catalog, prefix=storage.schema, audience_group=audience.groups[0])
     if not await asyncio.to_thread(_catalog_exists, reader_ws, choices.catalog):
         raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "catalog_not_found")
-    if not await asyncio.to_thread(_group_exists, sp_ws, choices.audience_group):
+    group = await asyncio.to_thread(_find_group, sp_ws, choices.audience_group)
+    if group is None:
         raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_not_found")
+    if _is_workspace_group(group):
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "audience_group_workspace_level")
     outcome = await orchestrator.save_configuration(store, choices, user_email=access.user_name)
     if outcome == "locked":
         raise _error(status.HTTP_409_CONFLICT, "configuration_locked")

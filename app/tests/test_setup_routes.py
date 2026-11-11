@@ -9,7 +9,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk.errors import InternalError, InvalidParameterValue, NotFound, PermissionDenied
-from databricks.sdk.service.iam import ServicePrincipal
+from databricks.sdk.service.iam import Group, ResourceMeta, ServicePrincipal
 from fastapi.testclient import TestClient
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
@@ -147,7 +147,7 @@ def settings() -> MemorySettings:
 @pytest.fixture
 def sp_ws() -> MagicMock:
     workspace = create_autospec(WorkspaceClient, instance=True)
-    workspace.groups.list.return_value = [SimpleNamespace(display_name="data-team")]
+    workspace.groups.list.return_value = [Group(display_name="data-team", meta=ResourceMeta(resource_type="Group"))]
     return workspace
 
 
@@ -528,11 +528,52 @@ def test_configuration_rejects_unknown_group(client: TestClient, sp_ws: MagicMoc
 
 
 def test_configuration_rejects_group_with_different_display_name(client: TestClient, sp_ws: MagicMock) -> None:
-    sp_ws.groups.list.return_value = [SimpleNamespace(display_name="data-team-2")]
+    sp_ws.groups.list.return_value = [Group(display_name="data-team-2")]
 
     response = client.post(_CONFIG_URL, json=_VALID)
 
     assert response.json()["detail"]["code"] == "audience_group_not_found"
+
+
+def _group_with_type(name: str, resource_type: str | None) -> Group:
+    return Group(display_name=name, meta=ResourceMeta(resource_type=resource_type) if resource_type else None)
+
+
+def test_configuration_rejects_workspace_level_group(
+    client: TestClient, sp_ws: MagicMock, settings: MemorySettings
+) -> None:
+    sp_ws.groups.list.return_value = [_group_with_type("data-team", "WorkspaceGroup")]
+
+    response = client.post(_CONFIG_URL, json=_VALID)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "audience_group_workspace_level"
+    assert not settings.values
+
+
+def test_configuration_accepts_account_level_group(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [_group_with_type("data-team", "Group")]
+
+    response = client.post(_CONFIG_URL, json=_VALID)
+
+    assert response.status_code == 200
+
+
+def test_configuration_does_not_block_group_of_unknown_type(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [_group_with_type("data-team", None)]
+
+    response = client.post(_CONFIG_URL, json=_VALID)
+
+    assert response.status_code == 200
+
+
+def test_configuration_checks_group_type_in_the_existence_lookup(client: TestClient, sp_ws: MagicMock) -> None:
+    sp_ws.groups.list.return_value = [_group_with_type("data-team", "Group")]
+
+    client.post(_CONFIG_URL, json=_VALID)
+
+    assert sp_ws.groups.list.call_count == 1
+    assert "meta" in sp_ws.groups.list.call_args.kwargs["attributes"].split(",")
 
 
 def test_configuration_reports_unexpected_group_failure(
@@ -556,7 +597,7 @@ def test_configuration_group_not_found_error_maps_to_not_found_code(client: Test
 
 
 def test_configuration_encodes_group_in_scim_filter(client: TestClient, sp_ws: MagicMock) -> None:
-    sp_ws.groups.list.return_value = [SimpleNamespace(display_name='team "a"')]
+    sp_ws.groups.list.return_value = [Group(display_name='team "a"')]
 
     response = client.post(_CONFIG_URL, json={**_VALID, "audience_group": 'team "a"'})
 

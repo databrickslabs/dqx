@@ -241,6 +241,7 @@ class FakeJobs:
     resolved: ResolvedJob = ResolvedJob(job_id=27, created=False)
     run_as_result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.TASK_RUNNER))
     grant_failure: Exception | None = None
+    view_failure: Exception | None = None
     run_as_failure: Exception | None = None
     job_exists: bool = True
     set_run_as_failure: Exception | None = None
@@ -260,6 +261,11 @@ class FakeJobs:
         self.events.append(f"grant_admin:{job_id}:{user_name}")
         if self.grant_failure is not None:
             raise self.grant_failure
+
+    def grant_workspace_view(self, job_id: int) -> None:
+        self.events.append(f"grant_view:{job_id}")
+        if self.view_failure is not None:
+            raise self.view_failure
 
     def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
@@ -302,6 +308,19 @@ class FakeMigrationRunner:
 @dataclass
 class FakeAppSettings:
     events: list[str]
+    saved_job_id: int | None = None
+
+    def saved_task_runner_job_id(self) -> int | None:
+        self.events.append("read_saved_job")
+        return self.saved_job_id
+
+    def save_task_runner_job_id(self, job_id: int) -> None:
+        self.events.append(f"save_job:{job_id}")
+        self.saved_job_id = job_id
+
+    def forget_task_runner_job_id(self) -> None:
+        self.events.append("forget_job")
+        self.saved_job_id = None
 
     def record_setup_completion(self, job_id: int, completed_at: datetime, user_name: str | None) -> None:
         assert completed_at.tzinfo is not None
@@ -642,6 +661,7 @@ async def test_full_setup_runs_steps_in_documented_order() -> None:
         "storage",
         "warehouse",
         "resolve_job:27",
+        "grant_view:27",
         "validate_run_as:27:app-service-principal",
         "runner:27",
         "publish_wheels",
@@ -654,6 +674,34 @@ async def test_full_setup_runs_steps_in_documented_order() -> None:
         "app_sharing",
         "background:ready",
     ]
+
+
+@pytest.mark.asyncio
+async def test_task_runner_view_grant_failure_does_not_block_setup(caplog: pytest.LogCaptureFixture) -> None:
+    harness = _harness()
+    harness.jobs.view_failure = PermissionDenied("user=secret")
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    assert report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert "Could not give workspace users view access to the task-runner job (PermissionDenied)" in caplog.text
+    assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_task_runner_view_grant_not_found_does_not_fail_step_while_job_exists(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A NotFound from the view grant can name an unknown principal; the job still exists, so setup carries on."""
+    harness = _harness()
+    harness.jobs.view_failure = NotFound("principal does not exist")
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert report.step(SetupStepId.TASK_RUNNER).code != "task_runner_reconciliation_failed"
+    assert "Could not give workspace users view access to the task-runner job (NotFound)" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1046,6 +1094,18 @@ async def test_reconcile_points_to_a_redeploy_when_the_bundle_job_is_deleted() -
 
 
 @pytest.mark.asyncio
+async def test_deleted_job_during_the_view_grant_is_reported_as_missing_not_swallowed() -> None:
+    """The view grant is best-effort, but a NotFound for a deleted job must still surface."""
+    harness = _harness()
+    harness.jobs.view_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
+
+
+@pytest.mark.asyncio
 async def test_reconcile_keeps_a_job_that_still_exists_after_an_unrelated_not_found() -> None:
     """A NotFound from the permissions update (for example an unknown principal) isn't a deleted job."""
     harness = _harness()
@@ -1143,6 +1203,56 @@ async def test_discovered_job_becomes_runtime_state_before_external_action() -> 
     assert "resolve_job:discover" in harness.events
     assert "grant_admin:81:admin@example.com" in harness.events
     assert not any(event.startswith("persist:") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_job_created_without_a_bundle_is_saved_before_anything_else_can_fail() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.jobs.resolved = ResolvedJob(job_id=81, created=True)
+
+    await harness.orchestrator.reconcile()
+
+    assert harness.events.index("save_job:81") == harness.events.index("resolve_job:discover") + 1
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_the_saved_job_instead_of_creating_one() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.orchestrator.app_settings.saved_job_id = 55
+    harness.jobs.resolved = ResolvedJob(job_id=55, created=False)
+
+    await harness.orchestrator.reconcile()
+
+    assert "resolve_job:55" in harness.events
+    assert "resolve_job:discover" not in harness.events
+    assert not any(event.startswith("save_job:") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_deleted_saved_job_is_forgotten_so_verify_creates_a_new_one() -> None:
+    harness = _harness(bootstrap=dataclasses.replace(BOOTSTRAP, job_id=None))
+    harness.orchestrator.app_settings.saved_job_id = 55
+    harness.jobs.resolved = ResolvedJob(job_id=55, created=False)
+    harness.jobs.view_failure = NotFound("job deleted")
+    harness.jobs.job_exists = False
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_job_missing"
+    assert harness.orchestrator.app_settings.saved_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_bundle_job_ignores_the_saved_job_id() -> None:
+    harness = _harness()
+    harness.orchestrator.app_settings.saved_job_id = 55
+
+    await harness.orchestrator.reconcile()
+
+    assert "resolve_job:27" in harness.events
+    assert not any(event in harness.events for event in ("read_saved_job", "forget_job")) and not any(
+        event.startswith("save_job:") for event in harness.events
+    )
 
 
 @pytest.mark.asyncio

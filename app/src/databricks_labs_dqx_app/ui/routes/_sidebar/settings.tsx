@@ -100,6 +100,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useResetDatabase, useResetStatus, getResetStatusQueryKey } from "@/lib/api";
+import { resetJustFinished } from "@/lib/resetCompletion";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -2673,18 +2674,37 @@ function DangerZoneCard() {
     },
   });
   const status = statusResp?.data;
-  const isRunning = status?.state === "running" || resetMutation.isPending;
+  // Set from the moment the reset is accepted until the polled status reports a
+  // terminal state. The POST only launches the background reset, so without this
+  // the dialog would close (and unlock) while the database is still being cleared.
+  const [awaitingReset, setAwaitingReset] = useState(false);
+  const isRunning = awaitingReset || status?.state === "running" || resetMutation.isPending;
 
   // Fire the success/failure toast when the polled status transitions OUT of
   // `running` into a terminal state. A ref-tracked previous state means we only
   // toast on a genuine running→terminal edge, never on mount over a stale
   // terminal status from an earlier reset.
   const prevResetStateRef = useRef<string | undefined>(undefined);
+  // `started_at` of whatever status existed when this reset was launched. A
+  // terminal status with a different `started_at` belongs to the new run, so a
+  // reset that finishes before the poll ever sees `running` still completes.
+  const launchStartedAtRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const state = status?.state;
     const prev = prevResetStateRef.current;
     prevResetStateRef.current = state;
-    if (prev !== "running") return;
+    const finished = resetJustFinished({
+      previousState: prev,
+      state,
+      startedAt: status?.started_at,
+      awaitingReset,
+      launchStartedAt: launchStartedAtRef.current,
+    });
+    if (!finished) return;
+    // The reset is over: release the dialog so it closes with the outcome toast.
+    setAwaitingReset(false);
+    setOpen(false);
+    setTyped("");
     if (state === "succeeded") {
       const failed = status?.failed_count ?? 0;
       if (failed > 0) {
@@ -2697,7 +2717,16 @@ function DangerZoneCard() {
     } else if (state === "failed") {
       toast.error(status?.message || t("config.resetDbFailed"));
     }
-  }, [status?.state, status?.cleared_count, status?.failed_count, status?.message, queryClient, t]);
+  }, [
+    status?.state,
+    status?.started_at,
+    status?.cleared_count,
+    status?.failed_count,
+    status?.message,
+    awaitingReset,
+    queryClient,
+    t,
+  ]);
 
   const canConfirm = typed.trim() === RESET_DB_PHRASE && !isRunning;
 
@@ -2708,13 +2737,15 @@ function DangerZoneCard() {
 
   const handleConfirm = () => {
     if (!canConfirm) return;
+    launchStartedAtRef.current = status?.started_at;
     resetMutation.mutate(
       { data: { confirmation_phrase: RESET_DB_PHRASE } },
       {
         onSuccess: () => {
-          closeDialog();
-          // Kick the poll immediately so the spinner picks up the `running`
-          // state; the terminal toast fires from the polled transition above.
+          // The reset has only started. Keep the dialog open and locked until the
+          // polled status turns terminal (handled above), and kick the poll now
+          // so it picks up the `running` state straight away.
+          setAwaitingReset(true);
           queryClient.invalidateQueries({ queryKey: getResetStatusQueryKey() });
         },
         onError: (err: unknown) => {

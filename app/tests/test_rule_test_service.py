@@ -7,7 +7,7 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
 from databricks_labs_dqx_app.backend.rule_test_sql import AdhocSource, TableSource
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
-from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestService
+from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestService, resolve_query_shape
 
 
 @pytest.fixture
@@ -241,3 +241,73 @@ class TestGenerateCrossTableTestData:
         ai_gateway.query.return_value = '{"rows": [], "refs": {"ref": {"columns": [{"name": "  "}], "rows": []}}}'
         result = await self._generate(service)
         assert result.refs == {}
+
+
+QUERY_TEXT = "SELECT (`amount` <= 0) AS condition FROM {{input_view}}"
+ROW_TEXT = "{{amount}} > 0"
+
+
+class TestResolveQueryShape:
+    def test_saved_sql_query_body_is_a_query_even_without_a_leading_select(self):
+        assert resolve_query_shape("WITH x AS (SELECT 1) SELECT (1) AS condition", "sql_query") is True
+
+    def test_saved_sql_expression_body_is_a_row_even_when_the_text_starts_with_select(self):
+        assert resolve_query_shape(QUERY_TEXT, "sql_expression") is False
+
+    def test_missing_check_function_falls_back_to_the_text(self):
+        assert resolve_query_shape(QUERY_TEXT, None) is True
+        assert resolve_query_shape(ROW_TEXT, None) is False
+
+
+class TestRunUsesSavedBodyShape:
+    @pytest.mark.asyncio
+    async def test_query_text_saved_as_row_expression_is_tested_as_a_row(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = []
+        src = AdhocSource(columns=["amount"], rows=[["5"]], families={}, column_mapping={"amount": "amount"})
+
+        await service.run_adhoc(predicate=QUERY_TEXT, polarity="pass", source=src, check_function="sql_expression")
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "SELECT src.*" in sql
+        assert "SELECT q.*" not in sql
+
+    @pytest.mark.asyncio
+    async def test_row_text_saved_as_sql_query_is_tested_as_a_query(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = []
+        src = AdhocSource(columns=["amount"], rows=[["5"]], families={}, column_mapping={"amount": "amount"})
+
+        await service.run_adhoc(predicate=QUERY_TEXT, polarity="pass", source=src, check_function="sql_query")
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "SELECT q.*" in sql
+
+    @pytest.mark.asyncio
+    async def test_table_query_text_saved_as_row_expression_is_tested_as_a_row(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = []
+        src = TableSource(table="c.s.t", column_mapping={"amount": "amount"}, sample_kind="records", sample_value=10)
+
+        await service.run_table(predicate=QUERY_TEXT, polarity="pass", source=src, check_function="sql_expression")
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "FROM `c`.`s`.`t`" in sql
+        assert "SELECT q.*" not in sql
+
+    @pytest.mark.asyncio
+    async def test_table_saved_sql_query_is_tested_as_a_query(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = []
+        src = TableSource(table="c.s.t", column_mapping={"amount": "amount"}, sample_kind="records", sample_value=10)
+
+        await service.run_table(predicate=QUERY_TEXT, polarity="pass", source=src, check_function="sql_query")
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "SELECT q.*" in sql
+
+    @pytest.mark.asyncio
+    async def test_without_check_function_query_text_still_runs_as_a_query(self, service, sql_executor_mock):
+        sql_executor_mock.query_dicts.return_value = []
+        src = AdhocSource(columns=["amount"], rows=[["5"]], families={}, column_mapping={"amount": "amount"})
+
+        await service.run_adhoc(predicate=QUERY_TEXT, polarity="pass", source=src)
+
+        sql = sql_executor_mock.query_dicts.call_args.args[0]
+        assert "SELECT q.*" in sql

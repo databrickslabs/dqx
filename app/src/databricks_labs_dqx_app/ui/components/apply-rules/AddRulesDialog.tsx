@@ -195,7 +195,7 @@ export function AddRulesDialog({
             <Trans
               i18nKey="monitoredTables.createRuleInlineHint"
               components={{
-                link: (
+                createLink: (
                   <Link
                     to="/registry-rules/new"
                     className="font-semibold underline underline-offset-2 hover:text-foreground"

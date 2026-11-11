@@ -2783,6 +2783,19 @@ class SchedulePreflightOut(BaseModel):
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
 
 
+class ReferenceGrantPreflightIn(BaseModel):
+    """Body of ``POST /schedule-grants/reference-preflight``: the tables a rule reads besides its source.
+
+    *table_fqns* are the join targets the low-code builder picked. *sql_query* is a raw SQL
+    rule's text; its FROM / JOIN tables are extracted server-side. *source_table_fqn* is the
+    rule's own table and is never checked.
+    """
+
+    table_fqns: list[str] = Field(default_factory=list, max_length=100, description="Joined table names")
+    sql_query: str | None = Field(default=None, max_length=65536, description="Raw SQL rule text to scan")
+    source_table_fqn: str | None = Field(default=None, description="The rule's own table, excluded from the check")
+
+
 class ScheduleGrantApplyIn(BaseModel):
     """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
 

@@ -31,7 +31,7 @@ from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, R
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
-_SETUP_JOB_ID_KEY = f"{SETUP_SETTING_KEY_PREFIX}task_runner_job_id"
+SETUP_TASK_RUNNER_JOB_ID_KEY = f"{SETUP_SETTING_KEY_PREFIX}task_runner_job_id"
 _SETUP_COMPLETED_AT_KEY = f"{SETUP_SETTING_KEY_PREFIX}completed_at"
 _SETUP_COMPLETED_BY_KEY = f"{SETUP_SETTING_KEY_PREFIX}completed_by"
 _BRANDING_KEY = "branding_v1"
@@ -250,6 +250,23 @@ class AppSettingsService:
         self._sql.execute(f"DELETE FROM {self._table} WHERE setting_key = '{escape_sql_string(key)}'")
         logger.info("Deleted setting: %s", key)
 
+    def saved_task_runner_job_id(self) -> int | None:
+        """Return the task-runner job ID setup saved, or None when none (or an unusable value) is stored."""
+        raw = (self.get_setting(SETUP_TASK_RUNNER_JOB_ID_KEY) or "").strip()
+        if not raw.isdigit() or int(raw) <= 0:
+            return None
+        return int(raw)
+
+    def save_task_runner_job_id(self, job_id: int) -> None:
+        """Save the task-runner job ID setup resolved, so a restart uses this job and never looks for one."""
+        if job_id <= 0:
+            raise ValueError("The setup task-runner job ID must be positive.")
+        self.save_setting(SETUP_TASK_RUNNER_JOB_ID_KEY, str(job_id))
+
+    def forget_task_runner_job_id(self) -> None:
+        """Remove the saved task-runner job ID, after its job was deleted."""
+        self.delete_setting(SETUP_TASK_RUNNER_JOB_ID_KEY)
+
     def record_setup_completion(
         self,
         job_id: int,
@@ -272,7 +289,7 @@ class AppSettingsService:
         timestamp = completed_at.astimezone(timezone.utc).isoformat()
         actor = _sanitize_audit_identity(user_name)
         for key, value in (
-            (_SETUP_JOB_ID_KEY, str(job_id)),
+            (SETUP_TASK_RUNNER_JOB_ID_KEY, str(job_id)),
             (_SETUP_COMPLETED_AT_KEY, timestamp),
             (_SETUP_COMPLETED_BY_KEY, actor or "system"),
         ):

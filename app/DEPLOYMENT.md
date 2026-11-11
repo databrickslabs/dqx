@@ -72,7 +72,7 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | `_demo` schema | Owner (Marketplace); explicit list incl. `MANAGE` (DAB) | None | `USE SCHEMA`, `SELECT` | Same as audience |
 | SQL warehouse | `CAN_MANAGE` | Not needed | `CAN_USE` | `CAN_USE` |
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
-| Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
+| Task-runner job | `CAN_MANAGE` | Configured `run_as` | `CAN_VIEW` (all workspace users) | Managed via setup |
 | Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
 | Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
@@ -97,7 +97,9 @@ Setup first tries effective UC grant inspection with app credentials. If unavail
 | Wheels volume | `READ VOLUME` |
 | Main schema | Schema-level `SELECT` and `MODIFY`, covering current and future tables |
 
-Checks include inherited permissions and ownership; table-specific output grants alone do not satisfy the main-schema requirement, and schema ownership alone does not establish `SELECT` or `MODIFY` on its tables. Because the grant covers every table in the main schema, keep unrelated data out of the Studio schema. Verification is never cached across startups and setup never changes `run_as`. Source-data access remains run-specific. Runner Lakebase roles and privileges are outside setup verification (see [Task-runner Lakebase access](#task-runner-lakebase-access)). Successful metadata-dimension refreshes retry the two explicit metadata-table `SELECT` grants.
+Checks include inherited permissions and ownership; table-specific output grants alone do not satisfy the main-schema requirement, and schema ownership alone does not establish `SELECT` or `MODIFY` on its tables. Because the grant covers every table in the main schema, keep unrelated data out of the Studio schema. Verification is never cached across startups and setup never changes `run_as`.
+
+**Task-runner job visibility.** Every workspace user gets `CAN_VIEW` on the task-runner job (named `dqx-studio-task-runner`), so anyone can open its runs and see why a run failed. Viewers cannot run, edit, or manage the job. Setup adds it on every startup with an additive permission update, for both bundle and Marketplace installs; existing grants are kept. If the app service principal can't update the job's permissions, setup logs a warning and carries on. A viewer can also see each run's parameters, including the requesting user, the rule configuration JSON, and the view name. Do not put secrets in rule configuration. Source-data access remains run-specific. Runner Lakebase roles and privileges are outside setup verification (see [Task-runner Lakebase access](#task-runner-lakebase-access)). Successful metadata-dimension refreshes retry the two explicit metadata-table `SELECT` grants.
 
 ## App sharing
 

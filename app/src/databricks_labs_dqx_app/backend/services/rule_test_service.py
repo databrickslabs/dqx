@@ -44,6 +44,7 @@ from databricks_labs_dqx_app.backend.rule_test_sql import (
     substitute_slots,
 )
 from databricks_labs_dqx_app.backend.services.ai_gateway import AIGateway, AIResponseParseError
+from databricks_labs_dqx_app.backend.sql_check_function import SqlCheckFunction
 from databricks_labs_dqx_app.backend.sql_utils import strip_sql_line_comments, validate_fqn
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,27 @@ class GeneratedTestData:
     refs: dict[str, GeneratedGrid] = field(default_factory=dict)
 
 
+def resolve_query_shape(predicate: str, check_function: SqlCheckFunction | None) -> bool:
+    """Whether a Test run should use the query builder (a whole ``sql_query``) rather than the row builder.
+
+    The saved body decides, exactly as the materializer decides what the job runs:
+    a *check_function* of ``"sql_query"`` means a query, ``"sql_expression"`` a row
+    predicate, whatever the text looks like. Callers that do not send a
+    *check_function* (older clients) fall back to inferring the shape from the text.
+
+    Args:
+        predicate: The effective SQL text the Test run evaluates.
+        check_function: The check the saved body materializes to, or ``None`` when
+            the caller did not send one.
+
+    Returns:
+        ``True`` to run *predicate* as a dataset-level query.
+    """
+    if check_function is None:
+        return is_query_shaped(predicate)
+    return check_function == "sql_query"
+
+
 class RuleTestService:
     """Execute rule-test queries and generate AI test data (OBO-scoped)."""
 
@@ -117,13 +139,21 @@ class RuleTestService:
         """Whether AI test-data generation can be offered (kill-switch + endpoint)."""
         return self._ai.is_enabled() and bool(self._ai.endpoint_name())
 
-    async def run_adhoc(self, *, predicate: str, polarity: str, source: AdhocSource) -> TestRunResult:
+    async def run_adhoc(
+        self,
+        *,
+        predicate: str,
+        polarity: str,
+        source: AdhocSource,
+        check_function: SqlCheckFunction | None = None,
+    ) -> TestRunResult:
         """Evaluate a rule over the manual VALUES grid(s).
 
         A boolean predicate is evaluated per input row. A cross-table or
         dataset-level rule — a whole ``SELECT`` — runs against the grids instead,
         with each reference table standing in as its own CTE, and its verdict read
-        off the query's condition column.
+        off the query's condition column. *check_function* is the check the saved
+        body materializes to (see :func:`resolve_query_shape`).
 
         Both the AI-generated grids and hand-typed rows flow through here, so the
         same safety gates cover every ad-hoc cell.
@@ -131,26 +161,34 @@ class RuleTestService:
         self._guard_predicate(predicate, source.column_mapping)
         sql = (
             build_adhoc_query_sql(predicate, polarity, source)
-            if is_query_shaped(predicate)
+            if resolve_query_shape(predicate, check_function)
             else build_adhoc_sql(predicate, polarity, source)
         )
         self._guard_assembled(sql)
         rows = await asyncio.to_thread(self._sql.query_dicts, sql)
         return parse_result(rows, display_cap=source.display_cap)
 
-    async def run_table(self, *, predicate: str, polarity: str, source: TableSource) -> TestRunResult:
+    async def run_table(
+        self,
+        *,
+        predicate: str,
+        polarity: str,
+        source: TableSource,
+        check_function: SqlCheckFunction | None = None,
+    ) -> TestRunResult:
         """Evaluate a rule over a sample of a real UC table, per-row verdicts.
 
         A boolean predicate is embedded per sampled row; a cross-table rule —
         whose body is a whole ``SELECT`` reading from ``{{input_view}}`` — runs as
         a query against the sample instead, with the verdict taken from its
-        condition column (see :func:`build_query_test_sql`).
+        condition column (see :func:`build_query_test_sql`). *check_function* is
+        the check the saved body materializes to (see :func:`resolve_query_shape`).
         """
         validate_fqn(source.table)
         self._guard_predicate(predicate, source.column_mapping)
         sql = (
             build_query_test_sql(predicate, polarity, source)
-            if is_query_shaped(predicate)
+            if resolve_query_shape(predicate, check_function)
             else build_table_sql(predicate, polarity, source)
         )
         self._guard_assembled(sql)

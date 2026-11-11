@@ -91,9 +91,10 @@ _SETTINGS_KEY_COLUMN = "setting_key"
 # and the terminal succeeded/failed write all depend on. We preserve only these
 # in-flight status keys (imported from their owning modules, never hardcoded),
 # so this keeps ZERO long-term reset history — it only keeps the live status
-# alive mid-operation. Setup's keys are spared separately by prefix (see
-# ``_clear_app_settings_preserving_status``); every other setting is cleared and
-# re-seeded.
+# alive mid-operation. Setup's keys (including the saved task-runner job ID, which
+# Studio needs so a restart doesn't create a second runner job) are spared
+# separately by prefix (see ``_clear_app_settings_preserving_status``); every other
+# setting is cleared and re-seeded.
 _PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY)
 
 
