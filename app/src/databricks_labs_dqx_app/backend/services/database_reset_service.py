@@ -20,8 +20,9 @@ Scope decisions:
   ``dq_migrations`` version tracker) must survive so the app keeps working
   without a redeploy/re-migrate.
 - ``dq_app_settings`` is cleared EXCEPT the two in-flight job-status keys
-  (``reset_database_status`` / ``demo_content_status``) and the saved
-  task-runner job ID (``setup_task_runner_job_id``), then the fresh-install
+  (``reset_database_status`` / ``demo_content_status``) and setup's own
+  ``setup_*`` keys (storage choices, storage lock, task-runner job, overrides),
+  which describe the installation rather than its data, then the fresh-install
   DEFAULT content it held is immediately RE-PROVISIONED in the same request
   by re-running the app's first-boot seed routines (see
   :meth:`DatabaseResetService._reprovision_defaults`). A "full reset" returns
@@ -54,11 +55,9 @@ from databricks_labs_dqx_app.backend.migrations import (
     ANALYTICAL_TABLE_NAMES,
     OLTP_TABLE_NAMES,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import (
-    SETUP_TASK_RUNNER_JOB_ID_KEY,
-    AppSettingsService,
-)
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.reset_status import RESET_STATUS_KEY
+from databricks_labs_dqx_app.backend.setup.configuration import SETUP_SETTING_KEY_PREFIX
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -74,7 +73,9 @@ RESET_CONFIRMATION_PHRASE = "reset dqx studio"
 #  - ``dq_role_mappings``: admin role mappings are preserved so the acting
 #    admin is never locked out.
 #  - ``dq_app_settings``: the in-flight reset/demo job-status rows are preserved
-#    so the ``running`` status survives its own wipe (see below).
+#    so the ``running`` status survives its own wipe (see below), and setup's
+#    keys (storage choices and lock, task-runner job, overrides) are preserved so
+#    the next restart doesn't send the administrator back to the setup form.
 _ROLE_MAPPINGS_TABLE = "dq_role_mappings"
 _APP_SETTINGS_TABLE = "dq_app_settings"
 
@@ -88,12 +89,13 @@ _SETTINGS_KEY_COLUMN = "setting_key"
 # the ``running`` status the route wrote just before launching lives there — so
 # an unconditional clear would delete the very row the 409 guard, the UI poll,
 # and the terminal succeeded/failed write all depend on. We preserve only these
-# in-flight status keys (imported from their owning modules, never hardcoded);
-# every other setting is still cleared and re-seeded, so this keeps ZERO
-# long-term reset history — it only keeps the live status alive mid-operation.
-# The saved task-runner job ID is setup state, not data: Studio finds its job only by this
-# ID, so clearing it would make the next start create a second runner job.
-_PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY, SETUP_TASK_RUNNER_JOB_ID_KEY)
+# in-flight status keys (imported from their owning modules, never hardcoded),
+# so this keeps ZERO long-term reset history — it only keeps the live status
+# alive mid-operation. Setup's keys (including the saved task-runner job ID, which
+# Studio needs so a restart doesn't create a second runner job) are spared
+# separately by prefix (see ``_clear_app_settings_preserving_status``); every other
+# setting is cleared and re-seeded.
+_PRESERVED_APP_SETTINGS_KEYS = (RESET_STATUS_KEY, DEMO_STATUS_KEY)
 
 
 @dataclass(frozen=True)
@@ -234,8 +236,10 @@ class DatabaseResetService:
                 "Cleared all DQX Studio-managed data, then re-provisioned the fresh-install "
                 "defaults (run review statuses and reserved dimension/severity label "
                 "definitions) so the app is back to a clean first-install state. Preserved: "
-                "the schema itself, the dq_migrations version tracker, and admin role mappings "
-                "(so admins keep access). Customer/monitored data tables are never touched."
+                "the schema itself, the dq_migrations version tracker, admin role mappings "
+                "(so admins keep access), and setup state (storage choices and lock, task-runner "
+                "job and setup overrides, so setup doesn't run again). Customer/monitored data "
+                "tables are never touched."
             ),
         )
 
@@ -309,7 +313,7 @@ class DatabaseResetService:
         cleared: list[str],
         failed: dict[str, str],
     ) -> None:
-        """Clear ``dq_app_settings`` EXCEPT the in-flight job-status keys.
+        """Clear ``dq_app_settings`` EXCEPT the in-flight job-status keys and setup's keys.
 
         The reset clears ``dq_app_settings``, but the ``running`` status row the
         route persisted immediately before launching the reset lives there too.
@@ -331,8 +335,15 @@ class DatabaseResetService:
         # literals, so they are escaped with ``escape_sql_string`` (doubled
         # single quotes) exactly like the admin-role literal there.
         preserved = ", ".join(f"'{escape_sql_string(k)}'" for k in _PRESERVED_APP_SETTINGS_KEYS)
+        # Setup's own keys (storage choices and lock, task-runner job, overrides) describe
+        # the installation, not its data: wiping them sends the next restart back to the
+        # setup form. "!" escapes LIKE's "_" wildcard on both Postgres and Delta.
+        setup_keys = escape_sql_string(SETUP_SETTING_KEY_PREFIX.replace("_", "!_")) + "%"
         try:
-            self._oltp.execute(f"DELETE FROM {fqn} WHERE {_SETTINGS_KEY_COLUMN} NOT IN ({preserved})")
+            self._oltp.execute(
+                f"DELETE FROM {fqn} WHERE {_SETTINGS_KEY_COLUMN} NOT IN ({preserved}) "
+                f"AND {_SETTINGS_KEY_COLUMN} NOT LIKE '{setup_keys}' ESCAPE '!'"
+            )
             cleared.append(_APP_SETTINGS_TABLE)
         except Exception as exc:
             # Best-effort: recorded, not swallowed, and never aborts the reset.
