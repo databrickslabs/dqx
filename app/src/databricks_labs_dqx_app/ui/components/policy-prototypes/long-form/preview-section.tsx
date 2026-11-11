@@ -24,8 +24,13 @@ function AttachmentStatus({ a, skipped }: { a: PreviewAttachment; skipped: boole
   return <span className={cn("inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ring-1", tone)}>{label}</span>;
 }
 
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
+function StatTile({ value, label, muted }: { value: number; label: string; muted?: boolean }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2.5">
+      <div className={cn("text-xl font-semibold tabular-nums", muted && "text-muted-foreground")}>{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
+  );
 }
 
 function Mapping({ mapping }: { mapping: Record<string, string[]> }) {
@@ -93,27 +98,15 @@ export function PreviewSection({ policies }: { policies: Policy[] }) {
           })}
         </div>
       )}
-      <div className="space-y-1 rounded-lg border bg-card px-4 py-3">
-        <p className="text-sm">
-          <span className="font-semibold tabular-nums">
-            {plural(active.length, "table", "tables")}
-            {!tableLevel && ` · ${plural(columns, "column", "columns")}`}
-          </span>{" "}
-          would get this rule
-          {toRegister > 0 && (
-            <>
-              , <span className="font-semibold tabular-nums">{toRegister}</span> not yet monitored would be added
-            </>
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatTile value={active.length} label="Tables matched" />
+          {!tableLevel && <StatTile value={columns} label="Columns matched" />}
+          {current.register_tables && <StatTile value={toRegister} label="New tables to monitor" />}
+          {preview.skipped > 0 && (
+            <StatTile value={preview.skipped} label="Skipped — you can't apply rules there" muted />
           )}
-          .
-        </p>
-        {preview.skipped > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {preview.skipped === 1
-              ? "1 matching table is skipped because you can't apply rules to it."
-              : `${preview.skipped} matching tables are skipped because you can't apply rules to them.`}
-          </p>
-        )}
+        </div>
         {preview.truncated && (
           <p className="text-xs text-amber-700 dark:text-amber-300">
             Preview stopped at 5,000 candidate tables. Narrow the scope for a complete count.
