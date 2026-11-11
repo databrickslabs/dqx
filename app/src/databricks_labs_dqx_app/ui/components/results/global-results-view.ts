@@ -64,7 +64,12 @@ export const GLOBAL_RESULTS_EMPTY_VALUES: Record<GlobalResultsFilterKey, ViewVal
 };
 
 /** Set by breakdown-row clicks too, so hiding their bubble keeps the value (shown as a chip). */
-export const GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE: readonly GlobalResultsFilterKey[] = ["dimension", "severity"];
+export const GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE: readonly GlobalResultsFilterKey[] = [
+  "table",
+  "rule",
+  "dimension",
+  "severity",
+];
 
 export const GLOBAL_RESULTS_OUTCOME_VALUES: readonly string[] = ["failed", "passed"];
 

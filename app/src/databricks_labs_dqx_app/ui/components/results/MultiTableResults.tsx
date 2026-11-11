@@ -549,8 +549,8 @@ export function MultiTableResultsSection({
     for (const [key, value] of viewValueChanges(filters, next)) onTopFilterChange(key, value);
     if (next.column !== filters.column) setLocalFilters((f) => ({ ...f, column: next.column }));
   };
-  // A view switch (or a hidden Table bubble) can empty the table facet under
-  // an active By-table selection — drop the selection with it.
+  // A view switch can empty the table facet under an active By-table
+  // selection — drop the selection with it.
   if (controlledValues && selectedTable !== null && filters.table.length === 0) {
     setSelectedTable(null);
   }

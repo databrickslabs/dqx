@@ -51,15 +51,28 @@ describe("buildGlobalResultsViewDefs", () => {
     expect(state.values.owner).toEqual([]);
   });
 
-  it("keeps dimension/severity values when their bubble is hidden, clears others", () => {
-    const state = { ...builtinViewState(defs), values: { ...builtinViewState(defs).values, table: ["a.b.c"] } };
-    expect(applyFilterToggle(state, "table", defs).values.table).toEqual([]);
+  it("keeps row-click filter values when their bubble is hidden, clears others", () => {
+    const state = {
+      ...builtinViewState(defs),
+      values: { ...builtinViewState(defs).values, table: ["a.b.c"], rule: ["r1"], catalog: ["main"] },
+    };
+    expect(applyFilterToggle(state, "table", defs).values.table).toEqual(["a.b.c"]);
+    expect(applyFilterToggle(state, "rule", defs).values.rule).toEqual(["r1"]);
+    expect(applyFilterToggle(state, "catalog", defs).values.catalog).toEqual([]);
     const shown = applyFilterToggle(state, "dimension", defs);
     const withDim = { ...shown, values: { ...shown.values, dimension: ["Validity"] } };
     expect(applyFilterToggle(withDim, "dimension", defs).values.dimension).toEqual(["Validity"]);
     // dimension is hidden by default: a stored value still survives reconcile; owner's doesn't.
-    const reconciled = reconcileView({ v: 1, values: { dimension: ["Validity"], owner: ["ann"] } }, defs);
+    const reconciled = reconcileView(
+      {
+        v: 1,
+        values: { dimension: ["Validity"], table: ["a.b.c"], owner: ["ann"] },
+        filters: { order: [], visibility: { table: false } },
+      },
+      defs,
+    );
     expect(reconciled.values.dimension).toEqual(["Validity"]);
+    expect(reconciled.values.table).toEqual(["a.b.c"]);
     expect(reconciled.values.owner).toEqual([]);
   });
 
