@@ -3246,6 +3246,7 @@
       "errors": {
         "configuration_invalid": "Revise el catálogo, el prefijo y el nombre del grupo.",
         "audience_group_builtin": "No se pueden usar grupos integrados como \"users\", \"account users\" y \"admins\". Elige un grupo de cuenta dedicado, por ejemplo dqx-users.",
+        "audience_group_workspace_level": "Los grupos a nivel de espacio de trabajo no son compatibles. Crea un nuevo grupo a nivel de cuenta (por ejemplo dqx-users) en este espacio de trabajo",
         "catalog_invalid": "Los nombres de catálogo no pueden contener puntos, acentos graves ni barras invertidas. Elige un catálogo de la lista o revisa el nombre que escribiste.",
         "audience_group_required": "Escribe el nombre de un grupo de cuenta existente.",
         "catalog_not_found": "El catálogo no existe o no tiene acceso a él.",
