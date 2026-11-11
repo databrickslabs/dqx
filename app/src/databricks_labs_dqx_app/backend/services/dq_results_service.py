@@ -121,6 +121,9 @@ class CheckResultRow:
     *severity* / *dimension* / *columns* / *rule_id* are the check's
     as-of-run attribution (frozen into the run's ``checks_json`` at
     materialization time); all-None/empty for untagged checks.
+
+    *total* is the rows the check evaluated: a filtered row check's
+    ``evaluated_row_count``, else the table's ``input_row_count``.
     """
 
     table_fqn: str
@@ -223,6 +226,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
             continue
         error_count = safe_int(row.get("error_count")) or 0
         warning_count = safe_int(row.get("warning_count")) or 0
+        evaluated = safe_int(row.get("evaluated_row_count"))
         out.append(
             CheckResultRow(
                 table_fqn=fqn,
@@ -230,7 +234,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 run_date=row.get("run_date"),
                 check_name=check_name,
                 failed=error_count + warning_count,
-                total=safe_int(row.get("input_row_count")),
+                total=evaluated if evaluated is not None else safe_int(row.get("input_row_count")),
                 severity=row.get("severity"),
                 dimension=row.get("dimension"),
                 columns=_parse_columns_json(row.get("columns_json")),
@@ -288,8 +292,13 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
 
 @dataclass
 class _GroupAcc:
+    # Row-level tests: row checks only, over each check's evaluated rows.
     failed: int = 0
     total: int | None = None
+    # Table-level tests: each dataset check is one test, failed if any row
+    # carries its failure. Never summed into the row-level counts.
+    table_failed: int = 0
+    table_total: int = 0
     rule_keys: set[str] = field(default_factory=set)
     check_rows: int = 0
     # A reusable rule may fan out into several per-column checks. Accumulate
@@ -311,7 +320,13 @@ class _GroupAcc:
     threshold_run_date: str | None = None
 
     def add(self, row: CheckResultRow, resolve: ThresholdResolver | None = None) -> None:
-        self.failed += row.failed
+        if row.check_granularity == "dataset":
+            self.table_total += 1
+            self.table_failed += 1 if row.failed > 0 else 0
+        else:
+            self.failed += row.failed
+            if row.total is not None:
+                self.total = (self.total or 0) + row.total
         # Track the newest contributing run across ALL rows and adopt THAT run's
         # frozen threshold — even when it is None (the pass-threshold feature was
         # turned off after an earlier run had it on). Strict '>' lets the
@@ -320,15 +335,13 @@ class _GroupAcc:
         if self.threshold_run_date is None or row_date > self.threshold_run_date:
             self.threshold_run_date = row_date
             self.pass_threshold = row.pass_threshold  # may be None — newest run wins
-        if row.total is not None:
-            self.total = (self.total or 0) + row.total
         self.rule_keys.add(_rule_key(row))
         self.check_rows += 1
         if row.total is not None and row.total > 0:
             if row.check_granularity == "dataset":
                 check_score = 0.0 if row.failed > 0 else 1.0
             else:
-                check_score = 1.0 - row.failed / row.total
+                check_score = max(0.0, 1.0 - row.failed / row.total)
             instance = (row.table_fqn, row.run_id, _rule_key(row))
             score_sum, count = self.rule_check_scores.get(instance, (0.0, 0))
             self.rule_check_scores[instance] = (score_sum + check_score, count + 1)
@@ -337,6 +350,13 @@ class _GroupAcc:
             if crit is not None:
                 self.breached = True
                 self.breach_criticality = _worse_criticality(self.breach_criticality, crit)
+
+    @property
+    def combined_total(self) -> int | None:
+        """Row tests plus table tests (one per dataset check), as the score box counts them; None when untested."""
+        if self.total is None and self.table_total == 0:
+            return None
+        return (self.total or 0) + self.table_total
 
     @property
     def pass_rate(self) -> float | None:
@@ -367,14 +387,17 @@ def _group_rows(
             rule_count=len(acc.rule_keys),
             check_count=acc.check_rows if with_check_count else None,
             total_tests=acc.total,
+            table_failed_tests=acc.table_failed,
+            table_total_tests=acc.table_total,
             breached=acc.breached,
             breach_criticality=acc.breach_criticality,
             pass_threshold=acc.pass_threshold,
         )
         for label, acc in groups.items()
     ]
-    # dqlake: ORDER BY failed_tests DESC.
-    out.sort(key=lambda g: g.failed_tests or 0, reverse=True)
+    # Worst pass rate first (unscored groups last); ties put the group
+    # with more failed row tests first.
+    out.sort(key=lambda g: (g.pass_rate is None, g.pass_rate or 0.0, -(g.failed_tests or 0)))
     return out
 
 
@@ -590,6 +613,8 @@ def _trend_grouped(
             pass_rate=acc.pass_rate,
             rule_count=len(acc.rule_keys),
             total_tests=acc.total,
+            table_failed_tests=acc.table_failed,
+            table_total_tests=acc.table_total,
             is_draft=(run_date, series) in draft_groups,
             breached=acc.breached,
             breach_criticality=acc.breach_criticality,
@@ -607,7 +632,7 @@ def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
             run_date=run_date,
             rule_count=len(acc.rule_keys),
             check_count=acc.check_rows,
-            test_count=acc.total,
+            test_count=acc.combined_total,
         )
         for run_date, acc in sorted(groups.items(), key=lambda kv: kv[0] or "")
     ]
@@ -640,7 +665,11 @@ def _trend_failures(
                 run_date=run_date,
                 failed_rule_count=len(failed_rules),
                 failed_check_count=sum(1 for row in rows_here if row.failed > 0),
-                failed_test_count=sum(row.failed for row in rows_here),
+                # Row tests plus failed table tests (one per dataset check), like *test_count*.
+                failed_test_count=sum(
+                    (1 if row.failed > 0 else 0) if row.check_granularity == "dataset" else row.failed
+                    for row in rows_here
+                ),
                 failed_records=sum(record_counts) if record_counts else None,
             )
         )
