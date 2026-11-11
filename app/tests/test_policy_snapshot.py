@@ -4,6 +4,16 @@ from databricks_labs_dqx_app.backend.policy_models import PolicyScope
 from databricks_labs_dqx_app.backend.services.policy_snapshot import MAX_SNAPSHOT_TABLES, PolicySnapshotReader
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
+_COLUMNS = {
+    "column_tags": ["schema_name", "table_name", "column_name", "tag_name", "tag_value"],
+    "table_tags": ["schema_name", "table_name", "tag_name", "tag_value"],
+    "schema_tags": ["schema_name", "tag_name", "tag_value"],
+    "catalog_tags": ["tag_name", "tag_value"],
+    "columns": ["table_schema", "table_name", "column_name", "data_type"],
+    "schemata": ["schema_name", "schema_owner"],
+    "catalogs": ["catalog_name", "catalog_owner"],
+    "tables": ["table_schema", "table_name", "table_owner"],
+}
 _TABLE_KINDS = (
     ("information_schema.column_tags", "column_tags"),
     ("information_schema.table_tags", "table_tags"),
@@ -21,15 +31,16 @@ def _make_sql(data: dict[str, dict[str, list[list[str | None]]]], failing: set[s
     sql = create_autospec(SqlExecutor, instance=True)
     queries: list[str] = []
 
-    def query(statement: str, **_: int) -> list[list[str | None]]:
+    def query(statement: str, **kwargs: object) -> list[dict[str, str | None]]:
+        assert kwargs.get("require_complete") is True
         queries.append(statement)
-        catalog = statement.split("FROM `", 1)[1].split("`", 1)[0]
+        catalog = statement.split("FROM `", 1)[1].split("`", 1)[0].lower()
         kind = next(name for marker, name in _TABLE_KINDS if marker in statement)
         if catalog in (failing or set()) or f"{catalog}:{kind}" in (failing or set()):
             raise RuntimeError("denied")
-        return data.get(catalog, {}).get(kind, [])
+        return [dict(zip(_COLUMNS[kind], row)) for row in data.get(catalog, {}).get(kind, [])]
 
-    sql.query.side_effect = query
+    sql.query_dicts.side_effect = query
     return sql, queries
 
 
@@ -180,3 +191,60 @@ def test_for_tables_skips_malformed_fqns():
     sql, queries = _make_sql(_main_data())
     result = _reader(sql).for_tables(["not_an_fqn"])
     assert result.tables == [] and queries == []
+
+
+def test_incomplete_result_marks_catalog_unreadable():
+    sql, _ = _make_sql(_main_data())
+    real = sql.query_dicts.side_effect
+
+    def query(statement: str, **kwargs: object):
+        if "information_schema.columns" in statement:
+            raise RuntimeError("Could not verify complete SQL results.")
+        return real(statement, **kwargs)
+
+    sql.query_dicts.side_effect = query
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+    assert result.unreadable_catalogs == ["main"] and result.tables == []
+
+
+def test_os_errors_mark_catalog_unreadable():
+    sql, _ = _make_sql(_main_data())
+    sql.query_dicts.side_effect = TimeoutError("slow")
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+    assert result.unreadable_catalogs == ["main"]
+
+
+def test_list_catalogs_failure_returns_wildcard_unreadable():
+    sql, queries = _make_sql({})
+
+    def boom() -> list[str]:
+        raise ConnectionError("down")
+
+    result = PolicySnapshotReader(sql, boom).for_scope(PolicyScope())
+    assert result.unreadable_catalogs == ["*"] and result.tables == [] and queries == []
+
+
+def test_follow_up_queries_are_limited_to_candidate_tables():
+    sql, queries = _make_sql(_main_data())
+    _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+    follow = [q for q in queries if "column_tags" in q or ".columns" in q or "table_tags" in q]
+    assert follow and all("lower(" in q and "IN ('sales')" in q for q in follow)
+
+    queries.clear()
+    _reader(sql).for_scope(PolicyScope(catalogs=["main"], tables=["main.sales.orders"]))
+    follow = [q for q in queries if ".columns" in q]
+    assert "lower(table_name) = 'orders'" in follow[0] and "'customers'" not in follow[0]
+
+
+def test_percent_and_semicolon_names_are_literal():
+    data = {"main": {"tables": [["a%b;c", "t_1", None]], "columns": [["a%b;c", "t_1", "c", "INT"]]}}
+    sql, queries = _make_sql(data)
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"], tables=["main.a%b;c.t_1"]))
+    assert [t.table_fqn for t in result.tables] == ["main.a%b;c.t_1"]
+    assert all("= 'a%b;c'" in q for q in queries if ".tables" in q)
+
+
+def test_case_mismatched_scope_matches():
+    sql, _ = _make_sql(_main_data())
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["MAIN"], schemas=["Main.Sales"]))
+    assert {t.table_fqn for t in result.tables} == {"MAIN.sales.orders", "MAIN.sales.customers"}

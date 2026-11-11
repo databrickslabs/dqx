@@ -7,7 +7,7 @@ only what the calling user can see.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from databricks.labs.dqx.utils import is_sql_query_safe
@@ -21,7 +21,7 @@ from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_i
 logger = logging.getLogger(__name__)
 
 MAX_SNAPSHOT_TABLES = 5000
-_READ_ERRORS = (ValueError, RuntimeError, DatabricksError)  # RuntimeError covers SqlStatementError
+_READ_ERRORS = (ValueError, RuntimeError, OSError, DatabricksError)  # RuntimeError covers SqlStatementError
 _TABLE_TYPES = "('MANAGED','EXTERNAL','VIEW', 'MATERIALIZED_VIEW', 'STREAMING_TABLE')"
 
 
@@ -65,14 +65,18 @@ def _where(flt: _CatalogFilter, schema_col: str, table_col: str | None) -> str:
     return " AND ".join(clauses)
 
 
+Row = dict[str, str | None]
+_PAIR_CHUNK = 200
+
+
 def _tag(name: str | None, value: str | None) -> str | None:
     if not name:
         return None
     return f"{name}={value}" if value else name
 
 
-def _tags(rows: Sequence[Sequence[str | None]], name_idx: int) -> tuple[str, ...]:
-    out = (_tag(r[name_idx], r[name_idx + 1]) for r in rows if len(r) > name_idx + 1)
+def _tags(rows: list[Row]) -> tuple[str, ...]:
+    out = (_tag(r.get("tag_name"), r.get("tag_value")) for r in rows)
     return tuple(t for t in out if t)
 
 
@@ -84,7 +88,11 @@ class PolicySnapshotReader:
         self._list_catalogs = list_catalogs
 
     def for_scope(self, scope: PolicyScope, *, limit: int = MAX_SNAPSHOT_TABLES) -> SnapshotResult:
-        catalogs = self._list_catalogs() if scope.catalogs == ALL else list(scope.catalogs)
+        try:
+            catalogs = self._list_catalogs() if scope.catalogs == ALL else list(scope.catalogs)
+        except _READ_ERRORS:
+            logger.warning("Could not list catalogs for policy snapshot")
+            return SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[ALL])
         plan: list[tuple[str, _CatalogFilter]] = []
         seen: set[str] = set()
         for catalog in catalogs:
@@ -150,10 +158,18 @@ class PolicySnapshotReader:
                 break
         return SnapshotResult(tables=tables, truncated=truncated, unreadable_catalogs=unreadable)
 
-    def _run(self, query: str) -> Sequence[Sequence[str | None]]:
+    def _run(self, query: str) -> list[Row]:
         if not is_sql_query_safe(query):
             raise ValueError("Unsafe snapshot query")
-        return self._sql.query(query)
+        return self._sql.query_dicts(query, require_complete=True)
+
+    @staticmethod
+    def _followup_filters(flt: _CatalogFilter, candidates: list[tuple[str, str]]) -> list[_CatalogFilter]:
+        """Filters limiting follow-up reads to the accepted candidates (pairs chunked when long)."""
+        if flt.pairs is None:
+            return [_CatalogFilter(schemas=frozenset(schema.lower() for schema, _ in candidates))]
+        pairs = sorted({(schema.lower(), table.lower()) for schema, table in candidates})
+        return [_CatalogFilter(pairs=frozenset(pairs[i : i + _PAIR_CHUNK])) for i in range(0, len(pairs), _PAIR_CHUNK)]
 
     def _read_catalog(
         self, catalog: str, flt: _CatalogFilter, remaining: int, accept: Callable[[str], bool]
@@ -165,47 +181,57 @@ class PolicySnapshotReader:
             f"AND {_where(flt, 'table_schema', 'table_name')} "
             f"ORDER BY table_schema, table_name LIMIT {max(remaining, 0) + 1}"
         )
-        rows = [r for r in rows if len(r) >= 2 and r[0] and r[1] and accept(f"{catalog}.{r[0]}.{r[1]}")]
+        rows = [r for r in rows if r.get("table_schema") and r.get("table_name")]
+        rows = [r for r in rows if accept(f"{catalog}.{r['table_schema']}.{r['table_name']}")]
         truncated = len(rows) > remaining
         rows = rows[: max(remaining, 0)]
         if not rows:
             return [], truncated
-        owners = {(r[0] or "", r[1] or ""): (r[2] if len(r) > 2 else None) for r in rows}
+        owners = {(str(r["table_schema"]), str(r["table_name"])): r.get("table_owner") for r in rows}
+        followups = self._followup_filters(flt, list(owners))
 
+        column_tags: dict[tuple[str, str, str], list[Row]] = {}
         columns: dict[tuple[str, str], list[ColumnSnapshot]] = {}
-        column_tags: dict[tuple[str, str, str], list[Sequence[str | None]]] = {}
-        for r in self._run(
-            "SELECT schema_name, table_name, column_name, tag_name, tag_value "
-            f"FROM {base}.column_tags WHERE {_where(flt, 'schema_name', 'table_name')}"
-        ):
-            if len(r) >= 5 and r[0] and r[1] and r[2]:
-                column_tags.setdefault((r[0], r[1], r[2]), []).append(r[3:5])
-        for r in self._run(
-            "SELECT table_schema, table_name, column_name, data_type "
-            f"FROM {base}.columns WHERE {_where(flt, 'table_schema', 'table_name')} "
-            "ORDER BY table_schema, table_name, ordinal_position"
-        ):
-            if len(r) >= 4 and r[0] and r[1] and r[2] and (r[0], r[1]) in owners:
-                tags = _tags(column_tags.get((r[0], r[1], r[2]), []), 0)
-                columns.setdefault((r[0], r[1]), []).append(ColumnSnapshot(r[2], r[3] or "", tags))
+        table_tags: dict[tuple[str, str], list[Row]] = {}
+        for sub in followups:
+            for r in self._run(
+                "SELECT schema_name, table_name, column_name, tag_name, tag_value "
+                f"FROM {base}.column_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
+            ):
+                sch, tbl, col = r.get("schema_name"), r.get("table_name"), r.get("column_name")
+                if sch and tbl and col:
+                    column_tags.setdefault((sch, tbl, col), []).append(r)
+            for r in self._run(
+                "SELECT table_schema, table_name, column_name, data_type "
+                f"FROM {base}.columns WHERE {_where(sub, 'table_schema', 'table_name')} "
+                "ORDER BY table_schema, table_name, ordinal_position"
+            ):
+                schema, table, column = r.get("table_schema"), r.get("table_name"), r.get("column_name")
+                if schema and table and column and (schema, table) in owners:
+                    tags = _tags(column_tags.get((schema, table, column), []))
+                    columns.setdefault((schema, table), []).append(
+                        ColumnSnapshot(column, r.get("data_type") or "", tags)
+                    )
+            for r in self._run(
+                "SELECT schema_name, table_name, tag_name, tag_value "
+                f"FROM {base}.table_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
+            ):
+                sch, tbl = r.get("schema_name"), r.get("table_name")
+                if sch and tbl:
+                    table_tags.setdefault((sch, tbl), []).append(r)
 
-        table_tags: dict[tuple[str, str], list[Sequence[str | None]]] = {}
-        for r in self._run(
-            "SELECT schema_name, table_name, tag_name, tag_value "
-            f"FROM {base}.table_tags WHERE {_where(flt, 'schema_name', 'table_name')}"
-        ):
-            if len(r) >= 4 and r[0] and r[1]:
-                table_tags.setdefault((r[0], r[1]), []).append(r[2:4])
-        schema_tags: dict[str, list[Sequence[str | None]]] = {}
+        schema_filter = _CatalogFilter(schemas=frozenset(schema.lower() for schema, _ in owners))
+        schema_tags: dict[str, list[Row]] = {}
         for r in self._run(
             "SELECT schema_name, tag_name, tag_value "
-            f"FROM {base}.schema_tags WHERE {_where(flt, 'schema_name', None)}"
+            f"FROM {base}.schema_tags WHERE {_where(schema_filter, 'schema_name', None)}"
         ):
-            if len(r) >= 3 and r[0]:
-                schema_tags.setdefault(r[0], []).append(r[1:3])
-        catalog_tags = _tags(self._run(f"SELECT tag_name, tag_value FROM {base}.catalog_tags"), 0)
+            sch = r.get("schema_name")
+            if sch:
+                schema_tags.setdefault(sch, []).append(r)
+        catalog_tags = _tags(self._run(f"SELECT tag_name, tag_value FROM {base}.catalog_tags"))
 
-        catalog_owner, schema_owners = self._owners(catalog, base, flt)
+        catalog_owner, schema_owners = self._owners(catalog, base, schema_filter)
         snapshots = [
             TableSnapshot(
                 table_fqn=f"{catalog}.{schema}.{table}",
@@ -213,8 +239,8 @@ class PolicySnapshotReader:
                 catalog_owner=catalog_owner,
                 schema_owner=schema_owners.get(schema),
                 catalog_tags=catalog_tags,
-                schema_tags=_tags(schema_tags.get(schema, []), 0),
-                table_tags=_tags(table_tags.get((schema, table), []), 0),
+                schema_tags=_tags(schema_tags.get(schema, [])),
+                table_tags=_tags(table_tags.get((schema, table), [])),
                 columns=tuple(columns.get((schema, table), [])),
             )
             for (schema, table), owner in owners.items()
@@ -230,16 +256,17 @@ class PolicySnapshotReader:
                 f"SELECT catalog_name, catalog_owner FROM {base}.catalogs "
                 f"WHERE lower(catalog_name) = {_literal(catalog.lower())}"
             ):
-                if len(r) >= 2 and r[0] and r[0].lower() == catalog.lower():
-                    catalog_owner = r[1]
+                name = r.get("catalog_name")
+                if name and name.lower() == catalog.lower():
+                    catalog_owner = r.get("catalog_owner")
         except _READ_ERRORS:
             logger.warning(f"Catalog owner lookup failed: {_safe(catalog)}")
         try:
             for r in self._run(
                 f"SELECT schema_name, schema_owner FROM {base}.schemata WHERE {_where(flt, 'schema_name', None)}"
             ):
-                if len(r) >= 2 and r[0]:
-                    schema_owners[r[0]] = r[1]
+                if r.get("schema_name"):
+                    schema_owners[str(r["schema_name"])] = r.get("schema_owner")
         except _READ_ERRORS:
             logger.warning(f"Schema owner lookup failed: {_safe(catalog)}")
         return catalog_owner, schema_owners
