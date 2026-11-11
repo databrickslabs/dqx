@@ -62,6 +62,7 @@ type ColumnKey =
 
 interface RenderCtx {
   labelDefinitions: LabelColorDefinition[];
+  rowNote?: (rule: RegistryRuleOut) => string | null;
 }
 
 interface ColumnDef extends ColumnLayoutDef {
@@ -119,9 +120,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     defaultWidth: 240,
     sortable: true,
     renderHeader: (label) => label,
-    renderCell: (r) => (
-      <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />
-    ),
+    renderCell: (r, ctx) => {
+      const note = ctx.rowNote?.(r);
+      return (
+        <>
+          <TruncatedCell text={getTag(r, RESERVED_NAME_KEY) || r.rule_id} className="font-medium text-sm" />
+          {note && <span className="block truncate text-[10px] text-muted-foreground">{note}</span>}
+        </>
+      );
+    },
     sortValue: (r) => (getTag(r, RESERVED_NAME_KEY) || r.rule_id).toLowerCase(),
   },
   description: {
@@ -284,15 +291,17 @@ export interface RulesPickerProps {
   isError?: boolean;
   /** Refetch the published-rules query (wired to the error-state retry). */
   onRetry?: () => void;
+  /** Optional muted note under a rule's name (e.g. "Applies once approved" for drafts). */
+  rowNote?: (rule: RegistryRuleOut) => string | null;
 }
 
-export function RulesPicker({ rules, labelDefinitions, selectedIds, appliedIds, onToggle, isLoading, isError, onRetry }: RulesPickerProps) {
+export function RulesPicker({ rules, labelDefinitions, selectedIds, appliedIds, onToggle, isLoading, isError, onRetry, rowNote }: RulesPickerProps) {
   const { t } = useTranslation();
   const applied = useMemo(() => appliedIds ?? new Set<string>(), [appliedIds]);
   // Kept for the row's screen-reader label only — the visible "already applied"
   // badge was removed (B2-131); the disabled/checked row state conveys it visually.
   const appliedLabel = t("monitoredTables.ruleAlreadyApplied");
-  const ctx = useMemo<RenderCtx>(() => ({ labelDefinitions }), [labelDefinitions]);
+  const ctx = useMemo<RenderCtx>(() => ({ labelDefinitions, rowNote }), [labelDefinitions, rowNote]);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState<ColumnKey | null>(null);

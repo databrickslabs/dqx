@@ -1,11 +1,10 @@
-// THROWAWAY prototype — shared layout primitives for variant A (long form).
+// Layout primitives for the policy form: ABAC-style two-column sections and choice tiles.
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { MockRule } from "../mock";
 
-/** ABAC-style section: title + description on the left third, fields on the right two thirds. */
+/** Title + description on the left third, fields on the right two thirds. */
 export function FormSection({
   id,
   title,
@@ -40,20 +39,21 @@ export interface TileOption<T extends string> {
   info?: ReactNode;
 }
 
-/** Large bordered choice tiles with an icon above the label and an info line for the selected option. */
+/** Bordered radio tiles; *xs* is the compact single-line variant used inside cards. */
 export function ChoiceTiles<T extends string>({
   value,
   onChange,
   options,
   size = "lg",
   ariaLabel,
+  disabled,
 }: {
   value: T;
   onChange: (next: T) => void;
   options: TileOption<T>[];
-  /** *xs* = compact single-line tiles (icon beside the label), for use inside cards. */
-  size?: "lg" | "sm" | "xs";
+  size?: "lg" | "xs";
   ariaLabel: string;
+  disabled?: boolean;
 }) {
   const selected = options.find((o) => o.value === value);
   return (
@@ -61,7 +61,11 @@ export function ChoiceTiles<T extends string>({
       <div
         role="radiogroup"
         aria-label={ariaLabel}
-        className={cn("grid", size === "xs" ? "gap-2" : "gap-3", options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}
+        className={cn(
+          "grid",
+          size === "xs" ? "gap-2" : "gap-3",
+          options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2",
+        )}
       >
         {options.map((opt) => {
           const on = opt.value === value;
@@ -72,18 +76,15 @@ export function ChoiceTiles<T extends string>({
               type="button"
               role="radio"
               aria-checked={on}
+              disabled={disabled}
               onClick={() => onChange(opt.value)}
               className={cn(
                 "flex items-center justify-center rounded-lg border bg-card text-center text-sm font-medium transition-colors",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                size === "lg"
-                  ? "min-h-24 flex-col gap-2 px-4 py-4"
-                  : size === "sm"
-                    ? "min-h-16 flex-col gap-2 px-3 py-2.5 text-xs"
-                    : "min-h-10 gap-2 px-3 py-2 text-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed",
+                size === "lg" ? "min-h-24 flex-col gap-2 px-4 py-4" : "min-h-10 gap-2 px-3 py-2 text-xs",
                 on
                   ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary"
-                  : "text-muted-foreground hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground",
+                  : "text-muted-foreground enabled:hover:border-foreground/30 enabled:hover:bg-muted/40 enabled:hover:text-foreground",
               )}
             >
               <Icon className={cn(size === "lg" ? "h-5 w-5" : "h-4 w-4", on && "text-primary")} aria-hidden />
@@ -105,29 +106,4 @@ export function ChoiceTiles<T extends string>({
 export function FieldError({ message }: { message?: string }) {
   if (!message) return null;
   return <p className="text-xs font-medium text-destructive">{message}</p>;
-}
-
-export function StatusBadge({ status }: { status: MockRule["status"] }) {
-  const label = status === "approved" ? "Approved" : status === "draft" ? "Draft" : "Pending approval";
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap ring-1",
-        status === "approved"
-          ? "bg-emerald-500/10 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300"
-          : "bg-amber-500/10 text-amber-700 ring-amber-500/30 dark:text-amber-300",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
-/** Same styling as FamilyBadge in apply-rules/MappingChips. */
-export function FamilyBadge({ family }: { family: string }) {
-  return (
-    <span className="inline-block shrink-0 rounded border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-      {family}
-    </span>
-  );
 }

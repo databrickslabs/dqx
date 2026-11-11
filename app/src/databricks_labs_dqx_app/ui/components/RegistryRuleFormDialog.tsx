@@ -52,6 +52,7 @@ import {
   Info,
   Loader2,
   Save,
+  ScrollText,
   Send,
   Shield,
   SlidersHorizontal,
@@ -65,6 +66,8 @@ import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
 import { PermissionsTab, type OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 import { RuleResultsTab } from "@/components/registry-rules/RuleResultsTab";
+import { PoliciesTab } from "@/components/rule-policies/PoliciesTab";
+import { useObjectPermissions } from "@/hooks/use-object-permissions";
 import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { ruleResultsState } from "@/lib/results-display";
 import { PredicatePolaritySwitch } from "@/components/rules/PredicatePolaritySwitch";
@@ -1771,6 +1774,8 @@ export function RegistryRuleFormDialog({
   // alone would incorrectly lock the create form.
   const readOnly = viewingRule !== null;
   const isEditing = editingRule !== null;
+  // Policies need MODIFY on the rule itself (object grant), on top of the page's editability.
+  const rulePermissions = useObjectPermissions("registry_rule", sourceRule?.rule_id ?? "");
   // Editing an already-published (version > 0) rule is the edit-in-place
   // REVISION path: Save persists the revision while the rule stays
   // approved-at-vN ("Modified since vN"), and Submit sends it back through the
@@ -4803,6 +4808,24 @@ export function RegistryRuleFormDialog({
               <Wrench className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabImplementation")}
             </TabsTrigger>
+            {sourceRule ? (
+              <TabsTrigger value="policies" className="gap-1.5">
+                <ScrollText className="h-3.5 w-3.5" />
+                {t("rulePolicies.tab")}
+              </TabsTrigger>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} className="inline-flex h-full cursor-not-allowed" aria-disabled="true">
+                    <TabsTrigger value="policies" className="gap-1.5" disabled aria-disabled="true">
+                      <ScrollText className="h-3.5 w-3.5" />
+                      {t("rulePolicies.tab")}
+                    </TabsTrigger>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{t("rulePolicies.tabSaveFirst")}</TooltipContent>
+              </Tooltip>
+            )}
             {/* Item 35: Results now sits at the TRAILING position of the
                 left/observability group (after Implementation) with its own
                 divider — the same relative placement Monitored Tables and
@@ -4866,6 +4889,15 @@ export function RegistryRuleFormDialog({
         <TabsContent value="about" className="pt-4">{aboutTabContent}</TabsContent>
         <TabsContent value="permissions" className="pt-4">{permissionsTabContent}</TabsContent>
         <TabsContent value="implementation" className="pt-4">{implementationTabContent}</TabsContent>
+        <TabsContent value="policies" className="pt-4">
+          {sourceRule && (
+            <PoliciesTab
+              rule={sourceRule}
+              readOnly={readOnly || rulePermissions?.can_modify !== true}
+              labelDefinitions={labelDefinitions}
+            />
+          )}
+        </TabsContent>
         <TabsContent value="test" className="pt-4">{testTabContent}</TabsContent>
         <TabsContent value="history" className="pt-4">{historyTabContent}</TabsContent>
         <TabsContent value="results" className="pt-4">
