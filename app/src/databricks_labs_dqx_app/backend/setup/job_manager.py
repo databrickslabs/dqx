@@ -46,16 +46,13 @@ _PRINCIPAL_ATTRIBUTES = "id,displayName,applicationId"
 _USE_ROLES = frozenset({"roles/servicePrincipal.user", "roles/servicePrincipal.manager"})
 _INVALID_APPLICATION_ID = "A service principal Application ID is a value like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d."
 _RUN_AS_SUMMARIES = {
-    "task_runner_run_as_missing": (
-        "Studio's background job needs its own service principal, separate from the app's. "
-        "Follow the three steps below."
-    ),
+    "task_runner_run_as_missing": "The task-runner job needs its own service principal, separate from the app's.",
     "task_runner_run_as_matches_app": (
-        "Studio's background job is currently using the app's own service principal instead of a dedicated "
-        "task runner service principal. Follow the steps below to create one."
+        "The task-runner job is currently using the app's own service principal instead of a dedicated service "
+        "principal. Follow the steps below to create one."
     ),
     "task_runner_run_as_not_service_principal": (
-        "Studio's background job runs as a person, so it would stop working if they left. "
+        "The task-runner job runs as a person, so it would stop working if they left. "
         "It needs a service principal. Follow the three steps below."
     ),
 }

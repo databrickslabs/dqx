@@ -265,7 +265,10 @@ export function TaskRunnerSteps({
     <ol className="space-y-3">
       <SubStep number={1} title={t("setup.taskRunner.steps.pick")}>
         <div className="space-y-1">
-          <Label htmlFor="task-runner-principal">{t("setup.taskRunner.pick.label")}</Label>
+          {/* The sub-step title already says what to pick, so the label is for screen readers only. */}
+          <Label htmlFor="task-runner-principal" className="sr-only">
+            {t("setup.taskRunner.pick.label")}
+          </Label>
           {principalList.status === "unavailable" ? (
             <>
               <Input
@@ -311,7 +314,7 @@ export function TaskRunnerSteps({
           <summary className="cursor-pointer text-primary underline-offset-4 hover:underline">
             {t("setup.taskRunner.pick.createTitle")}
           </summary>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+          <ol className="mt-2 list-decimal space-y-2 pl-5 text-muted-foreground">
             <li>{t("setup.taskRunner.pick.createStep1")}</li>
             <li>{t("setup.taskRunner.pick.createStep2")}</li>
           </ol>
@@ -335,7 +338,7 @@ export function TaskRunnerSteps({
             name: picked?.displayName || t("setup.taskRunner.access.nameFallback"),
           })}
         </p>
-        <ol className="list-[lower-alpha] space-y-1 pl-5 text-sm text-muted-foreground">
+        <ol className="list-[lower-alpha] space-y-2 pl-5 text-sm text-muted-foreground">
           <li>{t("setup.taskRunner.access.self")}</li>
           <li>{t("setup.taskRunner.access.app", { appName })}</li>
         </ol>
