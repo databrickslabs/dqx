@@ -25,8 +25,11 @@ from typing import Any
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.registry_models import (
+    AUTO_ORIGINS,
     ORIGIN_KEY,
+    ORIGIN_POLICY,
     ORIGIN_TAG_AUTO,
+    POLICY_ID_KEY,
     AppliedRule,
     ColumnMappingGroup,
     RegistryRule,
@@ -316,17 +319,18 @@ class ApplyRulesService:
             created_at=now,
         )
 
-    def attach_auto_mapping(
+    def attach_policy_mapping(
         self,
         binding_id: str,
         rule_id: str,
         column_mapping: list[ColumnMappingGroup],
         user_email: str,
+        policy_id: str,
     ) -> AppliedRule | None:
-        """Idempotently attach a TAG-AUTO mapping (apply-on-tag reconcile).
+        """Idempotently attach a mapping produced by a rule policy.
 
         Add-only and origin-stamped: inserts a new row stamped
-        ``user_metadata[ORIGIN_KEY] = ORIGIN_TAG_AUTO`` when absent; when a row
+        ``user_metadata = {ORIGIN_KEY: ORIGIN_POLICY, POLICY_ID_KEY: policy_id}`` when absent; when a row
         already exists for the natural key ``(binding_id, rule_id, mapping_hash)``
         it is LEFT UNTOUCHED and returned as-is — whether it is a prior auto row
         (idempotent no-op, preserves its pin/severity) or a hand-applied row
@@ -334,15 +338,15 @@ class ApplyRulesService:
 
         Suppression skip: if the natural key carries a suppression tombstone in
         ``dq_tag_auto_suppressions`` — recorded by :meth:`remove_applied` when a
-        owner DELIBERATELY removed a tag-auto row — this returns ``None`` and
-        inserts nothing. The sweep must not resurrect an auto mapping the user
+        owner DELIBERATELY removed an auto-made row — this returns ``None`` and
+        inserts nothing. No evaluation may resurrect an auto mapping the user
         removed on purpose.
 
         This is deliberately NOT :meth:`apply_rule`: the reconcile loop must
         never mutate an existing row. ``apply_rule`` treats an identical
         ``mapping_hash`` as an UPDATE of the mutable fields (pin / severity /
         tags), which would silently destroy an owner's hand-applied pin or
-        severity override and re-stamp their row as ``tag_auto`` — breaking the
+        severity override and re-stamp their row as auto-made — breaking the
         spec's "hand-applied rows are never touched" invariant (§2/§3.3). It
         would also make reconcile non-idempotent for its own rows (a pin set at
         insert time would be reset to ``None`` on the next sweep).
@@ -354,6 +358,7 @@ class ApplyRulesService:
                 passes a single-element list); every group's keys must exactly
                 match the rule's slot names.
             user_email: Attributed as ``created_by`` on a newly inserted row.
+            policy_id: The rule policy that produced the mapping.
 
         Returns:
             The existing :class:`AppliedRule` (unchanged) when one already
@@ -367,10 +372,26 @@ class ApplyRulesService:
             MappingIncompleteError: a provided group's keys don't exactly match
                 the rule's slot names.
         """
+        return self._attach_origin_mapping(
+            binding_id,
+            rule_id,
+            column_mapping,
+            user_email,
+            {ORIGIN_KEY: ORIGIN_POLICY, POLICY_ID_KEY: policy_id},
+        )
+
+    def _attach_origin_mapping(
+        self,
+        binding_id: str,
+        rule_id: str,
+        column_mapping: list[ColumnMappingGroup],
+        user_email: str,
+        origin_metadata: dict[str, str],
+    ) -> AppliedRule | None:
         rule = self._validate_applicable_rule(binding_id, rule_id, column_mapping)
 
         mapping_hash = compute_mapping_hash(column_mapping)
-        if self._is_suppressed(binding_id, rule_id, mapping_hash):
+        if self.is_suppressed(binding_id, rule_id, mapping_hash):
             # An owner deliberately removed this auto mapping; the sweep must
             # not re-add it. See remove_applied's tombstone write.
             logger.info("Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id)
@@ -389,7 +410,7 @@ class ApplyRulesService:
             pinned_version=resolved_pinned_version,
             severity_override=None,
             column_mapping=column_mapping,
-            user_metadata={ORIGIN_KEY: ORIGIN_TAG_AUTO},
+            user_metadata=dict(origin_metadata),
             mapping_hash=mapping_hash,
             created_by=user_email,
             created_at=now,
@@ -399,6 +420,21 @@ class ApplyRulesService:
             "Auto-attached registry rule %s to binding %s (applied_rule_id=%s)", rule_id, binding_id, applied.id
         )
         return applied
+
+    def attach_auto_mapping(
+        self,
+        binding_id: str,
+        rule_id: str,
+        column_mapping: list[ColumnMappingGroup],
+        user_email: str,
+    ) -> AppliedRule | None:
+        """Legacy apply-on-tag attach: :meth:`attach_policy_mapping` semantics stamped ``origin=tag_auto``.
+
+        Kept only for the tag-auto callers until they are removed.
+        """
+        return self._attach_origin_mapping(
+            binding_id, rule_id, column_mapping, user_email, {ORIGIN_KEY: ORIGIN_TAG_AUTO}
+        )
 
     def _validate_applicable_rule(
         self, binding_id: str, rule_id: str, column_mapping: list[ColumnMappingGroup]
@@ -533,7 +569,7 @@ class ApplyRulesService:
     # Suppression tombstones (apply-on-tag: deliberate auto-removal record)
     # ------------------------------------------------------------------
 
-    def _is_suppressed(self, binding_id: str, rule_id: str, mapping_hash: str) -> bool:
+    def is_suppressed(self, binding_id: str, rule_id: str, mapping_hash: str) -> bool:
         """Return whether ``(binding_id, rule_id, mapping_hash)`` has a suppression tombstone.
 
         Best-effort existence check: a transient read failure logs a warning and
@@ -766,11 +802,11 @@ class ApplyRulesService:
     def remove_applied(self, applied_rule_id: str, user_email: str | None = None) -> None:
         """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
-        Suppression tombstone: when the removed row was TAG-AUTO applied
-        (``user_metadata[ORIGIN_KEY] == ORIGIN_TAG_AUTO``), this also records a
-        tombstone in ``dq_tag_auto_suppressions`` for its natural key so the
-        periodic reconcile sweep does NOT re-add it (:meth:`attach_auto_mapping`
-        skips suppressed keys). *user_email* is attributed as ``suppressed_by``
+        Suppression tombstone: when the removed row was auto-applied
+        (``user_metadata[ORIGIN_KEY]`` is ``policy`` or legacy ``tag_auto``),
+        this also records a tombstone in ``dq_tag_auto_suppressions`` for its
+        natural key so no later evaluation re-adds it
+        (:meth:`attach_policy_mapping` skips suppressed keys). *user_email* is attributed as ``suppressed_by``
         when known. A HAND-applied row (no auto origin) is removed WITHOUT a
         tombstone — for v1 only auto-origin removals are suppressed, so a
         hand-applied removal of a mapping a tag-match would also create is left
@@ -779,7 +815,7 @@ class ApplyRulesService:
         Args:
             applied_rule_id: The applied-rule row to remove.
             user_email: The acting remover, recorded as ``suppressed_by`` on a
-                tombstone when the removed row was tag-auto applied.
+                tombstone when the removed row was auto-applied.
 
         Raises:
             RuntimeError: *applied_rule_id* does not exist.
@@ -789,7 +825,7 @@ class ApplyRulesService:
             raise RuntimeError(f"Applied rule not found: {applied_rule_id}")
         self._sql.delete(self._quality_rules_table, where={"applied_rule_id": applied_rule_id})
         self._sql.delete(self._table, where={"id": applied_rule_id})
-        if existing.user_metadata.get(ORIGIN_KEY) == ORIGIN_TAG_AUTO and existing.mapping_hash:
+        if existing.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS and existing.mapping_hash:
             self._record_suppression(existing.binding_id, existing.rule_id, existing.mapping_hash, user_email)
         logger.info(
             "Removed applied rule %s (binding=%s, rule=%s)", applied_rule_id, existing.binding_id, existing.rule_id

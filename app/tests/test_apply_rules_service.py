@@ -300,11 +300,11 @@ class TestBuildAppliedRule:
 
 
 # ---------------------------------------------------------------------------
-# attach_auto_mapping (apply-on-tag reconcile — add-only, origin-stamped)
+# attach_policy_mapping (rule policies — add-only, origin + policy_id stamped)
 # ---------------------------------------------------------------------------
 
 
-class TestAttachAutoMapping:
+class TestAttachPolicyMapping:
     def test_absent_inserts_origin_stamped_auto_row(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()
         sql.query.side_effect = [
@@ -312,18 +312,19 @@ class TestAttachAutoMapping:
             [],  # not suppressed
             [],  # no existing row for the natural key
         ]
-        applied = svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
+        applied = svc.attach_policy_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x", "p1")
         assert applied is not None
-        assert applied.user_metadata == {"origin": "tag_auto"}
+        assert applied.user_metadata == {"origin": "policy", "policy_id": "p1"}
         assert applied.severity_override is None
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
-        # The origin marker is persisted in the INSERT payload.
-        assert "tag_auto" in insert_sql
+        # The origin marker and policy id are persisted in the INSERT payload.
+        assert '"origin": "policy"' in insert_sql
+        assert '"policy_id": "p1"' in insert_sql
 
     def test_hand_applied_row_is_never_touched(self, svc, sql, registry):
         # An owner hand-applied the SAME rule with the SAME mapping: pinned to
-        # v3, a severity override, and NO origin marker. attach_auto_mapping must
+        # v3, a severity override, and NO origin marker. attach_policy_mapping must
         # return it unchanged and issue NO write of any kind.
         registry.get_rule.return_value = _published_rule()
         mapping = [{"column": "customer_id"}]
@@ -340,7 +341,7 @@ class TestAttachAutoMapping:
             [],  # not suppressed
             [hand_row],  # existing row found by natural key
         ]
-        applied = svc.attach_auto_mapping("b1", "r1", mapping, "alice@x")
+        applied = svc.attach_policy_mapping("b1", "r1", mapping, "alice@x", "p1")
         assert applied is not None
         assert applied.id == "hand1"
         assert applied.pinned_version == 3
@@ -350,7 +351,7 @@ class TestAttachAutoMapping:
         sql.execute.assert_not_called()
 
     def test_idempotent_on_its_own_auto_row(self, svc, sql, registry):
-        # A prior auto row (origin=tag_auto) with a resolved pin: a second attach
+        # A prior policy row (origin=policy) with a resolved pin: a second attach
         # is a no-op that returns it unchanged, pin preserved.
         registry.get_rule.return_value = _published_rule()
         mapping = [{"column": "customer_id"}]
@@ -359,29 +360,29 @@ class TestAttachAutoMapping:
             column_mapping=mapping,
             mapping_hash=compute_mapping_hash(mapping),
             pinned_version="1",
-            user_metadata={"origin": "tag_auto"},
+            user_metadata={"origin": "policy", "policy_id": "p1"},
         )
         sql.query.side_effect = [
             [["b1"]],  # binding exists
             [],  # not suppressed
             [auto_row],  # existing auto row found by natural key
         ]
-        applied = svc.attach_auto_mapping("b1", "r1", mapping, "alice@x")
+        applied = svc.attach_policy_mapping("b1", "r1", mapping, "alice@x", "p1")
         assert applied is not None
         assert applied.id == "auto1"
         assert applied.pinned_version == 1
-        assert applied.user_metadata == {"origin": "tag_auto"}
+        assert applied.user_metadata == {"origin": "policy", "policy_id": "p1"}
         sql.execute.assert_not_called()
 
     def test_skips_suppressed(self, svc, sql, registry):
         # An owner previously removed this auto mapping (tombstone present).
-        # attach_auto_mapping must return None and insert nothing.
+        # attach_policy_mapping must return None and insert nothing.
         registry.get_rule.return_value = _published_rule()
         sql.query.side_effect = [
             [["b1"]],  # binding exists
             [[1]],  # suppression lookup returns a row -> suppressed
         ]
-        applied = svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
+        applied = svc.attach_policy_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x", "p1")
         assert applied is None
         sql.execute.assert_not_called()
 
@@ -393,16 +394,16 @@ class TestAttachAutoMapping:
             [],  # not suppressed
             [],  # no existing row for the natural key
         ]
-        applied = svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
+        applied = svc.attach_policy_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x", "p1")
         assert applied is not None
-        assert applied.user_metadata == {"origin": "tag_auto"}
+        assert applied.user_metadata == {"origin": "policy", "policy_id": "p1"}
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
 
     def test_rejects_missing_binding(self, svc, sql, registry):
         sql.query.return_value = []  # binding lookup empty
         with pytest.raises(RuntimeError, match="Monitored table not found"):
-            svc.attach_auto_mapping("missing", "r1", [{"column": "customer_id"}], "alice@x")
+            svc.attach_policy_mapping("missing", "r1", [{"column": "customer_id"}], "alice@x", "p1")
         registry.get_rule.assert_not_called()
 
     def test_rejects_unpublished_rule(self, svc, sql, registry):
@@ -411,8 +412,33 @@ class TestAttachAutoMapping:
         draft_rule.status = "draft"
         registry.get_rule.return_value = draft_rule
         with pytest.raises(RuleNotPublishedError):
-            svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
+            svc.attach_policy_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x", "p1")
         sql.execute.assert_not_called()
+
+
+class TestAttachAutoMappingLegacy:
+    def test_legacy_attach_stamps_tag_auto(self, svc, sql, registry):
+        # Legacy tag-auto callers keep their origin until they are removed.
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [[["b1"]], [], []]
+        applied = svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
+        assert applied is not None
+        assert applied.user_metadata == {"origin": "tag_auto"}
+
+
+class TestIsSuppressed:
+    def test_true_when_tombstone_exists(self, svc, sql):
+        sql.query.return_value = [[1]]
+        assert svc.is_suppressed("b1", "r1", "h1") is True
+        assert "dq_tag_auto_suppressions" in sql.query.call_args[0][0]
+
+    def test_false_without_tombstone(self, svc, sql):
+        sql.query.return_value = []
+        assert svc.is_suppressed("b1", "r1", "h1") is False
+
+    def test_false_when_lookup_fails(self, svc, sql):
+        sql.query.side_effect = RuntimeError("boom")
+        assert svc.is_suppressed("b1", "r1", "h1") is False
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +688,23 @@ class TestRemoveApplied:
         assert call.args[0] == "dqx_test.dqx_app_test.dq_tag_auto_suppressions"
         assert call.kwargs["key_cols"] == {"binding_id": "b1", "rule_id": "r1", "mapping_hash": "h1"}
         assert call.kwargs["value_cols"]["suppressed_by"] == "bob@x"
+
+    def test_policy_origin_records_suppression(self, svc, sql):
+        # Removing a policy-made row writes a tombstone so no policy re-attaches it.
+        sql.query.return_value = [
+            _applied_row(
+                id_="ar1",
+                binding_id="b1",
+                rule_id="r1",
+                mapping_hash="h1",
+                user_metadata={"origin": "policy", "policy_id": "p1"},
+            )
+        ]
+        svc.remove_applied("ar1", "bob@x")
+        sql.upsert.assert_called_once()
+        call = sql.upsert.call_args
+        assert call.args[0] == "dqx_test.dqx_app_test.dq_tag_auto_suppressions"
+        assert call.kwargs["key_cols"] == {"binding_id": "b1", "rule_id": "r1", "mapping_hash": "h1"}
 
     def test_hand_applied_no_suppression(self, svc, sql):
         # Removing a row with NO origin marker must NOT write a tombstone.

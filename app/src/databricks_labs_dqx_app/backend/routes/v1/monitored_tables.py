@@ -45,6 +45,7 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
     DraftRunGateService,
     DraftRunRequiredError,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_registration import REGISTER_TABLE_ROLES, register_table
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
@@ -335,7 +336,7 @@ def get_monitored_table(
     "",
     response_model=MonitoredTableSummaryOut,
     operation_id="registerMonitoredTable",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*REGISTER_TABLE_ROLES)],
 )
 def register_monitored_table(
     body: RegisterMonitoredTableIn,
@@ -353,11 +354,12 @@ def register_monitored_table(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        owner = body.owner or discovery.get_table_owner(body.table_fqn)
-        table = svc.register(
+        table = register_table(
             body.table_fqn,
             user_email,
-            owner=owner,
+            monitored_tables=svc,
+            discovery=discovery,
+            owner=body.owner,
             owner_display_name=body.owner_display_name,
         )
         # Apply-on-tag: after a successful register, auto-attach every published
