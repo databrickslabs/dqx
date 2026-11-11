@@ -164,6 +164,21 @@ class TestParseCheckRows:
         assert rows[0].failed == 0
         assert rows[0].total is None
 
+    def test_total_is_the_checks_evaluated_rows(self):
+        base: dict[str, str | None] = {
+            "input_location": FQN,
+            "run_id": "r1",
+            "run_date": "d",
+            "check_name": "c1",
+            "error_count": "1",
+            "warning_count": "0",
+            "input_row_count": "1000",
+        }
+        filtered, legacy = parse_check_rows([{**base, "evaluated_row_count": "100"}, base])
+        assert filtered.total == 100
+        # Rows without the column (legacy shape) fall back to the table rows.
+        assert legacy.total == 1000
+
     def test_null_attribution_yields_untagged_row(self):
         # Legacy run (NULL checks_json) or a synthesized/hand-authored
         # check without tags: attribution columns arrive NULL from the
@@ -270,8 +285,53 @@ class TestBreakdowns:
         assert by_dim["Completeness"].check_count == 1
         assert by_dim["Completeness"].total_tests == 100
         assert by_dim["Validity"].pass_rate == pytest.approx(0.7)
-        # dqlake: ORDER BY failed_tests DESC.
+        # Worst pass rate first.
         assert [g.label for g in out.by_dimension] == ["Validity", "Completeness"]
+
+    def test_groups_sort_by_pass_rate_not_failed_tests(self):
+        rows = [
+            # Many failures over many rows: 90% pass.
+            make_row("big", failed=100, total=1000, dimension="Completeness", rule_id="rule-1"),
+            # Few failures over few evaluated rows: 50% pass.
+            make_row("small", failed=10, total=20, dimension="Validity", rule_id="rule-2"),
+            # No scorable checks: sorts last.
+            make_row("empty", failed=0, total=None, dimension="Timeliness", rule_id="rule-3"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert [g.label for g in out.by_dimension] == ["Validity", "Completeness", "Timeliness"]
+
+    def test_equal_pass_rates_tie_break_on_failed_tests(self):
+        rows = [
+            make_row("few", failed=1, total=10, dimension="Validity", rule_id="rule-1"),
+            make_row("many", failed=10, total=100, dimension="Completeness", rule_id="rule-2"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert [g.label for g in out.by_dimension] == ["Completeness", "Validity"]
+
+    def test_row_and_table_tests_are_counted_separately(self):
+        rows = [
+            make_row("row", failed=10, total=100, dimension="Validity", rule_id="rule-1"),
+            make_row(
+                "table", failed=100, total=100, dimension="Validity", rule_id="rule-2", check_granularity="dataset"
+            ),
+            make_row("row_only", failed=0, total=100, dimension="Completeness", rule_id="rule-3"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        by_dim = {g.label: g for g in out.by_dimension}
+        assert by_dim["Validity"].failed_tests == 10
+        assert by_dim["Validity"].total_tests == 100
+        assert by_dim["Validity"].table_failed_tests == 1
+        assert by_dim["Validity"].table_total_tests == 1
+        assert by_dim["Completeness"].table_failed_tests == 0
+        assert by_dim["Completeness"].table_total_tests == 0
+
+    def test_passing_dataset_check_is_a_passed_table_test(self):
+        rows = [make_row("table", failed=0, total=100, rule_id="rule-1", check_granularity="dataset")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].table_failed_tests == 0
+        assert out.by_rule[0].table_total_tests == 1
+        assert out.by_rule[0].failed_tests == 0
+        assert out.by_rule[0].total_tests is None
 
     def test_dataset_check_contributes_one_binary_verdict(self):
         rows = [
@@ -286,10 +346,11 @@ class TestBreakdowns:
         ]
         out = compute_entity_results(rows, ResultFacets())
         assert out.by_dimension[0].pass_rate == pytest.approx((0.9 + 0.0) / 2)
-        # Raw counters remain useful row-test diagnostics but do not define
-        # the equal-check-weight score.
-        assert out.by_dimension[0].failed_tests == 110
-        assert out.by_dimension[0].total_tests == 200
+        # Row tests count only row checks; the dataset check is one table test.
+        assert out.by_dimension[0].failed_tests == 10
+        assert out.by_dimension[0].total_tests == 100
+        assert out.by_dimension[0].table_failed_tests == 1
+        assert out.by_dimension[0].table_total_tests == 1
 
     def test_multiple_checks_of_one_rule_get_one_rule_weight(self):
         rows = [
@@ -361,6 +422,11 @@ class TestBreakdowns:
         rows = [make_row("c1", failed=1, total=10, dimension="Validity", pass_threshold=None)]
         out = compute_entity_results(rows, ResultFacets())
         assert out.by_rule[0].pass_threshold is None
+
+    def test_check_score_clamped_at_zero_when_failures_exceed_evaluated_rows(self):
+        rows = [make_row("c1", failed=150, total=100, rule_id="rule-1")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.by_rule[0].pass_rate == pytest.approx(0.0)
 
     def test_pass_rate_none_when_no_tests(self):
         rows = [make_row("c1", failed=0, total=None)]
@@ -747,6 +813,17 @@ class TestTrends:
         assert completeness.rule_count == 1
         assert completeness.total_tests == 100
 
+    def test_grouped_trend_points_split_row_and_table_tests(self):
+        rows = [
+            make_row("row", failed=10, total=100, dimension="Validity", rule_id="rule-1"),
+            make_row("table", failed=5, total=100, dimension="Validity", rule_id="rule-2", check_granularity="dataset"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        point = out.trend_by_dimension[0]
+        assert point.total_tests == 100
+        assert point.table_failed_tests == 1
+        assert point.table_total_tests == 1
+
     def test_trend_counts(self):
         out = compute_entity_results(self._multi_run(), ResultFacets())
         assert out.trend_counts[0].rule_count == 2
@@ -761,6 +838,24 @@ class TestTrends:
         assert day1.failed_check_count == 1  # one check row with failures
         assert day1.failed_test_count == 10
         assert day1.failed_records is None  # no per-run row counts supplied
+
+    def test_trend_tests_count_a_dataset_check_as_one_test(self):
+        # Matches the score box: row tests plus one test per dataset check.
+        rows = [
+            make_row("row", failed=10, total=100, rule_id="rule-1"),
+            make_row("table", failed=100, total=100, rule_id="rule-2", check_granularity="dataset"),
+            make_row("passing_table", failed=0, total=100, rule_id="rule-3", check_granularity="dataset"),
+        ]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend_failures[0].failed_test_count == 11
+        assert out.trend_failures[0].failed_check_count == 2
+        assert out.trend_counts[0].test_count == 102
+
+    def test_trend_tests_for_a_table_checks_only_run(self):
+        rows = [make_row("table", failed=0, total=100, rule_id="rule-1", check_granularity="dataset")]
+        out = compute_entity_results(rows, ResultFacets())
+        assert out.trend_counts[0].test_count == 1
+        assert out.trend_failures[0].failed_test_count == 0
 
     def test_trend_failures_sums_failed_records_per_run(self):
         out = compute_entity_results(
@@ -1455,6 +1550,24 @@ class TestBreach:
         # 20 failed / 100 -> 80% pass < 90 threshold -> breach.
         rows = [make_row(check="c1", failed=20, total=100, error_count=20, criticality="error")]
         out = compute_entity_results(rows, ResultFacets(), resolve_threshold=self._resolver(90))
+        assert out.by_rule[0].breached is True
+        assert out.by_rule[0].breach_criticality == "error"
+
+    def test_filtered_check_breaches_against_its_evaluated_rows(self):
+        # 10 failed of 20 evaluated -> 50% pass < 90 -> breach. Against the
+        # table's 1000 input rows it would be 99% and not breach.
+        raw: dict[str, str | None] = {
+            "input_location": FQN,
+            "run_id": "r1",
+            "run_date": "2026-07-01 00:00:00",
+            "check_name": "c1",
+            "error_count": "10",
+            "warning_count": "0",
+            "input_row_count": "1000",
+            "evaluated_row_count": "20",
+            "criticality": "error",
+        }
+        out = compute_entity_results(parse_check_rows([raw]), ResultFacets(), resolve_threshold=self._resolver(90))
         assert out.by_rule[0].breached is True
         assert out.by_rule[0].breach_criticality == "error"
 
