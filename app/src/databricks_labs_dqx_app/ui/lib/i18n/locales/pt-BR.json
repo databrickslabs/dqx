@@ -3551,7 +3551,7 @@
       "unreadableCatalogs_other": "{{count}} catálogos não puderam ser lidos e foram ignorados.",
       "truncated": "A prévia parou em 5.000 tabelas candidatas. Restrinja o escopo para uma contagem completa.",
       "failed": "Não foi possível carregar a prévia.",
-      "incomplete": "Preencha os campos destacados para ver uma prévia.",
+      "incomplete": "Conclua o escopo e as condições para ver uma prévia.",
       "forRule": "Prévia para a regra"
     },
     "scopeSummary": {

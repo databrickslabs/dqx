@@ -10,6 +10,7 @@ import {
   draftFromPolicy,
   emptyPolicyDraft,
   normalizeAll,
+  previewBlockedRuleIds,
   pruneScope,
   scopeSummary,
   slotPlaceholder,
@@ -368,5 +369,24 @@ describe("scopeSummary", () => {
   test("accepts the stored API scope shape", () => {
     expect(scopeSummary({ catalogs: ["prod"], schemas: "*", tables: "*" }, t)).toBe("prod · all schemas");
     expect(scopeSummary(undefined, t)).toBe("all catalogs · all schemas");
+  });
+});
+
+describe("previewBlockedRuleIds", () => {
+  const ids = ["r-email", "r-range"];
+
+  test("name errors never block the preview", () => {
+    expect(previewBlockedRuleIds({ name: "rulePolicies.errors.nameRequired" }, ids)).toEqual(new Set());
+  });
+
+  test("a column error blocks only its own rule", () => {
+    expect(previewBlockedRuleIds({ "column:r-range:start": "rulePolicies.errors.tagsRequired" }, ids)).toEqual(
+      new Set(["r-range"]),
+    );
+  });
+
+  test("shared scope or table-condition errors block every rule", () => {
+    expect(previewBlockedRuleIds({ scope: "x" }, ids)).toEqual(new Set(ids));
+    expect(previewBlockedRuleIds({ tableCondition: "x" }, ids)).toEqual(new Set(ids));
   });
 });

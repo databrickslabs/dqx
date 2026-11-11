@@ -3551,7 +3551,7 @@
       "unreadableCatalogs_other": "{{count}} cataloghi non sono stati letti e sono stati saltati.",
       "truncated": "L'anteprima si è fermata a 5.000 tabelle candidate. Restringi l'ambito per un conteggio completo.",
       "failed": "Impossibile caricare l'anteprima.",
-      "incomplete": "Completa i campi evidenziati per vedere un'anteprima.",
+      "incomplete": "Completa l'ambito e le condizioni per vedere un'anteprima.",
       "forRule": "Anteprima per la regola"
     },
     "scopeSummary": {

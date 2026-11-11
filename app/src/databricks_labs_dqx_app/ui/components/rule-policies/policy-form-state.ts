@@ -351,6 +351,19 @@ export function validateDraft(
   return errors;
 }
 
+/**
+ * Rules whose preview can't run: shared field errors (scope, table condition) block every
+ * rule, a column error blocks only its own rule, and the name never blocks (preview uses a stand-in).
+ */
+export function previewBlockedRuleIds(errors: Record<string, string>, ruleIds: string[]): Set<string> {
+  if (errors.scope || errors.tableCondition) return new Set(ruleIds);
+  const blocked = new Set<string>();
+  for (const ruleId of ruleIds) {
+    if (Object.keys(errors).some((k) => k.startsWith(`column:${ruleId}:`))) blocked.add(ruleId);
+  }
+  return blocked;
+}
+
 // ── Preview helpers ──────────────────────────────────────────────────────────
 
 /** Distinct columns a previewed table would attach to (mapping values may be comma-joined). */

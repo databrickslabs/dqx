@@ -43,7 +43,9 @@ function ModifyGate({ allowed, children }: { allowed: boolean; children: ReactNo
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex cursor-not-allowed">{children}</span>
+        <span tabIndex={0} className="inline-flex cursor-not-allowed" aria-disabled="true">
+          {children}
+        </span>
       </TooltipTrigger>
       <TooltipContent>{t("rulePolicies.needModify")}</TooltipContent>
     </Tooltip>

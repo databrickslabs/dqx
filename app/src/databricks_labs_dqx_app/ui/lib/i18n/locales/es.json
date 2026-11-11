@@ -3551,7 +3551,7 @@
       "unreadableCatalogs_other": "{{count}} catálogos no se pudieron leer y se omitieron.",
       "truncated": "La vista previa se detuvo en 5.000 tablas candidatas. Restringe el alcance para obtener un recuento completo.",
       "failed": "No se pudo cargar la vista previa.",
-      "incomplete": "Completa los campos resaltados para ver una vista previa.",
+      "incomplete": "Completa el alcance y las condiciones para ver una vista previa.",
       "forRule": "Vista previa para la regla"
     },
     "scopeSummary": {

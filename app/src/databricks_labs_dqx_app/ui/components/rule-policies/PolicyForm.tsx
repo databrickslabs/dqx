@@ -41,6 +41,7 @@ import {
   defaultColumnConditions,
   defaultRow,
   normalizeAll,
+  previewBlockedRuleIds,
   pruneScope,
   toCreatePayload,
   toUpdatePayload,
@@ -307,7 +308,6 @@ export function PolicyForm({
 
   const allErrors = validateDraft(draft, takenNames, extras);
   const errors = submitted ? allErrors : {};
-  const previewBlocked = Object.keys(allErrors).some((k) => k !== "name");
 
   const setTableKind = (kind: TableConditionDraft["kind"]) => {
     if (kind === draft.tableCondition.kind) return;
@@ -382,6 +382,11 @@ export function PolicyForm({
     hasSlots: (g.rule.definition.slots ?? []).length > 0,
     draft: { ...draft, ruleId: g.rule.rule_id, columnConditions: g.value },
   }));
+
+  const previewBlocked = previewBlockedRuleIds(
+    allErrors,
+    previewTargets.map((p) => p.ruleId),
+  );
 
   const showErrors = submitted;
 
@@ -551,12 +556,13 @@ export function PolicyForm({
             />
           ))}
         </FormSection>
-        <Separator />
-
-        <FormSection title={t("rulePolicies.form.previewTitle")} description={t("rulePolicies.form.previewDescription")}>
-          <PolicyPreview targets={previewTargets} blocked={previewBlocked} />
-        </FormSection>
       </fieldset>
+      <Separator />
+
+      {/* Outside the disabled fieldset: inspecting matches needs only SELECT, not Modify. */}
+      <FormSection title={t("rulePolicies.form.previewTitle")} description={t("rulePolicies.form.previewDescription")}>
+        <PolicyPreview targets={previewTargets} blockedRuleIds={previewBlocked} />
+      </FormSection>
 
       <div className="sticky bottom-0 z-10 -mx-6 flex items-center gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         {readOnly ? (

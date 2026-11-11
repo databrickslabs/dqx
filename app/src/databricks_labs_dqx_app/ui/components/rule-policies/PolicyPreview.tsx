@@ -134,10 +134,16 @@ function MatchingTables({ tables }: { tables: RulePolicyPreviewTableOut[] }) {
 }
 
 /**
- * Debounced (400 ms) dry run of the selected rule's draft. *blocked* (field errors other
- * than the name) skips the request, since the backend would reject the payload.
+ * Debounced (400 ms) dry run of the selected rule's draft. Rules in *blockedRuleIds* (field
+ * errors the backend would reject) skip the request.
  */
-export function PolicyPreview({ targets, blocked }: { targets: PreviewTarget[]; blocked: boolean }) {
+export function PolicyPreview({
+  targets,
+  blockedRuleIds,
+}: {
+  targets: PreviewTarget[];
+  blockedRuleIds: Set<string>;
+}) {
   const { t } = useTranslation();
   const [selectedRuleId, setSelectedRuleId] = useState(targets[0]?.ruleId ?? "");
   const current = targets.find((x) => x.ruleId === selectedRuleId) ?? targets[0];
@@ -146,6 +152,7 @@ export function PolicyPreview({ targets, blocked }: { targets: PreviewTarget[]; 
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState(false);
   const { mutateAsync } = usePreviewRulePolicy();
+  const blocked = current ? blockedRuleIds.has(current.ruleId) : true;
   const seq = useRef(0);
 
   const payloadJson = useMemo(() => {

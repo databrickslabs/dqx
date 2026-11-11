@@ -3551,7 +3551,7 @@
       "unreadableCatalogs_other": "{{count}} catalogs couldn't be read and were skipped.",
       "truncated": "Preview stopped at 5,000 candidate tables. Narrow the scope for a complete count.",
       "failed": "Couldn't load the preview.",
-      "incomplete": "Complete the highlighted fields to see a preview.",
+      "incomplete": "Finish the scope and conditions to see a preview.",
       "forRule": "Preview for rule"
     },
     "scopeSummary": {

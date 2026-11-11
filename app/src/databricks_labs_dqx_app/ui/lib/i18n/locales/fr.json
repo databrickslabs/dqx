@@ -3551,7 +3551,7 @@
       "unreadableCatalogs_other": "{{count}} catalogues n'ont pas pu être lus et ont été ignorés.",
       "truncated": "L'aperçu s'est arrêté à 5 000 tables candidates. Restreignez le périmètre pour un décompte complet.",
       "failed": "Impossible de charger l'aperçu.",
-      "incomplete": "Complétez les champs signalés pour voir un aperçu.",
+      "incomplete": "Terminez le périmètre et les conditions pour voir un aperçu.",
       "forRule": "Aperçu pour la règle"
     },
     "scopeSummary": {
