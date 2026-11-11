@@ -64,6 +64,7 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializatio
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
+    TableUniverseRow,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
@@ -914,7 +915,7 @@ class DataProductService:
         self,
         product_ids: list[str],
         *,
-        summaries: list[MonitoredTableSummary] | None = None,
+        tables: list[TableUniverseRow] | None = None,
     ) -> set[str]:
         """Return the table FQNs of every member of the given products.
 
@@ -925,8 +926,8 @@ class DataProductService:
 
         Args:
             product_ids: Data-product ids whose members to collect.
-            summaries: Monitored-table summaries the caller already fetched
-                for this request; listed here when omitted.
+            tables: Slim monitored-table rows the caller already fetched for
+                this request; listed here when omitted.
 
         Returns:
             The union of member table FQNs.
@@ -934,8 +935,8 @@ class DataProductService:
         members_by_product = self._fetch_members_by_product(product_ids)
         if not members_by_product:
             return set()
-        listed = summaries if summaries is not None else self._monitored_tables.list_monitored_tables()
-        fqn_by_binding = {s.table.binding_id: s.table.table_fqn for s in listed}
+        listed = tables if tables is not None else self._monitored_tables.list_table_universe()
+        fqn_by_binding = {t.binding_id: t.table_fqn for t in listed}
         return {
             fqn_by_binding[row.binding_id]
             for rows in members_by_product.values()

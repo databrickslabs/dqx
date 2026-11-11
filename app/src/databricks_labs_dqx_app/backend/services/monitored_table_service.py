@@ -141,6 +141,27 @@ class MonitoredTableDetail:
     applied_rules: list[AppliedRuleSummary] = field(default_factory=list)
 
 
+# Row cap shared by the full listing and the slim table-universe read.
+_MONITORED_TABLE_LIST_LIMIT = 2000
+
+
+@dataclass
+class TableUniverseRow:
+    """The per-table fields the table-universe filters (owner, score, collection) read.
+
+    Built by :meth:`MonitoredTableService.list_table_universe`. The owner fields
+    are mutable so the cache-only display-name fill can populate
+    ``owner_display_name`` in place, exactly as it does for a full listing.
+    """
+
+    binding_id: str
+    table_fqn: str
+    owner: str | None
+    owner_display_name: str | None
+    created_by: str | None
+    score: float | None
+
+
 @dataclass
 class MonitoredTableSummary:
     """A monitored table binding plus lightweight list-view counters.
@@ -458,7 +479,7 @@ class MonitoredTableService:
         )
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY mt.updated_at DESC LIMIT 2000"
+        sql += f" ORDER BY mt.updated_at DESC LIMIT {_MONITORED_TABLE_LIST_LIMIT}"
         rows = self._sql.query(sql)
         # Base columns end with schedule_sample_size (index 17), so the
         # score-cache LEFT-JOIN columns follow at 18..21, and the
@@ -504,6 +525,39 @@ class MonitoredTableService:
             )
             for t, cached, snap_check_count in tables
         ]
+
+    def list_table_universe(self) -> list[TableUniverseRow]:
+        """Slim listing of every monitored table, for the table-universe filters.
+
+        One query: the binding columns the owner / score / collection predicates
+        read, LEFT-JOINed to the cached score on the same key as
+        :meth:`list_monitored_tables`. Unlike that listing it skips the applied-rule,
+        check, tag-facet and version lookups, which the filters never use. Owner
+        display names are filled cache-only, as in the full listing, so owner
+        matching is identical. Tables without a score-cache row get ``score=None``.
+        """
+        sql = (
+            "SELECT mt.binding_id, mt.table_fqn, mt.owner, mt.owner_display_name, mt.created_by, sc.score "
+            f"FROM {self._table} mt "
+            f"LEFT JOIN {self._score_cache_table} sc "
+            "ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
+            f"ORDER BY mt.updated_at DESC LIMIT {_MONITORED_TABLE_LIST_LIMIT}"
+        )
+        tables = [
+            TableUniverseRow(
+                binding_id=row[0],
+                table_fqn=row[1],
+                owner=row[2],
+                owner_display_name=row[3] or None,
+                created_by=row[4],
+                score=parse_cached_score(row[5], None, None, None).score,
+            )
+            for row in self._sql.query(sql)
+        ]
+        fill_owner_display_names_from_cache(
+            tables, self._sp_ws, self._sql, self._table, defer=self._defer_owner_resolution
+        )
+        return tables
 
     @staticmethod
     def _fqn_part(table_fqn: str, index: int) -> str | None:

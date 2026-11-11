@@ -460,24 +460,23 @@ def _table_universe_filter(
     """
     if not collection and not owner and score_bucket is None:
         return None
-    # One monitored-table listing per request, shared by the collection join
+    # One slim table-universe read per request, shared by the collection join
     # and the owner / score lookups (only fetched when one of them needs it).
-    listed = monitored_tables.list_monitored_tables() if owner or score_bucket is not None else None
-    allowed = data_products.member_fqns(collection, summaries=listed) if collection else None
-    summaries = {s.table.table_fqn: s for s in listed} if listed is not None else {}
+    listed = monitored_tables.list_table_universe() if owner or score_bucket is not None else None
+    allowed = data_products.member_fqns(collection, tables=listed) if collection else None
+    rows = {t.table_fqn: t for t in listed} if listed is not None else {}
     owners = set(owner or ())
 
     def predicate(fqn: str) -> bool:
         if allowed is not None and fqn not in allowed:
             return False
-        summary = summaries.get(fqn)
+        row = rows.get(fqn)
         if owners:
-            if summary is None:
+            if row is None:
                 return False
-            table = summary.table
-            if (table.owner_display_name or table.owner or table.created_by or "") not in owners:
+            if (row.owner_display_name or row.owner or row.created_by or "") not in owners:
                 return False
-        if score_bucket is not None and not _matches_score_bucket(summary.score if summary else None, score_bucket):
+        if score_bucket is not None and not _matches_score_bucket(row.score if row else None, score_bucket):
             return False
         return True
 

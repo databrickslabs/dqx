@@ -53,7 +53,7 @@ from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
-    MonitoredTableSummary,
+    TableUniverseRow,
 )
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
@@ -883,15 +883,13 @@ class TestGlobalUniverseFilters:
     ]
 
     @staticmethod
-    def summary(fqn, score=None, owner=None, display=None, created_by=None):
-        return MonitoredTableSummary(
-            table=MonitoredTable(
-                binding_id=f"b-{fqn}",
-                table_fqn=fqn,
-                owner=owner,
-                owner_display_name=display,
-                created_by=created_by,
-            ),
+    def universe_row(fqn, score=None, owner=None, display=None, created_by=None):
+        return TableUniverseRow(
+            binding_id=f"b-{fqn}",
+            table_fqn=fqn,
+            owner=owner,
+            owner_display_name=display,
+            created_by=created_by,
             score=score,
         )
 
@@ -912,9 +910,9 @@ class TestGlobalUniverseFilters:
         sql_dispatch(sql_mock, check_rows=self.ROWS)
         data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
         assert self.labels(client, collection=["p1", "p2"]) == ["main.sales.items", "main.sales.orders"]
-        data_products_mock.member_fqns.assert_called_once_with(["p1", "p2"], summaries=None)
+        data_products_mock.member_fqns.assert_called_once_with(["p1", "p2"], tables=None)
         data_products_mock.get.assert_not_called()
-        monitored_tables_mock.list_monitored_tables.assert_not_called()
+        monitored_tables_mock.list_table_universe.assert_not_called()
 
     def test_unknown_collection_matches_nothing(self, client, sql_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
@@ -928,28 +926,28 @@ class TestGlobalUniverseFilters:
 
     def test_owner_uses_display_name_then_owner_then_created_by(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
-        monitored_tables_mock.list_monitored_tables.return_value = [
-            self.summary("main.sales.orders", display="Ada", owner="ada@x.com"),
-            self.summary("main.sales.items", owner="ada@x.com"),
-            self.summary("dev.sales.users", created_by="ada@x.com"),
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", display="Ada", owner="ada@x.com"),
+            self.universe_row("main.sales.items", owner="ada@x.com"),
+            self.universe_row("dev.sales.users", created_by="ada@x.com"),
         ]
         assert self.labels(client, owner=["Ada"]) == ["main.sales.orders"]
         assert self.labels(client, owner=["ada@x.com"]) == ["dev.sales.users", "main.sales.items"]
 
     def test_score_bucket_none_keeps_only_uncached_tables(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
-        monitored_tables_mock.list_monitored_tables.return_value = [
-            self.summary("main.sales.orders", score=0.9),
-            self.summary("main.sales.items"),
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", score=0.9),
+            self.universe_row("main.sales.items"),
         ]
         assert self.labels(client, score_bucket="none") == ["dev.sales.users", "main.sales.items"]
 
     def test_score_bucket_boundaries(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
-        monitored_tables_mock.list_monitored_tables.return_value = [
-            self.summary("main.sales.orders", score=0.75),
-            self.summary("main.sales.items", score=0.7499),
-            self.summary("dev.sales.users", score=0.0),
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", score=0.75),
+            self.universe_row("main.sales.items", score=0.7499),
+            self.universe_row("dev.sales.users", score=0.0),
         ]
         assert self.labels(client, score_bucket="75-100") == ["main.sales.orders"]
         assert self.labels(client, score_bucket="50-75") == ["main.sales.items"]
@@ -958,22 +956,22 @@ class TestGlobalUniverseFilters:
     def test_params_intersect(self, client, sql_mock, data_products_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
         data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
-        summaries = [
-            self.summary("main.sales.orders", score=0.9, display="Ada"),
-            self.summary("main.sales.items", score=0.9, display="Bob"),
+        rows = [
+            self.universe_row("main.sales.orders", score=0.9, display="Ada"),
+            self.universe_row("main.sales.items", score=0.9, display="Bob"),
         ]
-        monitored_tables_mock.list_monitored_tables.return_value = summaries
+        monitored_tables_mock.list_table_universe.return_value = rows
         assert self.labels(client, collection=["p1"], owner=["Ada"], score_bucket="75-100") == ["main.sales.orders"]
         # The listing is fetched once per request and shared with the member join.
-        assert monitored_tables_mock.list_monitored_tables.call_count == 1
-        data_products_mock.member_fqns.assert_called_once_with(["p1"], summaries=summaries)
+        assert monitored_tables_mock.list_table_universe.call_count == 1
+        data_products_mock.member_fqns.assert_called_once_with(["p1"], tables=rows)
         assert self.labels(client, collection=["p1"], owner=["Bob"], score_bucket="0-25") == []
         data_products_mock.get.assert_not_called()
 
     def test_no_params_does_not_load_monitored_tables(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(sql_mock, check_rows=self.ROWS)
         assert len(self.labels(client)) == 3
-        monitored_tables_mock.list_monitored_tables.assert_not_called()
+        monitored_tables_mock.list_table_universe.assert_not_called()
 
     def test_invalid_score_bucket_is_rejected(self, client, sql_mock):
         sql_dispatch(sql_mock)
