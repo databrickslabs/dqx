@@ -13,6 +13,7 @@ import {
   copyForRule,
   defaultColumnBuilder,
   defaultColumnCondition,
+  defaultColumnConditions,
   defaultRow,
   normalizeAll,
   pruneScope,
@@ -28,7 +29,7 @@ import {
 } from "./model";
 import { ChoiceTiles, FamilyBadge, FieldError, FormSection, StatusBadge } from "./primitives";
 import { ConditionBuilder } from "./condition-builder";
-import { TagMultiSelect, TagSingleSelect } from "./tag-picker";
+import { TagMultiSelect } from "./tag-picker";
 import { RulePickerDialog } from "./rule-picker-dialog";
 import { PreviewSection } from "./preview-section";
 
@@ -84,7 +85,7 @@ function ScopePicker({ value, onChange }: { value: PolicyScope; onChange: (next:
   );
 }
 
-// ── Column condition editor for one slot ────────────────────────────────────
+// ── Column condition editor for one slot (a section inside the rule's card) ──
 function SlotConditionEditor({
   rule,
   slot,
@@ -98,14 +99,14 @@ function SlotConditionEditor({
 }) {
   const label = `{{${slot.name}}}`;
   return (
-    <div className="space-y-3 rounded-lg border p-4">
+    <div className="space-y-3 p-4">
       <div className="flex items-center gap-2">
         <span className="font-mono text-sm font-medium">{label}</span>
         <FamilyBadge family={slot.family} />
       </div>
       <ChoiceTiles
-        size="sm"
-        ariaLabel={`Column condition for ${label}`}
+        size="xs"
+        ariaLabel={`Column condition for ${rule.name} ${label}`}
         value={value.kind}
         onChange={(kind) => {
           if (kind === value.kind) return;
@@ -130,11 +131,8 @@ function SlotConditionEditor({
   );
 }
 
-// ── Column conditions for one rule: one block per slot, plus pairing for multi-slot rules ──
-interface ColumnSettings {
-  column_conditions: Policy["column_conditions"];
-  pair_by_tag: Policy["pair_by_tag"];
-}
+// ── Column conditions for one rule: a single card, header = rule name, one section per slot ──
+type ColumnConditions = Policy["column_conditions"];
 
 function RuleColumnConditions({
   rule,
@@ -142,45 +140,36 @@ function RuleColumnConditions({
   onChange,
 }: {
   rule: LfRule;
-  value: ColumnSettings;
-  onChange: (next: ColumnSettings) => void;
+  value: ColumnConditions;
+  onChange: (next: ColumnConditions) => void;
 }) {
-  if (rule.slots.length === 0) return <p className="text-sm text-muted-foreground">Runs on whole tables.</p>;
-  const slotCond = (slot: MockSlot): ColumnCondition => value.column_conditions[slot.name] ?? defaultColumnCondition(rule);
+  const slotCond = (slot: MockSlot): ColumnCondition => value[slot.name] ?? defaultColumnCondition(rule);
   return (
-    <>
-      {rule.slots.map((slot) => (
-        <SlotConditionEditor
-          key={slot.name}
-          rule={rule}
-          slot={slot}
-          value={slotCond(slot)}
-          onChange={(c) => onChange({ ...value, column_conditions: { ...value.column_conditions, [slot.name]: c } })}
-        />
-      ))}
-      {rule.slots.length >= 2 && (
-        <div className="space-y-2 rounded-lg border bg-muted/20 p-4">
-          <div className="text-sm font-medium">Pair columns by tag</div>
-          <p className="text-xs text-muted-foreground">Pairs columns that share this tag's value. Defaults to pairing by name.</p>
-          <TagSingleSelect
-            className="max-w-xs"
-            value={value.pair_by_tag ?? ""}
-            onChange={(v) => onChange({ ...value, pair_by_tag: v || null })}
-            mode="key"
-            placeholder="Pair by name (default)"
-            clearable
-          />
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="border-b bg-muted/30 px-4 py-2.5 text-sm font-semibold">{rule.name}</div>
+      {rule.slots.length === 0 ? (
+        <p className="p-4 text-sm text-muted-foreground">Runs on whole tables.</p>
+      ) : (
+        <div className="divide-y">
+          {rule.slots.map((slot) => (
+            <SlotConditionEditor
+              key={slot.name}
+              rule={rule}
+              slot={slot}
+              value={slotCond(slot)}
+              onChange={(c) => onChange({ ...value, [slot.name]: c })}
+            />
+          ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-function RuleChip({ rule, current, onRemove }: { rule: LfRule; current?: boolean; onRemove?: () => void }) {
+function RuleChip({ rule, onRemove }: { rule: LfRule; onRemove?: () => void }) {
   return (
     <span className="inline-flex items-center gap-2 rounded-md border bg-card py-1 pr-1 pl-2.5 text-sm">
       <span className="font-medium">{rule.name}</span>
-      {current && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">this rule</span>}
       {rule.status !== "approved" && <StatusBadge status={rule.status} />}
       {onRemove ? (
         <button
@@ -218,7 +207,7 @@ export function PolicyForm({
 }) {
   const [draft, setDraft] = useState<Policy>(initial);
   /** Other rules, each with its own column settings; shared fields come from *draft* at save time. */
-  const [extras, setExtras] = useState<({ rule_id: string } & ColumnSettings)[]>([]);
+  const [extras, setExtras] = useState<{ rule_id: string; column_conditions: ColumnConditions }[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -229,19 +218,16 @@ export function PolicyForm({
   const copies: Policy[] = extras.map((e) => ({
     ...copyForRule(draft, e.rule_id),
     column_conditions: e.column_conditions,
-    pair_by_tag: e.pair_by_tag,
   }));
 
   const addRules = (ids: string[]) =>
     setExtras((prev) => [
       ...prev,
-      ...ids.map((rid) => {
-        const c = copyForRule(draft, rid);
-        return { rule_id: rid, column_conditions: c.column_conditions, pair_by_tag: c.pair_by_tag };
-      }),
+      // Prefilled from each added rule's own tags/slots, not copied from the current rule.
+      ...ids.map((rid) => ({ rule_id: rid, column_conditions: defaultColumnConditions(ruleById(rid)) })),
     ]);
-  const setExtra = (rid: string, next: ColumnSettings) =>
-    setExtras((prev) => prev.map((e) => (e.rule_id === rid ? { rule_id: rid, ...next } : e)));
+  const setExtra = (rid: string, next: ColumnConditions) =>
+    setExtras((prev) => prev.map((e) => (e.rule_id === rid ? { rule_id: rid, column_conditions: next } : e)));
 
   const setTableKind = (kind: TableCondition["kind"]) => {
     if (kind === draft.table_condition.kind) return;
@@ -271,13 +257,13 @@ export function PolicyForm({
       : `Create ${n + 1} policies`;
 
   const ruleGroups = [
-    { rule, value: { column_conditions: draft.column_conditions, pair_by_tag: draft.pair_by_tag }, onChange: (v: ColumnSettings) => setDraft((d) => ({ ...d, ...v })) },
+    { rule, value: draft.column_conditions, onChange: (v: ColumnConditions) => set("column_conditions", v) },
     ...extras.map((e) => ({
       rule: ruleById(e.rule_id),
-      value: { column_conditions: e.column_conditions, pair_by_tag: e.pair_by_tag },
-      onChange: (v: ColumnSettings) => setExtra(e.rule_id, v),
+      value: e.column_conditions,
+      onChange: (v: ColumnConditions) => setExtra(e.rule_id, v),
     })),
-  ].filter((g): g is { rule: LfRule; value: ColumnSettings; onChange: (v: ColumnSettings) => void } => !!g.rule);
+  ].filter((g): g is { rule: LfRule; value: ColumnConditions; onChange: (v: ColumnConditions) => void } => !!g.rule);
 
   return (
     <div className="pb-4">
@@ -336,7 +322,7 @@ export function PolicyForm({
         {/* 2. Rules */}
         <FormSection title="Rules" description="Each rule gets its own copy of this policy.">
           <div className="flex flex-wrap items-center gap-2">
-            {rule && <RuleChip rule={rule} current />}
+            {rule && <RuleChip rule={rule} />}
             {extras.map((e) => {
               const r = ruleById(e.rule_id);
               return r ? (
@@ -407,18 +393,11 @@ export function PolicyForm({
         </FormSection>
         <Separator />
 
-        {/* 5. Column conditions (one group per rule when there are several) */}
+        {/* 5. Column conditions (one card per rule) */}
         <FormSection title="Column conditions" description="Which columns fill each of the rule's inputs.">
-          {ruleGroups.length === 1 ? (
-            <RuleColumnConditions rule={ruleGroups[0].rule} value={ruleGroups[0].value} onChange={ruleGroups[0].onChange} />
-          ) : (
-            ruleGroups.map((g) => (
-              <div key={g.rule.rule_id} className="space-y-3">
-                <div className="text-sm font-semibold">{g.rule.name}</div>
-                <RuleColumnConditions rule={g.rule} value={g.value} onChange={g.onChange} />
-              </div>
-            ))
-          )}
+          {ruleGroups.map((g) => (
+            <RuleColumnConditions key={g.rule.rule_id} rule={g.rule} value={g.value} onChange={g.onChange} />
+          ))}
         </FormSection>
         <Separator />
 

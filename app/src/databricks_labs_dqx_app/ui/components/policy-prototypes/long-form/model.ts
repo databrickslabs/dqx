@@ -168,7 +168,6 @@ export interface Policy {
   table_condition: TableCondition;
   /** slot name -> condition */
   column_conditions: Record<string, ColumnCondition>;
-  pair_by_tag: string | null;
 }
 
 export function emptyPolicy(ruleId: string): Policy {
@@ -180,26 +179,25 @@ export function emptyPolicy(ruleId: string): Policy {
     scope: allScope(),
     register_tables: false,
     table_condition: { kind: "none" },
-    column_conditions: Object.fromEntries((rule?.slots ?? []).map((s) => [s.name, defaultColumnCondition(rule!)])),
-    pair_by_tag: null,
+    column_conditions: defaultColumnConditions(rule),
   };
 }
 
-/** Independent copy of a policy for another rule. Slot conditions carry over by position; extra slots get defaults. */
+/** Column-condition prefill for a rule, same as a new policy for it: selected-tags with the rule's own tags per slot. */
+export function defaultColumnConditions(rule: LfRule | undefined): Record<string, ColumnCondition> {
+  return Object.fromEntries((rule?.slots ?? []).map((s) => [s.name, defaultColumnCondition(rule!)]));
+}
+
+/**
+ * Independent copy of a policy for another rule. Shared fields (name, description, scope, table condition,
+ * register flag) carry over; column conditions are prefilled from the target rule's own tags and slots.
+ */
 export function copyForRule(source: Policy, ruleId: string): Policy {
-  const target = ruleById(ruleId);
-  const sourceSlots = ruleById(source.rule_id)?.slots ?? [];
-  const column_conditions: Record<string, ColumnCondition> = {};
-  (target?.slots ?? []).forEach((slot, i) => {
-    const from = sourceSlots[i] ? source.column_conditions[sourceSlots[i].name] : undefined;
-    column_conditions[slot.name] = from ? structuredClone(from) : defaultColumnCondition(target!);
-  });
   return {
     ...structuredClone(source),
     policy_id: undefined,
     rule_id: ruleId,
-    column_conditions,
-    pair_by_tag: (target?.slots.length ?? 0) >= 2 ? source.pair_by_tag : null,
+    column_conditions: defaultColumnConditions(ruleById(ruleId)),
   };
 }
 
@@ -213,7 +211,6 @@ export const MOCK_POLICIES: Policy[] = [
     register_tables: false,
     table_condition: { kind: "none" },
     column_conditions: { email: { kind: "tags", tags: ["class=email"] } },
-    pair_by_tag: null,
   },
   {
     policy_id: "p-2",
@@ -234,7 +231,6 @@ export const MOCK_POLICIES: Policy[] = [
         },
       },
     },
-    pair_by_tag: null,
   },
   {
     policy_id: "p-3",
@@ -245,7 +241,6 @@ export const MOCK_POLICIES: Policy[] = [
     register_tables: false,
     table_condition: { kind: "none" },
     column_conditions: { column: { kind: "tags", tags: ["class=email"] } },
-    pair_by_tag: null,
   },
   {
     policy_id: "p-4",
@@ -267,7 +262,6 @@ export const MOCK_POLICIES: Policy[] = [
       start: { kind: "builder", expr: { rows: [{ combinator: null, object: "column", predicate: "name_like", value: "%start%" }] } },
       end: { kind: "builder", expr: { rows: [{ combinator: null, object: "column", predicate: "name_like", value: "%end%" }] } },
     },
-    pair_by_tag: "pair",
   },
 ];
 

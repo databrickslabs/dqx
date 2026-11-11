@@ -178,7 +178,7 @@ export function TagMultiSelect({
   );
 }
 
-/** Single-select lookalike of a SelectTrigger, used inside condition rows and for "Pair columns by tag". */
+/** Single-select lookalike of a SelectTrigger, used inside condition rows. */
 export function TagSingleSelect({
   value,
   onChange,

@@ -51,7 +51,8 @@ export function ChoiceTiles<T extends string>({
   value: T;
   onChange: (next: T) => void;
   options: TileOption<T>[];
-  size?: "lg" | "sm";
+  /** *xs* = compact single-line tiles (icon beside the label), for use inside cards. */
+  size?: "lg" | "sm" | "xs";
   ariaLabel: string;
 }) {
   const selected = options.find((o) => o.value === value);
@@ -60,7 +61,7 @@ export function ChoiceTiles<T extends string>({
       <div
         role="radiogroup"
         aria-label={ariaLabel}
-        className={cn("grid gap-3", options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}
+        className={cn("grid", size === "xs" ? "gap-2" : "gap-3", options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}
       >
         {options.map((opt) => {
           const on = opt.value === value;
@@ -73,9 +74,13 @@ export function ChoiceTiles<T extends string>({
               aria-checked={on}
               onClick={() => onChange(opt.value)}
               className={cn(
-                "flex flex-col items-center justify-center gap-2 rounded-lg border bg-card text-center text-sm font-medium transition-colors",
+                "flex items-center justify-center rounded-lg border bg-card text-center text-sm font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                size === "lg" ? "min-h-24 px-4 py-4" : "min-h-16 px-3 py-2.5 text-xs",
+                size === "lg"
+                  ? "min-h-24 flex-col gap-2 px-4 py-4"
+                  : size === "sm"
+                    ? "min-h-16 flex-col gap-2 px-3 py-2.5 text-xs"
+                    : "min-h-10 gap-2 px-3 py-2 text-xs",
                 on
                   ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary"
                   : "text-muted-foreground hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground",
