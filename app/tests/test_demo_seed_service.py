@@ -1919,6 +1919,24 @@ def test_reseed_updates_existing_demo_views_instead_of_duplicating():
     assert fake.update_view.call_count == 4
 
 
+def test_reseed_matches_existing_demo_views_case_insensitively():
+    # View names are unique on lower(name), so a re-seed must update a view whose
+    # name differs only in case instead of trying to insert a duplicate.
+    fake, store = _saved_views_fake()
+    svc, _deps = _views_svc(fake, catalog="acme", schema="acme_demo")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    ids = sorted(v.id for v in store)
+    for index, view in enumerate(store):
+        store[index] = view.model_copy(update={"name": view.name.upper()})
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert result.saved_views == 4
+    assert sorted(v.id for v in store) == ids
+    assert fake.create_view.call_count == 4
+    assert fake.update_view.call_count == 4
+
+
 def test_another_seeding_admin_gets_their_own_demo_views_and_leaves_others_untouched():
     fake, store = _saved_views_fake()
     svc, _deps = _views_svc(fake, catalog="acme", schema="acme_demo")

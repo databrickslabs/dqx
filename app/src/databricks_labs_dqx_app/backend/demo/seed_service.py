@@ -931,7 +931,9 @@ class DemoSeedService:
                     (
                         view
                         for view in listing.views
-                        if view.scope == SavedViewScope.USER and not view.is_builtin and view.name == spec.name
+                        if view.scope == SavedViewScope.USER
+                        and not view.is_builtin
+                        and view.name.casefold() == spec.name.casefold()
                     ),
                     None,
                 )
