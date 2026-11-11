@@ -1,7 +1,7 @@
 // THROWAWAY: standalone dev-only entry for the rule-policies UI prototypes.
 // Open http://localhost:9001/policy-prototypes.html while `yarn vite` runs.
 // No backend, no auth, mock data only (see ./mock.ts). Not shipped.
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "@/styles/globals.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -27,10 +27,14 @@ function Shell() {
   const [variant, setVariant] = useState<string>(initial);
   const [ruleId, setRuleId] = useState("r-email");
   const [dark, setDark] = useState(true);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.classList.toggle("light", !dark);
+  }, [dark]);
   const rule = MOCK_RULES.find((r) => r.rule_id === ruleId)!;
   const Active = VARIANTS.find((v) => v.key === variant)?.Comp ?? LongForm;
   return (
-    <div className={cn("min-h-screen bg-background text-foreground", dark && "dark")}>
+    <div className="min-h-screen bg-background text-foreground">
       <div className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b bg-amber-500/15 px-4 py-2 text-xs">
         <span className="font-semibold">Prototype switcher (throwaway)</span>
         {VARIANTS.map((v) => (
