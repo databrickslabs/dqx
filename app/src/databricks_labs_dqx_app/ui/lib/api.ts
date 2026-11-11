@@ -4116,8 +4116,6 @@ export type RulesRegistrySettingsInAutoUpgradeWithoutApproval = boolean | null;
 
 export type RulesRegistrySettingsInDefaultAutoUpgrade = boolean | null;
 
-export type RulesRegistrySettingsInTagAutoApply = boolean | null;
-
 export type RulesRegistrySettingsInDefaultPassThreshold = number | null;
 
 export type RulesRegistrySettingsInPassThresholdEnabled = boolean | null;
@@ -4128,7 +4126,6 @@ export type RulesRegistrySettingsInPassThresholdEnabled = boolean | null;
 export interface RulesRegistrySettingsIn {
   auto_upgrade_without_approval?: RulesRegistrySettingsInAutoUpgradeWithoutApproval;
   default_auto_upgrade?: RulesRegistrySettingsInDefaultAutoUpgrade;
-  tag_auto_apply?: RulesRegistrySettingsInTagAutoApply;
   default_pass_threshold?: RulesRegistrySettingsInDefaultPassThreshold;
   pass_threshold_enabled?: RulesRegistrySettingsInPassThresholdEnabled;
 }
@@ -4141,8 +4138,6 @@ export interface RulesRegistrySettingsOut {
   auto_upgrade_without_approval: boolean;
   /** Attach-time default pin for new applications/members: follow latest (True, default) vs. pin to the current version (False). */
   default_auto_upgrade: boolean;
-  /** Tag-mapping assign behaviour: eagerly auto-assign tag-mapped rules across monitored tables (True) vs. only surface them as suggestions (False, default). */
-  tag_auto_apply: boolean;
   /** Org-wide default minimum pass rate (%) below which a check warns. Overridable per rule and per column. Clamped to [0, 100]. */
   default_pass_threshold: number;
   /** Master switch for the pass-threshold feature. When False, all threshold UI is hidden and breach evaluation is disabled server-side. Default True. */
@@ -5251,11 +5246,11 @@ export type TagRuleSuggestionOutSeverity = string | null;
 export type TagRuleSuggestionOutColumnMapping = {[key: string]: string};
 
 /**
- * One tag-matched, accept-to-attach rule suggestion for a monitored table (apply-on-tag).
+ * One accept-to-attach rule suggestion for a monitored table.
 
-The OFF-path counterpart to auto-apply: surfaced on a table's Apply Rules
-screen when ``tag_auto_apply`` is off. ``column_mapping`` is the single
-representative slot->column group; ``explanation`` names the matched tags.
+Produced by a tag match or by a rule policy with several possible columns;
+surfaced on a table's Apply Rules screen. ``column_mapping`` is one
+slot->column group; ``explanation`` names the matched tags or the policy.
  */
 export interface TagRuleSuggestionOut {
   rule_id: string;
@@ -18655,11 +18650,9 @@ export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeo
 /**
  * Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
-When tag-auto-apply is on, first runs a selective apply-on-tag rescan for
-this table (OBO, so it sees the caller's tags) so any newly-matching rules
-are attached and appear in the response immediately — rather than waiting for
-the periodic background sweep. Best-effort: a rescan failure never blocks the
-read, and it is a no-op when the toggle is off.
+First evaluates every rule policy reaching this table as the caller (so it
+only attaches where they may apply rules), so newly-matching rules appear in
+the response immediately. Best-effort: a policy failure never blocks the read.
  * @summary Get Monitored Table
  */
 export const getMonitoredTable = (
@@ -20650,13 +20643,13 @@ export const useMatchRulesForTable = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
- * List tag-matched published rules (with a representative column mapping) for a monitored table.
+ * List accept-to-attach rule suggestions for a monitored table.
 
-The OFF-path counterpart to auto-apply: when ``tag_auto_apply`` is off,
-tag-matched rules surface here as accept-to-attach suggestions instead of
-auto-attaching. Best-effort — any read/service failure degrades to an empty
-list with HTTP 200; this route never raises for a missing match or an
-unreadable table (mirroring the suggest-rules contract).
+Combines tag-matched published rules (always on) with rule-policy matches
+that have several possible columns (evaluated as the caller, nothing
+attached). A policy suggestion repeating a tag suggestion's rule and mapping
+is dropped. Best-effort — any read/service failure degrades that source to
+an empty list with HTTP 200; this route never raises.
  * @summary List Tag Suggestions
  */
 export const listTagSuggestions = (

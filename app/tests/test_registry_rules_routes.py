@@ -7,7 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -36,6 +36,9 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     undeprecate_registry_rule,
     update_registry_rule,
 )
+from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
+
+_ACTING_USER = ActingUser(email="alice@x", role=UserRole.RULE_APPROVER, principal_ids=frozenset({"alice@x"}))
 
 
 def _definition() -> RuleDefinition:
@@ -914,7 +917,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         assert result.status == "approved"
@@ -936,7 +940,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         embeddings.embed_and_store.assert_called_once_with(published)
@@ -961,7 +966,8 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 500
@@ -985,7 +991,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
@@ -1007,7 +1014,8 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 500
@@ -1035,7 +1043,8 @@ class TestLifecycleRoutes:
             app_settings=_no_auto_upgrade(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         assert monitored_tables.rollup_status.call_count == 2
@@ -1065,7 +1074,8 @@ class TestLifecycleRoutes:
             app_settings=app_settings,
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         version_svc.refreeze_current.assert_called_once_with("b1")
@@ -1137,16 +1147,17 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 404
 
-    def test_approve_triggers_tag_reconcile(self):
-        """Apply-on-tag (Task 7): a successful approve reconciles the rule once."""
+    def test_approve_runs_the_rule_policies_for_the_approver(self):
+        """A successful approve evaluates the rule's policies once, as the approving user."""
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
-        tag_reconcile = MagicMock()
+        policy_apply = create_autospec(PolicyApplyService, instance=True)
         approve_registry_rule(
             "r1",
             svc=svc,
@@ -1157,17 +1168,18 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=tag_reconcile,
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
-        tag_reconcile.reconcile_rule.assert_called_once_with("r1", "alice@x")
+        policy_apply.run_rule.assert_called_once_with("r1", _ACTING_USER)
 
-    def test_approve_tag_reconcile_failure_is_non_fatal(self):
-        """A raising tag-reconcile must NOT turn a successful approve into a 500."""
+    def test_approve_policy_run_failure_is_non_fatal(self):
+        """A raising policy run must NOT turn a successful approve into a 500."""
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
-        tag_reconcile = MagicMock()
-        tag_reconcile.reconcile_rule.side_effect = RuntimeError("boom")
+        policy_apply = create_autospec(PolicyApplyService, instance=True)
+        policy_apply.run_rule.side_effect = RuntimeError("boom")
         result = approve_registry_rule(
             "r1",
             svc=svc,
@@ -1178,7 +1190,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=tag_reconcile,
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         assert result.status == "approved"

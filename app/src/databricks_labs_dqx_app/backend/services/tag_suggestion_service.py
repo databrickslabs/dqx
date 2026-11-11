@@ -1,26 +1,24 @@
-"""Tag-based rule matching for the apply-on-tag feature (suggest AND auto-apply).
+"""Tag-based rule suggestions for a monitored table.
 
 Computes, for a monitored table, which published tag-mapped rules match its
-columns — then either surfaces them as accept-to-attach SUGGESTIONS
-(:meth:`TagSuggestionService.suggest`, when the ``tag_auto_apply`` toggle is
-off) or AUTO-ATTACHES them (:meth:`TagSuggestionService.apply_matches`, when the
-toggle is on, called from the register / open-table hooks).
+columns and surfaces them as accept-to-attach SUGGESTIONS
+(:meth:`TagSuggestionService.suggest`). Suggestions are always on; automatic
+attachment is done by rule policies (:mod:`policy_apply_service`).
 
-Both paths share one OBO-authed match computation: for every published
-(approved) rule that declares ``slot_tags``, the pure resolver
-(:func:`tag_mapping_service.resolve`) runs against the table's columns to
-produce the FULL Cartesian product of matching slot→column groups (one group per
-valid assignment of a real column to every slot — a 1-column rule matching N
-tagged columns yields N groups; a 2-column rule yields A·B), then any group
+For every published (approved) rule that declares ``slot_tags``, the pure
+resolver (:func:`tag_mapping_service.resolve`) runs against the table's columns
+to produce the FULL Cartesian product of matching slot→column groups (one group
+per valid assignment of a real column to every slot — a 1-column rule matching
+N tagged columns yields N groups; a 2-column rule yields A·B), then any group
 already applied (matched on ``(rule_id, mapping_hash)`` — mirroring the AI
-suggester's exclusion keys) is dropped. Column reads go through an injected callable, built
-over the CALLING USER's OBO credentials: this is deliberate and load-bearing —
-the app service principal has no grant on user catalogs, so an SP-authed read of
-``information_schema.column_tags`` returns nothing; running the match as the user
-sees exactly the tags they can, which is what makes auto-apply work at all.
+suggester's exclusion keys) is dropped. Column reads go through an injected
+callable, built over the CALLING USER's OBO credentials: the app service
+principal has no grant on user catalogs, so an SP-authed read of
+``information_schema.column_tags`` returns nothing; running the match as the
+user sees exactly the tags they can.
 
 Best-effort by construction: a read failure or an unknown binding degrades to
-``[]``/``0``; neither :meth:`suggest` nor :meth:`apply_matches` raises.
+``[]``; :meth:`suggest` never raises.
 """
 
 import collections.abc
@@ -36,7 +34,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
     get_slot_tags,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -64,14 +61,13 @@ class TagRuleSuggestion:
 
 
 class TagSuggestionService:
-    """Builds tag-based rule suggestions for a monitored table (apply-on-tag, OFF path)."""
+    """Builds tag-based rule suggestions for a monitored table."""
 
     def __init__(
         self,
         registry: RegistryService,
         monitored_tables: MonitoredTableService,
         apply_rules: ApplyRulesService,
-        app_settings: AppSettingsService,
         read_columns: collections.abc.Callable[[str], list[ColumnInfo]],
     ) -> None:
         """Build the tag-matcher.
@@ -80,22 +76,17 @@ class TagSuggestionService:
             registry: Registry service (published rules + slots/slot_tags).
             monitored_tables: Monitored-table service; resolves binding→table_fqn.
             apply_rules: Apply/map service — the source of already-applied
-                ``(rule_id, mapping_hash)`` exclusion keys, and the sink for
-                :meth:`apply_matches` (``attach_auto_mapping``).
-            app_settings: Reads the ``tag_auto_apply`` toggle deciding whether
-                matches auto-attach (:meth:`apply_matches`) or merely surface as
-                suggestions (:meth:`suggest`).
+                ``(rule_id, mapping_hash)`` exclusion keys.
             read_columns: Column-tag reader returning a table's columns as
                 :class:`ColumnInfo` (name, type_name, governed tags). OBO-authed
                 for this user-facing path so it respects the caller's Unity
-                Catalog permissions — this is what lets auto-apply see the tags
-                the app service principal cannot. Injected as a plain callable so
+                Catalog permissions — so it sees the tags the app service
+                principal cannot. Injected as a plain callable so
                 this service stays free of SDK details and is trivially testable.
         """
         self._registry = registry
         self._monitored_tables = monitored_tables
         self._apply_rules = apply_rules
-        self._app_settings = app_settings
         self._read_columns = read_columns
 
     def suggest(self, binding_id: str) -> list[TagRuleSuggestion]:
@@ -107,67 +98,20 @@ class TagSuggestionService:
         Returns one suggestion per matching group. Best-effort: returns [] on read
         failure (never raises).
 
-        When the ``tag_auto_apply`` admin toggle is ON, returns ``[]`` — the
-        matches are auto-attached (:meth:`apply_matches`, from the register /
-        open-table hooks) and then show in the table's normal applied-rule list,
-        so there is nothing left to *suggest*.
-
         Args:
             binding_id: The monitored table binding to suggest rules for.
 
         Returns:
-            One :class:`TagRuleSuggestion` per matching, not-yet-applied rule;
-            ``[]`` when auto-apply is on.
+            One :class:`TagRuleSuggestion` per matching, not-yet-applied rule.
         """
-        if self._app_settings.get_tag_auto_apply():
-            return []
         return self._matches(binding_id)
-
-    def apply_matches(self, binding_id: str, user_email: str) -> int:
-        """Auto-attach every tag match for a table (auto-apply ON path).
-
-        Runs the SAME OBO-read match computation as :meth:`suggest` — so it sees
-        exactly the tags the calling user can see, which is what makes auto-apply
-        work where an app-service-principal reconcile cannot (the SP has no grant
-        on user catalogs) — then attaches each match via
-        :meth:`ApplyRulesService.attach_auto_mapping` (add-only, origin-stamped,
-        idempotent, honouring user-removed tombstones). No-op returning ``0``
-        when the ``tag_auto_apply`` toggle is off. Best-effort: an attach failure
-        for one match is logged and skipped; never raises.
-
-        Args:
-            binding_id: The monitored table binding to attach matches to.
-            user_email: Attributed as ``created_by`` on any new attachment.
-
-        Returns:
-            The number of mapping groups newly attached.
-        """
-        if not self._app_settings.get_tag_auto_apply():
-            return 0
-        attached = 0
-        for match in self._matches(binding_id):
-            try:
-                result = self._apply_rules.attach_auto_mapping(
-                    binding_id, match.rule_id, [match.column_mapping], user_email
-                )
-            except Exception:
-                # rule_id is a controlled identifier; never log raw tag values.
-                logger.warning(
-                    "apply-on-tag: attach failed for rule %s on binding %s", match.rule_id, binding_id, exc_info=True
-                )
-                continue
-            if result is not None:
-                attached += 1
-        if attached:
-            logger.info("apply-on-tag: auto-attached %d tag-matched rule(s) to binding %s", attached, binding_id)
-        return attached
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _matches(self, binding_id: str) -> list[TagRuleSuggestion]:
-        """Compute tag matches for a table (shared by suggest + apply_matches).
+        """Compute tag matches for a table.
 
         Every matching group (Cartesian product) per published tag-mapped rule,
         excluding groups already applied. Best-effort: [] on unknown binding or

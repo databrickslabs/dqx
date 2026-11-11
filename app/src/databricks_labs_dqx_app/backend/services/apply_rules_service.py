@@ -421,20 +421,29 @@ class ApplyRulesService:
         )
         return applied
 
-    def attach_auto_mapping(
-        self,
-        binding_id: str,
-        rule_id: str,
-        column_mapping: list[ColumnMappingGroup],
-        user_email: str,
-    ) -> AppliedRule | None:
-        """Legacy apply-on-tag attach: :meth:`attach_policy_mapping` semantics stamped ``origin=tag_auto``.
+    def restamp_tag_auto_to_policy(self, rule_id: str, policy_id: str) -> int:
+        """Re-stamp *rule_id*'s legacy ``origin=tag_auto`` rows as made by rule policy *policy_id*.
 
-        Kept only for the tag-auto callers until they are removed.
+        One-off data migration helper for retiring tag auto-apply: only rows whose
+        ``user_metadata`` origin is ``tag_auto`` change (origin becomes ``policy``,
+        ``policy_id`` is added, other keys are kept). Hand-applied and policy rows
+        are untouched.
+
+        Returns:
+            The number of rows re-stamped.
         """
-        return self._attach_origin_mapping(
-            binding_id, rule_id, column_mapping, user_email, {ORIGIN_KEY: ORIGIN_TAG_AUTO}
-        )
+        count = 0
+        for applied in self.list_bindings_for_rule(rule_id):
+            if applied.user_metadata.get(ORIGIN_KEY) != ORIGIN_TAG_AUTO:
+                continue
+            metadata = {**applied.user_metadata, ORIGIN_KEY: ORIGIN_POLICY, POLICY_ID_KEY: policy_id}
+            metadata_expr = self._sql.json_literal_expr(json.dumps(metadata))
+            self._sql.execute(
+                f"UPDATE {self._table} SET user_metadata = {metadata_expr} "
+                f"WHERE id = '{escape_sql_string(applied.id or '')}'"
+            )
+            count += 1
+        return count
 
     def _validate_applicable_rule(
         self, binding_id: str, rule_id: str, column_mapping: list[ColumnMappingGroup]

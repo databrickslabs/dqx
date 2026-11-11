@@ -176,3 +176,15 @@ def test_active_mapping_honours_lifecycle_windows():
     start, end = m.RULE_LIFECYCLE[("shipments", "min_len")]
     assert "min_len" not in m.active_mapping(ship, start - 1)
     assert "min_len" in m.active_mapping(ship, start)
+
+
+def test_example_policies_target_approved_tag_mapped_rules():
+    rules = {r.key: r for r in m.RULES}
+    assert m.POLICIES, "expected at least one example rule policy"
+    for policy in m.POLICIES:
+        rule = rules.get(policy.rule_key)
+        assert rule is not None, f"{policy.name}: unknown rule {policy.rule_key}"
+        assert rule.slot_tags, f"{policy.name}: rule {policy.rule_key} has no slot tags to condition on"
+        assert policy.rule_key not in m.PENDING_APPROVAL_RULE_KEYS, f"{policy.name}: rule is never approved"
+        assert policy.name and policy.name[:2] != "A " and not policy.name.startswith("The ")
+        assert policy.description.endswith(".")

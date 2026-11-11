@@ -395,8 +395,6 @@
     "defaultAutoUpgradeLabel": "Mettre à niveau les associations de règles par défaut",
     "defaultAutoUpgradeHint": "Lors de l'application d'une nouvelle règle à une table, exécuter par défaut toujours la version « latest » de cette règle. Ce comportement peut être remplacé règle par règle.",
     "defaultAutoUpgradeHintOff": "Lors de l'application d'une nouvelle règle à une table, épingler par défaut explicitement la version la plus récente de cette règle. Surchargeable règle par règle.",
-    "tagAutoAssignLabel": "Attribuer automatiquement les règles par étiquette",
-    "tagAutoAssignHint": "Lorsque c'est activé, attribue automatiquement les règles correspondant aux étiquettes Unity Catalog de la colonne concernée. Lorsque c'est désactivé, propose ces règles comme suggestions",
     "passThresholdSettingsTitle": "Seuils de réussite",
     "passThresholdSettingsDescription": "Avertir lorsque moins d'un % défini de tests réussissent un contrôle. Définissez ici la valeur par défaut de l'espace de travail ; surchargez-la par règle et par colonne lors de l'application des règles.",
     "rulesRegistryPassThresholdEnabledLabel": "Portes qualité par seuil de réussite",

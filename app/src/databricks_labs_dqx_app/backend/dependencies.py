@@ -66,7 +66,6 @@ from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.tag_mapping_service import ColumnInfo
-from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
 from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
@@ -516,60 +515,26 @@ def _build_column_reader(
     return read_columns
 
 
-async def get_tag_reconcile_service(
-    registry: Annotated[RegistryService, Depends(get_registry_service)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
-    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-) -> TagReconcileService:
-    """Create the apply-on-tag orchestrator wired to SP-authed collaborators.
-
-    Every collaborator routes at the SP OLTP/Delta executors (via the shared
-    providers) because reconcile runs without a user context; the column reader
-    uses the SP :class:`WorkspaceClient` for column names/types and the SP
-    warehouse :class:`SqlExecutor` to read column tags from
-    ``information_schema.column_tags``, for the same reason.
-    """
-    return TagReconcileService(
-        registry=registry,
-        monitored_tables=monitored_tables,
-        apply_rules=apply_rules,
-        app_settings=app_settings,
-        read_columns=_build_column_reader(sp_ws, sp_sql),
-    )
-
-
 async def get_tag_suggestion_service(
     registry: Annotated[RegistryService, Depends(get_registry_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> TagSuggestionService:
-    """Create the apply-on-tag tag-matcher (suggestions AND auto-apply).
+    """Create the tag-match suggester.
 
     User-facing, so the column reader is built over the OBO
     :class:`WorkspaceClient` + OBO warehouse :class:`SqlExecutor` (via the same
     generic ``_build_column_reader`` factory) — so tag matching respects the
     calling user's Unity Catalog permissions. This is deliberate and
     load-bearing: the app service principal has no grant on user catalogs, so an
-    SP-authed read of ``information_schema.column_tags`` returns nothing; running
-    the match OBO is what makes auto-apply work.
-
-    When ``tag_auto_apply`` is off the matches surface as suggestions
-    (:meth:`~TagSuggestionService.suggest`); when on they auto-attach
-    (:meth:`~TagSuggestionService.apply_matches`, from the register / open-table
-    hooks). The applied-row WRITE still goes through the SP OLTP executor (via
-    ``get_apply_rules_service``), which owns the app's schema.
+    SP-authed read of ``information_schema.column_tags`` returns nothing.
     """
     return TagSuggestionService(
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,
-        app_settings=app_settings,
         read_columns=_build_column_reader(obo_ws, obo_sql),
     )
 
@@ -1194,6 +1159,7 @@ async def get_demo_seed_service(
         schedule_grants=ScheduleGrantService(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
+        policies=RulePolicyService(sql=oltp),
         catalog=resources.volume.catalog,
         schema=resources.demo_schema,
     )

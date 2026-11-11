@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentActingUser,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -25,10 +26,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_version_service,
     get_pending_application_service,
     get_permissions_service,
+    get_policy_apply_service,
     get_registry_service,
     get_rule_embeddings_service,
     get_rule_policy_service,
-    get_tag_reconcile_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
@@ -66,8 +67,8 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
 )
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
+from databricks_labs_dqx_app.backend.services.policy_apply_service import PolicyApplyService
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
-from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 
 router = APIRouter()
 
@@ -758,7 +759,8 @@ def approve_registry_rule(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
-    tag_reconcile: Annotated[TagReconcileService, Depends(get_tag_reconcile_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
     user_email: CurrentUser,
     body: LifecycleRationaleIn | None = None,
 ) -> RegistryRuleOut:
@@ -802,15 +804,13 @@ def approve_registry_rule(
             pending=pending,
             rationale=rationale,
         )
-        # Apply-on-tag (Task 7): after a successful publish, attach this rule
-        # to every monitored table it now tag-matches. Best-effort and a no-op
-        # when tag-auto-apply is off (the service gates internally); double-
-        # guarded here so this post-success side effect can never turn a
-        # successful approve into a 500.
+        # Rule policies: after a successful publish, run this rule's policies as
+        # the approving user so it attaches wherever they may apply it.
+        # Best-effort; guarded so it can never turn a successful approve into a 500.
         try:
-            tag_reconcile.reconcile_rule(rule_id, user_email)
+            policy_apply.run_rule(rule_id, acting_user)
         except Exception:
-            logger.warning("Tag auto-apply reconcile after approve failed (non-fatal)", exc_info=True)
+            logger.warning(f"Rule policy run after approving rule {rule_id} failed (non-fatal)", exc_info=True)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

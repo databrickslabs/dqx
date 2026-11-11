@@ -308,7 +308,6 @@ def make_scheduler():
         binding_run_service: Any | None = None,
         score_cache_service: Any | None = None,
         monitored_table_service: Any | None = None,
-        tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
         job_id: str = "test-job-0",
     ) -> tuple[Any, SimpleNamespace]:
@@ -362,7 +361,6 @@ def make_scheduler():
             binding_run_service=binding_run_service,
             score_cache_service=score_cache_service,
             monitored_table_service=monitored_table_service,
-            tag_reconcile_service=tag_reconcile_service,
             reconcile_scores_on_start=reconcile_scores_on_start,
         )
 

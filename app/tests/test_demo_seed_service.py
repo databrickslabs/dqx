@@ -21,7 +21,6 @@ from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService, demo_tag_targets
 
-
 DEMO_SCHEMA = "dqx_studio_demo"
 
 
@@ -1815,3 +1814,46 @@ def test_schedules_phase_is_a_noop_without_schedule_config():
     assert result.schedules == 0
     assert not deps["monitored_tables"].update_schedule.called
     assert not deps["data_products"].update.called
+
+
+def test_run_seeds_example_policy_scoped_to_demo_catalog_with_slot_tag_conditions():
+    from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, PolicyScope
+    from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
+
+    policies = create_autospec(RulePolicyService, instance=True)
+    policies.list_for_rule.return_value = []
+    svc, deps = _svc(policies=policies)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    specs = {r.key: r for r in manifest.RULES}
+    assert policies.create.call_count == len(manifest.POLICIES)
+    for call, policy_spec in zip(policies.create.call_args_list, manifest.POLICIES, strict=True):
+        rule_id, body, user_email = call.args
+        assert rule_id == "r1"
+        assert user_email == "admin@example.com"
+        assert body.name == policy_spec.name
+        assert body.scope == PolicyScope(catalogs=["dqx"])
+        assert body.column_conditions == {
+            slot: ColumnCondition(kind="tags", tags=list(tags))
+            for slot, tags in specs[policy_spec.rule_key].slot_tags.items()
+        }
+
+
+def test_example_policy_is_not_recreated_on_reseed():
+    from databricks_labs_dqx_app.backend.policy_models import RulePolicy
+    from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
+
+    policies = create_autospec(RulePolicyService, instance=True)
+    policies.list_for_rule.side_effect = lambda rule_id: [
+        RulePolicy(policy_id=f"p-{spec.name}", rule_id=rule_id, name=spec.name.upper()) for spec in manifest.POLICIES
+    ]
+    svc, deps = _svc(policies=policies)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    policies.create.assert_not_called()

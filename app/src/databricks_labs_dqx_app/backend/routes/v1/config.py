@@ -1146,10 +1146,6 @@ class RulesRegistrySettingsOut(BaseModel):
         description="Attach-time default pin for new applications/members: follow latest "
         "(True, default) vs. pin to the current version (False)."
     )
-    tag_auto_apply: bool = Field(
-        description="Tag-mapping assign behaviour: eagerly auto-assign tag-mapped rules "
-        "across monitored tables (True) vs. only surface them as suggestions (False, default)."
-    )
     default_pass_threshold: int = Field(
         description="Org-wide default minimum pass rate (%) below which a check warns. "
         "Overridable per rule and per column. Clamped to [0, 100]."
@@ -1165,7 +1161,6 @@ class RulesRegistrySettingsIn(BaseModel):
 
     auto_upgrade_without_approval: bool | None = None
     default_auto_upgrade: bool | None = None
-    tag_auto_apply: bool | None = None
     default_pass_threshold: int | None = Field(default=None, ge=0, le=100)
     pass_threshold_enabled: bool | None = None
 
@@ -1174,7 +1169,6 @@ def _rules_registry_settings_out(svc: AppSettingsService) -> RulesRegistrySettin
     return RulesRegistrySettingsOut(
         auto_upgrade_without_approval=svc.get_auto_upgrade_without_approval(),
         default_auto_upgrade=svc.get_default_auto_upgrade(),
-        tag_auto_apply=svc.get_tag_auto_apply(),
         default_pass_threshold=svc.get_default_pass_threshold(),
         pass_threshold_enabled=svc.get_pass_threshold_enabled(),
     )
@@ -1211,21 +1205,18 @@ def save_rules_registry_settings(
     if (
         body.auto_upgrade_without_approval is None
         and body.default_auto_upgrade is None
-        and body.tag_auto_apply is None
         and body.default_pass_threshold is None
         and body.pass_threshold_enabled is None
     ):
         raise HTTPException(
             status_code=400,
             detail="At least one of auto_upgrade_without_approval, default_auto_upgrade, "
-            "tag_auto_apply, default_pass_threshold, or pass_threshold_enabled must be provided.",
+            "default_pass_threshold, or pass_threshold_enabled must be provided.",
         )
     if body.auto_upgrade_without_approval is not None:
         svc.save_auto_upgrade_without_approval(body.auto_upgrade_without_approval, user_email=email)
     if body.default_auto_upgrade is not None:
         svc.save_default_auto_upgrade(body.default_auto_upgrade, user_email=email)
-    if body.tag_auto_apply is not None:
-        svc.save_tag_auto_apply(body.tag_auto_apply, user_email=email)
     if body.default_pass_threshold is not None:
         svc.save_default_pass_threshold(body.default_pass_threshold, user_email=email)
     if body.pass_threshold_enabled is not None:

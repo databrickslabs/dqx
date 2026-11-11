@@ -1,14 +1,13 @@
-"""Unit tests for :class:`TagSuggestionService` (apply-on-tag suggestions surface).
+"""Unit tests for :class:`TagSuggestionService` (tag-match suggestions).
 
-The OFF-path counterpart to auto-apply: when ``tag_auto_apply`` is off, a
-monitored table's tag-matched rules are surfaced as accept-to-attach
-SUGGESTIONS rather than auto-attached. Uses the REAL pure resolver
+A monitored table's tag-matched rules are always surfaced as accept-to-attach
+SUGGESTIONS (automatic attachment is the job of rule policies). Uses the REAL pure resolver
 (``tag_mapping_service.resolve``) so the wiring is exercised end-to-end;
 ``create_autospec`` fakes stand in for every I/O collaborator and a plain
 callable fakes the SP/OBO-authed column-tag reader.
 """
 
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec
 
 from databricks_labs_dqx_app.backend.registry_models import (
     AppliedRule,
@@ -28,7 +27,6 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
 )
-from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.tag_mapping_service import ColumnInfo
 from databricks_labs_dqx_app.backend.services.tag_suggestion_service import (
@@ -75,15 +73,12 @@ def _make_service(
     columns_by_fqn: dict[str, list[ColumnInfo]],
     detail: MonitoredTableDetail | None = _detail("b1", "cat.sch.t1"),
     read_raises: bool = False,
-    auto_apply: bool = False,
 ) -> tuple[TagSuggestionService, dict[str, object]]:
     registry = create_autospec(RegistryService, instance=True)
     monitored_tables = create_autospec(MonitoredTableService, instance=True)
     apply_rules = create_autospec(ApplyRulesService, instance=True)
-    app_settings = create_autospec(AppSettingsService, instance=True)
     monitored_tables.get.return_value = detail
     apply_rules.list_applied.return_value = []
-    app_settings.get_tag_auto_apply.return_value = auto_apply
 
     def read_columns(table_fqn: str) -> list[ColumnInfo]:
         if read_raises:
@@ -94,14 +89,12 @@ def _make_service(
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,
-        app_settings=app_settings,
         read_columns=read_columns,
     )
     return svc, {
         "registry": registry,
         "monitored_tables": monitored_tables,
         "apply_rules": apply_rules,
-        "app_settings": app_settings,
     }
 
 
@@ -197,83 +190,17 @@ def test_excludes_only_the_applied_group_not_the_whole_rule() -> None:
 
 
 # ---------------------------------------------------------------------------
-# apply_matches + auto_apply interaction
+# Always on: no setting gates suggestions, and nothing is ever attached
 # ---------------------------------------------------------------------------
 
 
-def test_auto_apply_off_suggest_returns_matches_and_apply_matches_is_noop() -> None:
-    """With auto_apply OFF, suggest returns matches as before and apply_matches is 0."""
+def test_suggestions_are_always_returned_and_nothing_is_attached() -> None:
+    """Suggestions do not depend on any setting, and suggesting never writes an applied rule."""
     columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
-    svc, deps = _make_service(columns_by_fqn=columns, auto_apply=False)
+    svc, deps = _make_service(columns_by_fqn=columns)
     deps["registry"].list_rules.return_value = [_rule(slot_tags={"c1": ["class.pii"]})]
 
-    # suggest returns the match
     suggestions = svc.suggest("b1")
-    assert len(suggestions) == 1
 
-    # apply_matches returns 0 and never calls attach
-    count = svc.apply_matches("b1", "user@x")
-    assert count == 0
-    deps["apply_rules"].attach_auto_mapping.assert_not_called()
-
-
-def test_auto_apply_on_suggest_returns_empty() -> None:
-    """With auto_apply ON, suggest returns [] (caller should use apply_matches instead)."""
-    columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
-    svc, deps = _make_service(columns_by_fqn=columns, auto_apply=True)
-    deps["registry"].list_rules.return_value = [_rule(slot_tags={"c1": ["class.pii"]})]
-
-    assert svc.suggest("b1") == []
-
-
-def test_auto_apply_on_apply_matches_attaches_each_match_and_returns_count() -> None:
-    """With auto_apply ON, apply_matches calls attach_auto_mapping per match and returns count."""
-    columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
-    svc, deps = _make_service(columns_by_fqn=columns, auto_apply=True)
-    deps["registry"].list_rules.return_value = [_rule(rule_id="r1", slot_tags={"c1": ["class.pii"]})]
-    # attach returns a truthy object → should count
-    deps["apply_rules"].attach_auto_mapping.return_value = MagicMock()
-
-    count = svc.apply_matches("b1", "user@x")
-
-    assert count == 1
-    deps["apply_rules"].attach_auto_mapping.assert_called_once_with("b1", "r1", [{"c1": "email"}], "user@x")
-
-
-def test_auto_apply_on_attach_returns_none_not_counted() -> None:
-    """attach_auto_mapping returning None (idempotent / already-attached) does not increment count."""
-    columns = {"cat.sch.t1": [ColumnInfo("email", "STRING", ["class.pii"])]}
-    svc, deps = _make_service(columns_by_fqn=columns, auto_apply=True)
-    deps["registry"].list_rules.return_value = [_rule(slot_tags={"c1": ["class.pii"]})]
-    deps["apply_rules"].attach_auto_mapping.return_value = None
-
-    count = svc.apply_matches("b1", "user@x")
-
-    assert count == 0
-    deps["apply_rules"].attach_auto_mapping.assert_called_once()
-
-
-def test_auto_apply_on_attach_raises_skipped_and_other_matches_still_attach() -> None:
-    """A raising attach is logged+skipped; remaining matches are still processed."""
-    columns = {
-        "cat.sch.t1": [
-            ColumnInfo("email", "STRING", ["class.pii"]),
-            ColumnInfo("ssn", "STRING", ["class.ssn"]),
-        ]
-    }
-    svc, deps = _make_service(columns_by_fqn=columns, auto_apply=True)
-    deps["registry"].list_rules.return_value = [
-        _rule(rule_id="r1", slot_tags={"c1": ["class.pii"]}),
-        _rule(rule_id="r2", slot_tags={"c1": ["class.ssn"]}),
-    ]
-    # r1 raises, r2 succeeds
-    deps["apply_rules"].attach_auto_mapping.side_effect = [
-        RuntimeError("transient error"),
-        MagicMock(),
-    ]
-
-    count = svc.apply_matches("b1", "user@x")
-
-    # apply_matches does not raise, and the successful attach is counted
-    assert count == 1
-    assert deps["apply_rules"].attach_auto_mapping.call_count == 2
+    assert [s.column_mapping for s in suggestions] == [{"c1": "email"}]
+    deps["apply_rules"].attach_policy_mapping.assert_not_called()

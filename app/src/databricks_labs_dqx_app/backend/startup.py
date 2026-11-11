@@ -16,7 +16,6 @@ from fastapi import FastAPI
 from databricks_labs_dqx_app.backend._scheduler_registry import get_scheduler, set_scheduler
 from databricks_labs_dqx_app.backend.config import AppConfig, conf
 from databricks_labs_dqx_app.backend.dependencies import (
-    _build_column_reader,
     get_app_settings_service,
     get_binding_run_service,
     get_data_product_service,
@@ -54,7 +53,9 @@ from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
     MetadataDimService,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.policy_migration import migrate_slot_tags_to_policies
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
     ResourceTaggingService,
     startup_tag_targets,
@@ -63,7 +64,6 @@ from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddi
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
-from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
 from databricks_labs_dqx_app.backend.setup.access import AudienceAccess
 from databricks_labs_dqx_app.backend.setup.ai_access import AiAccess
@@ -584,8 +584,23 @@ async def _run_post_migration_startup(
         settings.backfill_reserved_value_descriptions_if_missing()
     except Exception:
         logger.warning("Could not seed reserved label definitions")
+    _migrate_slot_tags_to_policies(oltp, settings)
 
     mark_tmp_schema_ready()
+
+
+def _migrate_slot_tags_to_policies(oltp: OltpExecutorProtocol, settings: AppSettingsService) -> None:
+    """One-off: turn legacy tag auto-apply into rule policies (idempotent; never fails startup)."""
+    try:
+        registry = RegistryService(sql=oltp)
+        migrate_slot_tags_to_policies(
+            settings,
+            registry,
+            RulePolicyService(sql=oltp),
+            ApplyRulesService(sql=oltp, registry=registry, app_settings=settings),
+        )
+    except Exception:
+        logger.warning("Could not migrate tag auto-apply rules to rule policies", exc_info=True)
 
 
 def _mark_interrupted_admin_jobs(oltp: OltpExecutorProtocol) -> None:
@@ -759,15 +774,6 @@ async def _start_scheduler(
             binding_runs = None
 
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=delta_sql)
-        registry = RegistryService(sql=oltp)
-        settings = AppSettingsService(sql=oltp)
-        tag_reconcile = TagReconcileService(
-            registry=registry,
-            monitored_tables=monitored_tables,
-            apply_rules=ApplyRulesService(sql=oltp, registry=registry, app_settings=settings),
-            app_settings=settings,
-            read_columns=_build_column_reader(workspace, delta_sql),
-        )
         scheduler = SchedulerService(
             ws=workspace,
             warehouse_id=resources.warehouse_id,
@@ -784,7 +790,6 @@ async def _start_scheduler(
                 genie_schema=resources.genie_schema,
             ),
             monitored_table_service=monitored_tables,
-            tag_reconcile_service=tag_reconcile,
             reconcile_scores_on_start=True,
         )
         set_scheduler(scheduler)

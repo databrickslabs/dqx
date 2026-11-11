@@ -395,8 +395,6 @@
     "defaultAutoUpgradeLabel": "Segui l'ultima versione per impostazione predefinita",
     "defaultAutoUpgradeHint": "I nuovi collegamenti seguono l'ultima versione pubblicata. Disattiva per fissarli invece alla versione corrente.",
     "defaultAutoUpgradeHintOff": "When applying a new rule to a table, default to always explicitly pinning the most recent version of that rule. Can be overridden on a per-rule basis.",
-    "tagAutoAssignLabel": "Assegna automaticamente le regole per tag",
-    "tagAutoAssignHint": "Se attivo, le regole con mappature di tag vengono assegnate automaticamente a ogni tabella monitorata le cui colonne portano tag Unity Catalog corrispondenti. Se disattivo, le corrispondenze di tag vengono proposte come suggerimenti.",
     "passThresholdSettingsTitle": "Soglie di superamento",
     "passThresholdSettingsDescription": "Avvisa quando meno di una % definita di test supera un controllo. Imposta qui il valore predefinito del workspace; sovrascrivilo per regola e per colonna quando applichi le regole.",
     "rulesRegistryPassThresholdEnabledLabel": "Gate di qualità con soglia di superamento",

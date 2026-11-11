@@ -14,6 +14,7 @@ The async loop itself (``_loop`` / ``_tick``) is exercised via
 integration tests; here we keep the surface narrow and deterministic.
 """
 
+import inspect
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -46,7 +47,6 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _RUN_SET_SWEEP_WINDOW_DAYS,
     _SCORE_RECONCILE_MAX_ATTEMPTS,
     _SCORE_REFRESH_TTL,
-    _TAG_RECONCILE_INTERVAL_HOURS,
     _TMP_VIEW_ID_LEN,
     _TMP_VIEW_NAME_RE,
     _TMP_VIEW_SWEEP_INTERVAL_HOURS,
@@ -54,7 +54,6 @@ from databricks_labs_dqx_app.backend.services.scheduler_service import (
     _parse_tracker_run_ids,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
-from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.services.scheduler_service import logger as scheduler_logger
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 
@@ -451,57 +450,16 @@ class TestSweepStaleTmpViews:
 
 
 # ---------------------------------------------------------------------------
-# _maybe_run_tag_reconcile — apply-on-tag reconcile sweep tick (Task 7)
+# Tag auto-apply retired: the scheduler has no tag-reconcile timer
 # ---------------------------------------------------------------------------
 
 
-class TestMaybeRunTagReconcile:
-    @pytest.mark.asyncio
-    async def test_noop_and_timer_untouched_when_collaborator_absent(self, make_scheduler):
-        svc, _ = make_scheduler()  # no tag_reconcile_service
-        assert svc._tag_reconcile_service is None
-        before = svc._next_tag_reconcile_at
-        # Even long past the timer, a None collaborator does nothing.
-        await svc._maybe_run_tag_reconcile(before + timedelta(hours=12))
-        assert svc._next_tag_reconcile_at == before
+class TestNoTagReconcileTimer:
+    def test_constructor_takes_no_tag_reconcile_service(self):
+        assert "tag_reconcile_service" not in inspect.signature(SchedulerService).parameters
 
-    @pytest.mark.asyncio
-    async def test_skips_when_not_yet_due(self, make_scheduler):
-        reconcile = create_autospec(TagReconcileService, instance=True)
-        svc, _ = make_scheduler(tag_reconcile_service=reconcile)
-        future = datetime(2099, 1, 1, tzinfo=timezone.utc)
-        svc._next_tag_reconcile_at = future
-
-        await svc._maybe_run_tag_reconcile(future - timedelta(seconds=1))
-
-        assert svc._next_tag_reconcile_at == future
-        reconcile.sweep.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_advances_timer_before_running_and_sweeps(self, make_scheduler):
-        reconcile = create_autospec(TagReconcileService, instance=True)
-        svc, _ = make_scheduler(tag_reconcile_service=reconcile)
-        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
-        svc._next_tag_reconcile_at = due
-
-        fire = due + timedelta(seconds=1)
-        await svc._maybe_run_tag_reconcile(fire)
-
-        reconcile.sweep.assert_called_once()
-        # Timer advanced by exactly the interval from ``now``.
-        assert svc._next_tag_reconcile_at == fire + timedelta(hours=_TAG_RECONCILE_INTERVAL_HOURS)
-
-    @pytest.mark.asyncio
-    async def test_sweep_failure_does_not_propagate(self, make_scheduler):
-        reconcile = create_autospec(TagReconcileService, instance=True)
-        reconcile.sweep.side_effect = RuntimeError("boom")
-        svc, _ = make_scheduler(tag_reconcile_service=reconcile)
-        due = datetime(2026, 5, 2, 1, 0, tzinfo=timezone.utc)
-        svc._next_tag_reconcile_at = due
-
-        # Must not raise; just log and reschedule.
-        await svc._maybe_run_tag_reconcile(due + timedelta(minutes=1))
-        assert svc._next_tag_reconcile_at > due
+    def test_scheduler_has_no_tag_reconcile_tick(self):
+        assert not hasattr(SchedulerService, "_maybe_run_tag_reconcile")
 
 
 # ---------------------------------------------------------------------------

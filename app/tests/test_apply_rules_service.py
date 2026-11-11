@@ -416,14 +416,27 @@ class TestAttachPolicyMapping:
         sql.execute.assert_not_called()
 
 
-class TestAttachAutoMappingLegacy:
-    def test_legacy_attach_stamps_tag_auto(self, svc, sql, registry):
-        # Legacy tag-auto callers keep their origin until they are removed.
-        registry.get_rule.return_value = _published_rule()
-        sql.query.side_effect = [[["b1"]], [], []]
-        applied = svc.attach_auto_mapping("b1", "r1", [{"column": "customer_id"}], "alice@x")
-        assert applied is not None
-        assert applied.user_metadata == {"origin": "tag_auto"}
+class TestRestampTagAutoToPolicy:
+    def test_restamps_only_legacy_tag_auto_rows(self, svc, sql):
+        sql.query.return_value = [
+            _applied_row(id_="legacy1", user_metadata={"origin": "tag_auto", "note": "kept"}),
+            _applied_row(id_="hand1", user_metadata={}),
+            _applied_row(id_="pol1", user_metadata={"origin": "policy", "policy_id": "p0"}),
+        ]
+        count = svc.restamp_tag_auto_to_policy("r1", "p1")
+        assert count == 1
+        assert sql.execute.call_count == 1
+        update_sql = sql.execute.call_args[0][0]
+        assert update_sql.startswith("UPDATE dqx_test.dqx_app_test.dq_applied_rules SET user_metadata = ")
+        assert "WHERE id = 'legacy1'" in update_sql
+        assert '"origin": "policy"' in update_sql
+        assert '"policy_id": "p1"' in update_sql
+        assert '"note": "kept"' in update_sql
+
+    def test_no_legacy_rows_writes_nothing(self, svc, sql):
+        sql.query.return_value = [_applied_row(id_="hand1", user_metadata={})]
+        assert svc.restamp_tag_auto_to_policy("r1", "p1") == 0
+        sql.execute.assert_not_called()
 
 
 class TestIsSuppressed:

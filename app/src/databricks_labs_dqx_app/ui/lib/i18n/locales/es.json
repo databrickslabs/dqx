@@ -395,8 +395,6 @@
     "defaultAutoUpgradeLabel": "Seguir la última versión de forma predeterminada",
     "defaultAutoUpgradeHint": "Las nuevas incorporaciones siguen la última versión publicada. Desactívalo para fijarlas a la versión actual.",
     "defaultAutoUpgradeHintOff": "When applying a new rule to a table, default to always explicitly pinning the most recent version of that rule. Can be overridden on a per-rule basis.",
-    "tagAutoAssignLabel": "Asignar reglas automáticamente por etiqueta",
-    "tagAutoAssignHint": "Cuando está activado, las reglas con asignaciones de etiquetas se asignan automáticamente a cada tabla monitorizada cuyas columnas tengan etiquetas de Unity Catalog coincidentes. Cuando está desactivado, las coincidencias de etiquetas se ofrecen como sugerencias.",
     "passThresholdSettingsTitle": "Umbrales de aprobación",
     "passThresholdSettingsDescription": "Advierte cuando menos de un % definido de pruebas pasa una verificación. Configura aquí el valor predeterminado del área de trabajo; reemplázalo por regla y por columna al aplicar reglas.",
     "rulesRegistryPassThresholdEnabledLabel": "Puertas de calidad por umbral de aprobación",

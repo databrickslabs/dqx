@@ -1356,11 +1356,11 @@ class MatchRulesOut(BaseModel):
 
 
 class TagRuleSuggestionOut(BaseModel):
-    """One tag-matched, accept-to-attach rule suggestion for a monitored table (apply-on-tag).
+    """One accept-to-attach rule suggestion for a monitored table.
 
-    The OFF-path counterpart to auto-apply: surfaced on a table's Apply Rules
-    screen when ``tag_auto_apply`` is off. ``column_mapping`` is the single
-    representative slot->column group; ``explanation`` names the matched tags.
+    Produced by a tag match or by a rule policy with several possible columns;
+    surfaced on a table's Apply Rules screen. ``column_mapping`` is one
+    slot->column group; ``explanation`` names the matched tags or the policy.
     """
 
     rule_id: str

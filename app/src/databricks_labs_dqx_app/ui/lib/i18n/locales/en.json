@@ -395,8 +395,6 @@
     "defaultAutoUpgradeLabel": "Upgrade rule mappings by default",
     "defaultAutoUpgradeHint": "When applying a new rule to a table, default to always running the \"latest\" version of that rule. Can be overridden on a per-rule basis.",
     "defaultAutoUpgradeHintOff": "When applying a new rule to a table, default to always explicitly pinning the most recent version of that rule. Can be overridden on a per-rule basis.",
-    "tagAutoAssignLabel": "Auto-assign rules by tag",
-    "tagAutoAssignHint": "When on, automatically assign rules matching Unity Catalog tags of the column in question. When off, offer these rules as suggestions instead",
     "passThresholdSettingsTitle": "Pass thresholds",
     "passThresholdSettingsDescription": "Warn when fewer than a set % of tests pass a check. Set the workspace default here; override it per rule and per column when applying rules.",
     "rulesRegistryPassThresholdEnabledLabel": "Pass-threshold quality gates",
