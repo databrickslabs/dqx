@@ -856,11 +856,11 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"INSERT INTO {_S}.dq_saved_views "
             "(id, page_key, name, scope, owner, payload, is_builtin, is_org_default, created_by, updated_by) VALUES "
-            "('builtin:monitored_tables','monitored_tables','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
-            "('builtin:registry_rules','registry_rules','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
-            "('builtin:collections','collections','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
-            "('builtin:schedules','schedules','Default','org',NULL,NULL,TRUE,TRUE,'system','system'),"
-            "('builtin:global_results','global_results','Default','org',NULL,NULL,TRUE,TRUE,'system','system') "
+            "('builtin:monitored_tables','monitored_tables','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:registry_rules','registry_rules','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:collections','collections','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:schedules','schedules','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:global_results','global_results','Default','org',NULL,NULL,TRUE,FALSE,'system','system') "
             "ON CONFLICT (id) DO NOTHING;"
         ),
     ),
