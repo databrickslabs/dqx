@@ -814,6 +814,29 @@ PG_MIGRATIONS: list[PgMigration] = [
             "('pending','success','partial_failure','failed','skipped'));"
         ),
     ),
+    PgMigration(
+        version=5,
+        description="Rule policies",
+        sql=(
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rule_policies ("
+            "  policy_id          TEXT PRIMARY KEY,"
+            "  rule_id            TEXT NOT NULL,"
+            "  name               TEXT NOT NULL,"
+            "  description        TEXT,"
+            "  scope              JSONB NOT NULL,"
+            "  table_condition    JSONB NOT NULL,"
+            "  column_conditions  JSONB NOT NULL,"
+            "  register_tables    BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  created_by         TEXT,"
+            "  created_at         TIMESTAMPTZ,"
+            "  updated_by         TEXT,"
+            "  updated_at         TIMESTAMPTZ"
+            ");"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_rule_policies_rule_id ON {_S}.dq_rule_policies (rule_id);"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_dq_rule_policies_rule_name "
+            f"  ON {_S}.dq_rule_policies (rule_id, lower(name));"
+        ),
+    ),
 ]
 
 
