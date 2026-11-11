@@ -30,6 +30,7 @@ from databricks_labs_dqx_app.backend.setup.checks import RunnerGrants
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
+    SetupReport,
     SetupState,
     SetupStep,
     SetupStepId,
@@ -245,6 +246,7 @@ class FakeJobs:
     set_run_as_failure: Exception | None = None
     managed_by_deployment: list[bool] = field(default_factory=list)
     app_permission: str = "confirmed"
+    configure_failure: Exception | None = None
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
@@ -268,6 +270,8 @@ class FakeJobs:
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
         self.events.append(f"configure_job:{job_id}:{len(wheel_paths)}")
+        if self.configure_failure is not None:
+            raise self.configure_failure
 
     def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission:
         self.events.append(f"app_permission:{application_id}:{app_application_id}")
@@ -374,9 +378,10 @@ def _harness(
     overrides: SetupOverrides | None = None,
     ai: FakeAi | None = None,
     app_sp_id: str = "app-service-principal",
+    runtime: SetupRuntime | None = None,
 ) -> Harness:
     events = [] if events is None else events
-    runtime = SetupRuntime()
+    runtime = runtime or SetupRuntime()
     bound = FakeBound(events, results=dict(bound_results or {}))
 
     async def default_publish() -> list[str]:
@@ -1185,6 +1190,40 @@ async def test_wheel_publication_failure_blocks_migrations() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wheel_publication_failure_reports_upload_code(caplog: pytest.LogCaptureFixture) -> None:
+    async def fail_publish() -> list[str]:
+        raise RuntimeError("raw storage payload")
+
+    harness = _harness(publish_wheels=fail_publish)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.step(SetupStepId.WHEELS).code == "wheel_publication_failed"
+    assert not any(event.startswith("configure_job:") for event in harness.events)
+    assert "Wheel publication failed (RuntimeError)" in caplog.text
+    assert "raw storage payload" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_task_runner_job_update_failure_reports_its_own_code(caplog: pytest.LogCaptureFixture) -> None:
+    harness = _harness()
+    harness.jobs.configure_failure = PermissionError("raw job payload")
+
+    report = await harness.orchestrator.reconcile()
+
+    step = report.step(SetupStepId.WHEELS)
+    assert report.current_step == SetupStepId.WHEELS
+    assert step.state == StepState.FAILED
+    assert step.code == "task_runner_job_update_failed"
+    assert "task-runner job" in step.summary
+    assert "wheels volume" not in step.summary
+    assert "raw job payload" not in step.summary
+    assert "delta" not in harness.events
+    assert "Task-runner job update failed (PermissionError)" in caplog.text
+    assert "raw job payload" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_lakebase_migration_failure_reports_stage_without_secret(caplog: pytest.LogCaptureFixture) -> None:
     class PrivilegeError(RuntimeError):
         sqlstate = "42501"
@@ -1267,6 +1306,76 @@ async def test_complete_resources_activate_without_wizard() -> None:
     assert report.current_step is None
     assert harness.runtime.report() is report
     assert harness.runtime.require_job_id() == 27
+
+
+class RecordingRuntime(SetupRuntime):
+    """Keeps every published report, so a test can follow setup's progress."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.published: list[SetupReport] = []
+
+    def publish(self, report: SetupReport) -> None:
+        self.published.append(report)
+        super().publish(report)
+
+
+@pytest.mark.asyncio
+async def test_progress_names_the_step_that_runs_next_not_a_finished_one() -> None:
+    """The task runner is checked twice; progress must follow the real run order.
+
+    Before, the next step came from the step enum, so once the runner's access check passed
+    the already finished wheels step was shown in progress again.
+    """
+    runtime = RecordingRuntime()
+    harness = _harness(runtime=runtime)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    in_progress = [
+        published.current_step for published in runtime.published if published.state == SetupState.INITIALIZING
+    ]
+    assert in_progress[:13] == [
+        SetupStepId.LAKEBASE,
+        SetupStepId.LAKEBASE,
+        SetupStepId.LAKEBASE,
+        SetupStepId.CONFIGURATION,
+        SetupStepId.UNITY_CATALOG,
+        SetupStepId.STORAGE,
+        SetupStepId.WAREHOUSE,
+        SetupStepId.TASK_RUNNER,
+        SetupStepId.WHEELS,
+        SetupStepId.MIGRATIONS,
+        SetupStepId.TASK_RUNNER,
+        SetupStepId.ACTIVATION,
+        SetupStepId.ACCESS,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ai_enabled", "expected_tail"),
+    [
+        (False, [SetupStepId.APP_SHARING, None]),
+        (True, [SetupStepId.AI, SetupStepId.APP_SHARING, None]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_progress_skips_the_ai_step_when_ai_is_off(
+    ai_enabled: bool, expected_tail: list[SetupStepId | None]
+) -> None:
+    """With AI off its check never runs, so progress must not name it while app sharing runs."""
+    runtime = RecordingRuntime()
+    events: list[str] = []
+    harness = _harness(events, runtime=runtime, ai=FakeAi(events) if ai_enabled else None)
+
+    report = await harness.orchestrator.reconcile()
+
+    assert report.state == SetupState.READY
+    in_progress = [
+        published.current_step for published in runtime.published if published.state == SetupState.INITIALIZING
+    ]
+    assert in_progress[13:] == expected_tail
 
 
 @pytest.mark.asyncio

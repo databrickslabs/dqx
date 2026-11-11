@@ -84,7 +84,7 @@ but is protected transitively by the instance-level guard.
  │   ├── dq_schedule_configs_history  (OLTP*) schedule config change audit log
  │   ├── dq_schedule_runs             (OLTP*) scheduler last/next run state (survives restarts)
  │   └── dq_migrations                (Delta) Delta migration version tracker
- │   └── wheels (volume)              ← DQX + task-runner wheels uploaded at app startup
+ │   └── wheels (volume)              ← task-runner wheel (pins DQX) uploaded at app startup
  ├── <prefix>_tmp                     ← temp views created via OBO for profiler/dryrun jobs
  ├── <prefix>_genie                   ← approved Genie views + metadata dimensions
  └── <prefix>_demo                    ← demo source tables
@@ -313,7 +313,7 @@ The UI is fully localized with **react-i18next**. Locale bundles live in `lib/i1
 - **Use `t()` for all display text.** Get it from `useTranslation()` (`const { t } = useTranslation()`); reference strings by key (`t("discovery.title")`), never as literals in JSX. This includes `toast` messages, `aria-label`s, placeholders, and error strings.
 - **Add every new key to all locales** — `en.json`, `fr.json`, `pt-BR.json`, `it.json`, `es.json`. `en.json` is the source of truth. A key present in `en` but missing from the others falls back to English at runtime (a silent partial-translation bug), so keep the key sets in sync and translate the value in each file — don't leave the English string behind in a non-English file.
 - **Pluralize with native i18next, not string concatenation.** Use `_one` / `_other` suffix keys with `{{count}}` (e.g. `columnsCount_one` / `columnsCount_other`). Never build plurals with a hard-coded `"s"` suffix or an interpolated `{{somethingPlural}}` placeholder — that bakes English grammar into the translation layer and breaks other locales.
-- **Adding a new language:** add it to `SUPPORTED_LANGUAGES` and register a loader in `localeLoaders` (both in `lib/i18n/index.ts`), then create the matching `locales/<code>.json`. Only `en` ships in the initial JS bundle; other locales lazy-load on demand via `ensureLocaleLoaded`, so don't statically import them.
+- **Adding a new language:** add it to `SUPPORTED_LANGUAGES` and register a loader in `localeLoaders` (both in `lib/i18n/languages.ts`), then create the matching `locales/<code>.json`. Only `en` ships in the initial JS bundle; other locales lazy-load on demand via `ensureLocaleLoaded`, so don't statically import them.
 
 ### Theming (CSS custom properties)
 
