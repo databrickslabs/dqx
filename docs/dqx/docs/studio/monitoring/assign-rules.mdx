@@ -102,11 +102,13 @@ drop the rest, and adjust severities or thresholds before you submit. Think of i
 as a knowledgeable first draft of "what should we be checking on this table?",
 not a decision made for you.
 
-<Admonition type="note" title="Governed tags apply rules automatically">
+<Admonition type="note" title="Tag matches are suggested; policies attach">
 If a rule's column is marked with a governed tag (for example `class.location`),
-that rule is applied automatically to any column on this table carrying the same
-tag — so tagged rules land on the right columns without you mapping them by hand.
-See [Governed tags](/docs/studio/authoring/create-a-rule#governed-tags).
+the rule is suggested for any column on this table carrying the same tag. You
+choose which suggestions to keep. To attach rules automatically, use a
+[rule policy](/docs/studio/authoring/rule-policies). Rules added by a policy show
+a **via policy** chip. See
+[Governed tags](/docs/studio/authoring/create-a-rule#governed-tags).
 </Admonition>
 
 <Admonition type="info" title="Your data is never changed">

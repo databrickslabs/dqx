@@ -3401,6 +3401,8 @@
     "pickCollectionEmpty": "No collections match."
   },
   "rulePolicies": {
+    "viaPolicy": "via policy",
+    "viaPolicyFallback": "Added by a rule policy",
     "tab": "Policies",
     "tabSaveFirst": "Save the rule to add policies.",
     "listTitle": "Policies",

@@ -44,10 +44,10 @@ Fill in:
   this measures (completeness, validity, accuracy, and so on). This is what lets
   you later report quality *by category*.
 - **Tags** *(optional)* — labels for organizing and filtering rules. Some tags
-  are [governed tags](#governed-tags) that make a rule apply automatically
-  wherever that kind of data appears.
+  are [governed tags](#governed-tags) that suggest the rule wherever that kind of
+  data appears.
 
-### Governed tags: apply a rule automatically {#governed-tags}
+### Governed tags: suggest a rule {#governed-tags}
 
 A **governed tag** is a label your organization agrees on for a *kind* of data —
 `pii`, `region`, `class.location`, and so on. Governed tags are defined in
@@ -56,18 +56,19 @@ use to classify columns.
 
 Instead of pointing a rule at a named column, you can point one of its columns at
 a **tag**: on the column, click **+ Apply to a tag** and pick from the searchable
-list of Unity Catalog tags. The rule then **auto-applies** to any table column
-carrying that tag — a rule scoped to `pii` lands on every `pii` column across your
-tables, and picks up new ones the moment they're tagged. No hunting down an
-`email` column that's called `email_address` on one table and `contact_email` on
-another.
+list of Unity Catalog tags. The rule is then **suggested** for any table column
+carrying that tag — a rule scoped to `pii` is offered for every `pii` column. No
+hunting down an `email` column that's called `email_address` on one table and
+`contact_email` on another. Suggestions appear on the table's Apply Rules tab and
+you accept the ones you want. To attach a rule automatically, create a
+[rule policy](/docs/studio/authoring/rule-policies).
 
-Checks that arrive this way are marked with a **matched-tag chip** on the table's
+Checks mapped this way are marked with a **matched-tag chip** on the table's
 [Apply Rules tab](/docs/studio/monitoring/assign-rules), so you can tell they came
 from a governed tag rather than being mapped by hand.
 
 <Admonition type="note" title="Governed tags vs. rule labels">
-Governed tags attach to a **column** inside a rule and drive auto-apply. They're
+Governed tags attach to a **column** inside a rule and drive suggestions. They're
 different from the plain **Tags** field above, which just helps you organize and
 find rules. Admins manage the organization's tags under
 [Governance](/docs/studio/governance/).

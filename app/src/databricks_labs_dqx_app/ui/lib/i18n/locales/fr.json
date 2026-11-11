@@ -3401,6 +3401,8 @@
     "pickCollectionEmpty": "Aucune collection ne correspond."
   },
   "rulePolicies": {
+    "viaPolicy": "via une politique",
+    "viaPolicyFallback": "Ajoutée par une politique de règle",
     "tab": "Politiques",
     "tabSaveFirst": "Enregistrez la règle pour ajouter des politiques.",
     "listTitle": "Politiques",
