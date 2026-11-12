@@ -123,6 +123,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
     choices: SimilarRuleChoice[];
   }>({ inputs: [], choices: [] });
   const [reuseRuleIds, setReuseRuleIds] = useState<ReadonlySet<string>>(new Set());
+  // True while a similar-rule lookup is scheduled or in flight — Import must
+  // wait so reuseRuleIds matches the YAML currently on screen.
+  const [similarLookupPending, setSimilarLookupPending] = useState(false);
 
   useEffect(() => {
     const inputs =
@@ -131,9 +134,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         : [];
     if (inputs.length === 0) {
       setSimilar({ inputs: [], choices: [] });
+      setSimilarLookupPending(false);
       return;
     }
     let cancelled = false;
+    setSimilarLookupPending(true);
     const timer = setTimeout(() => {
       previewSimilarRules(inputs, false)
         .then((matches) => {
@@ -144,6 +149,9 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
         })
         .catch(() => {
           if (!cancelled) setSimilar({ inputs: [], choices: [] });
+        })
+        .finally(() => {
+          if (!cancelled) setSimilarLookupPending(false);
         });
     }, SIMILAR_LOOKUP_DEBOUNCE_MS);
     return () => {
@@ -233,6 +241,16 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       }
       if (result.reused > 0) {
         toast.success(t("rulesImport.reusedExisting", { count: result.reused }));
+      }
+      if (result.reusedWithFilter > 0) {
+        // Rules-only import has no applied rule to attach the filter to.
+        toast.message(
+          t("rulesImport.reusedFilterDeferred", {
+            count: result.reusedWithFilter,
+            defaultValue:
+              "{{count}} reused rule(s) had a population filter — set it on Apply Rules when you apply them.",
+          }),
+        );
       }
       if (alsoSubmit && result.submitted > 0) {
         toast.success(t("rulesImport.submittedReview", { count: result.submitted }));
@@ -470,11 +488,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
             <Button
               variant="outline"
               onClick={() => importChecks(false)}
-              disabled={!parsedChecks || busy}
+              disabled={!parsedChecks || busy || similarLookupPending}
               className="gap-2"
               size="sm"
             >
-              {isSaving ? (
+              {isSaving || similarLookupPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Save className="h-4 w-4" />
@@ -483,11 +501,11 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
             </Button>
             <Button
               onClick={() => importChecks(true)}
-              disabled={!parsedChecks || busy}
+              disabled={!parsedChecks || busy || similarLookupPending}
               className="gap-2"
               size="sm"
             >
-              {isSubmitting ? (
+              {isSubmitting || similarLookupPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />

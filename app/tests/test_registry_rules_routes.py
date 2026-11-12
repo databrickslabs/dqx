@@ -645,6 +645,63 @@ class TestBatchImport:
         assert [r.rule.rule_id for r in result.reused] == ["lower", "upper"]
         svc.create_rule.assert_not_called()
 
+    def test_reuse_rule_ids_reject_dissimilar_rule(self):
+        # A stale or wrong ID must not silently link the check to an unrelated rule.
+        other = _rule("other", status="approved", version=1)
+        other.definition = RuleDefinition.model_validate(
+            {
+                **_definition().model_dump(),
+                "body": {"function": "is_unique", "arguments": {"columns": ["{{column}}"]}},
+            }
+        )
+        svc = MagicMock()
+        svc.get_rule.return_value = other
+        svc.create_rule.return_value = (_rule("created"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+            reuse_rule_ids={0: "other"},
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.reused == []
+        assert len(result.failed) == 1
+        assert "same check" in result.failed[0].error
+        svc.create_rule.assert_not_called()
+
+    def test_reuse_rule_ids_do_not_enable_in_batch_dedup(self):
+        # Sending reuse_rule_ids for one row must not collapse later rows with
+        # the same shape when skip_duplicates is off.
+        existing = _rule("existing", status="approved", version=1)
+        created = _rule("created")
+        svc = MagicMock()
+        svc.get_rule.return_value = existing
+        svc.create_rule.return_value = (created, None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+            reuse_rule_ids={0: "existing"},
+            skip_duplicates=False,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [r.rule.rule_id for r in result.reused] == ["existing"]
+        assert [r.rule.rule_id for r in result.created] == ["created"]
+        assert svc.create_rule.call_count == 1
+
     def test_skip_duplicates_carries_imported_filter_as_row_filter(self):
         existing = _rule("existing", status="approved", version=1)
         svc = MagicMock()

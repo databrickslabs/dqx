@@ -192,6 +192,9 @@ export function fnSupportsNegate(fn: ApiCheckFunctionDef | undefined): boolean {
  * path. ``date_format`` / ``timestamp_format`` decide which values count as
  * valid; leaving them blank is a different (lenient) check than a named format.
  */
+// Keep in sync with backend ``STUDIO_REQUIRED_OPTIONAL_PARAMS``
+// (``backend/routes/v1/check_functions.py``). Prefer serving this from the
+// check-functions API later so the two cannot drift.
 const STUDIO_REQUIRED_OPTIONAL_PARAMS = new Set(["ref_table", "date_format", "timestamp_format"]);
 
 /** Non-column parameter names that must be filled before a native rule can be submitted. */

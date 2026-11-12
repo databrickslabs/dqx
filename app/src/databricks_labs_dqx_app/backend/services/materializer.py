@@ -445,9 +445,10 @@ def render_check(
     error_message = definition.error_message
     if error_message:
         check_dict["message_expr"] = error_message
-    # Applied ``row_filter`` overrides the rule's default ``definition.filter``.
-    # Empty/None on the application inherits the rule default. Slot placeholders
-    # ({{slot}}) are substituted so the filter can reference mapped columns.
+    # Applied ``row_filter`` *replaces* the rule's default ``definition.filter``
+    # (it does not AND with it). Empty/None on the application inherits the rule
+    # default. Slot placeholders ({{slot}}) are substituted so the filter can
+    # reference mapped columns.
     effective_filter = (row_filter or "").strip() or (definition.filter or "").strip() or None
     if effective_filter:
         substituted_filter = _substitute_text(effective_filter, group, definition.slots)

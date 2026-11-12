@@ -65,16 +65,30 @@ export function hasConflictingSettings(
   return [...setParameters(a)].some(([name, value]) => right.has(name) && right.get(name) !== value);
 }
 
-/** Similar rules to reuse by default: those whose settings only add to or omit the imported ones. */
+/** Whether both rules set the same parameters to the same values (order-insensitive). */
+export function hasEqualParameters(
+  a: Pick<RuleDefinition, "parameters"> | undefined,
+  b: Pick<RuleDefinition, "parameters"> | undefined,
+): boolean {
+  const left = setParameters(a);
+  const right = setParameters(b);
+  if (left.size !== right.size) return false;
+  for (const [name, value] of left) {
+    if (right.get(name) !== value) return false;
+  }
+  return true;
+}
+
+/** Similar rules to reuse by default: only when parameters match exactly.
+ *  A candidate that fills in a blank (e.g. `trim_strings: true` when the import
+ *  left it unset) would run a different check, so it stays opt-in. */
 export function defaultReuseRuleIds(
   choices: SimilarRuleChoice[],
   inputs: Pick<CreateRegistryRuleIn, "definition">[],
 ): Set<string> {
   return new Set(
     choices
-      .filter(
-        (c) => !c.inputIndexes.some((i) => hasConflictingSettings(c.rule.definition, inputs[i]?.definition)),
-      )
+      .filter((c) => c.inputIndexes.every((i) => hasEqualParameters(c.rule.definition, inputs[i]?.definition)))
       .map((c) => c.rule.rule_id),
   );
 }
