@@ -309,7 +309,7 @@ class PolicyApplyService:
         try:
             rule = self._approved_rule(policy.rule_id)
             if rule is not None:
-                self._run_scope(policy, rule, user, totals)
+                self._run_scope(policy, rule, user, totals, {})
         except Exception:  # best-effort trigger: report what was done so far
             logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -325,27 +325,61 @@ class PolicyApplyService:
         except Exception:  # best-effort trigger: a storage failure must not fail the approval
             logger.warning(f"Could not load policies for rule {safe_log_value(rule_id)}", exc_info=True)
             return _EMPTY_RESULT
+        snapshots: dict[str, SnapshotResult] = {}
         for policy in policies:
             try:
-                self._run_scope(policy, rule, user, totals)
+                self._run_scope(policy, rule, user, totals, snapshots)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
                 logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
+        return totals.result()
+
+    def run_policies(self, policy_ids: list[str], user: ActingUser) -> ApplyResult:
+        """Evaluate several policies (after a multi-rule save); policies with the same scope share one snapshot.
+
+        Best-effort and never raises: an unknown or failing policy is logged and skipped.
+        """
+        totals = self._totals()
+        snapshots: dict[str, SnapshotResult] = {}
+        for policy_id in policy_ids:
+            try:
+                policy = self._policies.get(policy_id)
+                rule = self._approved_rule(policy.rule_id) if policy is not None else None
+                if policy is not None and rule is not None:
+                    self._run_scope(policy, rule, user, totals, snapshots)
+            except Exception:  # best-effort trigger: one policy failing must not stop the others
+                logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
 
     def evaluate_binding(self, binding_id: str, user: ActingUser) -> ApplyResult:
         """Evaluate every policy that reaches one monitored table (on open or register)."""
         totals = self._totals()
         try:
-            self._run_binding(binding_id, user, totals, attach=True)
+            table_fqn = self._monitored_tables.get_table_fqns({binding_id}).get(binding_id)
+            if table_fqn is not None:
+                self._run_bindings({table_fqn: binding_id}, user, totals, attach=True)
         except Exception:  # best-effort trigger: opening or registering a table must never fail on this
             logger.warning(f"Policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
+        return totals.result()
+
+    def evaluate_tables(self, table_fqns: list[str], user: ActingUser) -> ApplyResult:
+        """Evaluate every policy reaching each monitored table in *table_fqns* (after a bulk register).
+
+        Reads one snapshot for all of the tables. Best-effort and never raises.
+        """
+        totals = self._totals()
+        try:
+            self._run_bindings(self._binding_ids(table_fqns), user, totals, attach=True)
+        except Exception:  # best-effort trigger: registering tables must never fail on this
+            logger.warning("Policy evaluation for registered tables failed", exc_info=True)
         return totals.result()
 
     def ambiguous_for_binding(self, binding_id: str, user: ActingUser) -> list[PolicyMatch]:
         """Ambiguous policy pairings on one monitored table, offered as suggestions (nothing attached)."""
         totals = self._totals()
         try:
-            self._run_binding(binding_id, user, totals, attach=False)
+            table_fqn = self._monitored_tables.get_table_fqns({binding_id}).get(binding_id)
+            if table_fqn is not None:
+                self._run_bindings({table_fqn: binding_id}, user, totals, attach=False)
         except Exception:  # best-effort: suggestions are optional
             logger.warning(f"Policy suggestions for binding {safe_log_value(binding_id)} failed", exc_info=True)
         return totals.ambiguous
@@ -361,8 +395,20 @@ class PolicyApplyService:
         rule = self._registry.get_rule(rule_id)
         return rule if rule is not None and rule.status == "approved" else None
 
-    def _run_scope(self, policy: RulePolicy, rule: RegistryRule, user: ActingUser, totals: _Totals) -> None:
-        snapshot = self._snapshots.for_scope(policy.scope)
+    def _run_scope(
+        self,
+        policy: RulePolicy,
+        rule: RegistryRule,
+        user: ActingUser,
+        totals: _Totals,
+        snapshots: dict[str, SnapshotResult],
+    ) -> None:
+        """Evaluate *policy* across its scope; *snapshots* memoises reads by scope within one run."""
+        scope_key = policy.scope.model_dump_json()
+        snapshot = snapshots.get(scope_key)
+        if snapshot is None:
+            snapshot = self._snapshots.for_scope(policy.scope)
+            snapshots[scope_key] = snapshot
         if snapshot.truncated:
             logger.info(
                 f"Rule policy {safe_log_value(policy.policy_id)} evaluation was capped at the snapshot table limit"
@@ -372,25 +418,37 @@ class PolicyApplyService:
         for table in snapshot.tables:
             self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=True)
 
-    def _run_binding(self, binding_id: str, user: ActingUser, totals: _Totals, *, attach: bool) -> None:
-        table_fqn = self._monitored_tables.get_table_fqns({binding_id}).get(binding_id)
-        if table_fqn is None:
-            return
+    def _run_bindings(self, table_bindings: dict[str, str], user: ActingUser, totals: _Totals, *, attach: bool) -> None:
+        """Evaluate the policies reaching each ``table_fqn -> binding_id``, reading one snapshot for all."""
         gate = _UserGate(user, self._permissions, self._apply_rules)
-        if not gate.can_apply(binding_id):
+        allowed = {fqn: binding_id for fqn, binding_id in table_bindings.items() if gate.can_apply(binding_id)}
+        if not allowed:
             return
-        policies = [p for p in self._policies.list_all() if in_scope(p.scope, table_fqn)]
-        if not policies:
+        all_policies = self._policies.list_all()
+        reaching = {fqn: [p for p in all_policies if in_scope(p.scope, fqn)] for fqn in allowed}
+        reaching = {fqn: policies for fqn, policies in reaching.items() if policies}
+        if not reaching:
             return
-        rules = self._registry.get_rules_many(sorted({p.rule_id for p in policies}))
-        snapshot: SnapshotResult = self._snapshots.for_tables([table_fqn])
-        bindings = {table.table_fqn: binding_id for table in snapshot.tables}
-        for policy in policies:
-            rule = rules.get(policy.rule_id)
-            if rule is None or rule.status != "approved":
+        rules = self._registry.get_rules_many(sorted({p.rule_id for ps in reaching.values() for p in ps}))
+        snapshot = self._snapshots.for_tables(list(reaching))
+        tables = {table.table_fqn.lower(): table for table in snapshot.tables}
+        for fqn, policies in reaching.items():
+            table = tables.get(fqn.lower())
+            if table is None:
                 continue
-            for table in snapshot.tables:
-                self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=attach)
+            bindings = {table.table_fqn: allowed[fqn]}
+            for policy in policies:
+                rule = rules.get(policy.rule_id)
+                if rule is None or rule.status != "approved":
+                    continue
+                try:
+                    self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=attach)
+                except Exception:  # best-effort: one table failing must not stop the others
+                    logger.warning(
+                        f"Rule policy {safe_log_value(policy.policy_id)} evaluation on binding "
+                        f"{safe_log_value(allowed[fqn])} failed",
+                        exc_info=True,
+                    )
 
     def _apply_table(
         self,

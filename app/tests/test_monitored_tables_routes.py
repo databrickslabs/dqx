@@ -158,6 +158,7 @@ def _policy_apply_mock(attached: int = 0) -> MagicMock:
     """A PolicyApplyService fake whose trigger evaluations attach *attached* rows and nothing else."""
     policy_apply = create_autospec(PolicyApplyService, instance=True)
     policy_apply.evaluate_binding.return_value = ApplyResult(attached=attached, registered=0, ambiguous=[])
+    policy_apply.evaluate_tables.return_value = ApplyResult(attached=0, registered=0, ambiguous=[])
     policy_apply.ambiguous_for_binding.return_value = []
     return policy_apply
 
@@ -450,26 +451,34 @@ class TestBulkRegister:
             )
         assert excinfo.value.status_code == 500
 
-    def test_bulk_register_evaluates_policies_for_each_new_binding(self):
-        """Policies are evaluated once per newly-registered FQN (via get_by_table_fqn)."""
+    def test_bulk_register_evaluates_policies_once_for_all_new_tables(self):
+        """One evaluation (one snapshot) covers every newly-registered FQN; skipped ones are left out."""
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult(
             registered=["cat.schema.t1", "cat.schema.t2"],
             skipped_existing=["cat.schema.existing"],
             invalid=[],
         )
-        svc.get_by_table_fqn.side_effect = lambda fqn: MonitoredTableDetail(
-            table=_table(binding_id=f"bid-{fqn[-2:]}", table_fqn=fqn),
-            applied_rules=[],
-        )
         policy_apply = _policy_apply_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1", "cat.schema.t2", "cat.schema.existing"])
         bulk_register_monitored_tables(
             body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER
         )
-        assert policy_apply.evaluate_binding.call_count == 2
-        policy_apply.evaluate_binding.assert_any_call("bid-t1", _ACTING_USER)
-        policy_apply.evaluate_binding.assert_any_call("bid-t2", _ACTING_USER)
+        policy_apply.evaluate_tables.assert_called_once_with(["cat.schema.t1", "cat.schema.t2"], _ACTING_USER)
+        policy_apply.evaluate_binding.assert_not_called()
+        svc.get_by_table_fqn.assert_not_called()
+
+    def test_bulk_register_with_nothing_new_skips_policy_evaluation(self):
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=[], skipped_existing=["cat.schema.t1"], invalid=[]
+        )
+        policy_apply = _policy_apply_mock()
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bulk_register_monitored_tables(
+            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER
+        )
+        policy_apply.evaluate_tables.assert_not_called()
 
     def test_bulk_register_policy_failure_is_non_fatal(self):
         """A raising policy evaluation must NOT turn a successful bulk-register into a 500."""
@@ -477,12 +486,8 @@ class TestBulkRegister:
         svc.bulk_register.return_value = BulkRegisterResult(
             registered=["cat.schema.t1"], skipped_existing=[], invalid=[]
         )
-        svc.get_by_table_fqn.return_value = MonitoredTableDetail(
-            table=_table(binding_id="b1", table_fqn="cat.schema.t1"),
-            applied_rules=[],
-        )
         policy_apply = _policy_apply_mock()
-        policy_apply.evaluate_binding.side_effect = RuntimeError("boom")
+        policy_apply.evaluate_tables.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
         result = bulk_register_monitored_tables(
             body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER

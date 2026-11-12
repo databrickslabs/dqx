@@ -52,6 +52,15 @@ class CacheFactory:
 
     async def get(self, key: str) -> Any:
         """Return the cached value, or the ``_MISS`` sentinel if absent/expired."""
+        return self.peek(key)
+
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        self.put(key, value, ttl=ttl)
+
+    # -- synchronous access (for sync code running in the threadpool) ---
+
+    def peek(self, key: str) -> object:
+        """Synchronous :meth:`get`: the cached value, or ``MISS`` if absent/expired."""
         entry = self._store.get(key)
         if entry is None:
             return MISS
@@ -61,7 +70,8 @@ class CacheFactory:
             return MISS
         return value
 
-    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+    def put(self, key: str, value: object, ttl: int | None = None) -> None:
+        """Synchronous :meth:`set`."""
         effective_ttl = ttl if ttl is not None else self._ttl
         self._store[key] = (value, time.monotonic() + effective_ttl)
 

@@ -589,3 +589,69 @@ def test_preview_missing_rule_raises_before_snapshot(world: World) -> None:
     with pytest.raises(RuleNotFoundError):
         world.service().preview("missing", _policy_in(), AUTHOR)
     world.snapshots.for_scope.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Shared snapshots (bulk register, multi-policy runs)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_tables_reads_one_snapshot_for_all_tables(world: World) -> None:
+    world.bindings = {"c.s.a": "b1", "c.s.b": "b2"}
+    world.grants = {("b1", Privilege.APPLY), ("b2", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("c.s.b", _col("phone", "pii")))
+    world.policies.list_all.return_value = [_policy()]
+
+    result = world.service().evaluate_tables(["c.s.a", "c.s.b"], AUTHOR)
+
+    assert result.attached == 2
+    assert {(b, m[0]["column"]) for b, _, m, _, _ in world.attach_calls} == {("b1", "email"), ("b2", "phone")}
+    world.snapshots.for_tables.assert_called_once()
+    assert set(world.snapshots.for_tables.call_args.args[0]) == {"c.s.a", "c.s.b"}
+    world.policies.list_all.assert_called_once()
+
+
+def test_evaluate_tables_skips_tables_without_permission_or_binding(world: World) -> None:
+    world.bindings = {"c.s.a": "b1", "c.s.b": "b2"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("c.s.b", _col("phone", "pii")))
+    world.policies.list_all.return_value = [_policy()]
+
+    result = world.service().evaluate_tables(["c.s.a", "c.s.b", "c.s.unmonitored"], AUTHOR)
+
+    assert result.attached == 1
+    assert world.snapshots.for_tables.call_args.args[0] == ["c.s.a"]
+
+
+def test_evaluate_tables_never_raises(world: World) -> None:
+    world.monitored.get_binding_ids_by_table_fqn.side_effect = RuntimeError("db down")
+    assert world.service().evaluate_tables(["c.s.a"], AUTHOR) == ApplyResult(attached=0, registered=0, ambiguous=[])
+
+
+def test_run_policies_shares_one_snapshot_per_scope(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    stored = {
+        "p1": _policy("p1", rule_id="r1"),
+        "p2": _policy("p2", rule_id="r2"),
+        "p3": _policy("p3", rule_id="r3"),
+    }
+    world.policies.get.side_effect = stored.get
+
+    result = world.service().run_policies(["p1", "p2", "p3"], AUTHOR)
+
+    assert result.attached == 3
+    world.snapshots.for_scope.assert_called_once()
+
+
+def test_run_policies_is_best_effort(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    stored = {"p2": _policy("p2", rule_id="r2")}
+    world.policies.get.side_effect = stored.get
+
+    result = world.service().run_policies(["missing", "p2"], AUTHOR)
+
+    assert result.attached == 1

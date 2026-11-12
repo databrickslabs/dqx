@@ -4,15 +4,25 @@ Reads tables, columns, tags and owners per catalog with a handful of set-based
 queries (never one query per table) and returns :class:`TableSnapshot` objects
 for the pure policy engine. Run it with an OBO executor so the result reflects
 only what the calling user can see.
+
+Every read is bounded by a deadline (``DEFAULT_DEADLINE_SECONDS`` per call):
+when it passes, reading stops and the result is ``truncated``. ``for_tables``
+can share a per-table, per-user TTL cache so opening the same table again (or
+asking for its suggestions) does not re-read Unity Catalog.
 """
 
+import functools
+import hashlib
 import logging
+import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.sdk.errors.base import DatabricksError
 
+from databricks_labs_dqx_app.backend.cache import MISS, CacheFactory
 from databricks_labs_dqx_app.backend.policy_models import ALL, PolicyScope
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, TableSnapshot, in_scope
@@ -27,6 +37,12 @@ from databricks_labs_dqx_app.backend.sql_utils import (
 logger = logging.getLogger(__name__)
 
 MAX_SNAPSHOT_TABLES = 5000
+DEFAULT_DEADLINE_SECONDS = 30.0
+SNAPSHOT_CACHE_TTL_SECONDS = 300
+_CACHE_PREFIX = "policy:snapshot"
+# Databricks statement wait_timeout must be 0 or 5..50 s; the reader stays within its deadline.
+_MIN_WAIT_SECONDS = 5
+_MAX_WAIT_SECONDS = 30
 _READ_ERRORS = (ValueError, RuntimeError, OSError, DatabricksError)  # RuntimeError covers SqlStatementError
 _SYSTEM_CATALOG = "system"
 _INTERNAL_CATALOG_PREFIX = "__databricks_internal"
@@ -38,6 +54,15 @@ class SnapshotResult:
     tables: list[TableSnapshot]
     truncated: bool
     unreadable_catalogs: list[str]
+
+
+class _DeadlineExceeded(Exception):
+    """The snapshot ran out of time; deliberately not one of ``_READ_ERRORS``."""
+
+
+def snapshot_cache_identity(user_email: str) -> str:
+    """Stable, non-reversible cache key part for the user a snapshot is read for."""
+    return hashlib.sha256(user_email.strip().lower().encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -74,6 +99,14 @@ def _where(flt: _CatalogFilter, schema_col: str, table_col: str | None) -> str:
     return " AND ".join(clauses)
 
 
+def _valid_fqn(fqn: str) -> bool:
+    try:
+        validate_fqn(fqn)
+    except ValueError:
+        return False
+    return True
+
+
 def _user_catalogs(names: list[str]) -> list[str]:
     """Drop the platform catalogs "All catalogs" never reaches (``system``, ``__databricks_internal*``)."""
     return [n for n in names if n.lower() != _SYSTEM_CATALOG and not n.lower().startswith(_INTERNAL_CATALOG_PREFIX)]
@@ -97,11 +130,35 @@ def _tags(rows: list[Row]) -> tuple[str, ...]:
 class PolicySnapshotReader:
     """Builds :class:`TableSnapshot` lists for a policy scope or an explicit table list."""
 
-    def __init__(self, sql: SqlExecutor, list_catalogs: Callable[[], list[str]]) -> None:
+    def __init__(
+        self,
+        sql: SqlExecutor,
+        list_catalogs: Callable[[], list[str]],
+        *,
+        cache: CacheFactory | None = None,
+        cache_identity: str = "",
+        deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Create a reader.
+
+        Args:
+            sql: Executor the ``information_schema`` queries run on (OBO for user scoping).
+            list_catalogs: Lists the catalogs "All catalogs" expands to.
+            cache: Optional shared cache for :meth:`for_tables`; caching needs *cache_identity* too.
+            cache_identity: Identity of the user the reads run as (see :func:`snapshot_cache_identity`).
+            deadline_seconds: Time budget of each :meth:`for_scope` / :meth:`for_tables` call.
+            clock: Monotonic clock (injectable for tests).
+        """
         self._sql = sql
         self._list_catalogs = list_catalogs
+        self._cache = cache if cache_identity else None
+        self._cache_identity = cache_identity
+        self._deadline_seconds = deadline_seconds
+        self._clock = clock
 
     def for_scope(self, scope: PolicyScope, *, limit: int = MAX_SNAPSHOT_TABLES) -> SnapshotResult:
+        deadline = self._clock() + self._deadline_seconds
         try:
             catalogs = _user_catalogs(self._list_catalogs()) if scope.catalogs == ALL else list(scope.catalogs)
         except _READ_ERRORS:
@@ -116,9 +173,44 @@ class PolicySnapshotReader:
             flt = self._scope_filter(scope, catalog)
             if flt is not None:
                 plan.append((catalog, flt))
-        return self._read(plan, limit, lambda fqn: in_scope(scope, fqn))
+        return self._read(plan, limit, lambda fqn: in_scope(scope, fqn), deadline)
 
     def for_tables(self, table_fqns: list[str]) -> SnapshotResult:
+        """Snapshot specific tables, serving (and filling) the per-user cache when configured."""
+        deadline = self._clock() + self._deadline_seconds
+        cached: list[TableSnapshot] = []
+        misses: list[str] = []
+        for fqn in dict.fromkeys(table_fqns):
+            hit = self._cache.peek(self._cache_key(fqn)) if self._cache is not None else MISS
+            if hit is MISS:
+                misses.append(fqn)
+            elif isinstance(hit, TableSnapshot):
+                cached.append(hit)
+        if not misses:
+            return SnapshotResult(tables=cached, truncated=False, unreadable_catalogs=[])
+        result = self._read_tables(misses, deadline)
+        self._remember(misses, result)
+        return SnapshotResult(
+            tables=cached + result.tables, truncated=result.truncated, unreadable_catalogs=result.unreadable_catalogs
+        )
+
+    def _cache_key(self, table_fqn: str) -> str:
+        return f"{_CACHE_PREFIX}:{self._cache_identity}:{table_fqn.lower()}"
+
+    def _remember(self, requested: list[str], result: SnapshotResult) -> None:
+        """Cache what was read; a table not found is cached as ``None`` only when its read completed."""
+        if self._cache is None:
+            return
+        found = {table.table_fqn.lower(): table for table in result.tables}
+        unreadable = {catalog.lower() for catalog in result.unreadable_catalogs}
+        for fqn in requested:
+            table = found.get(fqn.lower())
+            if table is not None:
+                self._cache.put(self._cache_key(fqn), table, ttl=SNAPSHOT_CACHE_TTL_SECONDS)
+            elif not result.truncated and _valid_fqn(fqn) and fqn.split(".")[0].lower() not in unreadable:
+                self._cache.put(self._cache_key(fqn), None, ttl=SNAPSHOT_CACHE_TTL_SECONDS)
+
+    def _read_tables(self, table_fqns: list[str], deadline: float) -> SnapshotResult:
         pairs_by_catalog: dict[str, set[tuple[str, str]]] = {}
         catalog_names: dict[str, str] = {}
         for fqn in table_fqns:
@@ -133,7 +225,7 @@ class PolicySnapshotReader:
             pairs_by_catalog.setdefault(key, set()).add((schema.lower(), table.lower()))
         plan = [(catalog_names[key], _CatalogFilter(pairs=frozenset(pairs))) for key, pairs in pairs_by_catalog.items()]
         wanted = {fqn.lower() for fqn in table_fqns}
-        return self._read(plan, MAX_SNAPSHOT_TABLES, lambda fqn: fqn.lower() in wanted)
+        return self._read(plan, MAX_SNAPSHOT_TABLES, lambda fqn: fqn.lower() in wanted, deadline)
 
     @staticmethod
     def _scope_filter(scope: PolicyScope, catalog: str) -> _CatalogFilter | None:
@@ -154,7 +246,7 @@ class PolicySnapshotReader:
         return _CatalogFilter(schemas=schemas, pairs=pairs)
 
     def _read(
-        self, plan: list[tuple[str, _CatalogFilter]], limit: int, accept: Callable[[str], bool]
+        self, plan: list[tuple[str, _CatalogFilter]], limit: int, accept: Callable[[str], bool], deadline: float
     ) -> SnapshotResult:
         tables: list[TableSnapshot] = []
         unreadable: list[str] = []
@@ -162,20 +254,32 @@ class PolicySnapshotReader:
         for catalog, flt in plan:
             try:
                 validate_identifier(catalog)
-                found, truncated = self._read_catalog(catalog, flt, limit - len(tables), accept)
+                found, truncated = self._read_catalog(catalog, flt, limit - len(tables), accept, deadline)
+            except _DeadlineExceeded:
+                truncated = True
             except _READ_ERRORS:
                 logger.warning(f"Could not read information_schema for catalog (skipped): {safe_log_value(catalog)}")
                 unreadable.append(catalog)
-                continue
-            tables.extend(found)
+                truncated = self._clock() >= deadline  # a statement that hit the time limit
+                if not truncated:
+                    continue
+            else:
+                tables.extend(found)
             if truncated:
                 break
+        if truncated and self._clock() >= deadline:
+            logger.info("Policy snapshot stopped at its time limit")
         return SnapshotResult(tables=tables, truncated=truncated, unreadable_catalogs=unreadable)
 
-    def _run(self, query: str) -> list[Row]:
+    def _run(self, query: str, deadline: float) -> list[Row]:
         if not is_sql_query_safe(query):
             raise ValueError("Unsafe snapshot query")
-        return self._sql.query_dicts(query, require_complete=True)
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise _DeadlineExceeded()
+        wait = min(_MAX_WAIT_SECONDS, max(_MIN_WAIT_SECONDS, int(remaining)))
+        poll = max(1, math.ceil(remaining) - wait)
+        return self._sql.query_dicts(query, require_complete=True, timeout_seconds=poll, wait_timeout_seconds=wait)
 
     @staticmethod
     def _followup_filters(flt: _CatalogFilter, candidates: list[tuple[str, str]]) -> list[_CatalogFilter]:
@@ -186,10 +290,11 @@ class PolicySnapshotReader:
         return [_CatalogFilter(pairs=frozenset(pairs[i : i + _PAIR_CHUNK])) for i in range(0, len(pairs), _PAIR_CHUNK)]
 
     def _read_catalog(
-        self, catalog: str, flt: _CatalogFilter, remaining: int, accept: Callable[[str], bool]
+        self, catalog: str, flt: _CatalogFilter, remaining: int, accept: Callable[[str], bool], deadline: float
     ) -> tuple[list[TableSnapshot], bool]:
+        run = functools.partial(self._run, deadline=deadline)
         base = f"{quote_ident(catalog)}.information_schema"
-        rows = self._run(
+        rows = run(
             "SELECT table_schema, table_name, table_owner "
             f"FROM {base}.tables WHERE table_type IN {_TABLE_TYPES} "
             f"AND {_where(flt, 'table_schema', 'table_name')} "
@@ -208,14 +313,14 @@ class PolicySnapshotReader:
         columns: dict[tuple[str, str], list[ColumnSnapshot]] = {}
         table_tags: dict[tuple[str, str], list[Row]] = {}
         for sub in followups:
-            for r in self._run(
+            for r in run(
                 "SELECT schema_name, table_name, column_name, tag_name, tag_value "
                 f"FROM {base}.column_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
             ):
                 sch, tbl, col = r.get("schema_name"), r.get("table_name"), r.get("column_name")
                 if sch and tbl and col:
                     column_tags.setdefault((sch, tbl, col), []).append(r)
-            for r in self._run(
+            for r in run(
                 "SELECT table_schema, table_name, column_name, data_type "
                 f"FROM {base}.columns WHERE {_where(sub, 'table_schema', 'table_name')} "
                 "ORDER BY table_schema, table_name, ordinal_position"
@@ -226,7 +331,7 @@ class PolicySnapshotReader:
                     columns.setdefault((schema, table), []).append(
                         ColumnSnapshot(column, r.get("data_type") or "", tags)
                     )
-            for r in self._run(
+            for r in run(
                 "SELECT schema_name, table_name, tag_name, tag_value "
                 f"FROM {base}.table_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
             ):
@@ -236,16 +341,16 @@ class PolicySnapshotReader:
 
         schema_filter = _CatalogFilter(schemas=frozenset(schema.lower() for schema, _ in owners))
         schema_tags: dict[str, list[Row]] = {}
-        for r in self._run(
+        for r in run(
             "SELECT schema_name, tag_name, tag_value "
             f"FROM {base}.schema_tags WHERE {_where(schema_filter, 'schema_name', None)}"
         ):
             sch = r.get("schema_name")
             if sch:
                 schema_tags.setdefault(sch, []).append(r)
-        catalog_tags = _tags(self._run(f"SELECT tag_name, tag_value FROM {base}.catalog_tags"))
+        catalog_tags = _tags(run(f"SELECT tag_name, tag_value FROM {base}.catalog_tags"))
 
-        catalog_owner, schema_owners = self._owners(catalog, base, schema_filter)
+        catalog_owner, schema_owners = self._owners(catalog, base, schema_filter, deadline)
         snapshots = [
             TableSnapshot(
                 table_fqn=f"{catalog}.{schema}.{table}",
@@ -261,12 +366,15 @@ class PolicySnapshotReader:
         ]
         return snapshots, truncated
 
-    def _owners(self, catalog: str, base: str, flt: _CatalogFilter) -> tuple[str | None, dict[str, str | None]]:
-        """Best-effort catalog/schema owners; any failure yields ``None`` owners."""
+    def _owners(
+        self, catalog: str, base: str, flt: _CatalogFilter, deadline: float
+    ) -> tuple[str | None, dict[str, str | None]]:
+        """Best-effort catalog/schema owners; any read failure yields ``None`` owners."""
+        run = functools.partial(self._run, deadline=deadline)
         catalog_owner: str | None = None
         schema_owners: dict[str, str | None] = {}
         try:
-            for r in self._run(
+            for r in run(
                 f"SELECT catalog_name, catalog_owner FROM {base}.catalogs "
                 f"WHERE lower(catalog_name) = {_literal(catalog.lower())}"
             ):
@@ -276,7 +384,7 @@ class PolicySnapshotReader:
         except _READ_ERRORS:
             logger.warning(f"Catalog owner lookup failed: {safe_log_value(catalog)}")
         try:
-            for r in self._run(
+            for r in run(
                 f"SELECT schema_name, schema_owner FROM {base}.schemata WHERE {_where(flt, 'schema_name', None)}"
             ):
                 if r.get("schema_name"):

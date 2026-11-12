@@ -71,7 +71,7 @@ from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
 from .services.monitored_table_registration import register_table
 from .services.policy_apply_service import ActingUser, PolicyApplyService
-from .services.policy_snapshot import PolicySnapshotReader
+from .services.policy_snapshot import PolicySnapshotReader, snapshot_cache_identity
 from .services.rule_policy_service import RulePolicyService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
@@ -1518,17 +1518,24 @@ async def get_rule_policy_service(
 async def get_policy_snapshot_reader(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    email: Annotated[str, Depends(get_user_email)],
 ) -> PolicySnapshotReader:
     """Create a PolicySnapshotReader that reads Unity Catalog on-behalf-of the caller.
 
     Both the information_schema queries and the "All catalogs" listing run as the
-    calling user, so a policy only ever sees tables that user can see.
+    calling user, so a policy only ever sees tables that user can see. Per-table
+    snapshots are cached for 5 minutes per user (keyed by a hash of their email).
     """
 
     def _list_catalogs() -> list[str]:
         return sorted(c.name for c in obo_ws.catalogs.list() if c.name)
 
-    return PolicySnapshotReader(sql=obo_sql, list_catalogs=_list_catalogs)
+    return PolicySnapshotReader(
+        sql=obo_sql,
+        list_catalogs=_list_catalogs,
+        cache=app_cache,
+        cache_identity=snapshot_cache_identity(email),
+    )
 
 
 async def get_policy_apply_service(

@@ -479,15 +479,11 @@ def bulk_register_monitored_tables(
         _verify_tables_accessible(obo_ws, body.table_fqns)
         result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
         # Rule policies: evaluate for only the NEWLY-registered tables (never
-        # skipped_existing/invalid). ``BulkRegisterResult.registered`` is a list
-        # of table FQNs (no binding_id), so resolve each binding via
-        # ``get_by_table_fqn``. Best-effort per table; guarded so it can never
-        # turn a successful bulk-register into a 500.
-        for fqn in result.registered:
+        # skipped_existing/invalid), all in one pass over one snapshot.
+        # Best-effort; guarded so it can never turn a successful bulk-register into a 500.
+        if result.registered:
             try:
-                detail = svc.get_by_table_fqn(fqn)
-                if detail is not None:
-                    policy_apply.evaluate_binding(detail.table.binding_id, acting_user)
+                policy_apply.evaluate_tables(list(result.registered), acting_user)
             except Exception:
                 logger.warning("Rule policy evaluation after bulk-register failed (non-fatal)", exc_info=True)
         return BulkRegisterMonitoredTablesOut.from_domain(result)

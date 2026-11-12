@@ -772,7 +772,12 @@ class SqlExecutor:
         return []
 
     def query_dicts(
-        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+        self,
+        sql: str,
+        *,
+        timeout_seconds: int = 120,
+        require_complete: bool = False,
+        wait_timeout_seconds: int = 30,
     ) -> list[dict[str, str | None]]:
         """Execute a SQL query and return rows as column-name-keyed dicts.
 
@@ -784,16 +789,19 @@ class SqlExecutor:
             require_complete: Validate the result schema and read every data
                 chunk, rejecting incomplete or ambiguous results. Defaults to
                 the existing permissive first-chunk behavior.
+            wait_timeout_seconds: How long the initial execute call waits for the
+                result before polling (Databricks accepts 0 or 5-50 seconds).
 
         Raises:
             RuntimeError: The query fails or complete results cannot be verified.
                 Complete-result failures use sanitized guidance without SQL or
                 upstream error details.
         """
+        wait = f"{wait_timeout_seconds}s"
         if not require_complete:
-            return self._query_dicts(sql, timeout_seconds=timeout_seconds)
+            return self._query_dicts(sql, timeout_seconds=timeout_seconds, wait_timeout=wait)
         try:
-            return self._query_dicts(sql, timeout_seconds=timeout_seconds, require_complete=True)
+            return self._query_dicts(sql, timeout_seconds=timeout_seconds, require_complete=True, wait_timeout=wait)
         except Exception:
             # SDK, polling, and response-validation failures must not expose
             # query text or upstream diagnostics during metadata inspection.
@@ -803,7 +811,7 @@ class SqlExecutor:
             ) from None
 
     def _query_dicts(
-        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False, wait_timeout: str = "30s"
     ) -> list[dict[str, str | None]]:
         """Execute a query with optional complete-result validation."""
         resp = self._ws.statement_execution.execute_statement(
@@ -813,7 +821,7 @@ class SqlExecutor:
             schema=self._schema,
             disposition=Disposition.INLINE,
             format=Format.JSON_ARRAY,
-            wait_timeout="30s",
+            wait_timeout=wait_timeout,
         )
         if not resp.status:
             raise RuntimeError(f"SQL query returned no status\nSQL: {sql}")

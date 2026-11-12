@@ -1,5 +1,6 @@
 from unittest.mock import create_autospec
 
+from databricks_labs_dqx_app.backend.cache import CacheFactory
 from databricks_labs_dqx_app.backend.policy_models import PolicyScope
 from databricks_labs_dqx_app.backend.services.policy_snapshot import MAX_SNAPSHOT_TABLES, PolicySnapshotReader
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -270,3 +271,110 @@ def test_explicit_system_catalog_is_still_read():
     sql, queries = _make_sql({})
     _reader(sql).for_scope(PolicyScope(catalogs=["system"]))
     assert any("`system`" in q for q in queries)
+
+
+# ---------------------------------------------------------------------------
+# Per-table cache and evaluation deadline
+# ---------------------------------------------------------------------------
+
+
+def _cached_reader(sql, cache: CacheFactory, identity: str = "alice") -> PolicySnapshotReader:
+    return PolicySnapshotReader(sql, lambda: [], cache=cache, cache_identity=identity)
+
+
+def test_for_tables_second_call_is_served_from_cache():
+    sql, queries = _make_sql(_main_data())
+    cache = CacheFactory()
+    first = _cached_reader(sql, cache).for_tables(["main.sales.orders"])
+    issued = len(queries)
+
+    second = _cached_reader(sql, cache).for_tables(["main.sales.orders"])
+
+    assert issued > 0 and len(queries) == issued
+    assert second.tables == first.tables and not second.truncated
+
+
+def test_cache_remembers_tables_the_user_cannot_see():
+    sql, queries = _make_sql(_main_data())
+    cache = CacheFactory()
+    assert _cached_reader(sql, cache).for_tables(["main.sales.hidden"]).tables == []
+    issued = len(queries)
+    assert _cached_reader(sql, cache).for_tables(["main.sales.hidden"]).tables == []
+    assert len(queries) == issued
+
+
+def test_cache_is_per_user_and_reads_only_misses():
+    sql, queries = _make_sql(_main_data())
+    cache = CacheFactory()
+    _cached_reader(sql, cache, "alice").for_tables(["main.sales.orders"])
+
+    queries.clear()
+    _cached_reader(sql, cache, "bob").for_tables(["main.sales.orders"])
+    assert queries  # another user never sees alice's snapshot
+
+    queries.clear()
+    result = _cached_reader(sql, cache, "alice").for_tables(["main.sales.orders", "main.sales.customers"])
+    assert {t.table_fqn for t in result.tables} == {"main.sales.orders", "main.sales.customers"}
+    tables_query = next(q for q in queries if "information_schema.tables" in q)
+    assert "'customers'" in tables_query and "'orders'" not in tables_query
+
+
+def test_unreadable_catalog_is_not_cached():
+    sql, queries = _make_sql(_main_data(), failing={"main"})
+    cache = CacheFactory()
+    assert _cached_reader(sql, cache).for_tables(["main.sales.orders"]).unreadable_catalogs == ["main"]
+    queries.clear()
+    _cached_reader(sql, cache).for_tables(["main.sales.orders"])
+    assert queries
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_deadline_stops_the_snapshot_and_sets_truncated():
+    data = _main_data()
+    data["b"] = {"tables": [["s", "t", None]]}
+    sql, queries = _make_sql(data)
+    clock = _Clock()
+    real = sql.query_dicts.side_effect
+    timeouts: list[object] = []
+
+    def slow(statement: str, **kwargs: object):
+        timeouts.append(kwargs.get("timeout_seconds"))
+        clock.now += 4.0
+        return real(statement, **kwargs)
+
+    sql.query_dicts.side_effect = slow
+    reader = PolicySnapshotReader(sql, lambda: ["main", "b"], deadline_seconds=10.0, clock=clock)
+
+    result = reader.for_scope(PolicyScope())
+
+    assert result.truncated
+    assert result.tables == []  # the catalog cut off part-way is dropped, never half-built
+    assert not any("`b`" in q for q in queries)
+    assert all(isinstance(t, int) and t <= 10 for t in timeouts)
+
+
+def test_deadline_truncated_results_are_not_cached_as_missing():
+    sql, queries = _make_sql(_main_data())
+    clock = _Clock()
+    real = sql.query_dicts.side_effect
+
+    def slow(statement: str, **kwargs: object):
+        clock.now += 100.0
+        return real(statement, **kwargs)
+
+    sql.query_dicts.side_effect = slow
+    cache = CacheFactory()
+    reader = PolicySnapshotReader(sql, lambda: [], cache=cache, cache_identity="a", deadline_seconds=30.0, clock=clock)
+    assert reader.for_tables(["main.sales.orders"]).truncated
+
+    sql.query_dicts.side_effect = real
+    queries.clear()
+    result = _cached_reader(sql, cache, "a").for_tables(["main.sales.orders"])
+    assert queries and [t.table_fqn for t in result.tables] == ["main.sales.orders"]

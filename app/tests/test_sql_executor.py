@@ -91,6 +91,13 @@ def test_complete_query_reads_all_chunks_including_empty_first_chunk(
     ]
 
 
+def test_query_dicts_passes_the_wait_timeout(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    query_executor.query_dicts("SELECT 1", require_complete=True, wait_timeout_seconds=5)
+    assert statement_api.execute_statement.call_args.kwargs["wait_timeout"] == "5s"
+    query_executor.query_dicts("SELECT 1")
+    assert statement_api.execute_statement.call_args.kwargs["wait_timeout"] == "30s"
+
+
 def test_complete_query_accepts_known_empty_result(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
     statement_api.execute_statement.return_value = query_response()
     assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == []
