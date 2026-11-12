@@ -12,7 +12,7 @@
 // preview list, which has no staged row to edit) to fall back to
 // non-interactive display chips.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,8 +26,18 @@ import { cn } from "@/lib/utils";
 import type {
   AppliedRuleOutColumnMappingItem,
   ColumnOut,
+  RuleParameter,
   RuleSlot,
 } from "@/lib/api";
+import {
+  COLUMN_PLACEHOLDER_CLASS,
+  PARAM_PLACEHOLDER_CLASS,
+  displayParameterValue,
+  isUnboundParameterValue,
+  mappingGroupKey,
+  validateGroupParameterValues,
+} from "@/lib/apply-time-params";
+import { ParameterValueInput } from "@/components/rules/ParameterValueInput";
 import { computeMatchedTagsForSlot } from "@/lib/registry-rule-conversion";
 import {
   ColumnDropdownList,
@@ -343,7 +353,9 @@ function PendingSlotChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-xs font-mono",
+        // justify-self-start: as a direct grid item it would otherwise stretch
+        // to the column width set by a long parameter value below it.
+        "inline-flex items-center gap-1 justify-self-start rounded border border-dashed px-2 py-0.5 text-xs font-mono",
         colorClass,
       )}
     >
@@ -486,6 +498,88 @@ interface MappingChipsProps {
   /** Governed tags applied to each column of this table, keyed by column name.
    *  From `useGetTableTags`. */
   columnTags?: Record<string, string[]>;
+  /** Apply-time parameters rendered on the same row as each mapped check. */
+  parameters?: RuleParameter[];
+  storedParameterValues?: Record<string, Record<string, unknown>>;
+  canEditParameters?: boolean;
+  bindAllParameters?: boolean;
+  onParameterValuesChange?: (groupIdx: number, values: Record<string, unknown>) => void;
+  /** Parameter names the applier may set (empty ones plus the author's
+   *  explicit unlocks). Only these get an entry box; locked parameters keep
+   *  the registry value and are hidden. Missing/empty = none shown. */
+  overridableParameters?: string[];
+}
+
+/** Approximate width in characters of a parameter value box's content: each
+ *  list item plus its chip chrome, or the text, plus room for the lock icon
+ *  and padding. */
+function paramCellCh(type: RuleParameter["type"], raw: string): number {
+  if (type === "list" || type === "ref_column") {
+    const items = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return items.reduce((sum, item) => sum + item.length + 3, 0) + 8;
+  }
+  return Math.max(raw.length, 4) + 6;
+}
+
+function GroupParamCell({
+  group,
+  groupIdx,
+  param,
+  parameters,
+  stored,
+  canEdit,
+  bindAll,
+  overridable,
+  onChange,
+}: {
+  group: Record<string, string>;
+  groupIdx: number;
+  param: RuleParameter;
+  parameters: RuleParameter[];
+  stored?: Record<string, Record<string, unknown>>;
+  canEdit: boolean;
+  bindAll: boolean;
+  overridable: readonly string[];
+  onChange?: (groupIdx: number, values: Record<string, unknown>) => void;
+}) {
+  const key = mappingGroupKey(group);
+  const values = stored?.[key] ?? {};
+  const { error } = validateGroupParameterValues(parameters, values, bindAll, overridable);
+  // Pre-fill the registry default until the applier sets their own value.
+  const raw = displayParameterValue(
+    (values[param.name] as RuleParameter["value"]) ??
+      (isUnboundParameterValue(param.value) ? undefined : param.value),
+  );
+  const invalid = error?.startsWith(`${param.name} `);
+  return (
+    <span
+      // Size the column from the value itself (list chips or text), between
+      // 8rem and 22rem, and stretch to the mapping chip above when that is
+      // wider. `contain: inline-size` stops the inputs' default ~20-character
+      // width from also widening the column.
+      className="flex w-full flex-col items-stretch gap-0.5 justify-self-stretch [contain:inline-size]"
+      style={{ minWidth: `clamp(8rem, ${paramCellCh(param.type, raw)}ch, 22rem)` }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <ParameterValueInput
+        type={param.type}
+        value={raw}
+        disabled={!canEdit}
+        invalid={invalid}
+        onChange={(next) => onChange?.(groupIdx, { ...values, [param.name]: next })}
+        aria-label={param.name}
+        fill
+      />
+      {/* An empty required box is already flagged by its red border and the
+          card's "mapping incomplete" warning, so no "<name> is required" line;
+          a filled-in but invalid value still says what's wrong. */}
+      {invalid && error && raw !== "" ? <p className="text-xs text-destructive">{error}</p> : null}
+    </span>
+  );
 }
 
 export function MappingChips({
@@ -503,18 +597,30 @@ export function MappingChips({
   className,
   slotTags,
   columnTags,
+  parameters = [],
+  storedParameterValues,
+  canEditParameters = false,
+  bindAllParameters = false,
+  overridableParameters,
+  onParameterValuesChange,
 }: MappingChipsProps) {
   const { t } = useTranslation();
   const addingGroup = pendingValues !== undefined;
-  if (columnMapping.length === 0 && !onAddGroup && !addingGroup) return null;
+  // Locked parameters always use the registry value, so only the ones the
+  // applier can set get a row. Validation still sees the full list.
+  const overridable = overridableParameters ?? [];
+  const visibleParameters = parameters.filter((param) => overridable.includes(param.name));
+  if (columnMapping.length === 0 && !onAddGroup && !addingGroup && visibleParameters.length === 0) return null;
 
   // No declared slots (e.g. aggregate rule) — fall back to the flat
   // per-group rendering used before slots were threaded through.
   if (!slots || slots.length === 0) {
     return (
       <div className={cn("space-y-1", className)}>
-        {columnMapping.map((group, groupIdx) => (
-          <div key={groupIdx} className="flex flex-wrap gap-1">
+        {/* Rules without column slots still need their parameter boxes, so an
+            empty mapping renders one blank group to hold them. */}
+        {(columnMapping.length > 0 ? columnMapping : [{}]).map((group, groupIdx) => (
+          <div key={groupIdx} className="flex flex-wrap items-center gap-2">
             {Object.entries(group).map(([slot, column]) => (
               <ReadonlyChip
                 key={slot}
@@ -525,6 +631,27 @@ export function MappingChips({
                 }
               />
             ))}
+            {visibleParameters.length > 0 && (
+              <div className="w-full space-y-2">
+                {visibleParameters.map((param) => (
+                  <div key={param.name} className="grid grid-cols-[160px_24px_1fr] items-center gap-3">
+                    <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
+                    <span className="text-muted-foreground text-xs justify-self-center self-center">&rarr;</span>
+                    <GroupParamCell
+                      group={group}
+                      groupIdx={groupIdx}
+                      param={param}
+                      parameters={parameters}
+                      stored={storedParameterValues}
+                      canEdit={canEditParameters}
+                      bindAll={bindAllParameters}
+                      overridable={overridable}
+                      onChange={onParameterValuesChange}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -547,28 +674,77 @@ export function MappingChips({
     ? slots.find((s) => !pendingValues?.[s.name])?.name
     : undefined;
 
+  const slotTokenClass = visibleParameters.length > 0 ? COLUMN_PLACEHOLDER_CLASS : "font-mono";
+  const filledGroups = columnMapping
+    .map((group, groupIdx) => ({ group, groupIdx }))
+    .filter(({ group }) => slotNames.some((s) => Boolean(group[s])));
+  // With nothing mapped yet, keep a value column so the parameter boxes still
+  // show: "No column mapped" in the slot rows, the entry boxes below it.
+  const showEmptyMapping =
+    filledGroups.length === 0 && !addingGroup && (!onAddGroup || visibleParameters.length > 0);
+  // Parameter boxes typed before any column is picked live on a blank group
+  // (the caller moves them onto the first mapping once it is chosen).
+  const showUnmappedParams = filledGroups.length === 0 && (addingGroup || showEmptyMapping);
+  const valueCols = filledGroups.length + (addingGroup ? 1 : 0) + (showEmptyMapping ? 1 : 0);
+  const mappingGridStyle = {
+    display: "grid",
+    gridTemplateColumns: `max-content 24px${valueCols > 0 ? ` repeat(${valueCols}, max-content)` : ""} max-content`,
+    columnGap: "0.5rem",
+    rowGap: "0.5rem",
+    // Top-align so each row's first line lines up even when a cell is taller
+    // (matched governed-tag chips under a column chip pushed the arrow and
+    // "+ Apply to another column" down to the middle of the taller cell).
+    // Labels, arrows and the add button are sized to a chip's 1.375rem.
+    alignItems: "start",
+    justifyContent: "start",
+    width: "max-content",
+    maxWidth: "100%",
+  } as const;
+
+  const renderPendingChip = (slot: RuleSlot, isLastSlot: boolean) => {
+    if (!addingGroup || !onPendingSelect) return null;
+    const pendingSiblingColumns = Object.entries(pendingValues ?? {})
+      .filter(([slotName]) => slotName !== slot.name)
+      .flatMap(([, v]) => v.split(","));
+    const excludeColumns = [...usedColumns, ...pendingSiblingColumns];
+    return slot.cardinality === "many" ? (
+      <PendingManySlotChip
+        key="pending"
+        slot={slot}
+        columns={columns}
+        excludeColumns={excludeColumns}
+        onCommit={(colNames) => onPendingSelect(slot.name, colNames.join(","))}
+      />
+    ) : (
+      <PendingSlotChip
+        key="pending"
+        slot={slot}
+        columns={columns}
+        excludeColumns={excludeColumns}
+        value={pendingValues?.[slot.name]}
+        autoOpen={slot.name === activePendingSlot}
+        colorClass={paletteAt(columnMapping.length)}
+        onSelect={(colName) => onPendingSelect(slot.name, colName)}
+        onCancel={isLastSlot ? onCancelAdd : undefined}
+      />
+    );
+  };
+
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-2 overflow-x-auto", className)}>
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-blue-500 dark:text-blue-400">
           {t("monitoredTables.mappingCheckCount", { count: n })}
         </span>
       </div>
 
-      <div className="space-y-2">
+      <div style={mappingGridStyle}>
         {slots.map((slot, slotIdx) => {
           const isLastSlot = slotIdx === slots.length - 1;
-          const filled = columnMapping
-            .map((group, groupIdx) => ({ colName: group[slot.name], groupIdx }))
-            .filter((e): e is { colName: string; groupIdx: number } =>
-              Boolean(e.colName),
-            );
+          const filled = filledGroups
+            .map(({ group, groupIdx }) => ({ colName: group[slot.name], groupIdx }))
+            .filter((e): e is { colName: string; groupIdx: number } => Boolean(e.colName));
 
-          // The governed tags that matched for this slot, mirrored under the
-          // `{{slot}}` placeholder as well as under each mapped column chip
-          // (the match is a property of the slot↔column tag mapping, so it
-          // reads the same on both sides). Union across every mapped column so
-          // a rule applied to several columns shows the slot's full matched set.
           const slotMatchedTags =
             slotTags && columnTags
               ? Array.from(
@@ -586,15 +762,10 @@ export function MappingChips({
               : [];
 
           return (
-            <div
-              key={slot.name}
-              className="grid grid-cols-[160px_24px_1fr] items-center gap-3"
-            >
-              {/* flex-col so matched-tag chips stack below the slot placeholder,
-                  mirroring the column-chip side (below). */}
+            <Fragment key={slot.name}>
               <div className="flex flex-col items-start gap-1 min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono text-xs truncate">{`{{${slot.name}}}`}</span>
+                <div className="flex items-center gap-2 min-w-0 min-h-[1.375rem]">
+                  <span className={cn(slotTokenClass, "text-xs truncate")}>{`{{${slot.name}}}`}</span>
                   <FamilyBadge family={slot.family} />
                 </div>
                 {slotMatchedTags.length > 0 && (
@@ -611,168 +782,154 @@ export function MappingChips({
                   </span>
                 )}
               </div>
-              <span className="text-muted-foreground text-xs justify-self-center self-center">
+              <span className="text-muted-foreground text-xs justify-self-center flex h-[1.375rem] items-center">
                 &rarr;
               </span>
-              {/* items-start so a column chip's matched-tag line (stacked below
-                  it) doesn't vertically-center the row's other chips / the
-                  "+ Apply to another column" button — they stay on the top line. */}
-              <div className="flex flex-wrap items-start gap-1.5">
-                {filled.length === 0 && !onAddGroup && !addingGroup ? (
-                  <span className="text-xs text-muted-foreground italic">
-                    {t("monitoredTables.noColumnMapped")}
-                  </span>
-                ) : (
-                  filled.map(({ colName, groupIdx }) => {
-                    const matchedTags =
-                      slotTags && columnTags
-                        ? computeMatchedTagsForSlot(
-                            slotTags,
-                            columnTags,
-                            slot.name,
-                            colName,
-                          )
-                        : [];
-                    return (
-                      // Column chip on top; any matched governed-tag chips sit
-                      // on the line BELOW it (not to its right), so the match
-                      // reads as metadata about the column above it.
-                      <span
-                        key={groupIdx}
-                        className="inline-flex flex-col items-start gap-1"
-                      >
-                        {onChangeGroup && columns ? (
-                          <EditableChip
-                            colorClass={paletteAt(groupIdx)}
-                            label={colName}
-                            slot={slot}
-                            columns={columns}
-                            excludeColumns={usedColumns}
-                            onChange={(next) =>
-                              onChangeGroup(groupIdx, slot.name, next)
-                            }
-                            onJump={
-                              onJumpToColumn
-                                ? () => onJumpToColumn(colName)
-                                : undefined
-                            }
-                            onRemove={
-                              onRemoveGroup
-                                ? () => onRemoveGroup(groupIdx)
-                                : undefined
-                            }
-                            removeTitle={t(
-                              "monitoredTables.removeMappingGroupTitle",
-                              { count: groupIdx + 1 },
-                            )}
-                          />
-                        ) : (
-                          <ReadonlyChip
-                            colorClass={paletteAt(groupIdx)}
-                            label={colName}
-                            driftKind={
-                              columns
-                                ? columnMappingDriftKind(colName, slot, columns)
-                                : null
-                            }
-                            onJump={
-                              onJumpToColumn
-                                ? () => onJumpToColumn(colName)
-                                : undefined
-                            }
-                            onRemove={
-                              onRemoveGroup
-                                ? () => onRemoveGroup(groupIdx)
-                                : undefined
-                            }
-                            removeTitle={t(
-                              "monitoredTables.removeMappingGroupTitle",
-                              { count: groupIdx + 1 },
-                            )}
-                            busy={busyGroupIdx === groupIdx}
-                          />
-                        )}
-                        {matchedTags.length > 0 && (
-                          <span className="inline-flex flex-wrap items-center gap-1">
-                            {matchedTags.map((tag) => (
-                              <Badge
-                                key={tag}
-                                variant="secondary"
-                                className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
-                              >
-                                {tag}
-                              </Badge>
-                            ))}
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })
-                )}
-
-                {/* In-progress "add mapping group" flow: one placeholder
-                    chip per slot, rendered inline in that slot's own row —
-                    no separate form/dialog. `cardinality: "one"` slots (the
-                    common case, including every single-slot rule) commit
-                    and auto-advance to the next slot's picker on a single
-                    click; `cardinality: "many"` keeps one explicit confirm
-                    step since a multi-select has no "I'm done" signal. */}
-                {addingGroup &&
-                  onPendingSelect &&
-                  (() => {
-                    // Exclude columns already picked for *other* slots in
-                    // this same in-progress group — same column can't fill
-                    // two slots of one mapping group.
-                    const pendingSiblingColumns = Object.entries(
-                      pendingValues ?? {},
-                    )
-                      .filter(([slotName]) => slotName !== slot.name)
-                      .flatMap(([, v]) => v.split(","));
-                    const excludeColumns = [
-                      ...usedColumns,
-                      ...pendingSiblingColumns,
-                    ];
-                    return slot.cardinality === "many" ? (
-                      <PendingManySlotChip
-                        key="pending"
-                        slot={slot}
-                        columns={columns}
-                        excludeColumns={excludeColumns}
-                        onCommit={(colNames) =>
-                          onPendingSelect(slot.name, colNames.join(","))
-                        }
-                      />
-                    ) : (
-                      <PendingSlotChip
-                        key="pending"
-                        slot={slot}
-                        columns={columns}
-                        excludeColumns={excludeColumns}
-                        value={pendingValues?.[slot.name]}
-                        autoOpen={slot.name === activePendingSlot}
-                        colorClass={paletteAt(columnMapping.length)}
-                        onSelect={(colName) =>
-                          onPendingSelect(slot.name, colName)
-                        }
-                        onCancel={isLastSlot ? onCancelAdd : undefined}
-                      />
-                    );
-                  })()}
-
-                {/* + Apply to another column: only on the last slot row */}
-                {onAddGroup && isLastSlot && !addingGroup && (
-                  <button
-                    type="button"
-                    onClick={onAddGroup}
-                    className="text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-0.5"
-                  >
-                    {t("monitoredTables.applyToAnotherColumnButton")}
-                  </button>
-                )}
-              </div>
-            </div>
+              {showEmptyMapping ? (
+                <span className="text-xs text-muted-foreground italic leading-[1.375rem]">
+                  {t("monitoredTables.noColumnMapped")}
+                </span>
+              ) : (
+                filledGroups.map(({ group, groupIdx }) => {
+                  const colName = group[slot.name];
+                  if (!colName) return <span key={groupIdx} />;
+                  const matchedTags =
+                    slotTags && columnTags
+                      ? computeMatchedTagsForSlot(
+                          slotTags,
+                          columnTags,
+                          slot.name,
+                          colName,
+                        )
+                      : [];
+                  return (
+                    <span
+                      key={groupIdx}
+                      className="inline-flex w-full min-w-0 flex-col items-start gap-1 justify-self-stretch"
+                    >
+                      {onChangeGroup && columns ? (
+                        <EditableChip
+                          colorClass={paletteAt(groupIdx)}
+                          label={colName}
+                          slot={slot}
+                          columns={columns}
+                          excludeColumns={usedColumns}
+                          onChange={(next) =>
+                            onChangeGroup(groupIdx, slot.name, next)
+                          }
+                          onJump={
+                            onJumpToColumn
+                              ? () => onJumpToColumn(colName)
+                              : undefined
+                          }
+                          onRemove={
+                            onRemoveGroup
+                              ? () => onRemoveGroup(groupIdx)
+                              : undefined
+                          }
+                          removeTitle={t(
+                            "monitoredTables.removeMappingGroupTitle",
+                            { count: groupIdx + 1 },
+                          )}
+                        />
+                      ) : (
+                        <ReadonlyChip
+                          colorClass={paletteAt(groupIdx)}
+                          label={colName}
+                          driftKind={
+                            columns
+                              ? columnMappingDriftKind(colName, slot, columns)
+                              : null
+                          }
+                          onJump={
+                            onJumpToColumn
+                              ? () => onJumpToColumn(colName)
+                              : undefined
+                          }
+                          onRemove={
+                            onRemoveGroup
+                              ? () => onRemoveGroup(groupIdx)
+                              : undefined
+                          }
+                          removeTitle={t(
+                            "monitoredTables.removeMappingGroupTitle",
+                            { count: groupIdx + 1 },
+                          )}
+                          busy={busyGroupIdx === groupIdx}
+                        />
+                      )}
+                      {matchedTags.length > 0 && (
+                        <span className="inline-flex flex-wrap items-center gap-1">
+                          {matchedTags.map((tag) => (
+                            <Badge
+                              key={tag}
+                              variant="secondary"
+                              className="text-[10px] font-mono px-1.5 py-0 h-auto opacity-75"
+                            >
+                              {tag}
+                            </Badge>
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })
+              )}
+              {renderPendingChip(slot, isLastSlot)}
+              {onAddGroup && isLastSlot && !addingGroup ? (
+                <button
+                  type="button"
+                  onClick={onAddGroup}
+                  className="justify-self-start text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-0.5 whitespace-nowrap"
+                >
+                  {t("monitoredTables.applyToAnotherColumnButton")}
+                </button>
+              ) : (
+                <span />
+              )}
+            </Fragment>
           );
         })}
+        {visibleParameters.map((param) => (
+          <Fragment key={param.name}>
+            {/* Parameter rows match the 1.5rem value box instead of a chip. */}
+            <div className="flex items-center gap-2 min-w-0 min-h-6">
+              <span className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs truncate")}>{`{{${param.name}}}`}</span>
+              <FamilyBadge family={param.type === "regex" ? "string" : param.type} />
+            </div>
+            <span className="text-muted-foreground text-xs justify-self-center flex h-6 items-center">&rarr;</span>
+            {filledGroups.map(({ group, groupIdx }) => (
+              <GroupParamCell
+                key={groupIdx}
+                group={group}
+                groupIdx={groupIdx}
+                param={param}
+                parameters={parameters}
+                stored={storedParameterValues}
+                canEdit={canEditParameters}
+                bindAll={bindAllParameters}
+                overridable={overridable}
+                onChange={onParameterValuesChange}
+              />
+            ))}
+            {showUnmappedParams ? (
+              <GroupParamCell
+                group={{}}
+                groupIdx={0}
+                param={param}
+                parameters={parameters}
+                stored={storedParameterValues}
+                canEdit={canEditParameters}
+                bindAll={bindAllParameters}
+                overridable={overridable}
+                onChange={onParameterValuesChange}
+              />
+            ) : addingGroup ? (
+              <span />
+            ) : null}
+            <span />
+          </Fragment>
+        ))}
       </div>
     </div>
   );

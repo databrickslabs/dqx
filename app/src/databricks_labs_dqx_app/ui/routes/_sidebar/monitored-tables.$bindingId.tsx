@@ -151,13 +151,19 @@ import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
 import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
-import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
+import {
+  RuleConfigCard,
+  computeStatus,
+  statusNeedsAttention,
+  type RuleStatus,
+} from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
   MonitoredTableDiffDialog,
   type MonitoredTableDiffTarget,
 } from "@/components/drafts/ChangeDiffDialog";
-import { slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { overridableParametersFromUserMetadata, slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
+import { mappingGroupKey } from "@/lib/apply-time-params";
 import {
   RESERVED_SEVERITY_KEY,
   buildDesiredApplications,
@@ -610,7 +616,11 @@ function MonitoredTableDetailPage() {
   // enforces the authoritative check and returns 409 either way.
   const staleDraftRun = isRunStale(table.last_run_at, table.updated_at);
   const needsDraftRun = requireDraftRun && (!table.last_run_at || staleDraftRun);
-  const submitBlocked = submitDisabledNoChanges || needsDraftRun;
+  // Rules flagged "needs attention" (incomplete mapping, missing parameter
+  // values, schema drift) would publish broken or empty checks.
+  const attentionCount = useApplyRulesAttentionCount(stagedRows, table.table_fqn);
+  const needsAttention = attentionCount > 0;
+  const submitBlocked = submitDisabledNoChanges || needsDraftRun || needsAttention;
 
   return (
     <FadeIn>
@@ -677,9 +687,11 @@ function MonitoredTableDetailPage() {
                         </Button>
                       </span>
                     </TooltipTrigger>
-                    {(needsDraftRun || submitDisabledNoChanges) && (
+                    {(needsAttention || needsDraftRun || submitDisabledNoChanges) && (
                       <TooltipContent side="bottom">
-                        {needsDraftRun
+                        {needsAttention
+                          ? t("monitoredTables.submitDisabledNeedsAttentionHint", { count: attentionCount })
+                          : needsDraftRun
                           ? staleDraftRun
                             ? t("monitoredTables.submitDisabledStaleDraftRunHint")
                             : t("monitoredTables.submitDisabledNeedsDraftRunHint")
@@ -2073,6 +2085,47 @@ function PendingApplicationsPanel({ bindingId }: { bindingId: string }) {
   );
 }
 
+/** Completeness + schema-drift status per merged rule (one card per rule_id). */
+function computeRuleStatuses(
+  mergedRules: AppliedRuleOut[],
+  ruleById: Map<string, RegistryRuleOut>,
+  columns: ColumnOut[],
+): RuleStatus[] {
+  return mergedRules.map((rule) => {
+    const registry = ruleById.get(rule.rule_id);
+    return computeStatus(
+      rule,
+      registry?.definition.slots ?? [],
+      columns,
+      registry?.definition.parameters ?? [],
+      registry?.mode === "sql" || registry?.mode === "lowcode",
+      overridableParametersFromUserMetadata(
+        registry?.user_metadata as Record<string, unknown> | undefined,
+        registry?.definition.parameters ?? [],
+      ),
+    );
+  });
+}
+
+/** How many staged rules need attention — the same count as the Apply Rules
+ *  tab's "Needs attention" filter, for the page header (Submit for review is
+ *  blocked while it's above zero). Uses the tab's queries, so it adds no
+ *  requests of its own. */
+function useApplyRulesAttentionCount(stagedRows: AppliedRuleOut[], tableFqn: string): number {
+  const parts = tableFqn.split(".");
+  const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
+    query: { enabled: parts.length === 3 },
+  });
+  const { data: registryData } = useListRegistryRules({ status: "approved" });
+  return useMemo(() => {
+    const ruleById = new Map<string, RegistryRuleOut>();
+    for (const r of registryData?.data ?? []) ruleById.set(r.rule_id, r);
+    const mergedRules = groupAppliedRulesByRuleId(stagedRows).map(mergeRuleRowGroup);
+    return computeRuleStatuses(mergedRules, ruleById, columnsQuery.data?.data ?? []).filter(statusNeedsAttention)
+      .length;
+  }, [stagedRows, registryData, columnsQuery.data]);
+}
+
 function ApplyRulesTab({
   bindingId,
   tableFqn,
@@ -2362,13 +2415,33 @@ function ApplyRulesTab({
   // Completeness + schema-drift status per rule group — drives the "needs
   // attention" filter and the by-rule incomplete/drift indicators.
   const statuses = useMemo(
-    () =>
-      mergedRules.map((rule) =>
-        computeStatus(rule, ruleById.get(rule.rule_id)?.definition.slots ?? [], columns),
-      ),
+    () => computeRuleStatuses(mergedRules, ruleById, columns),
     [mergedRules, ruleById, columns],
   );
   const attentionCount = statuses.filter(statusNeedsAttention).length;
+
+  // Rules shown by the "Needs attention" filter stay listed after they're
+  // fixed (until the filter is left), so a card doesn't vanish mid-edit.
+  // Once nothing needs attention the filter falls back to All: its toggle
+  // only renders while something needs attention, so it would otherwise
+  // strand the view on "No rules need attention".
+  const [attentionShown, setAttentionShown] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (filter !== "needs-attention") return;
+    setAttentionShown((prev) => {
+      const next = new Set(prev);
+      mergedRules.forEach((rule, i) => {
+        if (statusNeedsAttention(statuses[i])) next.add(rule.rule_id);
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filter, mergedRules, statuses]);
+  useEffect(() => {
+    if (filter !== "needs-attention") setAttentionShown(new Set());
+  }, [filter]);
+  useEffect(() => {
+    if (filter === "needs-attention" && attentionCount === 0) setFilter("all");
+  }, [filter, attentionCount]);
   const schemaDriftMissing = statuses.reduce((n, s) => n + s.drift.missingCount, 0);
   const schemaDriftMismatch = statuses.reduce((n, s) => n + s.drift.typeMismatchCount, 0);
   const schemaDriftRuleCount = statuses.filter(
@@ -2391,7 +2464,9 @@ function ApplyRulesTab({
   const visibleMergedRules = useMemo(() => {
     let filtered = mergedRules;
     if (filter === "needs-attention") {
-      filtered = mergedRules.filter((_, i) => statusNeedsAttention(statuses[i]));
+      filtered = mergedRules.filter(
+        (rule, i) => statusNeedsAttention(statuses[i]) || attentionShown.has(rule.rule_id),
+      );
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -2407,7 +2482,7 @@ function ApplyRulesTab({
       });
     }
     return filtered;
-  }, [mergedRules, statuses, filter, search]);
+  }, [mergedRules, statuses, filter, search, attentionShown]);
 
   // Clamp the requested page against the live list length so removing rules
   // on the last page (or a filter narrowing the set) can't strand the view
@@ -2513,8 +2588,21 @@ function ApplyRulesTab({
       const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
       const target = rowsForRule[groupIdx];
       if (!target) return prev;
-      const nextGroup = { ...(target.column_mapping?.[0] ?? {}), [slotName]: colName };
-      return prev.map((r) => (r === target ? { ...r, column_mapping: [nextGroup] } : r));
+      const nextGroup = {
+        ...(target.column_mapping?.[0] ?? {}),
+        [slotName]: colName,
+      };
+      const prevGroup = target.column_mapping?.[0] ?? {};
+      const prevKey = mappingGroupKey(prevGroup);
+      const nextKey = mappingGroupKey(nextGroup);
+      const prevParams = { ...(target.parameter_values ?? {}) };
+      if (prevKey !== nextKey && prevParams[prevKey]) {
+        prevParams[nextKey] = prevParams[prevKey];
+        delete prevParams[prevKey];
+      }
+      return prev.map((r) =>
+        r === target ? { ...r, column_mapping: [nextGroup], parameter_values: prevParams } : r,
+      );
     });
   };
 
@@ -2529,7 +2617,17 @@ function ApplyRulesTab({
       const emptyRow =
         rowsForRule.length === 1 && (rowsForRule[0].column_mapping ?? []).length === 0 ? rowsForRule[0] : null;
       if (emptyRow) {
-        return prev.map((r) => (r === emptyRow ? { ...r, column_mapping: [group] } : r));
+        // Parameter values typed before any column was picked sit under the
+        // blank group's key; move them onto the new mapping.
+        const unmappedKey = mappingGroupKey({});
+        const params = { ...(emptyRow.parameter_values ?? {}) };
+        if (params[unmappedKey]) {
+          params[mappingGroupKey(group)] = params[unmappedKey];
+          delete params[unmappedKey];
+        }
+        return prev.map((r) =>
+          r === emptyRow ? { ...r, column_mapping: [group], parameter_values: params } : r,
+        );
       }
       const template = rowsForRule[0];
       if (!template) return prev;
@@ -2541,6 +2639,25 @@ function ApplyRulesTab({
         created_at: null,
       };
       return [...prev, newRow];
+    });
+  };
+
+  const handleParameterValuesChange = (
+    ruleId: string,
+    groupIdx: number,
+    values: Record<string, unknown>,
+  ) => {
+    setStagedRows((prev) => {
+      const rowsForRule = prev.filter((r) => r.rule_id === ruleId);
+      const target = rowsForRule[groupIdx];
+      if (!target) return prev;
+      const group = target.column_mapping?.[0] ?? {};
+      const key = mappingGroupKey(group);
+      return prev.map((r) =>
+        r === target
+          ? { ...r, parameter_values: { ...(r.parameter_values ?? {}), [key]: values } }
+          : r,
+      );
     });
   };
 
@@ -2820,6 +2937,9 @@ function ApplyRulesTab({
                   handleChangeMapping(rule.rule_id, groupIdx, slotName, colName)
                 }
                 onAddMapping={(group) => handleAddMapping(rule.rule_id, group)}
+                onParameterValuesChange={(groupIdx, values) =>
+                  handleParameterValuesChange(rule.rule_id, groupIdx, values)
+                }
                 columns={columns}
                 isOpen={openRuleId === rule.rule_id}
                 onToggle={() => setOpenRuleId((prev) => (prev === rule.rule_id ? null : rule.rule_id))}

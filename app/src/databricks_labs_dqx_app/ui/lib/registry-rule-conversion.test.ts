@@ -5,7 +5,9 @@ import {
   fnSupportsNegate,
   nativeArguments,
   nativeArgumentsForTest,
+  overridableParametersFromUserMetadata,
   slotTagsFromUserMetadata,
+  userMetadataWithOverridableParameters,
   userMetadataWithSlotTags,
 } from "./registry-rule-conversion";
 import { familyForSparkType } from "./slot-mapping";
@@ -534,6 +536,32 @@ describe("slot_tags helpers (apply-on-tag) — mirror backend get_slot_tags/set_
     const md = { name: "x" };
     userMetadataWithSlotTags(md, { c1: ["class.pii"] });
     expect(md).toEqual({ name: "x" });
+  });
+});
+
+describe("overridable_parameters helpers", () => {
+  test("empty parameters are overridable; filled ones need an explicit unlock", () => {
+    const params = [
+      { name: "limit", value: null },
+      { name: "scale", value: 2 },
+      { name: "threshold", value: "{{threshold}}" },
+    ];
+    expect(overridableParametersFromUserMetadata(undefined, params)).toEqual(["limit", "threshold"]);
+    expect(overridableParametersFromUserMetadata({}, params)).toEqual(["limit", "threshold"]);
+    expect(
+      overridableParametersFromUserMetadata({ overridable_parameters: ["scale"] }, params),
+    ).toEqual(["limit", "scale", "threshold"]);
+  });
+
+  test("round-trips unlocked names and omits the key when there are no unlocks", () => {
+    const md = userMetadataWithOverridableParameters({ name: "x" }, ["limit", "bogus"], ["limit", "scale"]);
+    expect(md.overridable_parameters).toEqual(["limit"]);
+    expect(overridableParametersFromUserMetadata(md)).toEqual(["limit"]);
+    // No explicit unlocks → omit the key (empty [] wrongly reads as "nothing overridable").
+    const allFixed = userMetadataWithOverridableParameters({ name: "x" }, [], ["limit"]);
+    expect("overridable_parameters" in allFixed).toBe(false);
+    const noParams = userMetadataWithOverridableParameters({ overridable_parameters: ["limit"] }, [], []);
+    expect("overridable_parameters" in noParams).toBe(false);
   });
 });
 

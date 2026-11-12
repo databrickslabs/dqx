@@ -5,12 +5,15 @@ import { Plus } from "lucide-react";
 import { LowcodeRow } from "./LowcodeRow";
 import type { AnyRow, LowcodeAstV2 } from "@/lib/lowcodeAst";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
+import type { RuleParameter } from "@/lib/api";
 import type { Family } from "@/lib/lowcodeOperators";
 
 type Props = {
   ast: LowcodeAstV2;
   onChange: (next: LowcodeAstV2) => void;
   declaredColumns: LowcodeColumnRef[];
+  /** Variable Parameters a condition value can reference (`{{param}}`). */
+  declaredParameters?: Pick<RuleParameter, "name" | "type">[];
   readOnly?: boolean;
   /** When false, aggregated condition rows only offer the table-wide
    * cardinality aggregates; setting Group by unlocks the full set. */
@@ -34,7 +37,15 @@ function defaultColumnRef(declared: LowcodeColumnRef[]): string {
 
 // Ported 1:1 from dqlake's LowcodeBuilder — the row stack with "Add
 // condition" / "Add aggregated condition" actions.
-export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, hasGroupBy = false, renderOperator }: Props) {
+export function LowcodeBuilder({
+  ast,
+  onChange,
+  declaredColumns,
+  declaredParameters,
+  readOnly,
+  hasGroupBy = false,
+  renderOperator,
+}: Props) {
   const { t } = useTranslation();
 
   const addRow = () => {
@@ -93,6 +104,7 @@ export function LowcodeBuilder({ ast, onChange, declaredColumns, readOnly, hasGr
           row={row}
           isFirst={i === 0}
           declaredColumns={declaredColumns}
+          declaredParameters={declaredParameters}
           onChange={(r) => updateRow(i, r)}
           onDelete={() => deleteRow(i)}
           readOnly={readOnly}
