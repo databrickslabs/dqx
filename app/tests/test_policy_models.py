@@ -89,6 +89,17 @@ def test_value_control_chars_rejected():
         ConditionRow(object="table", predicate="has_name", value="a\nb")
 
 
+@pytest.mark.parametrize("value", ["a\u2028b", "a\u2029b", "a\u0085b", "a\u009bb"])
+def test_value_line_separators_and_c1_controls_rejected(value: str) -> None:
+    with pytest.raises(ValidationError):
+        ConditionRow(object="table", predicate="has_name", value=value)
+
+
+def test_tag_with_line_separator_rejected() -> None:
+    with pytest.raises(ValidationError):
+        TableCondition(kind="tags", tags=["class=a\u2028b"])
+
+
 def test_scope_defaults_to_all():
     scope = PolicyScope()
     assert scope.catalogs == "*"

@@ -16,7 +16,7 @@ _COLUMNS = {
     "column_tags": ["schema_name", "table_name", "column_name", "tag_name", "tag_value"],
     "table_tags": ["schema_name", "table_name", "tag_name", "tag_value"],
     "schema_tags": ["schema_name", "tag_name", "tag_value"],
-    "catalog_tags": ["tag_name", "tag_value"],
+    "catalog_tags": ["catalog_name", "tag_name", "tag_value"],
     "columns": ["table_schema", "table_name", "column_name", "data_type"],
     "schemata": ["schema_name", "schema_owner"],
     "catalogs": ["catalog_name", "catalog_owner"],
@@ -67,7 +67,8 @@ def _main_data() -> dict[str, dict[str, list[list[str | None]]]]:
             ],
             "table_tags": [["sales", "orders", "domain", "finance"]],
             "schema_tags": [["sales", "tier", ""]],
-            "catalog_tags": [["env", "prod"]],
+            # information_schema.catalog_tags lists every catalog's tags; only main's apply here.
+            "catalog_tags": [["main", "env", "prod"], ["other", "env", "dev"]],
             "schemata": [["sales", "bob"]],
             "catalogs": [["main", "carol"]],
         }
@@ -548,3 +549,51 @@ def test_cached_table_is_reused_only_when_it_has_the_needed_facts():
     assert queries == []  # fewer facts: served from cache
     _cached_reader(sql, cache).for_tables(["main.sales.orders"], needs=SnapshotNeeds(table_tags=True))
     assert "table_tags" in _kinds(queries)  # more facts: read again
+
+
+def test_catalog_tags_are_filtered_to_the_catalog_read():
+    sql, queries = _make_sql(_main_data())
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["MAIN"]))
+
+    [catalog_tags_query] = [q for q in queries if "information_schema.catalog_tags" in q]
+    assert "WHERE lower(catalog_name) = 'main'" in catalog_tags_query
+    assert {t.catalog_tags for t in result.tables} == {("env=prod",)}
+
+
+def test_one_failing_sdk_table_read_keeps_the_rest_of_the_catalog():
+    sql, _ = _make_sql({"main": {}})
+    names = [f"main.s.t{i}" for i in range(10)]
+    known = {fqn: _table_info(fqn, "alice", ("id", "bigint")) for fqn in names}
+
+    def get_table(fqn: str) -> TableInfo:
+        if fqn == "main.s.t3":
+            raise RuntimeError("flaky")
+        return known[fqn]
+
+    cache = CacheFactory()
+    reader = PolicySnapshotReader(sql, list, get_table=get_table, cache=cache, cache_identity="u")
+    result = reader.for_tables(names, needs=SnapshotNeeds())
+
+    assert sorted(t.table_fqn for t in result.tables) == sorted(n for n in names if n != "main.s.t3")
+    assert result.unreadable_catalogs == []
+    assert result.unreadable_tables == ["main.s.t3"]
+    # The failed table is not remembered as "not visible": the next read retries it.
+    retried: list[str] = []
+
+    def get_again(fqn: str) -> TableInfo:
+        retried.append(fqn)
+        return known[fqn]
+
+    again = PolicySnapshotReader(sql, list, get_table=get_again, cache=cache, cache_identity="u")
+    assert [t.table_fqn for t in again.for_tables(["main.s.t3"], needs=SnapshotNeeds()).tables] == ["main.s.t3"]
+    assert retried == ["main.s.t3"]
+
+
+def test_sdk_catalog_is_unreadable_only_when_every_table_failed_case_insensitively():
+    sql, _ = _make_sql({"main": {}})
+
+    def boom(fqn: str) -> TableInfo:
+        raise RuntimeError("down")
+
+    result = PolicySnapshotReader(sql, list, get_table=boom).for_tables(["Main.s.a", "main.s.b"])
+    assert [c.lower() for c in result.unreadable_catalogs] == ["main"] and result.tables == []

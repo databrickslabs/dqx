@@ -6,8 +6,9 @@ When the legacy setting was on, each rule with ``slot_tags`` (any status) gets a
 policy ``"{rule name} by tag"`` scoped to everything, whose column conditions are
 the rule's slot tags, and the rule's ``origin=tag_auto`` applied rows are
 re-stamped as made by that policy (so removing one still records a suppression
-against the policy). The legacy setting is then deleted and a marker setting is
-written so the migration runs once. ``slot_tags`` are kept: they still drive tag
+against the policy). Once every rule migrated, the legacy setting is deleted and a
+marker setting is written so the migration runs once; when any rule failed, both
+are left as they are so the next startup retries. ``slot_tags`` are kept: they still drive tag
 suggestions.
 """
 
@@ -15,6 +16,7 @@ import logging
 
 from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, PolicyScope, RulePolicy, RulePolicyIn
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, get_rule_name, get_slot_tags
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
@@ -40,8 +42,8 @@ def migrate_slot_tags_to_policies(
 
     Idempotent (a marker setting skips later runs; a re-run after a partial run reuses
     the policies it already created instead of adding copies) and never raises: a failing rule
-    is logged and skipped. When the setting or the rules cannot be read, nothing is
-    marked so the next startup retries.
+    is logged and skipped. When the setting or the rules cannot be read, or any rule failed,
+    nothing is marked so the next startup retries.
     """
     try:
         if settings.get_setting(MIGRATED_MARKER_KEY) == _MARKER_VALUE:
@@ -52,6 +54,7 @@ def migrate_slot_tags_to_policies(
         logger.warning("Rule policy migration could not read settings or rules; will retry", exc_info=True)
         return 0
     created = 0
+    failed = 0
     for rule in rules:
         slot_tags = {slot: tags for slot, tags in get_slot_tags(rule.user_metadata).items() if tags}
         if not slot_tags:
@@ -61,7 +64,11 @@ def migrate_slot_tags_to_policies(
             applied.restamp_tag_auto_to_policy(rule.rule_id, policy.policy_id)
             created += 1
         except Exception:
-            logger.warning(f"Rule policy migration skipped rule {rule.rule_id}", exc_info=True)
+            failed += 1
+            logger.warning(f"Rule policy migration skipped rule {safe_log_value(rule.rule_id)}", exc_info=True)
+    if failed:
+        logger.warning(f"Rule policy migration left {failed} rule(s) unmigrated; will retry on the next startup")
+        return created
     try:
         settings.delete_setting(LEGACY_TAG_AUTO_APPLY_KEY)
         settings.save_setting(MIGRATED_MARKER_KEY, _MARKER_VALUE, user_email=_SYSTEM_USER)
@@ -76,11 +83,13 @@ def _create_policy(policies: RulePolicyService, rule: RegistryRule, slot_tags: d
     base = (get_rule_name(rule.user_metadata) or rule.rule_id)[:_MAX_RULE_NAME_LEN].strip() + _NAME_SUFFIX
     conditions = {slot: ColumnCondition(kind="tags", tags=tags) for slot, tags in slot_tags.items()}
     body = RulePolicyIn(name=base, scope=PolicyScope(), column_conditions=conditions)
+    suffixed = f"{base} (2)"
+    # A re-run after a partial migration finds its own earlier policy: reuse it.
+    for existing in policies.list_for_rule(rule.rule_id):
+        if existing.created_by == _SYSTEM_USER and existing.name in (base, suffixed):
+            return existing
     try:
         return policies.create(rule.rule_id, body, _SYSTEM_USER)
     except DuplicatePolicyNameError:
-        # A re-run after a partial migration finds its own earlier policy: reuse it.
-        for existing in policies.list_for_rule(rule.rule_id):
-            if existing.name == base and existing.created_by == _SYSTEM_USER:
-                return existing
-        return policies.create(rule.rule_id, body.model_copy(update={"name": f"{base} (2)"}), _SYSTEM_USER)
+        # The name is taken by a user's policy.
+        return policies.create(rule.rule_id, body.model_copy(update={"name": suffixed}), _SYSTEM_USER)

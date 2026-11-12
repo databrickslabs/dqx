@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from databricks_labs_dqx_app.backend.sanitization import has_unsafe_characters
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn, validate_identifier
 
 ConditionObject = Literal["catalog", "schema", "table", "column"]
@@ -18,10 +19,6 @@ Combinator = Literal["AND", "OR"]
 ALL = "*"
 
 _MAX_TAG_LEN = 255
-
-
-def _has_control_chars(value: str) -> bool:
-    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
 
 
 class ConditionRow(BaseModel):
@@ -35,7 +32,7 @@ class ConditionRow(BaseModel):
     @field_validator("value")
     @classmethod
     def _value_has_no_control_chars(cls, value: str) -> str:
-        if _has_control_chars(value):
+        if has_unsafe_characters(value):
             raise ValueError("Condition value must not contain control characters.")
         return value
 
@@ -64,7 +61,7 @@ class ConditionExpr(BaseModel):
 def _validate_tags(tags: list[str]) -> list[str]:
     for tag in tags:
         key = tag.split("=", 1)[0]
-        if not key or len(key) > _MAX_TAG_LEN or _has_control_chars(tag):
+        if not key or len(key) > _MAX_TAG_LEN or has_unsafe_characters(tag):
             raise ValueError("Tags must be 'key' or 'key=value' with a non-empty key of at most 255 characters.")
     return tags
 

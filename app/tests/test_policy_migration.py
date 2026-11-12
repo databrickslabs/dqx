@@ -184,6 +184,62 @@ def test_one_failing_rule_does_not_stop_the_others() -> None:
     deps.applied.restamp_tag_auto_to_policy.side_effect = [RuntimeError("boom"), 3]
 
     assert deps.run() == 1
+    assert deps.applied.restamp_tag_auto_to_policy.call_count == 2
+
+
+def test_partial_failure_is_retried_on_the_next_run_without_duplicate_policies() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [
+        _rule("r1", "First", {"column": ["a"]}),
+        _rule("r2", "Second", {"column": ["b"]}),
+    ]
+    stored: dict[str, list[RulePolicy]] = {}
+
+    def create(rule_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
+        if any(p.name.lower() == body.name.lower() for p in stored.get(rule_id, [])):
+            raise DuplicatePolicyNameError("taken")
+        policy = deps.create_policy(rule_id, body, user_email).model_copy(update={"created_by": user_email})
+        stored.setdefault(rule_id, []).append(policy)
+        return policy
+
+    deps.policies.create.side_effect = create
+    deps.policies.list_for_rule.side_effect = lambda rule_id: list(stored.get(rule_id, []))
+    deps.applied.restamp_tag_auto_to_policy.side_effect = [RuntimeError("boom"), 3]
+
+    assert deps.run() == 1
+    assert MIGRATED_MARKER_KEY not in deps.rows
+    assert deps.rows["tag_auto_apply"] == "true"
+
+    deps.applied.restamp_tag_auto_to_policy.side_effect = None
+    deps.applied.restamp_tag_auto_to_policy.return_value = 0
+    assert deps.run() == 2
+
+    assert deps.rows[MIGRATED_MARKER_KEY] == "true"
+    assert "tag_auto_apply" not in deps.rows
+    assert {rule_id: [p.name for p in ps] for rule_id, ps in stored.items()} == {
+        "r1": ["First by tag"],
+        "r2": ["Second by tag"],
+    }
+    assert deps.applied.restamp_tag_auto_to_policy.call_args_list[-2:] == [
+        (("r1", "p-r1-1"),),
+        (("r2", "p-r2-2"),),
+    ]
+
+
+def test_rerun_reuses_a_suffixed_system_policy() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [_rule("r1", "Email not null", {"column": ["class.email_address"]})]
+    mine = RulePolicy(name="Email not null by tag", policy_id="p-user", rule_id="r1", created_by="alice@example.com")
+    earlier = RulePolicy(name="Email not null by tag (2)", policy_id="p-sys", rule_id="r1", created_by="system")
+
+    def create(rule_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
+        raise DuplicatePolicyNameError("taken")
+
+    deps.policies.create.side_effect = create
+    deps.policies.list_for_rule.return_value = [mine, earlier]
+
+    assert deps.run() == 1
+    deps.applied.restamp_tag_auto_to_policy.assert_called_once_with("r1", "p-sys")
     assert deps.rows[MIGRATED_MARKER_KEY] == "true"
 
 

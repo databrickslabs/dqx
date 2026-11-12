@@ -18,7 +18,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from databricks.labs.blueprint.parallel import Threads
 from databricks.labs.dqx.utils import is_sql_query_safe
@@ -65,6 +65,8 @@ class SnapshotResult:
     tables: list[TableSnapshot]
     truncated: bool
     unreadable_catalogs: list[str]
+    # Tables whose own metadata read failed (the rest of their catalog was read); never cached as missing.
+    unreadable_tables: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,12 @@ def _valid_fqn(fqn: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _add_catalog(catalogs: list[str], catalog: str) -> None:
+    """Append *catalog* unless it is already listed (catalog names compare case-insensitively)."""
+    if catalog.lower() not in {c.lower() for c in catalogs}:
+        catalogs.append(catalog)
 
 
 def _user_catalogs(names: list[str]) -> list[str]:
@@ -186,7 +194,10 @@ def _fact_statements(
             f"FROM {base}.schema_tags WHERE {_where(schema_filter, 'schema_name', None)}"
         )
     if needs.catalog_tags:
-        required["catalog_tags"] = f"SELECT tag_name, tag_value FROM {base}.catalog_tags"
+        required["catalog_tags"] = (
+            f"SELECT catalog_name, tag_name, tag_value FROM {base}.catalog_tags "
+            f"WHERE lower(catalog_name) = {_literal(catalog.lower())}"
+        )
     optional: dict[str, str] = {}
     if needs.catalog_owner:
         optional["catalog_owner"] = (
@@ -241,7 +252,9 @@ def _assemble(
         sch = r.get("schema_name")
         if sch:
             schema_tags.setdefault(sch.lower(), []).append(r)
-    catalog_tags = _tags(results.get("catalog_tags", []))
+    catalog_tags = _tags(
+        [r for r in results.get("catalog_tags", []) if (r.get("catalog_name") or "").lower() == catalog.lower()]
+    )
     catalog_owner: str | None = None
     for r in results.get("catalog_owner", []):
         name = r.get("catalog_name")
@@ -347,7 +360,10 @@ class PolicySnapshotReader:
             result = self._read_tables(misses, deadline, needs)
         self._remember(misses, result, needs)
         return SnapshotResult(
-            tables=cached + result.tables, truncated=result.truncated, unreadable_catalogs=result.unreadable_catalogs
+            tables=cached + result.tables,
+            truncated=result.truncated,
+            unreadable_catalogs=result.unreadable_catalogs,
+            unreadable_tables=result.unreadable_tables,
         )
 
     def _cache_key(self, table_fqn: str) -> str:
@@ -359,11 +375,17 @@ class PolicySnapshotReader:
             return
         found = {table.table_fqn.lower(): table for table in result.tables}
         unreadable = {catalog.lower() for catalog in result.unreadable_catalogs}
+        unreadable_tables = {fqn.lower() for fqn in result.unreadable_tables}
         for fqn in requested:
             table = found.get(fqn.lower())
             if table is not None:
                 self._cache.put(self._cache_key(fqn), _CachedTable(needs, table), ttl=SNAPSHOT_CACHE_TTL_SECONDS)
-            elif not result.truncated and _valid_fqn(fqn) and fqn.split(".")[0].lower() not in unreadable:
+            elif (
+                not result.truncated
+                and _valid_fqn(fqn)
+                and fqn.split(".")[0].lower() not in unreadable
+                and fqn.lower() not in unreadable_tables
+            ):
                 self._cache.put(self._cache_key(fqn), _CachedTable(needs, None), ttl=SNAPSHOT_CACHE_TTL_SECONDS)
 
     def _read_tables(self, table_fqns: list[str], deadline: float, needs: SnapshotNeeds) -> SnapshotResult:
@@ -425,8 +447,7 @@ class PolicySnapshotReader:
                 truncated = True
             except _READ_ERRORS:
                 logger.warning(f"Could not read information_schema for catalog (skipped): {safe_log_value(catalog)}")
-                if catalog not in unreadable:
-                    unreadable.append(catalog)
+                _add_catalog(unreadable, catalog)
                 truncated = self._clock() >= deadline  # a statement that hit the time limit
                 if not truncated:
                     continue
@@ -511,26 +532,32 @@ class PolicySnapshotReader:
         )
         truncated = False
         unreadable: list[str] = []
+        failed_tables: list[str] = []
         found: dict[str, list[tuple[str, TableInfo]]] = {}
+        answered: set[str] = set()  # catalogs (lower-cased) where at least one table read did not fail
         names: dict[str, str] = {}
         for fqn, info, error in outcomes:
             catalog = fqn.split(".")[0]
+            names.setdefault(catalog.lower(), catalog)
             if isinstance(error, _DeadlineExceeded):
                 truncated = True
+                answered.add(catalog.lower())
             elif isinstance(error, (NotFound, PermissionDenied)):
-                continue  # the user cannot see it: same as information_schema returning no row
+                answered.add(catalog.lower())  # the user cannot see it: same as information_schema returning no row
             elif error is not None or info is None:
+                # Only this table is unreadable: it is left out (and not cached), the rest of its catalog is kept.
                 logger.warning(f"Could not read table metadata (skipped): {safe_log_value(fqn)}")
-                if catalog not in unreadable:
-                    unreadable.append(catalog)
+                failed_tables.append(fqn)
             else:
-                names.setdefault(catalog.lower(), catalog)
+                answered.add(catalog.lower())
                 found.setdefault(catalog.lower(), []).append((fqn, info))
+        for fqn in failed_tables:
+            catalog = fqn.split(".")[0]
+            if catalog.lower() not in answered:  # every table of this catalog failed
+                _add_catalog(unreadable, names[catalog.lower()])
         tables: list[TableSnapshot] = []
         for key, items in found.items():
             catalog = names[key]
-            if catalog in unreadable:
-                continue
             owners: dict[tuple[str, str], str | None] = {}
             columns: dict[tuple[str, str], list[ColumnSnapshot]] = {}
             for fqn, info in items:
@@ -554,10 +581,12 @@ class PolicySnapshotReader:
                 continue
             except _READ_ERRORS:
                 logger.warning(f"Could not read information_schema for catalog (skipped): {safe_log_value(catalog)}")
-                unreadable.append(catalog)
+                _add_catalog(unreadable, catalog)
                 continue
             tables.extend(_assemble(catalog, owners, results, len(followups), columns))
-        return SnapshotResult(tables=tables, truncated=truncated, unreadable_catalogs=unreadable)
+        return SnapshotResult(
+            tables=tables, truncated=truncated, unreadable_catalogs=unreadable, unreadable_tables=failed_tables
+        )
 
     def _run_all(
         self, catalog: str, required: dict[str, str], optional: dict[str, str], deadline: float

@@ -71,6 +71,7 @@ from databricks_labs_dqx_app.backend.demo.manifest import (
 from databricks_labs_dqx_app.backend.lowcode_compile import compile_lowcode_body
 from databricks_labs_dqx_app.backend.demo.status import DemoStatus, DemoStatusStore
 from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, PolicyScope, RulePolicyIn
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
     RESERVED_DIMENSION_KEY,
@@ -696,7 +697,9 @@ class DemoSeedService:
                 self._policies.create(rule_id, body, user_email)
                 created += 1
             except Exception:
-                logger.warning("Demo seed: could not create example policy for rule %s", rule_id, exc_info=True)
+                logger.warning(
+                    f"Demo seed: could not create example policy for rule {safe_log_value(rule_id)}", exc_info=True
+                )
         return created
 
     def _submit_pending_rule(self, spec: RuleSpec, user_email: str) -> None:
