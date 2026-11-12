@@ -23,6 +23,7 @@ from databricks.labs.dqx.utils import (
     is_sql_query_safe,
     safe_filter_expr,
     VALID_UNQUOTED_IDENTIFIER_PATTERN,
+    ANSI_RESERVED_KEYWORDS,
     sanitize_for_logging,
 )
 
@@ -463,8 +464,9 @@ class DQRuleManager:
 
         This lets plain column names skip the per-column schema analysis. Anything else (expressions, nested paths,
         back-quoted names, case-insensitive matches, ambiguous duplicates) returns False and is resolved by Spark.
+        So are reserved keywords, which may not parse as bare identifiers (depending on the session's ANSI settings).
         """
-        if not VALID_UNQUOTED_IDENTIFIER_PATTERN.match(column):
+        if not VALID_UNQUOTED_IDENTIFIER_PATTERN.match(column) or column.lower() in ANSI_RESERVED_KEYWORDS:
             return False
         return self._check_input_column_names.count(column) == 1
 
