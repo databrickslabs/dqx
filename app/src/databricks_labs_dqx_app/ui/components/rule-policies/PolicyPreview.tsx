@@ -11,8 +11,6 @@ import { cn } from "@/lib/utils";
 import { distinctColumnCount, reasonLabel, toPreviewPayload, type PolicyDraft } from "./policy-form-state";
 
 const PREVIEW_DEBOUNCE_MS = 400;
-/** Stand-in name so an unnamed draft can still be previewed (name is never persisted here). */
-const PREVIEW_NAME = "preview";
 
 export interface PreviewTarget {
   ruleId: string;
@@ -157,8 +155,7 @@ export function PolicyPreview({
 
   const payloadJson = useMemo(() => {
     if (!current) return "";
-    const payload = toPreviewPayload(current.draft);
-    return JSON.stringify({ ...payload, policy: { ...payload.policy, name: payload.policy.name || PREVIEW_NAME } });
+    return JSON.stringify(toPreviewPayload(current.draft));
   }, [current]);
 
   useEffect(() => {

@@ -247,7 +247,14 @@ describe("toCreatePayload / toUpdatePayload", () => {
   test("preview payload targets the draft's rule", () => {
     const payload = toPreviewPayload(namedDraft(emailRule));
     expect(payload.rule_id).toBe("r-email");
-    expect(payload.policy.name).toBe("PII emails");
+  });
+
+  test("preview payload ignores name and description so typing them does not re-run the preview", () => {
+    const a = toPreviewPayload({ ...namedDraft(emailRule, "PII emails"), description: "one" });
+    const b = toPreviewPayload({ ...namedDraft(emailRule, ""), description: "two" });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect(a.policy.name.trim()).not.toBe("");
+    expect(a.policy.description ?? null).toBeNull();
   });
 
   test("a stored policy round-trips through the draft", () => {

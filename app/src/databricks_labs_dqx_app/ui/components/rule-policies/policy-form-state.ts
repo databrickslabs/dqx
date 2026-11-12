@@ -266,8 +266,15 @@ export function toCreatePayload(
   };
 }
 
+/** Stand-in name for previews: the backend requires one, but it never affects what a policy matches. */
+const PREVIEW_NAME = "preview";
+
+/**
+ * Dry-run request for the draft. Name and description never change what a policy matches, so they
+ * are fixed here: the serialized payload doubles as the preview's debounce key.
+ */
 export function toPreviewPayload(draft: PolicyDraft): PreviewRulePolicyIn {
-  return { rule_id: draft.ruleId, policy: toUpdatePayload(draft) };
+  return { rule_id: draft.ruleId, policy: { ...toUpdatePayload(draft), name: PREVIEW_NAME, description: null } };
 }
 
 /** Editable draft from a stored policy. */
