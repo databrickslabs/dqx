@@ -377,8 +377,16 @@ def test_rule_manager_still_analyzes_present_filter():
 
 
 def test_rule_manager_falls_back_to_schema_analysis_for_ambiguous_or_unlisted_columns():
-    """Duplicate names, case-insensitive matches, and expressions are resolved by Spark, not the fast path."""
-    for columns, column in ((["id", "id"], "id"), (["ID"], "id"), (["a"], "a + 1"), (["s"], "s.field")):
+    """Duplicate names, case-insensitive matches, expressions, and reserved keywords are resolved by Spark, not the
+    fast path."""
+    for columns, column in (
+        (["id", "id"], "id"),
+        (["ID"], "id"),
+        (["a"], "a + 1"),
+        (["s"], "s.field"),
+        (["order"], "order"),  # reserved keyword: may not parse as a bare identifier under ANSI settings
+        (["User"], "User"),
+    ):
         df_mock = create_autospec(DataFrame)
         type(df_mock).columns = PropertyMock(return_value=columns)
         type(df_mock.select.return_value).schema = PropertyMock(side_effect=AnalysisException("unresolved"))
