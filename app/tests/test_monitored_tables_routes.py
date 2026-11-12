@@ -7,11 +7,12 @@ routes themselves are thin adapters over ``MonitoredTableService``, whose
 behaviour is already covered by ``test_monitored_table_service.py``.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from databricks.sdk.errors import NotFound, PermissionDenied
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.models import (
@@ -228,43 +229,43 @@ class TestListAndGet:
             ],
         )
         policy_apply = _policy_apply_mock()
-        result = get_monitored_table("b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER)
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
         assert result.table.binding_id == "b1"
         assert len(result.applied_rules) == 1
         assert result.applied_rules[0].rule_name == "Not Null"
-        # Opening the table evaluates the policies reaching it once, as the caller;
-        # nothing attached -> the detail is not re-read.
+        # Opening the table responds first; the policies reaching it are evaluated
+        # afterwards, once, as the caller, and the detail is read only once.
+        policy_apply.evaluate_binding.assert_not_called()
+        assert len(bt.tasks) == 1
+        asyncio.run(bt())
         policy_apply.evaluate_binding.assert_called_once_with("b1", _ACTING_USER)
         svc.get.assert_called_once_with("b1")
-
-    def test_get_rereads_detail_only_when_policies_attached(self):
-        svc = MagicMock()
-        before = MonitoredTableDetail(table=_table(), applied_rules=[])
-        applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
-        after = MonitoredTableDetail(
-            table=_table(), applied_rules=[AppliedRuleSummary(applied_rule=applied, rule_name="Not Null")]
-        )
-        svc.get.side_effect = [before, after]
-        policy_apply = _policy_apply_mock(attached=1)
-        result = get_monitored_table("b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER)
-        policy_apply.evaluate_binding.assert_called_once_with("b1", _ACTING_USER)
-        assert svc.get.call_count == 2
-        assert [r.rule_name for r in result.applied_rules] == ["Not Null"]
 
     def test_get_policy_failure_is_non_fatal(self):
         svc = MagicMock()
         svc.get.return_value = MonitoredTableDetail(table=_table(), applied_rules=[])
         policy_apply = _policy_apply_mock()
         policy_apply.evaluate_binding.side_effect = RuntimeError("boom")
-        result = get_monitored_table("b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER)
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
         assert result.table.binding_id == "b1"
+        asyncio.run(bt())  # the background failure is swallowed (logged)
+        policy_apply.evaluate_binding.assert_called_once()
 
     def test_get_missing_binding_raises_404(self):
         svc = MagicMock()
         svc.get.return_value = None
         policy_apply = _policy_apply_mock()
         with pytest.raises(HTTPException) as excinfo:
-            get_monitored_table("missing", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER)
+            bt = BackgroundTasks()
+            get_monitored_table(
+                "missing", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+            )
         assert excinfo.value.status_code == 404
         policy_apply.evaluate_binding.assert_not_called()
 
@@ -275,6 +276,7 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
         discovery = _mock_discovery(owner="owner@x")
+        bt = BackgroundTasks()
         result = register_monitored_table(
             body=body,
             svc=svc,
@@ -282,6 +284,7 @@ class TestRegister:
             discovery=discovery,
             policy_apply=_policy_apply_mock(),
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
@@ -300,6 +303,7 @@ class TestRegister:
         svc = MagicMock()
         svc.register.return_value = _table(binding_id="new-b1")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
@@ -307,6 +311,7 @@ class TestRegister:
             discovery=_mock_discovery(),
             policy_apply=_policy_apply_mock(),
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         svc.register.assert_called_once()
 
@@ -315,6 +320,7 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner="owner@x")
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
@@ -322,6 +328,7 @@ class TestRegister:
             discovery=discovery,
             policy_apply=_policy_apply_mock(),
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner="owner@x", owner_display_name=None)
@@ -333,6 +340,7 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner=None)
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
@@ -340,6 +348,7 @@ class TestRegister:
             discovery=discovery,
             policy_apply=_policy_apply_mock(),
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner=None, owner_display_name=None)
 
@@ -348,6 +357,7 @@ class TestRegister:
         svc.register.side_effect = DuplicateMonitoredTableError("Table already monitored")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             register_monitored_table(
                 body=body,
                 svc=svc,
@@ -355,6 +365,7 @@ class TestRegister:
                 discovery=_mock_discovery(),
                 policy_apply=_policy_apply_mock(),
                 acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 409
 
@@ -363,6 +374,7 @@ class TestRegister:
         svc.register.side_effect = ValueError("Invalid fully qualified name")
         body = RegisterMonitoredTableIn(table_fqn="bad-fqn")
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             register_monitored_table(
                 body=body,
                 svc=svc,
@@ -370,6 +382,7 @@ class TestRegister:
                 discovery=_mock_discovery(),
                 policy_apply=_policy_apply_mock(),
                 acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 400
 
@@ -379,6 +392,7 @@ class TestRegister:
         svc.register.return_value = _table(binding_id="b1", table_fqn="cat.schema.tbl")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
         policy_apply = _policy_apply_mock()
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
@@ -386,7 +400,10 @@ class TestRegister:
             discovery=_mock_discovery(),
             policy_apply=policy_apply,
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
+        policy_apply.evaluate_binding.assert_not_called()  # responds first
+        asyncio.run(bt())
         policy_apply.evaluate_binding.assert_called_once_with("b1", _ACTING_USER)
 
     def test_register_policy_failure_is_non_fatal(self):
@@ -396,6 +413,7 @@ class TestRegister:
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
         policy_apply = _policy_apply_mock()
         policy_apply.evaluate_binding.side_effect = RuntimeError("boom")
+        bt = BackgroundTasks()
         result = register_monitored_table(
             body=body,
             svc=svc,
@@ -403,8 +421,10 @@ class TestRegister:
             discovery=_mock_discovery(),
             policy_apply=policy_apply,
             acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.table.table_fqn == "cat.schema.tbl"
+        asyncio.run(bt())
 
 
 class TestBulkRegister:
@@ -420,8 +440,14 @@ class TestBulkRegister:
             table_fqns=["cat.schema.a", "cat.schema.b", "cat.schema.existing", "bad-fqn"],
             owner="bob@x",
         )
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=_policy_apply_mock(), acting_user=_ACTING_USER
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == ["cat.schema.a", "cat.schema.b"]
         assert result.skipped_existing == ["cat.schema.existing"]
@@ -434,8 +460,14 @@ class TestBulkRegister:
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult()
         body = BulkRegisterMonitoredTablesIn(table_fqns=[])
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=_policy_apply_mock(), acting_user=_ACTING_USER
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == []
         assert result.skipped_existing == []
@@ -446,8 +478,14 @@ class TestBulkRegister:
         svc.bulk_register.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             bulk_register_monitored_tables(
-                body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=_policy_apply_mock(), acting_user=_ACTING_USER
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 500
 
@@ -461,9 +499,17 @@ class TestBulkRegister:
         )
         policy_apply = _policy_apply_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1", "cat.schema.t2", "cat.schema.existing"])
+        bt = BackgroundTasks()
         bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
+        policy_apply.evaluate_tables.assert_not_called()  # responds first
+        asyncio.run(bt())
         policy_apply.evaluate_tables.assert_called_once_with(["cat.schema.t1", "cat.schema.t2"], _ACTING_USER)
         policy_apply.evaluate_binding.assert_not_called()
         svc.get_by_table_fqn.assert_not_called()
@@ -475,9 +521,16 @@ class TestBulkRegister:
         )
         policy_apply = _policy_apply_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bt = BackgroundTasks()
         bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
+        assert bt.tasks == []
         policy_apply.evaluate_tables.assert_not_called()
 
     def test_bulk_register_policy_failure_is_non_fatal(self):
@@ -489,10 +542,17 @@ class TestBulkRegister:
         policy_apply = _policy_apply_mock()
         policy_apply.evaluate_tables.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), policy_apply=policy_apply, acting_user=_ACTING_USER
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == ["cat.schema.t1"]
+        asyncio.run(bt())
 
     def test_bulk_register_rejects_whole_batch_when_a_table_is_unavailable(self):
         svc = MagicMock()
@@ -510,8 +570,14 @@ class TestBulkRegister:
             table_fqns=["cat.schema.ok", "cat.schema.missing", "cat.schema.hidden", "bad-fqn"]
         )
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             bulk_register_monitored_tables(
-                body=body, svc=svc, obo_ws=obo, policy_apply=_policy_apply_mock(), acting_user=_ACTING_USER
+                body=body,
+                svc=svc,
+                obo_ws=obo,
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 422
         assert excinfo.value.detail["code"] == "import_tables_unavailable"
@@ -524,8 +590,14 @@ class TestBulkRegister:
         obo.tables.get.side_effect = RuntimeError("UC down")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             bulk_register_monitored_tables(
-                body=body, svc=svc, obo_ws=obo, policy_apply=_policy_apply_mock(), acting_user=_ACTING_USER
+                body=body,
+                svc=svc,
+                obo_ws=obo,
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 502
         svc.bulk_register.assert_not_called()

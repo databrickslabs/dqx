@@ -12,7 +12,7 @@ from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
@@ -134,7 +134,7 @@ from databricks_labs_dqx_app.backend.services.profiling_suggestion_service impor
     BindingNotFoundError as ProfilingBindingNotFoundError,
     ProfilingSuggestionService,
 )
-from databricks_labs_dqx_app.backend.services.policy_apply_service import PolicyApplyService
+from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
 from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
@@ -295,6 +295,22 @@ def list_implemented_rules(
         raise HTTPException(status_code=500, detail="Failed to list implemented rules.")
 
 
+def _evaluate_binding(policy_apply: PolicyApplyService, binding_id: str, acting_user: ActingUser) -> None:
+    """Background task: evaluate the policies reaching one binding; never raises."""
+    try:
+        policy_apply.evaluate_binding(binding_id, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
+
+
+def _evaluate_tables(policy_apply: PolicyApplyService, table_fqns: list[str], acting_user: ActingUser) -> None:
+    """Background task: evaluate the policies reaching newly registered tables; never raises."""
+    try:
+        policy_apply.evaluate_tables(table_fqns, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning("Rule policy evaluation after bulk-register failed", exc_info=True)
+
+
 @router.get(
     "/{binding_id}",
     response_model=MonitoredTableDetailOut,
@@ -306,29 +322,19 @@ def get_monitored_table(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
     acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> MonitoredTableDetailOut:
     """Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
-    First evaluates every rule policy reaching this table as the caller (so it
-    only attaches where they may apply rules), so newly-matching rules appear in
-    the response immediately. Best-effort: a policy failure never blocks the read.
+    After responding, evaluates every rule policy reaching this table as the
+    caller (so it only attaches where they may apply rules); rules it attaches
+    show up on the next read. Best-effort: a policy failure never affects the read.
     """
     try:
         detail = svc.get(binding_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
-        try:
-            attached = policy_apply.evaluate_binding(binding_id, acting_user).attached
-        except Exception:
-            logger.warning(
-                f"Rule policy evaluation on open of binding {safe_log_value(binding_id)} failed (non-fatal)",
-                exc_info=True,
-            )
-            attached = 0
-        # Re-read only when policies actually attached rows, so the response
-        # includes them; otherwise reuse the detail we already loaded.
-        if attached:
-            detail = svc.get(binding_id) or detail
+        background_tasks.add_task(_evaluate_binding, policy_apply, binding_id, acting_user)
         return MonitoredTableDetailOut.from_domain(detail)
     except HTTPException:
         raise
@@ -355,6 +361,7 @@ def register_monitored_table(
     discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
     policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
     acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> MonitoredTableSummaryOut:
     """Register a table under Rules Registry governance (status ``draft``).
 
@@ -373,16 +380,9 @@ def register_monitored_table(
             owner=body.owner,
             owner_display_name=body.owner_display_name,
         )
-        # Rule policies: after a successful register, evaluate every policy
-        # reaching the new table as the caller (OBO snapshot). Best-effort so it
-        # can never turn a successful register into a 500.
-        try:
-            policy_apply.evaluate_binding(table.binding_id, acting_user)
-        except Exception:
-            logger.warning(
-                f"Rule policy evaluation after registering binding {table.binding_id} failed (non-fatal)",
-                exc_info=True,
-            )
+        # Rule policies: after responding, evaluate every policy reaching the new
+        # table as the caller (OBO snapshot). Best-effort; never affects the register.
+        background_tasks.add_task(_evaluate_binding, policy_apply, table.binding_id, acting_user)
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -456,6 +456,7 @@ def bulk_register_monitored_tables(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
     acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> BulkRegisterMonitoredTablesOut:
     """Register many tables under Rules Registry governance in one call.
 
@@ -478,14 +479,10 @@ def bulk_register_monitored_tables(
         user_email = _current_user_email(obo_ws)
         _verify_tables_accessible(obo_ws, body.table_fqns)
         result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
-        # Rule policies: evaluate for only the NEWLY-registered tables (never
-        # skipped_existing/invalid), all in one pass over one snapshot.
-        # Best-effort; guarded so it can never turn a successful bulk-register into a 500.
+        # Rule policies: after responding, evaluate only the NEWLY-registered tables
+        # (never skipped_existing/invalid), in one pass over one snapshot. Best-effort.
         if result.registered:
-            try:
-                policy_apply.evaluate_tables(list(result.registered), acting_user)
-            except Exception:
-                logger.warning("Rule policy evaluation after bulk-register failed (non-fatal)", exc_info=True)
+            background_tasks.add_task(_evaluate_tables, policy_apply, list(result.registered), acting_user)
         return BulkRegisterMonitoredTablesOut.from_domain(result)
     except HTTPException:
         raise
