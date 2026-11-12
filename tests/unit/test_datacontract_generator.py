@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 import os
@@ -237,11 +238,8 @@ class DataContractGeneratorTestBase:
             },
             {
                 'check': {
-                    'function': 'sql_expression',
-                    'arguments': {
-                        'expression': 'temperature_celsius >= -273.15 AND temperature_celsius <= 200.0',
-                        'columns': ['temperature_celsius'],
-                    },
+                    'function': 'is_in_range',
+                    'arguments': {'column': 'temperature_celsius', 'min_limit': -273.15, 'max_limit': 200.0},
                 },
                 'name': 'temperature_celsius_out_of_range',
                 'criticality': 'error',
@@ -271,11 +269,8 @@ class DataContractGeneratorTestBase:
             },
             {
                 'check': {
-                    'function': 'sql_expression',
-                    'arguments': {
-                        'expression': 'humidity_percentage >= 0.0 AND humidity_percentage <= 100.0',
-                        'columns': ['humidity_percentage'],
-                    },
+                    'function': 'is_in_range',
+                    'arguments': {'column': 'humidity_percentage', 'min_limit': 0.0, 'max_limit': 100.0},
                 },
                 'name': 'humidity_percentage_out_of_range',
                 'criticality': 'error',
@@ -291,11 +286,8 @@ class DataContractGeneratorTestBase:
             },
             {
                 'check': {
-                    'function': 'sql_expression',
-                    'arguments': {
-                        'expression': 'pressure_bar >= 0.1 AND pressure_bar <= 10.0',
-                        'columns': ['pressure_bar'],
-                    },
+                    'function': 'is_in_range',
+                    'arguments': {'column': 'pressure_bar', 'min_limit': 0.1, 'max_limit': 10.0},
                 },
                 'name': 'pressure_bar_out_of_range',
                 'criticality': 'error',
@@ -2340,171 +2332,389 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     """Test constraint-specific predefined rule generation."""
 
-    def test_field_with_only_minimum_constraint(self, generator):
-        """Test that field with only minimum (no maximum) generates sql_expression rule for float."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "temperature",
-                    "physicalType": "DOUBLE",
-                    "logicalType": "number",
-                    "logicalTypeOptions": {
-                        "minimum": -273.15,  # Float minimum, should use sql_expression
-                    },
-                }
-            ]
-        )
-
+    def _generate_range_rules(self, generator, prop: dict, api_version: str = "v3.0.2") -> list[dict]:
+        """Generate predefined rules for a single property and return those for its range bounds."""
+        contract_dict = self.create_basic_contract(properties=[prop])
+        contract_dict["apiVersion"] = api_version
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
+                generate_schema_validation=False,
             )
-
-            # Should generate sql_expression rule for float minimum
-            rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "sql_expression" in rule_functions, "Should have sql_expression rule for float minimum"
-
-            # Verify the expression is correct
-            min_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
-            assert min_rule["check"]["arguments"]["expression"] == "temperature >= -273.15"
-            assert min_rule["check"]["arguments"]["columns"] == ["temperature"]
-
         finally:
             os.unlink(temp_path)
+        return [r for r in rules if r["name"].endswith(("_below_minimum", "_above_maximum", "_out_of_range"))]
+
+    def test_field_with_only_minimum_constraint(self, generator):
+        """Test that a float minimum generates a row-level is_not_less_than rule."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "temperature",
+                "physicalType": "DOUBLE",
+                "logicalType": "number",
+                "logicalTypeOptions": {"minimum": -273.15},
+            },
+        )
+
+        assert len(rules) == 1
+        assert rules[0]["name"] == "temperature_below_minimum"
+        assert rules[0]["check"] == {
+            "function": "is_not_less_than",
+            "arguments": {"column": "temperature", "limit": -273.15},
+        }
 
     def test_field_with_only_maximum_constraint(self, generator):
-        """Test that field with only maximum (no minimum) generates sql_expression rule for float."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "humidity",
-                    "physicalType": "DOUBLE",
-                    "logicalType": "number",
-                    "logicalTypeOptions": {
-                        "maximum": 100.0,  # Float maximum, should use sql_expression
-                    },
-                }
-            ]
+        """Test that a float maximum generates a row-level is_not_greater_than rule."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "humidity",
+                "physicalType": "DOUBLE",
+                "logicalType": "number",
+                "logicalTypeOptions": {"maximum": 100.0},
+            },
         )
 
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        assert len(rules) == 1
+        assert rules[0]["name"] == "humidity_above_maximum"
+        assert rules[0]["check"] == {
+            "function": "is_not_greater_than",
+            "arguments": {"column": "humidity", "limit": 100.0},
+        }
 
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
-
-            # Should generate sql_expression rule for float maximum
-            rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "sql_expression" in rule_functions, "Should have sql_expression rule for float maximum"
-
-            # Verify the expression is correct
-            max_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
-            assert max_rule["check"]["arguments"]["expression"] == "humidity <= 100.0"
-            assert max_rule["check"]["arguments"]["columns"] == ["humidity"]
-
-        finally:
-            os.unlink(temp_path)
-
-    def test_sql_expression_back_quotes_column_requiring_escaping(self, generator):
-        """Tests that rules parse correctly for columns that require SQL escaping."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "Päivämäärä",
-                    "physicalType": "DOUBLE",
-                    "logicalType": "number",
-                    "logicalTypeOptions": {"minimum": 0.0, "maximum": 100.0},
-                }
-            ]
+    def test_range_rule_keeps_column_requiring_escaping(self, generator):
+        """Test that a column name that requires SQL escaping is passed to the range check as is."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "Päivämäärä",
+                "physicalType": "DOUBLE",
+                "logicalType": "number",
+                "logicalTypeOptions": {"minimum": 0.0, "maximum": 100.0},
+            },
         )
 
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
-
-            range_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
-            assert range_rule["check"]["arguments"]["expression"] == "`Päivämäärä` >= 0.0 AND `Päivämäärä` <= 100.0"
-            # The columns list keeps the raw name (used for resolution / skip messaging).
-            assert range_rule["check"]["arguments"]["columns"] == ["Päivämäärä"]
-
-        finally:
-            os.unlink(temp_path)
+        assert len(rules) == 1
+        assert rules[0]["check"] == {
+            "function": "is_in_range",
+            "arguments": {"column": "Päivämäärä", "min_limit": 0.0, "max_limit": 100.0},
+        }
 
     def test_field_with_only_integer_maximum_constraint(self, generator):
-        """Test that field with only integer maximum generates is_aggr_not_greater_than rule."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "age",
-                    "physicalType": "INT",
-                    "logicalType": "integer",
-                    "logicalTypeOptions": {
-                        "maximum": 150,  # Integer maximum
-                    },
-                }
-            ]
+        """Test that an integer maximum generates a row-level is_not_greater_than rule, not an aggregate check."""
+        rules = self._generate_range_rules(
+            generator,
+            {"name": "age", "physicalType": "INT", "logicalType": "integer", "logicalTypeOptions": {"maximum": 150}},
         )
 
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
-
-            # Should generate is_aggr_not_greater_than rule for integer maximum
-            rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "is_aggr_not_greater_than" in rule_functions
-
-            # Verify the rule details
-            max_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_greater_than")
-            assert max_rule["check"]["arguments"]["column"] == "age"
-            assert max_rule["check"]["arguments"]["limit"] == 150
-            assert max_rule["check"]["arguments"]["aggr_type"] == "max"
-
-        finally:
-            os.unlink(temp_path)
+        assert len(rules) == 1
+        assert rules[0]["name"] == "age_above_maximum"
+        assert rules[0]["check"] == {"function": "is_not_greater_than", "arguments": {"column": "age", "limit": 150}}
 
     def test_field_with_only_integer_minimum_constraint(self, generator):
-        """Test that field with only integer minimum generates is_aggr_not_less_than rule."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "quantity",
-                    "physicalType": "INT",
-                    "logicalType": "integer",
-                    "logicalTypeOptions": {
-                        "minimum": 0,  # Integer minimum
-                    },
-                }
-            ]
+        """Test that an integer minimum generates a row-level is_not_less_than rule, not an aggregate check."""
+        rules = self._generate_range_rules(
+            generator,
+            {"name": "quantity", "physicalType": "INT", "logicalType": "integer", "logicalTypeOptions": {"minimum": 0}},
         )
 
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        assert len(rules) == 1
+        assert rules[0]["name"] == "quantity_below_minimum"
+        assert rules[0]["check"] == {"function": "is_not_less_than", "arguments": {"column": "quantity", "limit": 0}}
 
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, options, function, limits, name_suffix",
+        [
+            ("integer", "INT", {"minimum": 0}, "is_not_less_than", {"limit": 0}, "below_minimum"),
+            ("integer", "INT", {"maximum": 10}, "is_not_greater_than", {"limit": 10}, "above_maximum"),
+            ("number", "DOUBLE", {"maximum": 99.5}, "is_not_greater_than", {"limit": 99.5}, "above_maximum"),
+            (
+                "number",
+                "DOUBLE",
+                {"minimum": 0.0, "maximum": 1.0},
+                "is_in_range",
+                {"min_limit": 0.0, "max_limit": 1.0},
+                "out_of_range",
+            ),
+            (
+                "date",
+                "DATE",
+                {"minimum": datetime.date(2020, 1, 1)},
+                "is_not_less_than",
+                {"limit": datetime.date(2020, 1, 1)},
+                "below_minimum",
+            ),
+            (
+                "date",
+                "DATE",
+                {"minimum": "2020-01-01", "maximum": "2030-12-31"},
+                "is_in_range",
+                {"min_limit": "2020-01-01", "max_limit": "2030-12-31"},
+                "out_of_range",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": datetime.datetime(2024, 1, 1, 10, 30)},
+                "is_not_less_than",
+                {"limit": datetime.datetime(2024, 1, 1, 10, 30)},
+                "below_minimum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T10:00:00+00:00"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T10:00:00+00:00"},
+                "below_minimum",
+            ),
+            (None, "INT", {"minimum": 1}, "is_not_less_than", {"limit": 1}, "below_minimum"),
+            (
+                "integer",
+                "INT",
+                {"minimum": 5, "maximum": 5},
+                "is_in_range",
+                {"min_limit": 5, "max_limit": 5},
+                "out_of_range",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T10:00:00Z"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T10:00:00+00:00"},
+                "below_minimum",
+            ),
+            (
+                "datetime",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01 10:00"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01 10:00"},
+                "above_maximum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T00:00:00", "maximum": "2024-12-31T00:00:00+00:00"},
+                "is_in_range",
+                {"min_limit": "2024-01-01T00:00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
+                "out_of_range",
+            ),
+        ],
+    )
+    def test_range_bounds_generate_row_level_checks(
+        self, generator, caplog, logical_type, physical_type, options, function, limits, name_suffix
+    ):
+        """Test that range bounds of every supported kind generate one row-level check, without warnings."""
+        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert rules == [
+            {
+                "check": {"function": function, "arguments": {"column": "value", **limits}},
+                "name": f"value_{name_suffix}",
+                "criticality": "error",
+                "user_metadata": {
+                    "contract_id": "test",
+                    "contract_version": "1.0.0",
+                    "odcs_version": "v3.0.2",
+                    "schema": "test_table",
+                    "field": "value",
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
+        assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, options, warning",
+        [
+            ("integer", "INT", {"minimum": "abc"}, "Skipping minimum on 'value': 'abc' is not a number."),
+            ("integer", "INT", {"minimum": "10"}, "Skipping minimum on 'value': '10' is not a number."),
+            ("integer", "INT", {"minimum": True}, "Skipping minimum on 'value': 'True' is not a number."),
+            ("integer", "INT", {"minimum": [1, 2]}, "Skipping minimum on 'value': '[1, 2]' is not a number."),
+            ("number", "DOUBLE", {"maximum": float("inf")}, "Skipping maximum on 'value': 'inf' is not a number."),
+            (
+                "number",
+                "DOUBLE",
+                {"maximum": "2020-01-01"},
+                "Skipping maximum on 'value': '2020-01-01' is not a number.",
+            ),
+            (
+                "date",
+                "DATE",
+                {"maximum": "next week"},
+                "Skipping maximum on 'value': 'next week' is not a date or timestamp.",
+            ),
+            ("date", "DATE", {"minimum": 5}, "Skipping minimum on 'value': '5' is not a date or timestamp."),
+            (
+                None,
+                "INT",
+                {"minimum": float("nan")},
+                "Skipping minimum on 'value': 'nan' is not a number, date or timestamp.",
+            ),
+            (
+                None,
+                "STRING",
+                {"minimum": "other_column"},
+                "Skipping minimum on 'value': 'other_column' is not a number, date or timestamp.",
+            ),
+            (
+                "date",
+                "DATE",
+                {"minimum": "20240101"},
+                "Skipping minimum on 'value': '20240101' is not a date or timestamp.",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2020-01-01T10"},
+                "Skipping minimum on 'value': '2020-01-01T10' is not a date or timestamp.",
+            ),
+            (
+                "date",
+                "DATE",
+                {"maximum": "2024-02-30"},
+                "Skipping maximum on 'value': '2024-02-30' is not a date or timestamp.",
+            ),
+            (
+                "string",
+                "STRING",
+                {"minimum": 5},
+                "Skipping range bounds on 'value': ODCS defines no range bounds for logical type 'string'.",
+            ),
+            (
+                "boolean",
+                "BOOLEAN",
+                {"minimum": 0},
+                "Skipping range bounds on 'value': ODCS defines no range bounds for logical type 'boolean'.",
+            ),
+            (
+                "time",
+                "STRING",
+                {"minimum": "08:00:00"},
+                "Skipping range bounds on 'value': range bounds on time fields aren't supported yet.",
+            ),
+        ],
+    )
+    def test_invalid_range_bound_is_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, options, warning
+    ):
+        """Test that a bound that would be evaluated as a SQL expression generates no rule and logs why."""
+        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert warning in caplog.messages
+
+    def test_valid_bound_is_kept_when_the_other_is_skipped(self, generator, caplog):
+        """Test that an invalid maximum is skipped while the valid minimum still generates its rule."""
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(
+                generator,
+                {
+                    "name": "value",
+                    "physicalType": "INT",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {"minimum": 0, "maximum": "abc"},
+                },
             )
 
-            # Should generate is_aggr_not_less_than rule for integer minimum
-            rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "is_aggr_not_less_than" in rule_functions
+        assert [r["check"] for r in rules] == [
+            {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}
+        ]
+        assert "Skipping maximum on 'value': 'abc' is not a number." in caplog.messages
 
-            # Verify the rule details
-            min_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_less_than")
-            assert min_rule["check"]["arguments"]["column"] == "quantity"
-            assert min_rule["check"]["arguments"]["limit"] == 0
-            assert min_rule["check"]["arguments"]["aggr_type"] == "min"
+    @pytest.mark.parametrize(
+        "logical_type, options, reason",
+        [
+            ("integer", {"minimum": 10, "maximum": 1}, "no value is at least 10 and at most 1"),
+            (
+                "date",
+                {"minimum": "2030-01-01", "maximum": "2020-01-01"},
+                "no value is at least 2030-01-01 and at most 2020-01-01",
+            ),
+            (None, {"minimum": 1, "maximum": "2020-01-01"}, "the bounds mix numbers with dates or timestamps"),
+        ],
+    )
+    def test_unusable_range_is_skipped_with_warning(self, generator, caplog, logical_type, options, reason):
+        """Test that a minimum and maximum no value could satisfy generate no rule and log why."""
+        prop = {"name": "value", "physicalType": "STRING", "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
 
-        finally:
-            os.unlink(temp_path)
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert f"Skipping range bounds on 'value': {reason}." in caplog.messages
+
+    @pytest.mark.parametrize("api_version", ["v3.0.2", "v3.1.0", "v3.2.0"])
+    def test_range_bounds_are_the_same_in_every_odcs_version(self, generator, api_version):
+        """Test that minimum and maximum mean the same in every supported ODCS version."""
+        rules = self._generate_range_rules(
+            generator,
+            {"name": "qty", "physicalType": "INT", "logicalType": "integer", "logicalTypeOptions": {"minimum": 1}},
+            api_version=api_version,
+        )
+
+        assert [r["check"] for r in rules] == [
+            {"function": "is_not_less_than", "arguments": {"column": "qty", "limit": 1}}
+        ]
+
+    @pytest.mark.parametrize(
+        "name, logical_type, physical_type, options, column",
+        [
+            ("value", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            (
+                "value",
+                "date",
+                "VARCHAR(10)",
+                {"minimum": "2020-01-01", "maximum": "2030-12-31"},
+                "try_cast(value AS DATE)",
+            ),
+            ("value", "timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
+            ("value", "integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
+            ("value", "number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
+            ("value", None, "CHAR(8)", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            ("value", None, "STRING", {"maximum": "2020-01-01T10:00:00"}, "try_cast(value AS TIMESTAMP)"),
+            ("value", None, "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
+            ("value", "datetime", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS TIMESTAMP)"),
+            ("value", "date", "DATE", {"minimum": "2020-01-01"}, "value"),
+            ("Päivämäärä", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(`Päivämäärä` AS DATE)"),
+        ],
+    )
+    def test_range_check_on_text_column_compares_try_cast(
+        self, generator, name, logical_type, physical_type, options, column
+    ):
+        """Test that a column stored as text is compared through try_cast, so a malformed value can't fail the run."""
+        prop = {"name": name, "physicalType": physical_type, "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
+
+        rules = self._generate_range_rules(generator, prop)
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["arguments"]["column"] == column
+        assert rules[0]["name"].startswith(f"{name}_")
+
+
+class TestDataContractGeneratorQualityAndLengthConstraints(DataContractGeneratorTestBase):
+    """Test explicit quality checks and length constraints."""
 
     def test_explicit_dqx_quality_check_detection(self, generator):
         """Test that explicit DQX quality checks are correctly identified."""
