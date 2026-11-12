@@ -378,3 +378,14 @@ def test_deadline_truncated_results_are_not_cached_as_missing():
     queries.clear()
     result = _cached_reader(sql, cache, "a").for_tables(["main.sales.orders"])
     assert queries and [t.table_fqn for t in result.tables] == ["main.sales.orders"]
+
+
+def test_for_tables_chunks_long_table_lists():
+    fqns = [f"main.s.t{i}" for i in range(450)]
+    data = {"main": {"tables": [["s", f"t{i}", None] for i in range(450)]}}
+    sql, queries = _make_sql(data)
+    result = _reader(sql).for_tables(fqns)
+    table_queries = [q for q in queries if "information_schema.tables" in q]
+    assert len(table_queries) == 3
+    assert all(q.count("lower(table_name) =") <= 200 for q in table_queries)
+    assert len(result.tables) == 450

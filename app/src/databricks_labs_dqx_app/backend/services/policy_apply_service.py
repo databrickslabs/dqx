@@ -2,7 +2,10 @@
 
 Ties the pure :mod:`policy_engine` to storage: reads a user-scoped snapshot of
 the tables a policy can reach, evaluates the policy against each table, and
-attaches the ``auto`` matches as policy-made applied rules. Every action runs
+attaches the ``auto`` matches as policy-made applied rules. Only a policy that
+may register tables (``register_tables`` and a role that may register) scans
+its whole scope in Unity Catalog; any other policy reads just the monitored
+tables in its scope, and reads nothing when there are none. Every action runs
 for the ACTING user (whoever saved, re-scanned, opened, registered or
 approved), so a policy only ever reaches tables that user may apply rules to:
 
@@ -26,7 +29,7 @@ from dataclasses import dataclass, field
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
-from databricks_labs_dqx_app.backend.policy_models import RulePolicy, RulePolicyIn
+from databricks_labs_dqx_app.backend.policy_models import PolicyScope, RulePolicy, RulePolicyIn
 from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, RegistryRule, compute_mapping_hash
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
@@ -122,6 +125,14 @@ def _matched_columns(matches: list[PolicyMatch]) -> set[str]:
         for bound in match.column_mapping.values():
             columns.update(name for name in bound.split(",") if name)
     return columns
+
+
+@dataclass
+class _RunReads:
+    """What one evaluation run has read so far, shared by every policy it evaluates."""
+
+    monitored: dict[str, str] | None = None  # table_fqn -> binding_id of every monitored table
+    snapshots: dict[tuple[str, bool], tuple[SnapshotResult, dict[str, str]]] = field(default_factory=dict)
 
 
 class _UserGate:
@@ -259,11 +270,10 @@ class PolicyApplyService:
         rule = self._registry.get_rule(rule_id)
         if rule is None:
             raise RuleNotFoundError(f"Registry rule '{rule_id}' not found.")
-        snapshot = self._snapshots.for_scope(body.scope)
         policy = RulePolicy(**body.model_dump(), policy_id=_PREVIEW_POLICY_ID, rule_id=rule_id)
-        gate = _UserGate(user, self._permissions, self._apply_rules)
-        bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
         may_register = policy.register_tables and can_register_tables(user.role)
+        snapshot, bindings = self._read_scope(policy.scope, may_register, _RunReads())
+        gate = _UserGate(user, self._permissions, self._apply_rules)
         tables: list[PreviewTable] = []
         for table in snapshot.tables:
             autos = [m for m in evaluate(policy, rule.definition.slots, table) if m.status == "auto"]
@@ -309,7 +319,7 @@ class PolicyApplyService:
         try:
             rule = self._approved_rule(policy.rule_id)
             if rule is not None:
-                self._run_scope(policy, rule, user, totals, {})
+                self._run_scope(policy, rule, user, totals, _RunReads())
         except Exception:  # best-effort trigger: report what was done so far
             logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -325,10 +335,10 @@ class PolicyApplyService:
         except Exception:  # best-effort trigger: a storage failure must not fail the approval
             logger.warning(f"Could not load policies for rule {safe_log_value(rule_id)}", exc_info=True)
             return _EMPTY_RESULT
-        snapshots: dict[str, SnapshotResult] = {}
+        reads = _RunReads()
         for policy in policies:
             try:
-                self._run_scope(policy, rule, user, totals, snapshots)
+                self._run_scope(policy, rule, user, totals, reads)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
                 logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -339,13 +349,13 @@ class PolicyApplyService:
         Best-effort and never raises: an unknown or failing policy is logged and skipped.
         """
         totals = self._totals()
-        snapshots: dict[str, SnapshotResult] = {}
+        reads = _RunReads()
         for policy_id in policy_ids:
             try:
                 policy = self._policies.get(policy_id)
                 rule = self._approved_rule(policy.rule_id) if policy is not None else None
                 if policy is not None and rule is not None:
-                    self._run_scope(policy, rule, user, totals, snapshots)
+                    self._run_scope(policy, rule, user, totals, reads)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
                 logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -401,22 +411,48 @@ class PolicyApplyService:
         rule: RegistryRule,
         user: ActingUser,
         totals: _Totals,
-        snapshots: dict[str, SnapshotResult],
+        reads: _RunReads,
     ) -> None:
-        """Evaluate *policy* across its scope; *snapshots* memoises reads by scope within one run."""
-        scope_key = policy.scope.model_dump_json()
-        snapshot = snapshots.get(scope_key)
-        if snapshot is None:
-            snapshot = self._snapshots.for_scope(policy.scope)
-            snapshots[scope_key] = snapshot
+        """Evaluate *policy* across its scope, reusing what this run (*reads*) already read."""
+        full_scan = policy.register_tables and can_register_tables(user.role)
+        snapshot, bindings = self._read_scope(policy.scope, full_scan, reads)
         if snapshot.truncated:
-            logger.info(
-                f"Rule policy {safe_log_value(policy.policy_id)} evaluation was capped at the snapshot table limit"
-            )
-        bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
+            logger.info(f"Rule policy {safe_log_value(policy.policy_id)} evaluation was capped at the snapshot limits")
         gate = _UserGate(user, self._permissions, self._apply_rules)
         for table in snapshot.tables:
             self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=True)
+
+    def _read_scope(
+        self, scope: PolicyScope, full_scan: bool, reads: _RunReads
+    ) -> tuple[SnapshotResult, dict[str, str]]:
+        """Snapshot of the tables a policy over *scope* can reach, plus their ``table_fqn -> binding_id``.
+
+        Only a policy that may register tables (*full_scan*) scans the whole scope in Unity
+        Catalog. Otherwise just the monitored tables in scope are read, in one bulk call, and
+        nothing at all is read when none are in scope.
+        """
+        key = (scope.model_dump_json(), full_scan)
+        hit = reads.snapshots.get(key)
+        if hit is not None:
+            return hit
+        if full_scan:
+            snapshot = self._snapshots.for_scope(scope)
+            bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
+        else:
+            if reads.monitored is None:
+                reads.monitored = self._monitored_tables.list_table_bindings()
+            reachable = {fqn: b for fqn, b in reads.monitored.items() if in_scope(scope, fqn)}
+            if reachable:
+                snapshot = self._snapshots.for_tables(list(reachable))
+                by_name = {fqn.lower(): b for fqn, b in reachable.items()}
+                bindings = {
+                    t.table_fqn: by_name[t.table_fqn.lower()] for t in snapshot.tables if t.table_fqn.lower() in by_name
+                }
+            else:
+                snapshot = SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[])
+                bindings = {}
+        reads.snapshots[key] = (snapshot, bindings)
+        return snapshot, bindings
 
     def _run_bindings(self, table_bindings: dict[str, str], user: ActingUser, totals: _Totals, *, attach: bool) -> None:
         """Evaluate the policies reaching each ``table_fqn -> binding_id``, reading one snapshot for all."""

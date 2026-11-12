@@ -338,6 +338,14 @@ class TestGetTableFqns:
         assert "WHERE binding_id IN ('b1', 'b2')" in stmt
 
 
+class TestListTableBindings:
+    def test_one_query_for_every_binding(self, svc, sql):
+        sql.query.return_value = [["cat.sch.t1", "b1"], ["cat.sch.t2", "b2"], ["", "b3"]]
+        assert svc.list_table_bindings() == {"cat.sch.t1": "b1", "cat.sch.t2": "b2"}
+        [stmt] = [c.args[0] for c in sql.query.call_args_list]
+        assert stmt.startswith("SELECT table_fqn, binding_id FROM") and "WHERE" not in stmt
+
+
 class TestListOwnerEnrichmentIsNonBlocking:
     def test_list_defers_scim_resolution_off_the_request_path(self, sql, profiling_sql):
         from unittest.mock import create_autospec

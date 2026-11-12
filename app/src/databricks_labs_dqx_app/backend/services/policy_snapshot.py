@@ -223,7 +223,11 @@ class PolicySnapshotReader:
             key = catalog.lower()
             catalog_names.setdefault(key, catalog)
             pairs_by_catalog.setdefault(key, set()).add((schema.lower(), table.lower()))
-        plan = [(catalog_names[key], _CatalogFilter(pairs=frozenset(pairs))) for key, pairs in pairs_by_catalog.items()]
+        plan: list[tuple[str, _CatalogFilter]] = []
+        for key, pairs in pairs_by_catalog.items():
+            ordered = sorted(pairs)
+            for start in range(0, len(ordered), _PAIR_CHUNK):  # keeps each tables query's predicate bounded
+                plan.append((catalog_names[key], _CatalogFilter(pairs=frozenset(ordered[start : start + _PAIR_CHUNK]))))
         wanted = {fqn.lower() for fqn in table_fqns}
         return self._read(plan, MAX_SNAPSHOT_TABLES, lambda fqn: fqn.lower() in wanted, deadline)
 
@@ -249,6 +253,7 @@ class PolicySnapshotReader:
         self, plan: list[tuple[str, _CatalogFilter]], limit: int, accept: Callable[[str], bool], deadline: float
     ) -> SnapshotResult:
         tables: list[TableSnapshot] = []
+        seen: set[str] = set()
         unreadable: list[str] = []
         truncated = False
         for catalog, flt in plan:
@@ -259,12 +264,16 @@ class PolicySnapshotReader:
                 truncated = True
             except _READ_ERRORS:
                 logger.warning(f"Could not read information_schema for catalog (skipped): {safe_log_value(catalog)}")
-                unreadable.append(catalog)
+                if catalog not in unreadable:
+                    unreadable.append(catalog)
                 truncated = self._clock() >= deadline  # a statement that hit the time limit
                 if not truncated:
                     continue
             else:
-                tables.extend(found)
+                for table in found:
+                    if table.table_fqn.lower() not in seen:
+                        seen.add(table.table_fqn.lower())
+                        tables.append(table)
             if truncated:
                 break
         if truncated and self._clock() >= deadline:

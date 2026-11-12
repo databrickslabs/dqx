@@ -179,6 +179,7 @@ def world() -> World:
         f: w.bindings[f] for f in fqns if f in w.bindings
     }
     w.monitored.get_table_fqns.side_effect = lambda ids: {b: f for f, b in w.bindings.items() if b in ids}
+    w.monitored.list_table_bindings.side_effect = lambda: dict(w.bindings)
     w.permissions.get_object_owner.return_value = "owner@x"
     w.permissions.has_privilege.side_effect = lambda object_type, object_id, privilege, **_: (
         object_type == ObjectType.MONITORED_TABLE.value and (object_id, privilege) in w.grants
@@ -264,7 +265,7 @@ def test_preview_new_tables_only_when_register_tables(world: World) -> None:
 
 def test_preview_reports_truncation_and_unreadable(world: World) -> None:
     world.snapshots.for_scope.return_value = SnapshotResult(tables=[], truncated=True, unreadable_catalogs=["x"])
-    preview = world.service().preview("r1", _policy_in(), AUTHOR)
+    preview = world.service().preview("r1", _policy_in(register_tables=True), AUTHOR)
     assert preview.truncated is True
     assert preview.unreadable_catalogs == ["x"]
 
@@ -642,7 +643,8 @@ def test_run_policies_shares_one_snapshot_per_scope(world: World) -> None:
     result = world.service().run_policies(["p1", "p2", "p3"], AUTHOR)
 
     assert result.attached == 3
-    world.snapshots.for_scope.assert_called_once()
+    world.snapshots.for_tables.assert_called_once_with(["c.s.t"])
+    world.monitored.list_table_bindings.assert_called_once()
 
 
 def test_run_policies_is_best_effort(world: World) -> None:
@@ -664,5 +666,65 @@ def test_run_policy_reads_its_scope_once(world: World) -> None:
     world.policies.get.return_value = _policy()
 
     assert world.service().run_policy("p1", AUTHOR).attached == 2
+    world.snapshots.for_tables.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Monitored-only reads when a policy does not register tables
+# ---------------------------------------------------------------------------
+
+
+def test_policy_without_register_reads_only_monitored_tables_in_scope(world: World) -> None:
+    world.bindings = {"c.s.a": "b1", "other.s.b": "b2"}
+    world.grants = {("b1", Privilege.APPLY), ("b2", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("other.s.b", _col("email", "pii")))
+    scoped = _policy().model_copy(update={"scope": PolicyScope(catalogs=["c"])})
+    world.policies.get.return_value = scoped
+    world.policies.list_for_rule.return_value = [scoped]
+    svc = world.service()
+
+    assert svc.run_policy("p1", AUTHOR).attached == 1
+    assert svc.run_rule("r1", AUTHOR).attached == 1
+    preview = svc.preview("r1", _policy_in().model_copy(update={"scope": PolicyScope(catalogs=["c"])}), AUTHOR)
+
+    assert [t.table_fqn for t in preview.tables] == ["c.s.a"]
+    world.snapshots.for_scope.assert_not_called()
+    assert [c.args[0] for c in world.snapshots.for_tables.call_args_list] == [["c.s.a"]] * 3
+
+
+def test_policy_with_register_scans_the_scope(world: World) -> None:
+    world.bindings = {"c.s.a": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("c.s.new", _col("email", "pii")))
+    world.policies.get.return_value = _policy(register_tables=True)
+
+    result = world.service().run_policy("p1", AUTHOR)
+
+    assert (result.attached, result.registered) == (2, 1)
     world.snapshots.for_scope.assert_called_once()
+    world.snapshots.for_tables.assert_not_called()
+    world.monitored.list_table_bindings.assert_not_called()
+
+
+def test_register_policy_for_a_user_who_cannot_register_reads_only_monitored(world: World) -> None:
+    world.bindings = {"c.s.a": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")))
+
+    world.service().preview("r1", _policy_in(register_tables=True), VIEWER)
+
+    world.snapshots.for_scope.assert_not_called()
+    world.snapshots.for_tables.assert_called_once_with(["c.s.a"])
+
+
+def test_no_monitored_table_in_scope_reads_nothing(world: World) -> None:
+    world.bindings = {"other.s.b": "b2"}
+    scoped = _policy().model_copy(update={"scope": PolicyScope(catalogs=["c"])})
+    world.policies.get.return_value = scoped
+
+    assert world.service().run_policy("p1", AUTHOR) == ApplyResult(attached=0, registered=0, ambiguous=[])
+    preview = world.service().preview("r1", _policy_in().model_copy(update={"scope": scoped.scope}), AUTHOR)
+
+    assert preview.tables_matched == 0 and not preview.truncated
+    world.snapshots.for_scope.assert_not_called()
     world.snapshots.for_tables.assert_not_called()
