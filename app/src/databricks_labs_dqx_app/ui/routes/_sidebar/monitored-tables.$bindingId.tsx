@@ -985,7 +985,7 @@ function MonitoredTableDetailPage() {
           </TabsContent>
 
           <TabsContent value="history">
-            <TableChangesPanel bindingId={bindingId} />
+            <TableChangesPanel bindingId={bindingId} revision={`${table.status}:${table.version}:${table.updated_at ?? ""}`} />
           </TabsContent>
         </Tabs>
       </div>

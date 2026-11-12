@@ -154,3 +154,30 @@ export function itemStatus(before: unknown[], after: unknown[]): "added" | "remo
   if (!after.length) return "removed";
   return JSON.stringify(canonical(before)) === JSON.stringify(canonical(after)) ? "unchanged" : "modified";
 }
+
+/**
+ * *value* with its object keys put in *reference*'s order, at every level (keys
+ * *reference* lacks go last, in their own order). Two sides of a diff can list
+ * the same keys in a different order (a frozen version and a live rendering,
+ * say); a line diff would read that as changes, so the after side is laid out
+ * like the before side first. Arrays are aligned element by element.
+ */
+export function alignKeys(value: unknown, reference: unknown): unknown {
+  if (Array.isArray(value)) {
+    const ref = Array.isArray(reference) ? reference : [];
+    return value.map((item, i) => alignKeys(item, ref[i]));
+  }
+  if (!isPlainObject(value)) return value;
+  const ref = isPlainObject(reference) ? reference : {};
+  const keys = [...Object.keys(ref).filter((k) => k in value), ...Object.keys(value).filter((k) => !(k in ref))];
+  return Object.fromEntries(keys.map((k) => [k, alignKeys(value[k], ref[k])]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** The line diff of an item's two sides, with the after side laid out like the before side. */
+export function itemRows(before: unknown[], after: unknown[]): DiffRow[] {
+  return diffLines(sideYaml(before), sideYaml(alignKeys(after, before) as unknown[]));
+}

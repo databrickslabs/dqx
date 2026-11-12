@@ -2205,6 +2205,7 @@ export function RegistryRuleFormDialog({
             name: String(sourceRule.user_metadata?.[RESERVED_NAME_KEY] ?? "") || sourceRule.rule_id,
             version: sourceRule.version,
             proposed: sourceRule,
+            revision: `${sourceRule.status}:${sourceRule.version}:${sourceRule.updated_at ?? ""}`,
           }
         : null,
     [sourceRule],

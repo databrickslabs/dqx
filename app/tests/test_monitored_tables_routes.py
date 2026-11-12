@@ -1138,9 +1138,9 @@ class TestSaveAppliedRules:
                 history=MagicMock(),
             )
             (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
-            assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
-                f"Expected key absent for thresholds={thresholds!r}"
-            )
+            assert (
+                RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags
+            ), f"Expected key absent for thresholds={thresholds!r}"
 
     def test_clearing_column_pass_thresholds_drops_stale_key_from_prior_metadata(self):
         """Regression: clearing every per-column override ("Use rule default") must remove
@@ -1177,9 +1177,9 @@ class TestSaveAppliedRules:
             history=MagicMock(),
         )
         (_binding_id, called_desired, _user_email), _kwargs = svc.save_applied_rules.call_args
-        assert RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags, (
-            "Stale column_pass_thresholds must be dropped when the override is cleared"
-        )
+        assert (
+            RESERVED_COLUMN_PASS_THRESHOLDS_KEY not in called_desired[0].tags
+        ), "Stale column_pass_thresholds must be dropped when the override is cleared"
         # A real free-text tag alongside it must survive.
         assert called_desired[0].tags["team"] == "growth"
 
@@ -2179,7 +2179,9 @@ class TestGetMonitoredTableChanges:
         version_svc = MagicMock()
         version_svc.changed_since_version.return_value = changed
         version_svc.compare.return_value = []
-        result = get_monitored_table_changes("b1", svc=svc, version_svc=version_svc, **_read_perm_deps(), **params)
+        result = get_monitored_table_changes(
+            "b1", svc=svc, version_svc=version_svc, history=MagicMock(), **_read_perm_deps(), **params
+        )
         return result, version_svc
 
     def test_unapproved_changes_compare_the_approved_version_with_the_proposed_rules(self):
@@ -2224,7 +2226,9 @@ class TestGetMonitoredTableChanges:
             RuleChange("a2", "Two", "removed"),
             RuleChange("a3", "Three", "unchanged"),
         ]
-        result = get_monitored_table_changes("b1", svc=svc, version_svc=version_svc, **_read_perm_deps())
+        result = get_monitored_table_changes(
+            "b1", svc=svc, version_svc=version_svc, history=MagicMock(), **_read_perm_deps()
+        )
         assert result.counts == {"added": 0, "removed": 2, "modified": 0, "unchanged": 1}
         assert [c.status for c in result.changes] == ["removed", "removed", "unchanged"]
 
@@ -2383,7 +2387,7 @@ class TestLifecycleHistory:
             history=history,
         )
         history.record.assert_called_once_with(
-            "monitored_table", "b1", "create", "alice@x", new_status="draft", state={"table_fqn": "cat.schema.tbl"}
+            "monitored_table", "b1", "create", "alice@x", new_status="draft", details={"table_fqn": "cat.schema.tbl"}
         )
 
     def test_saving_applied_rules_records_an_edit_with_the_rules(self):
@@ -2406,7 +2410,7 @@ class TestLifecycleHistory:
             history=history,
         )
         history.record.assert_called_once_with(
-            "monitored_table", "b1", "update", "alice@x", state={"applied_rules": ["r1"]}
+            "monitored_table", "b1", "update", "alice@x", details={"applied_rules": ["r1"]}
         )
 
     def test_resubmitting_a_table_already_in_review_without_a_note_records_nothing(self):
@@ -2443,3 +2447,56 @@ class TestLifecycleHistory:
         history.list_events.assert_called_once_with("monitored_table", "b1")
         assert [(e.action, e.actor, e.version, e.rationale) for e in out] == [("approved", "bob@x", 3, "ok")]
         assert perms.require_object.call_args.args[2] == Privilege.SELECT
+
+
+class TestChangesWithSteps:
+    @staticmethod
+    def _check(rule_id: str, criticality: str) -> dict:
+        return {"criticality": criticality, "user_metadata": {"applied_rule_id": rule_id, "name": rule_id}}
+
+    def _call(self, history, version_svc, **params):
+        svc = MagicMock()
+        svc.get.return_value = MagicMock(table=MagicMock(version=4, status="approved"))
+        version_svc.changed_since_version.return_value = False
+        return get_monitored_table_changes(
+            "b1",
+            svc=svc,
+            version_svc=version_svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.VIEWER,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            history=history,
+            **params,
+        )
+
+    def test_a_saved_draft_is_compared_with_a_version(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (True, [self._check("a1", "error"), self._check("a2", "warn")])
+        version_svc = MagicMock()
+        version_svc.checks_or_empty.return_value = [self._check("a1", "warn")]
+        out = self._call(history, version_svc, base=4, target_step=7)
+        history.get_snapshot.assert_called_once_with("monitored_table", "b1", 7)
+        version_svc.checks_or_empty.assert_called_once_with("b1", 4)
+        assert (out.base_version, out.target_step) == (4, 7)
+        assert {c.key: c.status for c in out.changes} == {"a1": "modified", "a2": "added"}
+
+    def test_a_step_is_compared_with_the_proposed_rules(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (True, [self._check("a1", "warn")])
+        version_svc = MagicMock()
+        version_svc.current_checks.return_value = [self._check("a1", "warn")]
+        out = self._call(history, version_svc, base_step=7)
+        assert [c.status for c in out.changes] == ["unchanged"]
+
+    def test_a_version_and_a_step_on_one_side_is_400(self):
+        with pytest.raises(HTTPException) as exc:
+            self._call(create_autospec(LifecycleHistoryService, instance=True), MagicMock(), base=3, base_step=7)
+        assert exc.value.status_code == 400
+
+    def test_an_unknown_step_is_404(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (False, None)
+        with pytest.raises(HTTPException) as exc:
+            self._call(history, MagicMock(), base=4, target_step=99)
+        assert exc.value.status_code == 404

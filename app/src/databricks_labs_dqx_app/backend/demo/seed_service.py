@@ -103,6 +103,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
     MonitoredTableService,
 )
+from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryAction, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
@@ -185,6 +186,35 @@ class DemoSeedResult:
     schedules: int = 0
 
 
+@dataclass
+class _TableStep:
+    """A monitored-table lifecycle step the seed replays, written once its back-dated time is known."""
+
+    action: HistoryAction
+    actor: str
+    prev_status: str | None = None
+    new_status: str | None = None
+    version: int | None = None
+    details: dict[str, object] | None = None
+    #: The table's state right after the step, taken when it happened.
+    snapshot: object | None = None
+
+
+def _write_table_step(history: LifecycleHistoryService, binding_id: str, step: _TableStep, at: datetime | None) -> None:
+    history.record(
+        "monitored_table",
+        binding_id,
+        step.action,
+        step.actor,
+        prev_status=step.prev_status,
+        new_status=step.new_status,
+        version=step.version,
+        details=step.details,
+        changed_at=at,
+        snapshot=step.snapshot,
+    )
+
+
 class DemoSeedService:
     """Orchestrates end-to-end seeding of the DQX Studio demo content."""
 
@@ -208,6 +238,7 @@ class DemoSeedService:
         status: DemoStatusStore,
         reset_service: DatabaseResetService | None = None,
         embeddings: RuleEmbeddingsService | None = None,
+        history: LifecycleHistoryService | None = None,
         tagging_sql: SqlExecutor | None = None,
         job_service: JobService | None = None,
         profiler_view: ViewService | None = None,
@@ -233,6 +264,17 @@ class DemoSeedService:
         self._status = status
         self._reset_service = reset_service
         self._embeddings = embeddings
+        # Optional lifecycle history. The seed drives tables and collections
+        # through services rather than the routes that record their history, so
+        # it records the same steps itself. None (minimal test graph) records none.
+        self._history = history
+        # A table's steps since its last approval, then each approval's steps
+        # keyed by the version it froze. Table versions are back-dated into the
+        # trend window, so their steps are written once those times are known
+        # (:meth:`_write_table_history`), just before each version's approval.
+        self._unapproved_steps: dict[str, list[_TableStep]] = {}
+        self._approved_steps: list[tuple[str, int, list[_TableStep]]] = []
+        self._freeze_instants: dict[tuple[str, int], datetime] = {}
         # Optional profiler collaborators. When both are present the seed runs a
         # real profiler Job on a demo table so the Profile page shows genuine
         # ``dq_profiling_results`` output; when either is None (minimal test
@@ -334,6 +376,8 @@ class DemoSeedService:
                 # Build-only: still refresh caches so the app shows a truthful
                 # (current) score for the freshly governed tables.
                 self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
+
+            self._write_table_history()
 
             self._set_status("running", "schedules", "Adding paused schedules", user_email)
             product_map = {spec.name: pid for spec, pid in zip(manifest.DATA_PRODUCTS, product_ids, strict=True)}
@@ -791,7 +835,7 @@ class DemoSeedService:
             binding_id = self._register_binding(binding.table, user_email)
             binding_map[binding.table] = binding_id
             desired = self._desired_rules(binding, rule_map, week=0)
-            self._apply_rules.save_applied_rules(binding_id, desired, user_email)
+            self._save_rules(binding_id, desired, user_email)
             self._approve_binding(binding_id, user_email)
         return binding_map
 
@@ -800,6 +844,10 @@ class DemoSeedService:
         table_fqn = self._table_fqn(table)
         try:
             registered = self._monitored_tables.register(table_fqn, user_email)
+            self._note_table_step(
+                registered.binding_id,
+                _TableStep("create", user_email, new_status="draft", details={"table_fqn": table_fqn}),
+            )
             return registered.binding_id
         except DuplicateMonitoredTableError:
             existing = self._monitored_tables.get_by_table_fqn(table_fqn)
@@ -817,6 +865,22 @@ class DemoSeedService:
             column_mapping = [dict(group) for group in groups]
             desired.append(DesiredAppliedRule(rule_id=rule_id, column_mapping=column_mapping))
         return desired
+
+    def _save_rules(self, binding_id: str, desired: list[DesiredAppliedRule], user_email: str) -> None:
+        """Save a binding's applied rules, as the Apply Rules save does, and note the edit."""
+        self._apply_rules.save_applied_rules(binding_id, desired, user_email)
+        self._note_table_step(
+            binding_id, _TableStep("update", user_email, details={"applied_rules": [d.rule_id for d in desired]})
+        )
+
+    def _note_table_step(self, binding_id: str, step: _TableStep) -> None:
+        self._unapproved_steps.setdefault(binding_id, []).append(self._with_snapshot(binding_id, step))
+
+    def _with_snapshot(self, binding_id: str, step: _TableStep) -> _TableStep:
+        """*step* with the table's state as it is now (the step is written later, back-dated)."""
+        if self._history is not None:
+            step.snapshot = self._history.snapshot("monitored_table", binding_id)
+        return step
 
     def _approve_binding(self, binding_id: str, user_email: str) -> int:
         """Drive a binding's materialized checks to ``approved`` and freeze a version.
@@ -855,6 +919,22 @@ class DemoSeedService:
         )
         self._monitored_tables.set_status(binding_id, "approved", user_email)
         version = self._version_service.freeze_new_version(binding_id, user_email)
+        # The submit and the approval, after this cycle's create and edits. A
+        # table already approved is resubmitted from approved, as a revision is.
+        reviewed_before = any(bid == binding_id for bid, _, _ in self._approved_steps)
+        steps = self._unapproved_steps.pop(binding_id, [])
+        submit = _TableStep(
+            "submit",
+            user_email,
+            prev_status="approved" if reviewed_before else "draft",
+            new_status="pending_approval",
+        )
+        approve = _TableStep(
+            "approve", user_email, prev_status="pending_approval", new_status="approved", version=version
+        )
+        steps.extend([self._with_snapshot(binding_id, submit), self._with_snapshot(binding_id, approve)])
+        if isinstance(version, int) and not isinstance(version, bool):
+            self._approved_steps.append((binding_id, version, steps))
         # Record the freeze in creation order so the weekly trend can re-date each
         # binding's freeze ``created_at`` into the historical window (see
         # :meth:`_redate_version_freezes`). Freezes are written at seed-time
@@ -872,15 +952,89 @@ class DemoSeedService:
         product_ids: list[str] = []
         for spec in manifest.DATA_PRODUCTS:
             product = self._data_products.create(spec.name, spec.description, None, user_email)
+            self._record_product(
+                "create", product.product_id, user_email, new_status="draft", details={"name": spec.name}
+            )
+            # The tables are added in one save, as the collection's page saves them: one edit,
+            # recorded as the save endpoint records it.
+            added: list[str] = []
             for member in spec.members:
                 binding_id = binding_map.get(member)
                 if binding_id is None:
                     continue
                 self._data_products.add_member(product.product_id, binding_id, None, user_email)
+                added.append(binding_id)
+            if added:
+                self._record_product(
+                    "update",
+                    product.product_id,
+                    user_email,
+                    new_status="draft",
+                    details={"fields": [], "members_added": added, "members_repinned": [], "members_removed": []},
+                )
             self._data_products.submit(product.product_id, user_email)
-            self._data_products.approve(product.product_id, user_email)
+            self._record_product(
+                "submit", product.product_id, user_email, prev_status="draft", new_status="pending_approval"
+            )
+            approved = self._data_products.approve(product.product_id, user_email)
+            self._record_product(
+                "approve",
+                product.product_id,
+                user_email,
+                prev_status="pending_approval",
+                new_status="approved",
+                version=getattr(approved, "version", None),
+            )
             product_ids.append(product.product_id)
         return product_ids
+
+    def _record_product(
+        self,
+        action: HistoryAction,
+        product_id: str,
+        user_email: str,
+        *,
+        prev_status: str | None = None,
+        new_status: str | None = None,
+        version: int | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        """Record a collection step as its route does (collections aren't back-dated, so it's written now)."""
+        if self._history is None:
+            return
+        self._history.record(
+            "data_product",
+            product_id,
+            action,
+            user_email,
+            prev_status=prev_status,
+            new_status=new_status,
+            version=version if isinstance(version, int) and not isinstance(version, bool) else None,
+            details=details,
+        )
+
+    def _write_table_history(self) -> None:
+        """Write each table's recorded steps, ending at the (back-dated) time its version was approved.
+
+        The steps of a cycle lead up to its approval a second apart, so a
+        table's History reads created, edited, submitted, approved in order at
+        the time each version took effect. Versions that weren't re-dated (no
+        trend weeks) are written now. Steps after the last approval are written
+        now as well.
+        """
+        history = self._history
+        if history is None:
+            return
+        for binding_id, version, steps in self._approved_steps:
+            approved_at = self._freeze_instants.get((binding_id, version))
+            for index, step in enumerate(steps):
+                at = None if approved_at is None else approved_at - timedelta(seconds=len(steps) - 1 - index)
+                _write_table_step(history, binding_id, step, at)
+        for binding_id, steps in self._unapproved_steps.items():
+            for step in steps:
+                _write_table_step(history, binding_id, step, None)
+        self._approved_steps = []
+        self._unapproved_steps = {}
 
     # ------------------------------------------------------------------
     # Phase: schedules (paused)
@@ -1199,7 +1353,7 @@ class DemoSeedService:
                 active_keys = tuple(sorted(active_mapping(binding, week).keys()))
                 if last_active.get(table) != active_keys:
                     desired = self._desired_rules(binding, rule_map, week)
-                    self._apply_rules.save_applied_rules(binding_id, desired, user_email)
+                    self._save_rules(binding_id, desired, user_email)
                     self._approve_binding(binding_id, user_email)
                     last_active[table] = active_keys
 
@@ -1346,6 +1500,7 @@ class DemoSeedService:
                 instant = first + (span * index) // count if count else first
                 target_iso = redate.iso(instant)
                 self._oltp.execute(redate.build_redate_versions_sql(versions_fqn, binding_id, version, target_iso))
+                self._freeze_instants[(binding_id, version)] = instant
 
     def _tighten_card_rule(self, rule_map: dict[str, str], user_email: str) -> None:
         """Edit + re-approve the card-validation rule to a new version at TIGHTEN_WEEK.

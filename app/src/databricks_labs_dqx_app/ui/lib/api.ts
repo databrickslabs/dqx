@@ -1205,6 +1205,16 @@ export interface CustomMetricsOut {
 export type DataProductChangesOutTargetVersion = number | null;
 
 /**
+ * The history step on the base side (instead of a version)
+ */
+export type DataProductChangesOutBaseStep = number | null;
+
+/**
+ * The history step on the target side (instead of a version)
+ */
+export type DataProductChangesOutTargetStep = number | null;
+
+/**
  * Items per status
  */
 export type DataProductChangesOutCounts = {[key: string]: number};
@@ -1226,6 +1236,10 @@ export interface DataProductChangesOut {
   base_version: number;
   /** None = the current members */
   target_version?: DataProductChangesOutTargetVersion;
+  /** The history step on the base side (instead of a version) */
+  base_step?: DataProductChangesOutBaseStep;
+  /** The history step on the target side (instead of a version) */
+  target_step?: DataProductChangesOutTargetStep;
   /** False when a compared version was approved before collections recorded their versions */
   base_recorded: boolean;
   /** Items per status */
@@ -2128,6 +2142,11 @@ export type HistoryEventOutRationale = string | null;
 export type HistoryEventOutVersion = number | null;
 
 /**
+ * The step's id, to compare the state it left
+ */
+export type HistoryEventOutHistoryId = number | null;
+
+/**
  * One step of a table's, collection's or rule's history — backs the History tab.
  */
 export interface HistoryEventOut {
@@ -2140,6 +2159,10 @@ export interface HistoryEventOut {
   rationale?: HistoryEventOutRationale;
   /** The version an approval created */
   version?: HistoryEventOutVersion;
+  /** The step's id, to compare the state it left */
+  history_id?: HistoryEventOutHistoryId;
+  /** The step recorded the object's state after it */
+  has_snapshot?: boolean;
 }
 
 export type HomeStatsOutScore = number | null;
@@ -2580,6 +2603,16 @@ export interface ModelServicesOut {
 export type MonitoredTableChangesOutTargetVersion = number | null;
 
 /**
+ * The history step on the base side (instead of a version)
+ */
+export type MonitoredTableChangesOutBaseStep = number | null;
+
+/**
+ * The history step on the target side (instead of a version)
+ */
+export type MonitoredTableChangesOutTargetStep = number | null;
+
+/**
  * Rules per status
  */
 export type MonitoredTableChangesOutCounts = {[key: string]: number};
@@ -2600,6 +2633,10 @@ export interface MonitoredTableChangesOut {
   base_version: number;
   /** None = the proposed rules */
   target_version?: MonitoredTableChangesOutTargetVersion;
+  /** The history step on the base side (instead of a version) */
+  base_step?: MonitoredTableChangesOutBaseStep;
+  /** The history step on the target side (instead of a version) */
+  target_step?: MonitoredTableChangesOutTargetStep;
   /** Rules per status */
   counts?: MonitoredTableChangesOutCounts;
   changes?: RuleChangeOut[];
@@ -3486,6 +3523,18 @@ export interface RegistryRuleOut {
   modified_since_publish?: boolean;
   /** UI-facing status: raw status, or 'modified' for an edited approved rule. */
   display_status: RegistryRuleOutDisplayStatus;
+}
+
+export type RegistryRuleSnapshotOutSnapshotAnyOf = { [key: string]: unknown };
+
+export type RegistryRuleSnapshotOutSnapshot = RegistryRuleSnapshotOutSnapshotAnyOf | null;
+
+/**
+ * A registry rule as one history step left it (mode, polarity, definition, labels); None = not recorded.
+ */
+export interface RegistryRuleSnapshotOut {
+  history_id: number;
+  snapshot?: RegistryRuleSnapshotOutSnapshot;
 }
 
 /**
@@ -4422,6 +4471,22 @@ removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
  */
 export interface SaveAppliedRulesIn {
   applications?: DesiredAppliedRuleIn[];
+}
+
+export type SaveDataProductInUpdates = UpdateDataProductIn | null;
+
+export type SaveDataProductInMembers = AddDataProductMemberIn[] | null;
+
+/**
+ * Body of ``POST /data-products/{id}/save`` (``saveDataProduct``): one save of the collection's page.
+
+*updates* are its changed settings (as ``updateDataProduct`` takes them);
+*members* is the full list of its tables and their pins after the save
+(None leaves the members as they are). One request, so one history step.
+ */
+export interface SaveDataProductIn {
+  updates?: SaveDataProductInUpdates;
+  members?: SaveDataProductInMembers;
 }
 
 export type SaveRulesInChecksItem = { [key: string]: unknown };
@@ -5888,6 +5953,14 @@ base?: number | null;
  * Target version; omit for the proposed rules
  */
 target?: number | null;
+/**
+ * History step on the base side, instead of a version
+ */
+base_step?: number | null;
+/**
+ * History step on the target side, instead of a version
+ */
+target_step?: number | null;
 };
 
 export type RemoveAppliedRule200 = {[key: string]: string};
@@ -6089,6 +6162,14 @@ base?: number | null;
  * Target version; omit for the current members
  */
 target?: number | null;
+/**
+ * History step on the base side, instead of a version
+ */
+base_step?: number | null;
+/**
+ * History step on the target side, instead of a version
+ */
+target_step?: number | null;
 };
 
 export type SubmitDataProductBody = LifecycleRationaleIn | null;
@@ -17160,6 +17241,165 @@ export function useListRegistryRuleHistorySuspense<TData = Awaited<ReturnType<ty
 
 
 /**
+ * The rule as one step of its history left it, to compare with any version or other step.
+ * @summary Get Registry Rule Snapshot
+ */
+export const getRegistryRuleSnapshot = (
+    ruleId: string,
+    historyId: number, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<RegistryRuleSnapshotOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/registry-rules/${ruleId}/history/${historyId}`,options
+    );
+  }
+
+
+
+
+export const getGetRegistryRuleSnapshotQueryKey = (ruleId?: string,
+    historyId?: number,) => {
+    return [
+    `/api/v1/registry-rules/${ruleId}/history/${historyId}`
+    ] as const;
+    }
+
+    
+export const getGetRegistryRuleSnapshotQueryOptions = <TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(ruleId: string,
+    historyId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRegistryRuleSnapshotQueryKey(ruleId,historyId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>> = ({ signal }) => getRegistryRuleSnapshot(ruleId,historyId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(ruleId && historyId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRegistryRuleSnapshotQueryResult = NonNullable<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>>
+export type GetRegistryRuleSnapshotQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRegistryRuleSnapshot<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRegistryRuleSnapshot>>,
+          TError,
+          Awaited<ReturnType<typeof getRegistryRuleSnapshot>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSnapshot<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRegistryRuleSnapshot>>,
+          TError,
+          Awaited<ReturnType<typeof getRegistryRuleSnapshot>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSnapshot<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Registry Rule Snapshot
+ */
+
+export function useGetRegistryRuleSnapshot<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRegistryRuleSnapshotQueryOptions(ruleId,historyId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getGetRegistryRuleSnapshotSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(ruleId: string,
+    historyId: number, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRegistryRuleSnapshotQueryKey(ruleId,historyId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>> = ({ signal }) => getRegistryRuleSnapshot(ruleId,historyId, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetRegistryRuleSnapshotSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>>
+export type GetRegistryRuleSnapshotSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useGetRegistryRuleSnapshotSuspense<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSnapshotSuspense<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetRegistryRuleSnapshotSuspense<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get Registry Rule Snapshot
+ */
+
+export function useGetRegistryRuleSnapshotSuspense<TData = Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError = AxiosError<HTTPValidationError>>(
+ ruleId: string,
+    historyId: number, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getRegistryRuleSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetRegistryRuleSnapshotSuspenseQueryOptions(ruleId,historyId,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Bulk-create registry drafts from imported checks in a single request.
 
 Avoids N sequential round-trips (each of which re-resolves Databricks
@@ -18831,11 +19071,13 @@ export function useListMonitoredTableVersionsSuspense<TData = Awaited<ReturnType
 /**
  * Compare a monitored table's rules between two sides, per rule (added / removed / modified / unchanged).
 
-With no *base* or *target*: when the table has changes not yet approved
-(a draft, a pending review, or a saved edit to an approved table) this
-compares the approved version with the proposed rules; otherwise the
-latest version with the one before it. *target* omitted with a *base*
-compares that version with the proposed rules.
+A side is an approved version, a history step (the rules a saved draft or
+other step left), or for the target the proposed rules. With no *base* or
+*target*: when the table has changes not yet approved (a draft, a pending
+review, or a saved edit to an approved table) this compares the approved
+version with the proposed rules; otherwise the latest version with the one
+before it. *target* omitted with a *base* compares that version with the
+proposed rules.
  * @summary Get Monitored Table Changes
  */
 export const getMonitoredTableChanges = (
@@ -27484,9 +27726,11 @@ export const useDeleteDataProduct = <TError = AxiosError<HTTPValidationError>,
 /**
  * Compare a collection between two sides: its settings, then each member (added / removed / modified / unchanged).
 
-With no *base* or *target*: a collection with changes not yet approved
-compares its approved version with its current members; otherwise its
-latest version with the one before it.
+A side is an approved version, a history step (the state a saved draft or
+other step left), or for the target the current members. With no *base*
+or *target*: a collection with changes not yet approved compares its
+approved version with its current members; otherwise its latest version
+with the one before it.
  * @summary Get Data Product Changes
  */
 export const getDataProductChanges = (
@@ -27925,6 +28169,75 @@ export const useRemoveDataProductMember = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getRemoveDataProductMemberMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Save the collection's page in one request: its changed settings, then its tables and pins.
+
+The same as ``updateDataProduct`` followed by adding, re-pinning and
+removing members (with the same permissions: ``MODIFY`` for settings,
+``APPLY`` for members, and the schedule grant gate), recorded as one edit
+in the collection's history.
+ * @summary Save Data Product
+ */
+export const saveDataProduct = (
+    productId: string,
+    saveDataProductIn: SaveDataProductIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DataProductOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/data-products/${productId}/save`,
+      saveDataProductIn,options
+    );
+  }
+
+
+
+export const getSaveDataProductMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDataProduct>>, TError,{productId: string;data: SaveDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDataProduct>>, TError,{productId: string;data: SaveDataProductIn}, TContext> => {
+
+const mutationKey = ['saveDataProduct'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDataProduct>>, {productId: string;data: SaveDataProductIn}> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  saveDataProduct(productId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDataProductMutationResult = NonNullable<Awaited<ReturnType<typeof saveDataProduct>>>
+    export type SaveDataProductMutationBody = SaveDataProductIn
+    export type SaveDataProductMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Save Data Product
+ */
+export const useSaveDataProduct = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDataProduct>>, TError,{productId: string;data: SaveDataProductIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveDataProduct>>,
+        TError,
+        {productId: string;data: SaveDataProductIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSaveDataProductMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

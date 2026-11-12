@@ -14,7 +14,9 @@ import pytest
 from fastapi import HTTPException
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
+from databricks_labs_dqx_app.backend.common.permissions import Privilege
 from databricks_labs_dqx_app.backend.models import (
+    SaveDataProductIn,
     AddDataProductMemberIn,
     CreateDataProductIn,
     LifecycleRationaleIn,
@@ -39,10 +41,12 @@ from databricks_labs_dqx_app.backend.routes.v1.data_products import (
     update_data_product,
 )
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    DataProductService,
     BindingNotApprovedError,
     CollectionChange,
     DataProductChanges,
     DataProductDetail,
+    DataProductMemberDetail,
     DataProductRunResult,
     DataProductVersion,
     DuplicateDataProductNameError,
@@ -700,7 +704,7 @@ class TestChanges:
     def test_returns_counts_versions_and_changes(self):
         svc = MagicMock()
         svc.changes.return_value = self._result()
-        out = dp_routes.get_data_product_changes("p1", svc, base=None, target=None)
+        out = dp_routes.get_data_product_changes("p1", svc, MagicMock(), base=None, target=None)
         svc.changes.assert_called_once_with("p1", None, None)
         assert out.counts == {"added": 1, "removed": 0, "modified": 0, "unchanged": 1}
         assert [v.version for v in out.versions] == [2]
@@ -711,14 +715,14 @@ class TestChanges:
         svc = MagicMock()
         svc.changes.side_effect = LookupError("nope")
         with pytest.raises(HTTPException) as exc:
-            dp_routes.get_data_product_changes("nope", svc, base=None, target=None)
+            dp_routes.get_data_product_changes("nope", svc, MagicMock(), base=None, target=None)
         assert exc.value.status_code == 404
 
     def test_400_for_a_version_that_does_not_exist(self):
         svc = MagicMock()
         svc.changes.side_effect = ValueError("Version 9 doesn't exist (latest is 2)")
         with pytest.raises(HTTPException) as exc:
-            dp_routes.get_data_product_changes("p1", svc, base=None, target=9)
+            dp_routes.get_data_product_changes("p1", svc, MagicMock(), base=None, target=9)
         assert exc.value.status_code == 400
 
 
@@ -850,7 +854,7 @@ class TestLifecycleHistory:
             "update",
             "alice@x",
             new_status="draft",
-            state={"member": "b1", "pinned_version": 2},
+            details={"member": "b1", "pinned_version": 2},
         )
 
     def test_deleting_a_collection_records_it(self):
@@ -882,3 +886,146 @@ class TestLifecycleHistory:
         out = dp_routes.list_data_product_history("p1", history=history)
         history.list_events.assert_called_once_with("data_product", "p1")
         assert [(e.action, e.actor, e.rationale) for e in out] == [("submitted", "alice@x", "adds orders")]
+
+
+class TestChangesWithSteps:
+    def test_a_saved_draft_is_compared_with_the_current_members(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (
+            True,
+            {"name": "Orders", "description": "old", "owner": "a@x", "members": []},
+        )
+        svc = create_autospec(DataProductService, instance=True)
+        svc.changes.return_value = MagicMock(
+            approved_version=1, has_pending_changes=True, versions=[], base_recorded=True, changes=[]
+        )
+        svc.current_state.return_value = {"name": "Orders", "description": "new", "owner": "a@x", "members": []}
+        out = dp_routes.get_data_product_changes("p1", svc=svc, history=history, base_step=3)
+        assert out.base_step == 3
+        assert [(c.key, c.status) for c in out.changes] == [("settings", "modified")]
+
+    def test_an_unknown_step_is_404(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (False, None)
+        svc = create_autospec(DataProductService, instance=True)
+        svc.changes.return_value = MagicMock(versions=[])
+        with pytest.raises(HTTPException) as exc:
+            dp_routes.get_data_product_changes("p1", svc=svc, history=history, target_step=9)
+        assert exc.value.status_code == 404
+
+
+def _member(binding_id: str, pinned: int | None = None) -> DataProductMemberDetail:
+    return DataProductMemberDetail(
+        id=f"m-{binding_id}",
+        binding_id=binding_id,
+        table_fqn=f"c.s.{binding_id}",
+        binding_status="approved",
+        binding_version=1,
+        pinned_version=pinned,
+        rules_count=1,
+        checks_count=1,
+        runnable=True,
+    )
+
+
+class TestSaveDataProduct:
+    """One save of the collection's page is one request and one history step."""
+
+    @staticmethod
+    def _call(svc, history, perms, body):
+        return dp_routes.save_data_product(
+            "p1",
+            SaveDataProductIn.model_validate(body),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            history=history,
+            role=UserRole.RULE_AUTHOR,
+            principal_ids=frozenset(),
+            perms=perms,
+            grant_svc=MagicMock(),
+        )
+
+    def _svc(self):
+        svc = create_autospec(DataProductService, instance=True)
+        detail = DataProductDetail(
+            product=_product(status="approved", version=1), members=[_member("b1"), _member("b2", 1)]
+        )
+        svc.get.return_value = detail
+        svc.update.return_value = _product(status="draft")
+        return svc
+
+    def test_settings_and_member_changes_are_one_history_step(self):
+        svc, history, perms = self._svc(), create_autospec(LifecycleHistoryService, instance=True), MagicMock()
+        self._call(
+            svc,
+            history,
+            perms,
+            {
+                "updates": {"description": "new"},
+                "members": [
+                    {"binding_id": "b2", "pinned_version": 2},
+                    {"binding_id": "b3", "pinned_version": None},
+                ],
+            },
+        )
+        svc.update.assert_called_once_with("p1", {"description": "new"}, "alice@x")
+        assert [c.args[1:3] for c in svc.add_member.call_args_list] == [("b3", None), ("b2", 2)]
+        svc.remove_member.assert_called_once_with("p1", "m-b1", "alice@x")
+        history.record.assert_called_once()
+        call = history.record.call_args
+        assert call.args[:4] == ("data_product", "p1", "update", "alice@x")
+        assert call.kwargs["new_status"] == "draft"
+        assert call.kwargs["details"] == {
+            "fields": ["description"],
+            "members_added": ["b3"],
+            "members_repinned": ["b2"],
+            "members_removed": ["b1"],
+        }
+        privileges = {c.args[2] for c in perms.require_object.call_args_list}
+        assert privileges == {Privilege.MODIFY, Privilege.APPLY}
+
+    def test_a_save_that_changes_nothing_records_nothing(self):
+        svc, history = self._svc(), create_autospec(LifecycleHistoryService, instance=True)
+        self._call(
+            svc,
+            history,
+            MagicMock(),
+            {"members": [{"binding_id": "b1", "pinned_version": None}, {"binding_id": "b2", "pinned_version": 1}]},
+        )
+        assert not svc.update.called and not svc.add_member.called and not svc.remove_member.called
+        assert not history.record.called
+
+    def test_only_members_needs_apply_not_modify(self):
+        svc, perms = self._svc(), MagicMock()
+        self._call(
+            svc,
+            create_autospec(LifecycleHistoryService, instance=True),
+            perms,
+            {"members": [{"binding_id": "b1"}, {"binding_id": "b2", "pinned_version": 1}, {"binding_id": "b4"}]},
+        )
+        assert {c.args[2] for c in perms.require_object.call_args_list} == {Privilege.APPLY}
+
+    def test_a_table_that_cant_join_refuses_the_whole_save_before_anything_is_written(self):
+        svc = self._svc()
+        svc.require_approved_bindings.side_effect = BindingNotApprovedError("not approved")
+        with pytest.raises(HTTPException) as exc:
+            self._call(
+                svc,
+                create_autospec(LifecycleHistoryService, instance=True),
+                MagicMock(),
+                {"updates": {"name": "Renamed"}, "members": [{"binding_id": "b9"}]},
+            )
+        assert exc.value.status_code == 400
+        svc.require_approved_bindings.assert_called_once_with(["b9"])
+        assert not svc.update.called and not svc.add_member.called and not svc.remove_member.called
+
+    def test_a_schedule_is_granted_on_the_members_after_the_save(self):
+        svc = self._svc()
+        svc.table_fqns_of.return_value = []
+        self._call(
+            svc,
+            create_autospec(LifecycleHistoryService, instance=True),
+            MagicMock(),
+            {"updates": {"schedule_cron": "0 6 * * *"}, "members": [{"binding_id": "b1"}, {"binding_id": "b3"}]},
+        )
+        svc.table_fqns_of.assert_called_once_with(["b1", "b3"])

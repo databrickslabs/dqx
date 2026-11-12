@@ -195,7 +195,10 @@ function DataProductDetailPage() {
             ),
             history: (
               <TabBoundary label={t("dataProducts.tabHistory")}>
-                <CollectionChangesPanel productId={product.product_id} />
+                <CollectionChangesPanel
+                  productId={product.product_id}
+                  revision={`${product.status}:${product.version}:${product.updated_at ?? ""}`}
+                />
               </TabBoundary>
             ),
           }}

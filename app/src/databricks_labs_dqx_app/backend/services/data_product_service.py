@@ -936,6 +936,11 @@ class DataProductService:
             changes=changes,
         )
 
+    def current_state(self, product_id: str) -> dict[str, Any] | None:
+        """The collection's settings and members as a version records them; None if it doesn't exist."""
+        product = self._fetch_product(product_id)
+        return None if product is None else self._current_state(product)
+
     def _current_state(self, product: DataProduct) -> dict[str, Any]:
         rows = self._fetch_members(product.product_id)
         tables = self._table_summary_map()
@@ -1144,12 +1149,18 @@ class DataProductService:
         are skipped — there is no physical table to profile. Order follows
         the members list; duplicates are collapsed.
         """
-        member_rows = self._fetch_members(product_id)
+        return self.table_fqns_of([row.binding_id for row in self._fetch_members(product_id)])
+
+    def table_fqns_of(self, binding_ids: list[str]) -> list[str]:
+        """The distinct real source table FQNs of *binding_ids*, as :meth:`member_table_fqns` returns them.
+
+        For tables that aren't members yet, e.g. the members a save is about to set.
+        """
         table_map = self._table_summary_map()
         seen: set[str] = set()
         fqns: list[str] = []
-        for row in member_rows:
-            summary = table_map.get(row.binding_id)
+        for binding_id in binding_ids:
+            summary = table_map.get(binding_id)
             if summary is None:
                 continue
             fqn = summary.table.table_fqn
@@ -1157,6 +1168,19 @@ class DataProductService:
                 seen.add(fqn)
                 fqns.append(fqn)
         return fqns
+
+    def require_approved_bindings(self, binding_ids: list[str]) -> None:
+        """Check that every one of *binding_ids* can join a collection (it exists and is approved), writing nothing.
+
+        Lets a save that adds several tables refuse before changing anything,
+        rather than after adding some of them.
+
+        Raises:
+            RuntimeError: a binding doesn't exist.
+            BindingNotApprovedError: a binding isn't approved.
+        """
+        for binding_id in binding_ids:
+            self._require_approved_binding(binding_id)
 
     # ------------------------------------------------------------------
     # Internal helpers

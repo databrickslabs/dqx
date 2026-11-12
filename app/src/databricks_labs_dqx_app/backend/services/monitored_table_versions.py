@@ -410,20 +410,25 @@ class MonitoredTableVersionService:
                 return True
         return False
 
+    def current_checks(self, binding_id: str) -> list[dict[str, Any]]:
+        """The table's proposed rules: its current applied rules, rendered the way a run would render them."""
+        return self._materializer.render_binding_checks(binding_id)
+
     def compare(self, binding_id: str, base_version: int, target_version: int | None) -> list[RuleChange]:
         """Compare *base_version* (0 = nothing approved yet) with *target_version*, per rule.
 
         *target_version* None means the proposed rules: the table's current
         applied rules, rendered the way a run would render them.
         """
-        before = self._checks_or_empty(binding_id, base_version)
+        before = self.checks_or_empty(binding_id, base_version)
         if target_version is None:
             after = self._materializer.render_binding_checks(binding_id)
         else:
-            after = self._checks_or_empty(binding_id, target_version)
+            after = self.checks_or_empty(binding_id, target_version)
         return compare_checks(before, after)
 
-    def _checks_or_empty(self, binding_id: str, version: int) -> list[dict[str, Any]]:
+    def checks_or_empty(self, binding_id: str, version: int) -> list[dict[str, Any]]:
+        """The checks of a frozen *version*; none for version 0 or a missing snapshot."""
         if version <= 0:
             return []
         try:

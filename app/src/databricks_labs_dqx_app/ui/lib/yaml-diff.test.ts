@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffLines, inlineChange, itemStatus, toYaml, unifiedRows } from "./yaml-diff";
+import { alignKeys, diffLines, inlineChange, itemRows, itemStatus, toYaml, unifiedRows } from "./yaml-diff";
 
 describe("diffLines", () => {
   test("pairs a changed line opposite its replacement", () => {
@@ -63,5 +63,33 @@ describe("itemStatus", () => {
   });
   test("a changed argument is modified", () => {
     expect(itemStatus([check], [{ check: { function: "is_not_null", arguments: { column: "key" } } }])).toBe("modified");
+  });
+});
+
+describe("alignKeys", () => {
+  test("lays the after side out like the before side, at every level, with new keys last", () => {
+    const before = { criticality: "warn", check: { function: "f", arguments: { column: "a" } }, name: "n" };
+    const after = { name: "n", extra: 1, check: { arguments: { column: "a" }, function: "f" }, criticality: "error" };
+    expect(JSON.stringify(alignKeys(after, before))).toBe(
+      JSON.stringify({ criticality: "error", check: { function: "f", arguments: { column: "a" } }, name: "n", extra: 1 }),
+    );
+  });
+
+  test("aligns array elements by position and leaves scalars alone", () => {
+    expect(alignKeys([{ b: 1, a: 2 }, "x"], [{ a: 0, b: 0 }])).toEqual([{ a: 2, b: 1 }, "x"]);
+    expect(alignKeys("x", { a: 1 })).toBe("x");
+  });
+});
+
+describe("itemRows", () => {
+  test("the same content in another key order is not a change", () => {
+    const rows = itemRows([{ a: 1, b: 2 }], [{ b: 2, a: 1 }]);
+    expect(rows.every((r) => r.left?.tag === "equal" && r.right?.tag === "equal")).toBe(true);
+  });
+
+  test("only the changed value is a change", () => {
+    const rows = itemRows([{ severity: "Low", name: "n" }], [{ name: "n", severity: "High" }]);
+    expect(rows.filter((r) => r.left?.tag === "removed").map((r) => r.left?.text)).toEqual(["severity: Low"]);
+    expect(rows.filter((r) => r.right?.tag === "added").map((r) => r.right?.text)).toEqual(["severity: High"]);
   });
 });

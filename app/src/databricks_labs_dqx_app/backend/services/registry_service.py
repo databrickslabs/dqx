@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_dimension,
     get_rule_severity,
 )
+from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryAction, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     DeferredTaskRunner,
@@ -65,6 +66,31 @@ class DuplicateRegistryRuleError(Exception):
         super().__init__(message)
         self.existing_rule_id = existing_rule_id
         self.existing_rule_name = existing_rule_name
+
+
+def rule_snapshot(rule: RegistryRule | RuleVersion) -> dict[str, Any]:
+    """A rule's whole state as a history step or version records it: what renders its check."""
+    return {
+        "mode": rule.mode,
+        "polarity": rule.polarity,
+        "definition": rule.definition.model_dump(mode="json"),
+        "user_metadata": dict(rule.user_metadata or {}),
+    }
+
+
+def _transition_history_action(prev_status: str, new_status: str) -> HistoryAction:
+    """The lifecycle step a status transition records, when the caller doesn't name one."""
+    if new_status == "pending_approval":
+        return "submit"
+    if new_status == "deprecated":
+        return "deprecate"
+    if new_status == "rejected":
+        return "reject"
+    if new_status == "draft":
+        return "withdraw"
+    if prev_status == "deprecated":
+        return "reinstate"
+    return "update"
 
 
 class RegistryService:
@@ -123,13 +149,14 @@ class RegistryService:
         sql: OltpExecutorProtocol,
         permissions: PermissionsService | None = None,
         sp_ws: WorkspaceClient | None = None,
+        history: LifecycleHistoryService | None = None,
     ) -> None:
         self._sql = sql
         self._perms = permissions
         self._sp_ws = sp_ws
+        self._history = history or LifecycleHistoryService(sql)
         self._table = sql.fqn("dq_rules")
         self._versions_table = sql.fqn("dq_rule_versions")
-        self._history_table = sql.fqn("dq_rules_history")
         self._select_cols = self._build_select_cols()
 
     def _build_select_cols(self) -> str:
@@ -654,7 +681,7 @@ class RegistryService:
                     existing_rule_name=existing_name if existing_name != duplicate.rule_id else None,
                 )
         self._insert(rule)
-        self._record_history(rule.rule_id, rule.definition, rule.version, "create", None, "draft", user_email)
+        self._record_history(rule, rule.version, "create", None, "draft", user_email)
         if self._perms is not None:
             self._perms.seed_default_grants(
                 ObjectType.REGISTRY_RULE.value,
@@ -708,7 +735,7 @@ class RegistryService:
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
         self._insert(rule)
         self._write_version_snapshot(rule, user_email)
-        self._record_history(rule.rule_id, rule.definition, rule.version, "seed", None, "approved", user_email)
+        self._record_history(rule, rule.version, "create", None, "approved", user_email)
         logger.info("Seeded built-in registry rule %s (fingerprint=%s)", rule.rule_id, rule.fingerprint)
         return rule
 
@@ -783,9 +810,7 @@ class RegistryService:
         rule.fingerprint = compute_registry_rule_fingerprint(rule)
         rule.updated_by = user_email
         self._update(rule)
-        self._record_history(
-            rule.rule_id, rule.definition, rule.version, "update", rule.status, rule.status, user_email
-        )
+        self._record_history(rule, rule.version, "update", rule.status, rule.status, user_email)
         logger.info("Updated registry rule %s (status=%s)", rule.rule_id, rule.status)
         return rule
 
@@ -924,8 +949,7 @@ class RegistryService:
             )
         self._write_version_snapshot(rule, user_email)
         self._record_history(
-            rule.rule_id,
-            rule.definition,
+            rule,
             rule.version,
             "approve",
             prev_status,
@@ -973,7 +997,7 @@ class RegistryService:
         if rule.status != "pending_approval":
             raise ValueError(f"Cannot revoke: rule is not pending approval (status={rule.status})")
         target: RuleStatus = "approved" if rule.version >= 1 else "draft"
-        return self._transition(rule_id, target, user_email, clear_pending_rationale=True, history_action="revoke")
+        return self._transition(rule_id, target, user_email, clear_pending_rationale=True, history_action="withdraw")
 
     def deprecate(self, rule_id: str, user_email: str) -> RegistryRule:
         """Deprecate a published rule (approved -> deprecated)."""
@@ -993,7 +1017,7 @@ class RegistryService:
         as_submit: bool = False,
         as_decision: bool = False,
         clear_pending_rationale: bool = False,
-        history_action: str | None = None,
+        history_action: HistoryAction | None = None,
     ) -> RegistryRule:
         rule = self._get(rule_id)
         if rule is None:
@@ -1012,10 +1036,9 @@ class RegistryService:
         self._update(rule)
         history_rationale = rationale if (as_submit or as_decision) else None
         self._record_history(
-            rule.rule_id,
-            rule.definition,
+            rule,
             rule.version,
-            history_action or f"status:{new_status}",
+            history_action or _transition_history_action(prev_status, new_status),
             prev_status,
             new_status,
             user_email,
@@ -1049,7 +1072,7 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         self._sql.delete(self._table, where={"rule_id": rule_id})
-        self._record_history(rule_id, rule.definition, rule.version, "delete", rule.status, None, user_email)
+        self._record_history(rule, rule.version, "delete", rule.status, None, user_email)
         logger.info("Deleted registry rule %s (by %s)", rule_id, user_email)
 
     def delete_builtin_rules(self) -> int:
@@ -1186,34 +1209,27 @@ class RegistryService:
 
     def _record_history(
         self,
-        rule_id: str | None,
-        definition: RuleDefinition | None,
+        rule: RegistryRule,
         version: int,
-        action: str,
+        action: HistoryAction,
         prev_status: str | None,
         new_status: str | None,
         user_email: str,
         *,
         rationale: str | None = None,
     ) -> None:
-        """Insert an audit row into ``dq_rules_history`` (best-effort)."""
-        try:
-            definition_sql = (
-                self._sql.json_literal_expr(json.dumps(definition.model_dump(mode="json")))
-                if definition is not None
-                else "NULL"
-            )
-            sql = (
-                f"INSERT INTO {self._history_table} "
-                "(rule_id, definition, version, action, prev_status, new_status, changed_by, changed_at, rationale) "
-                "VALUES "
-                f"({self._opt_str(rule_id)}, {definition_sql}, {version}, '{escape_sql_string(action)}', "
-                f"{self._opt_str(prev_status)}, {self._opt_str(new_status)}, {self._opt_str(user_email)}, now(), "
-                f"{self._opt_str(rationale)})"
-            )
-            self._sql.execute(sql)
-        except Exception:
-            logger.warning("Failed to record registry history for %s (non-fatal)", rule_id, exc_info=True)
+        """Record a lifecycle step of the rule, with its whole state after it (best-effort; none for a delete)."""
+        self._history.record(
+            "registry_rule",
+            rule.rule_id,
+            action,
+            user_email,
+            prev_status=prev_status,
+            new_status=new_status,
+            version=version,
+            rationale=rationale,
+            snapshot=None if action == "delete" else rule_snapshot(rule),
+        )
 
     # ------------------------------------------------------------------
     # Row <-> domain model

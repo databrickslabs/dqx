@@ -7,7 +7,10 @@ import {
 import {
   ChangesDialog,
   ChangesPanel,
+  LIVE_STALE_TIME,
+  sideParams,
   useChangesSides,
+  useRefetchOnRevision,
   type ChangeItem,
   type ChangesViewProps,
 } from "@/components/changes/ChangesDialog";
@@ -23,25 +26,43 @@ export interface TableChangesTarget {
   version: number;
 }
 
-function useTableChanges(bindingId: string, enabled: boolean, withEvents = false): ChangesViewProps {
+function useTableChanges(
+  bindingId: string,
+  enabled: boolean,
+  historyTab = false,
+  revision?: string,
+): ChangesViewProps {
   const { t } = useTranslation();
   // The server picks the default comparison (pending changes when there are any).
-  const defaults = useGetMonitoredTableChanges(bindingId, undefined, { query: { enabled } });
+  const defaults = useGetMonitoredTableChanges(bindingId, undefined, {
+    query: { enabled, staleTime: LIVE_STALE_TIME },
+  });
   const info = defaults.data?.data;
   const approved = info?.approved_version ?? 0;
   const hasPending = !!info?.has_pending_changes;
-  const sides = useChangesSides(bindingId, hasPending, approved);
-  const params =
-    sides.mode === "pending"
-      ? { base: approved }
-      : { base: sides.base, target: sides.target > 0 ? sides.target : undefined };
+  const sides = useChangesSides(bindingId, hasPending && !historyTab, approved);
+  const params = sideParams(sides.base, sides.target);
   const query = useGetMonitoredTableChanges(bindingId, params, {
-    query: { enabled: enabled && !!info && (sides.mode === "pending" || sides.target > 0) },
+    query: {
+      // A version-0 target is nothing approved yet: there's nothing to compare until a draft is picked.
+      enabled: enabled && !!info && !(sides.target.kind === "version" && sides.target.version === 0),
+      staleTime: LIVE_STALE_TIME,
+    },
   });
-  const versions = useListMonitoredTableVersions(bindingId, { query: { enabled } });
-  const reviewEvents = useListMonitoredTableHistory(bindingId, { query: { enabled: enabled && withEvents } });
+  const versions = useListMonitoredTableVersions(bindingId, { query: { enabled, staleTime: LIVE_STALE_TIME } });
+  // Nothing on the target side (nothing approved yet, no draft picked) is nothing to compare.
+  const shown = sides.target.kind === "version" && sides.target.version === 0 ? undefined : query.data?.data;
+  const reviewEvents = useListMonitoredTableHistory(bindingId, {
+    query: { enabled, staleTime: LIVE_STALE_TIME },
+  });
+  useRefetchOnRevision(revision, () => {
+    void defaults.refetch();
+    if (info) void query.refetch();
+    void versions.refetch();
+    void reviewEvents.refetch();
+  });
 
-  const items: ChangeItem[] = (query.data?.data?.changes ?? []).map((c) => ({
+  const items: ChangeItem[] = (shown?.changes ?? []).map((c) => ({
     key: c.key,
     name: c.rule_name,
     status: c.status,
@@ -64,9 +85,12 @@ function useTableChanges(bindingId: string, enabled: boolean, withEvents = false
       at: e.created_at,
       note: e.rationale,
       version: e.version,
+      historyId: e.history_id,
+      hasSnapshot: e.has_snapshot,
     })),
     items,
     loading: defaults.isLoading || query.isLoading,
+    timelineLoading: versions.isLoading || reviewEvents.isLoading,
     error: defaults.isError || query.isError,
     neverApprovedText: t("tableChanges.neverApproved"),
     noChangesText: t("tableChanges.noChanges"),
@@ -78,8 +102,11 @@ export function TableChangesDialog({ target, onClose }: { target: TableChangesTa
   return <ChangesDialog open={!!target} onClose={onClose} subject={target?.name ?? ""} {...view} />;
 }
 
-/** The table page's History tab: the version timeline beside the changes. */
-export function TableChangesPanel({ bindingId }: { bindingId: string }) {
-  const view = useTableChanges(bindingId, true, true);
-  return <ChangesPanel resetKey={bindingId} {...view} />;
+/**
+ * The table page's History tab: the version timeline beside the changes.
+ * *revision* (status, version, last edit) re-reads them when the table changes.
+ */
+export function TableChangesPanel({ bindingId, revision }: { bindingId: string; revision?: string }) {
+  const view = useTableChanges(bindingId, true, true, revision);
+  return <ChangesPanel {...view} />;
 }

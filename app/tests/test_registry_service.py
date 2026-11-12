@@ -14,6 +14,15 @@ from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 
 
+def _history_steps(sql) -> list[dict]:
+    """The lifecycle history rows the service wrote, in order."""
+    return [
+        c.kwargs["values"]
+        for c in sql.insert.call_args_list
+        if c.args and str(c.args[0]).endswith("dq_lifecycle_history")
+    ]
+
+
 @pytest.fixture
 def sql(sql_executor_mock):
     sql_executor_mock.dialect = "delta"
@@ -216,8 +225,13 @@ class TestCreateRule:
     def test_records_history_on_create(self, svc, sql):
         svc.create_rule(mode="dqx_native", definition=_native_definition(), user_email="alice@x")
         # execute called twice: once for dq_rules insert, once for history
-        calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any("dq_rules_history" in c for c in calls)
+        (step,) = _history_steps(sql)
+        assert (step["object_type"], step["action"], step["new_status"], step["changed_by"]) == (
+            "registry_rule",
+            "create",
+            "draft",
+            "alice@x",
+        )
 
     def test_dedup_blocks_when_published_rule_shares_fingerprint(self, svc, sql):
         existing_definition = _native_definition()
@@ -763,16 +777,37 @@ class TestLifecycle:
         approved, so the history names each instead of the status they land on."""
         sql.query.return_value = [_row_for(self._rule("pending_approval", version=version))]
         svc.reject("r1", "approver@x", rationale="too broad")
-        history = next(c.args[0] for c in sql.execute.call_args_list if "dq_rules_history" in c.args[0])
-        assert "'reject'" in history
-        assert "'too broad'" in history
+        (step,) = _history_steps(sql)
+        assert (step["action"], step["rationale"]) == ("reject", "too broad")
 
     @pytest.mark.parametrize("version", [0, 1])
-    def test_revoke_records_a_revoke_in_the_history(self, svc, sql, version):
+    def test_revoke_records_a_withdraw_in_the_history(self, svc, sql, version):
         sql.query.return_value = [_row_for(self._rule("pending_approval", version=version))]
         svc.revoke("r1", "author@x")
-        history = next(c.args[0] for c in sql.execute.call_args_list if "dq_rules_history" in c.args[0])
-        assert "'revoke'" in history
+        (step,) = _history_steps(sql)
+        assert step["action"] == "withdraw"
+
+    @pytest.mark.parametrize(
+        ("status", "transition", "expected"),
+        [
+            ("draft", "submit", ("submit", "draft", "pending_approval")),
+            ("approved", "deprecate", ("deprecate", "approved", "deprecated")),
+            ("deprecated", "undeprecate", ("reinstate", "deprecated", "approved")),
+        ],
+    )
+    def test_each_transition_records_its_lifecycle_step(self, svc, sql, status, transition, expected):
+        sql.query.return_value = [_row_for(self._rule(status, version=1 if status != "draft" else 0))]
+        getattr(svc, transition)("r1", "alice@x")
+        (step,) = _history_steps(sql)
+        assert (step["action"], step["prev_status"], step["new_status"]) == expected
+        assert step["object_type"] == "registry_rule"
+
+    def test_an_auto_approval_is_recorded_as_automatic(self, svc, sql):
+        pending = self._rule("pending_approval")
+        sql.query.side_effect = [[_row_for(pending)], [_cas_confirm_row(pending, approver="bob@x (auto)")]]
+        svc.approve("r1", "bob@x (auto)")
+        steps = _history_steps(sql)
+        assert [(s["action"], s["changed_by"], s["is_automatic"]) for s in steps] == [("approve", "bob@x", True)]
 
     def test_cannot_revoke_non_pending(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("draft"))]
@@ -814,8 +849,8 @@ class TestDelete:
         sql.query.return_value = [_row_for(rule)]
         svc.delete("r1", "alice@x")
         calls = [c.args[0] for c in sql.execute.call_args_list]
-        assert any(c.startswith("DELETE FROM") and "dq_rules" in c and "dq_rules_history" not in c for c in calls)
-        assert any("dq_rules_history" in c for c in calls)
+        assert any(c.startswith("DELETE FROM") and "dq_rules" in c for c in calls)
+        assert [step["action"] for step in _history_steps(sql)] == ["delete"]
 
     def test_delete_missing_rule_raises(self, svc, sql):
         sql.query.return_value = []
@@ -1074,7 +1109,7 @@ class TestSeedBuiltinRule:
         calls = [c.args[0] for c in sql.execute.call_args_list]
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in c for c in calls)
         assert any("dq_rule_versions" in c for c in calls)
-        assert any("dq_rules_history" in c for c in calls)
+        assert [(step["action"], step["new_status"]) for step in _history_steps(sql)] == [("create", "approved")]
 
     def test_uses_provided_owner_and_user_email(self, svc, sql):
         rule = svc.seed_builtin_rule(

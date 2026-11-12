@@ -30,6 +30,7 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     delete_registry_rule,
     deprecate_registry_rule,
     get_registry_rule,
+    get_registry_rule_snapshot,
     list_registry_rule_history,
     list_registry_rule_versions,
     list_registry_rules,
@@ -1190,13 +1191,30 @@ class TestBackfillRuleEmbeddings:
 class TestListRegistryRuleHistory:
     def test_returns_the_rule_review_trail(self):
         history = create_autospec(LifecycleHistoryService, instance=True)
-        history.list_rule_events.return_value = [
+        history.list_events.return_value = [
             HistoryEvent(action="approved", actor="bob@x", created_at="2026-10-02", rationale="ok", version=2),
             HistoryEvent(action="submitted", actor="alice@x", created_at="2026-10-01", rationale="ready"),
         ]
         out = list_registry_rule_history("r1", history=history)
-        history.list_rule_events.assert_called_once_with("r1")
+        history.list_events.assert_called_once_with("registry_rule", "r1")
         assert [(e.action, e.actor, e.version) for e in out] == [
             ("approved", "bob@x", 2),
             ("submitted", "alice@x", None),
         ]
+
+
+class TestRuleSnapshot:
+    def test_returns_the_rule_a_step_left(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        snapshot = {"mode": "dqx_native", "polarity": None, "definition": {"x": 2}, "user_metadata": {}}
+        history.get_snapshot.return_value = (True, snapshot)
+        out = get_registry_rule_snapshot("r1", 5, history=history)
+        history.get_snapshot.assert_called_once_with("registry_rule", "r1", 5)
+        assert (out.history_id, out.snapshot) == (5, snapshot)
+
+    def test_an_unknown_step_is_404(self):
+        history = create_autospec(LifecycleHistoryService, instance=True)
+        history.get_snapshot.return_value = (False, None)
+        with pytest.raises(HTTPException) as exc:
+            get_registry_rule_snapshot("r1", 5, history=history)
+        assert exc.value.status_code == 404

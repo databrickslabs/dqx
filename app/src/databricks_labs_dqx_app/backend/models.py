@@ -809,6 +809,15 @@ class HistoryEventOut(BaseModel):
     created_at: str | None = None
     rationale: str | None = Field(default=None, description="The note left with it")
     version: int | None = Field(default=None, description="The version an approval created")
+    history_id: int | None = Field(default=None, description="The step's id, to compare the state it left")
+    has_snapshot: bool = Field(default=False, description="The step recorded the object's state after it")
+
+
+class RegistryRuleSnapshotOut(BaseModel):
+    """A registry rule as one history step left it (mode, polarity, definition, labels); None = not recorded."""
+
+    history_id: int
+    snapshot: dict[str, Any] | None = None
 
 
 class LifecycleRationaleIn(BaseModel):
@@ -1170,6 +1179,10 @@ class MonitoredTableChangesOut(BaseModel):
     has_pending_changes: bool = Field(description="The proposed rules differ from the approved version")
     base_version: int
     target_version: int | None = Field(default=None, description="None = the proposed rules")
+    base_step: int | None = Field(default=None, description="The history step on the base side (instead of a version)")
+    target_step: int | None = Field(
+        default=None, description="The history step on the target side (instead of a version)"
+    )
     counts: dict[str, int] = Field(default_factory=dict, description="Rules per status")
     changes: list[RuleChangeOut] = Field(default_factory=list)
 
@@ -1939,6 +1952,18 @@ class AddDataProductMemberIn(BaseModel):
     pinned_version: int | None = Field(default=None, description="None = follow latest approved")
 
 
+class SaveDataProductIn(BaseModel):
+    """Body of ``POST /data-products/{id}/save`` (``saveDataProduct``): one save of the collection's page.
+
+    *updates* are its changed settings (as ``updateDataProduct`` takes them);
+    *members* is the full list of its tables and their pins after the save
+    (None leaves the members as they are). One request, so one history step.
+    """
+
+    updates: UpdateDataProductIn | None = None
+    members: list[AddDataProductMemberIn] | None = None
+
+
 class RunDataProductIn(BaseModel):
     """Body of ``POST /data-products/{id}/run`` (``runDataProduct``)."""
 
@@ -2109,6 +2134,10 @@ class DataProductChangesOut(BaseModel):
     has_pending_changes: bool = Field(description="The collection has changes not yet approved")
     base_version: int
     target_version: int | None = Field(default=None, description="None = the current members")
+    base_step: int | None = Field(default=None, description="The history step on the base side (instead of a version)")
+    target_step: int | None = Field(
+        default=None, description="The history step on the target side (instead of a version)"
+    )
     base_recorded: bool = Field(
         description="False when a compared version was approved before collections recorded their versions"
     )
