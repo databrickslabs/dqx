@@ -3406,7 +3406,6 @@
     "tab": "Politiques",
     "tabSaveFirst": "Enregistrez la règle pour ajouter des politiques.",
     "listTitle": "Politiques",
-    "listDescription": "Politiques qui associent cette règle aux tables et colonnes correspondantes.",
     "newPolicy": "Nouvelle politique",
     "emptyTitle": "Aucune politique pour cette règle",
     "emptyDescription": "Une politique associe cette règle à chaque table et colonne correspondant à son périmètre et à ses conditions.",

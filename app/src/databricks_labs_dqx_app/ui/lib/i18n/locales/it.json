@@ -3406,7 +3406,6 @@
     "tab": "Policy",
     "tabSaveFirst": "Salva la regola per aggiungere policy.",
     "listTitle": "Policy",
-    "listDescription": "Policy che associano questa regola alle tabelle e colonne corrispondenti.",
     "newPolicy": "Nuova policy",
     "emptyTitle": "Nessuna policy per questa regola",
     "emptyDescription": "Una policy associa questa regola a ogni tabella e colonna che corrisponde al suo ambito e alle sue condizioni.",

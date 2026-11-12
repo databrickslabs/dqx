@@ -191,13 +191,15 @@ export function PoliciesTab({
 
   const startNew = () => setEditing(emptyPolicyDraft(rule));
   const newButton = canModify ? (
-    <Button onClick={startNew} className="gap-1.5">
-      <Plus className="h-4 w-4" /> {t("rulePolicies.newPolicy")}
+    <Button size="sm" onClick={startNew} className="gap-1.5">
+      <Plus className="h-3.5 w-3.5" />
+      {t("rulePolicies.newPolicy")}
     </Button>
   ) : (
     <ModifyGate allowed={false}>
-      <Button disabled className="gap-1.5">
-        <Plus className="h-4 w-4" /> {t("rulePolicies.newPolicy")}
+      <Button size="sm" disabled className="gap-1.5">
+        <Plus className="h-3.5 w-3.5" />
+        {t("rulePolicies.newPolicy")}
       </Button>
     </ModifyGate>
   );
@@ -220,11 +222,8 @@ export function PoliciesTab({
 
   return (
     <div className="space-y-4 pt-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">{t("rulePolicies.listTitle")}</h2>
-          <p className="text-sm text-muted-foreground">{t("rulePolicies.listDescription")}</p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium leading-none">{t("rulePolicies.listTitle")}</h2>
         {policies.length > 0 && newButton}
       </div>
 

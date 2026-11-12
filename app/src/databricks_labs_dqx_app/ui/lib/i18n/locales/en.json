@@ -3406,7 +3406,6 @@
     "tab": "Policies",
     "tabSaveFirst": "Save the rule to add policies.",
     "listTitle": "Policies",
-    "listDescription": "Policies that attach this rule to matching tables and columns.",
     "newPolicy": "New policy",
     "emptyTitle": "No policies for this rule",
     "emptyDescription": "A policy attaches this rule to every table and column that matches its scope and conditions.",
