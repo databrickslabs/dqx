@@ -348,6 +348,7 @@ def preview_rule_policy(
             RulePolicyPreviewTableOut(
                 table_fqn=table.table_fqn,
                 monitored=table.monitored,
+                already_attached=table.already_attached,
                 mappings=[
                     RulePolicyPreviewMappingOut(column_mapping=match.column_mapping, reason=match.reason)
                     for match in table.matches

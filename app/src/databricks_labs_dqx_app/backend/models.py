@@ -3297,10 +3297,15 @@ class RulePolicyPreviewMappingOut(BaseModel):
 
 
 class RulePolicyPreviewTableOut(BaseModel):
-    """A table the policy would attach to; *monitored* is False when it would be registered first."""
+    """A table the policy matches.
+
+    *monitored* is False when it would be registered first; *already_attached* is True
+    when the rule is already applied there for every listed mapping.
+    """
 
     table_fqn: str
     monitored: bool
+    already_attached: bool = False
     mappings: list[RulePolicyPreviewMappingOut]
 
 

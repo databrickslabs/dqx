@@ -2,10 +2,11 @@
 
 Ties the pure :mod:`policy_engine` to storage: reads a user-scoped snapshot of
 the tables a policy can reach, evaluates the policy against each table, and
-attaches the ``auto`` matches as policy-made applied rules. Only a policy that
-may register tables (``register_tables`` and a role that may register) scans
-its whole scope in Unity Catalog; any other policy reads just the monitored
-tables in its scope, and reads nothing when there are none. Every action runs
+attaches the ``auto`` matches as policy-made applied rules. The monitored
+tables in a policy's scope are always read directly (nothing is read when there
+are none); only a policy that may register tables (``register_tables`` and a
+role that may register) also scans its scope in Unity Catalog, to find
+unmonitored candidates. Every action runs
 for the ACTING user (whoever saved, re-scanned, opened, registered or
 approved), so a policy only ever reaches tables that user may apply rules to:
 
@@ -68,6 +69,7 @@ class PreviewTable:
     table_fqn: str
     monitored: bool
     matches: list[PolicyMatch]  # only status == "auto"
+    already_attached: bool = False  # every match is already applied on the (monitored) table
 
 
 @dataclass(frozen=True)
@@ -220,6 +222,26 @@ class _UserGate:
             out.append(match)
         return out
 
+    def visible(self, binding_id: str, matches: list[PolicyMatch]) -> tuple[list[PolicyMatch], bool]:
+        """Matches a preview shows (deduplicated; deliberately removed ones left out) and whether all are applied.
+
+        Already-applied mappings are kept: a policy still "matches" a table it attached to.
+        When the tombstones cannot be read, only already-applied mappings are shown.
+        """
+        applied = self._applied_keys(binding_id)
+        suppressed = self._suppressed_keys(binding_id)
+        out: list[PolicyMatch] = []
+        seen: set[tuple[str, str]] = set()
+        for match in matches:
+            key = (match.rule_id, _mapping_hash(match))
+            if key in seen:
+                continue
+            if key not in applied and (suppressed is None or key in suppressed):
+                continue
+            seen.add(key)
+            out.append(match)
+        return out, bool(out) and all((m.rule_id, _mapping_hash(m)) in applied for m in out)
+
     def mark_applied(self, binding_id: str, match: PolicyMatch) -> None:
         self._applied_keys(binding_id).add((match.rule_id, _mapping_hash(match)))
 
@@ -259,8 +281,9 @@ class PolicyApplyService:
 
         Evaluates regardless of the rule's status so authors can see the impact of a
         draft rule's policy. Only ``auto`` matches on tables the user can apply rules to
-        (or would register) are included; already-applied and suppressed mappings are
-        left out.
+        (or would register) are included. Mappings already applied stay in (the table is
+        flagged ``already_attached`` when all of them are); only deliberately removed
+        (suppressed) mappings are left out.
 
         Unlike the trigger methods, preview may raise: it backs an interactive request.
 
@@ -286,9 +309,9 @@ class PolicyApplyService:
                 continue
             if not gate.can_apply(binding_id):
                 continue
-            fresh = gate.fresh(binding_id, autos)
-            if fresh:
-                tables.append(PreviewTable(table.table_fqn, monitored=True, matches=fresh))
+            shown, attached = gate.visible(binding_id, autos)
+            if shown:
+                tables.append(PreviewTable(table.table_fqn, monitored=True, matches=shown, already_attached=attached))
         return PolicyPreview(
             tables=tables,
             tables_matched=len(tables),
@@ -427,31 +450,42 @@ class PolicyApplyService:
     ) -> tuple[SnapshotResult, dict[str, str]]:
         """Snapshot of the tables a policy over *scope* can reach, plus their ``table_fqn -> binding_id``.
 
-        Only a policy that may register tables (*full_scan*) scans the whole scope in Unity
-        Catalog. Otherwise just the monitored tables in scope are read, in one bulk call, and
-        nothing at all is read when none are in scope.
+        Monitored tables in scope are always read directly, in one bulk call (nothing is read
+        when none are in scope). Only a policy that may register tables (*full_scan*) also
+        scans the scope in Unity Catalog, and only to find unmonitored candidates: a
+        truncated or failed scan sets ``truncated`` but never removes monitored tables.
         """
         key = (scope.model_dump_json(), full_scan)
         hit = reads.snapshots.get(key)
         if hit is not None:
             return hit
+        snapshot, bindings = self._read_monitored(scope, reads)
         if full_scan:
-            snapshot = self._snapshots.for_scope(scope)
-            bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
-        else:
-            if reads.monitored is None:
-                reads.monitored = self._monitored_tables.list_table_bindings()
-            reachable = {fqn: b for fqn, b in reads.monitored.items() if in_scope(scope, fqn)}
-            if reachable:
-                snapshot = self._snapshots.for_tables(list(reachable))
-                by_name = {fqn.lower(): b for fqn, b in reachable.items()}
-                bindings = {
-                    t.table_fqn: by_name[t.table_fqn.lower()] for t in snapshot.tables if t.table_fqn.lower() in by_name
-                }
-            else:
-                snapshot = SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[])
-                bindings = {}
+            scan = self._snapshots.for_scope(scope)
+            known = {fqn.lower() for fqn in self._monitored(reads)}
+            extra = [t for t in scan.tables if t.table_fqn.lower() not in known]
+            snapshot = SnapshotResult(
+                tables=snapshot.tables + extra,
+                truncated=snapshot.truncated or scan.truncated,
+                unreadable_catalogs=list(dict.fromkeys(snapshot.unreadable_catalogs + scan.unreadable_catalogs)),
+            )
         reads.snapshots[key] = (snapshot, bindings)
+        return snapshot, bindings
+
+    def _monitored(self, reads: _RunReads) -> dict[str, str]:
+        if reads.monitored is None:
+            reads.monitored = self._monitored_tables.list_table_bindings()
+        return reads.monitored
+
+    def _read_monitored(self, scope: PolicyScope, reads: _RunReads) -> tuple[SnapshotResult, dict[str, str]]:
+        reachable = {fqn: b for fqn, b in self._monitored(reads).items() if in_scope(scope, fqn)}
+        if not reachable:
+            return SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[]), {}
+        snapshot = self._snapshots.for_tables(list(reachable))
+        by_name = {fqn.lower(): b for fqn, b in reachable.items()}
+        bindings = {
+            t.table_fqn: by_name[t.table_fqn.lower()] for t in snapshot.tables if t.table_fqn.lower() in by_name
+        }
         return snapshot, bindings
 
     def _run_bindings(self, table_bindings: dict[str, str], user: ActingUser, totals: _Totals, *, attach: bool) -> None:

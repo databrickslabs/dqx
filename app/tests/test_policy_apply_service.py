@@ -64,7 +64,7 @@ def _policy_in(*, register_tables: bool = False, conditions: dict[str, list[str]
     conds = {"column": ["pii"]} if conditions is None else conditions
     return RulePolicyIn(
         name="PII columns",
-        scope=PolicyScope(),
+        scope=PolicyScope(catalogs=["c"]) if register_tables else PolicyScope(),  # registering needs catalogs
         column_conditions={slot: ColumnCondition(kind="tags", tags=tags) for slot, tags in conds.items()},
         register_tables=register_tables,
     )
@@ -702,8 +702,32 @@ def test_policy_with_register_scans_the_scope(world: World) -> None:
 
     assert (result.attached, result.registered) == (2, 1)
     world.snapshots.for_scope.assert_called_once()
-    world.snapshots.for_tables.assert_not_called()
-    world.monitored.list_table_bindings.assert_not_called()
+    world.snapshots.for_tables.assert_called_once_with(["c.s.a"])
+    assert world.registered == ["c.s.new"]
+
+
+def test_truncated_scope_scan_never_drops_monitored_matches(world: World) -> None:
+    world.bindings = {"c.s.a": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")))
+    world.snapshots.for_scope.return_value = SnapshotResult(tables=[], truncated=True, unreadable_catalogs=[])
+    body = _policy_in(register_tables=True).model_copy(update={"scope": PolicyScope(catalogs=["c"])})
+
+    preview = world.service().preview("r1", body, AUTHOR)
+
+    assert [t.table_fqn for t in preview.tables] == ["c.s.a"] and preview.truncated is True
+    world.policies.get.return_value = _policy(register_tables=True)
+    assert world.service().run_policy("p1", AUTHOR).attached == 1
+
+
+def test_scope_scan_rows_for_monitored_tables_are_not_duplicated(world: World) -> None:
+    world.bindings = {"c.s.a": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("c.s.new", _col("email", "pii")))
+
+    preview = world.service().preview("r1", _policy_in(register_tables=True), AUTHOR)
+
+    assert sorted((t.table_fqn, t.monitored) for t in preview.tables) == [("c.s.a", True), ("c.s.new", False)]
 
 
 def test_register_policy_for_a_user_who_cannot_register_reads_only_monitored(world: World) -> None:
@@ -728,3 +752,43 @@ def test_no_monitored_table_in_scope_reads_nothing(world: World) -> None:
     assert preview.tables_matched == 0 and not preview.truncated
     world.snapshots.for_scope.assert_not_called()
     world.snapshots.for_tables.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Preview shows already-attached matches (QA B1)
+# ---------------------------------------------------------------------------
+
+
+def test_preview_after_attach_still_lists_the_table_as_already_attached(world: World) -> None:
+    world.bindings = {"c.s.t": "b1", "c.s.u": "b2"}
+    world.grants = {("b1", Privilege.APPLY), ("b2", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")), _snap("c.s.u", _col("email", "pii")))
+    world.mark_applied("b1", "r1", {"column": "email"})
+
+    preview = world.service().preview("r1", _policy_in(), AUTHOR)
+
+    by_table = {t.table_fqn: t for t in preview.tables}
+    assert set(by_table) == {"c.s.t", "c.s.u"}
+    assert by_table["c.s.t"].already_attached is True
+    assert by_table["c.s.u"].already_attached is False
+    assert preview.tables_matched == 2
+
+
+def test_preview_still_hides_suppressed_mappings(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    world.suppressed = {("b1", "r1", compute_mapping_hash([{"column": "email"}]))}
+
+    assert world.service().preview("r1", _policy_in(), AUTHOR).tables == []
+
+
+def test_preview_with_some_mappings_attached_is_not_already_attached(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii"), _col("phone", "pii")))
+    world.mark_applied("b1", "r1", {"column": "email"})
+
+    [table] = world.service().preview("r1", _policy_in(), AUTHOR).tables
+
+    assert len(table.matches) == 2 and table.already_attached is False

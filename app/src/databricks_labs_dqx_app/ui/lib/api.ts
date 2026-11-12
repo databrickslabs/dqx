@@ -3926,11 +3926,15 @@ export interface RulePolicyPreviewOut {
 }
 
 /**
- * A table the policy would attach to; *monitored* is False when it would be registered first.
+ * A table the policy matches.
+
+*monitored* is False when it would be registered first; *already_attached* is True
+when the rule is already applied there for every listed mapping.
  */
 export interface RulePolicyPreviewTableOut {
   table_fqn: string;
   monitored: boolean;
+  already_attached?: boolean;
   mappings: RulePolicyPreviewMappingOut[];
 }
 
@@ -17810,7 +17814,7 @@ export function useListRulePoliciesSuspense<TData = Awaited<ReturnType<typeof li
 
 
 /**
- * Create one policy per rule in *rule_ids*, all or nothing, then evaluate each.
+ * Create one policy per rule in *rule_ids*, all or nothing; evaluate them after responding.
 
 MODIFY is checked on every rule and every rule's column conditions are
 validated before anything is written. If a create fails part-way, the
@@ -18024,7 +18028,7 @@ export function useGetRulePolicySuspense<TData = Awaited<ReturnType<typeof getRu
 
 
 /**
- * Replace a policy's definition, then evaluate it.
+ * Replace a policy's definition; evaluate it after responding.
  * @summary Update Rule Policy
  */
 export const updateRulePolicy = (

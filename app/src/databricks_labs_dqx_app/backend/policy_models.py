@@ -160,8 +160,8 @@ class PolicyScope(BaseModel):
         return value
 
 
-class RulePolicyIn(BaseModel):
-    """Request body for creating or updating a rule policy."""
+class RulePolicyBody(BaseModel):
+    """Fields shared by a rule policy request and a stored rule policy."""
 
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
@@ -177,8 +177,23 @@ class RulePolicyIn(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
-class RulePolicy(RulePolicyIn):
-    """A stored rule policy."""
+class RulePolicyIn(RulePolicyBody):
+    """Request body for creating or updating a rule policy."""
+
+    @model_validator(mode="after")
+    def _register_needs_catalogs(self) -> "RulePolicyIn":
+        # Finding unmonitored tables scans Unity Catalog: keep it to chosen catalogs.
+        if self.register_tables and self.scope.catalogs == ALL:
+            raise ValueError("Matching tables not yet monitored needs at least one specific catalog.")
+        return self
+
+
+class RulePolicy(RulePolicyBody):
+    """A stored rule policy.
+
+    Not checked against the request-only rule that registering policies need specific
+    catalogs, so policies stored before that rule still load.
+    """
 
     policy_id: str
     rule_id: str

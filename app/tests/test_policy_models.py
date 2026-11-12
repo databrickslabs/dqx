@@ -8,6 +8,7 @@ from databricks_labs_dqx_app.backend.policy_models import (
     ConditionExpr,
     ConditionRow,
     PolicyScope,
+    RulePolicy,
     RulePolicyIn,
     TableCondition,
 )
@@ -130,3 +131,16 @@ def test_policy_name_is_stripped_and_must_not_be_blank():
     assert RulePolicyIn(name="  PII columns  ").name == "PII columns"
     with pytest.raises(ValidationError):
         RulePolicyIn(name="   ")
+
+
+def test_register_tables_needs_specific_catalogs():
+    with pytest.raises(ValidationError):
+        RulePolicyIn(name="p", register_tables=True)
+    with pytest.raises(ValidationError):
+        RulePolicyIn(name="p", register_tables=True, scope=PolicyScope(catalogs="*"))
+    assert RulePolicyIn(name="p", register_tables=True, scope=PolicyScope(catalogs=["main"])).register_tables
+
+
+def test_stored_policy_with_register_and_all_catalogs_still_loads():
+    stored = RulePolicy(name="p", register_tables=True, policy_id="p1", rule_id="r1")
+    assert stored.scope.catalogs == "*"

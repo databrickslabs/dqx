@@ -278,6 +278,17 @@ class TestCreate:
         policies.create.assert_not_called()
         apply.run_policies.assert_not_called()
 
+    def test_register_tables_with_all_catalogs_is_422(self, client, policies, apply):
+        body = _policy_body()
+        body["register_tables"] = True
+        body["scope"]["catalogs"] = "*"
+
+        assert client.post(BASE, json={"rule_ids": ["r1"], "policy": body}).status_code == 422
+        assert client.put(f"{BASE}/p1", json=body).status_code == 422
+        assert client.post(f"{BASE}/preview", json={"rule_id": "r1", "policy": body}).status_code == 422
+        policies.create.assert_not_called()
+        apply.preview.assert_not_called()
+
     def test_viewer_cannot_create(self, client, role, policies):
         role[0] = UserRole.VIEWER
         assert client.post(BASE, json={"rule_ids": ["r1"], "policy": _policy_body()}).status_code == 403
@@ -457,7 +468,10 @@ class TestPreview:
             reason="tag class=pii",
         )
         apply.preview.return_value = PolicyPreview(
-            tables=[PreviewTable("main.s.t", monitored=False, matches=[match])],
+            tables=[
+                PreviewTable("main.s.t", monitored=False, matches=[match]),
+                PreviewTable("main.s.done", monitored=True, matches=[match], already_attached=True),
+            ],
             tables_matched=1,
             columns_matched=1,
             new_tables=1,
@@ -478,8 +492,15 @@ class TestPreview:
             {
                 "table_fqn": "main.s.t",
                 "monitored": False,
+                "already_attached": False,
                 "mappings": [{"column_mapping": {"column": "email"}, "reason": "tag class=pii"}],
-            }
+            },
+            {
+                "table_fqn": "main.s.done",
+                "monitored": True,
+                "already_attached": True,
+                "mappings": [{"column_mapping": {"column": "email"}, "reason": "tag class=pii"}],
+            },
         ]
         assert perms.require_object.call_args.args[1:3] == ("r1", Privilege.SELECT)
         assert apply.preview.call_args.args[0] == "r1"
