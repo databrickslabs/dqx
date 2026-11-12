@@ -17,7 +17,7 @@ describe("resolvePageTab", () => {
     }
   });
 
-  test("policies sits directly after permissions", () => {
-    expect(PAGE_TAB_KEYS.slice(0, 4)).toEqual(["about", "permissions", "policies", "implementation"]);
+  test("left strip reads build | access | outcome", () => {
+    expect(PAGE_TAB_KEYS.slice(0, 5)).toEqual(["about", "implementation", "policies", "permissions", "results"]);
   });
 });

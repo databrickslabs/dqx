@@ -947,9 +947,9 @@ function MonitoredTableDetailPage() {
         <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
-          {/* Tab order (P23 item 14): About, Permissions first (View Data
-              folded into About in P26 item 3),
-              then the working group (Profile, Apply Rules), then Results.
+          {/* Tab order: About, Profile, Apply Rules (what the table is and the
+              rules on it) | Permissions | Results — the same build | access |
+              outcome order as the Rules and Collections pages.
               Schedule + History live in a second, RIGHT-aligned TabsList —
               the table-spaces `ProductTabsShell` / dqlake `BindingTabsShell`
               two-group layout (RIGHT_TABS = [scheduling, history]). */}
@@ -959,11 +959,6 @@ function MonitoredTableDetailPage() {
                 <Info className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabAbout")}
               </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5">
-                <KeyRound className="h-3.5 w-3.5" />
-                {t("monitoredTables.tabPermissions")}
-              </TabsTrigger>
-              <TabGroupDivider />
               <TabsTrigger value="profile" className="gap-1.5">
                 <BarChart3 className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabProfile")}
@@ -971,6 +966,11 @@ function MonitoredTableDetailPage() {
               <TabsTrigger value="apply-rules" className="gap-1.5">
                 <Columns3 className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabApplyRules")}
+              </TabsTrigger>
+              <TabGroupDivider />
+              <TabsTrigger value="permissions" className="gap-1.5">
+                <KeyRound className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabPermissions")}
               </TabsTrigger>
               <TabGroupDivider />
               <TabsTrigger value="results" className="gap-1.5">

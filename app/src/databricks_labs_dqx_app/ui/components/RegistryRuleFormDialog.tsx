@@ -4795,10 +4795,9 @@ export function RegistryRuleFormDialog({
               <Info className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabAbout")}
             </TabsTrigger>
-            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
-            <TabsTrigger value="permissions" className="gap-1.5">
-              <Shield className="h-3.5 w-3.5" />
-              {t("rulesRegistry.tabPermissions")}
+            <TabsTrigger value="implementation" className="gap-1.5">
+              <Wrench className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabImplementation")}
             </TabsTrigger>
             {sourceRule ? (
               <TabsTrigger value="policies" className="gap-1.5">
@@ -4818,25 +4817,14 @@ export function RegistryRuleFormDialog({
                 <TooltipContent>{t("rulePolicies.tabSaveFirst")}</TooltipContent>
               </Tooltip>
             )}
-            {/* Muted vertical rule separating the access group (Permissions /
-                Permissions / Policies) from Implementation (item 10) — same divider the
-                MT/TS tab shells use; `muted-foreground/40` stays visible over
-                TabsList's `bg-muted` in both themes. */}
+            {/* Groups: what the rule is and where it applies (About / Implementation /
+                Policies) | who can use it (Permissions) | outcome (Results) — the same
+                build | access | outcome order as the Tables and Collections pages. */}
             <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
-            <TabsTrigger value="implementation" className="gap-1.5">
-              <Wrench className="h-3.5 w-3.5" />
-              {t("rulesRegistry.tabImplementation")}
+            <TabsTrigger value="permissions" className="gap-1.5">
+              <Shield className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabPermissions")}
             </TabsTrigger>
-            {/* Item 35: Results now sits at the TRAILING position of the
-                left/observability group (after Implementation) with its own
-                divider — the same relative placement Monitored Tables and
-                Table Spaces use (last left-aligned tab, LineChart icon),
-                rather than the old trailing-of-the-right-group spot.
-                Results is only meaningful once the rule is applied to at
-                least one monitored table; until then (and for new rules) the
-                trigger is disabled with an explanatory tooltip. The wrapping
-                <span> is the tooltip trigger because the disabled button
-                itself swallows pointer events. */}
             <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
             {resultsNeedsApplyTooltip || resultsScoreError ? (
               <Tooltip>

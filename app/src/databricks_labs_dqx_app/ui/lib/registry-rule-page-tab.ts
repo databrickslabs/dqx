@@ -1,6 +1,6 @@
 // Top-level page tabs of the rule editor. Persisted to the URL (`?tab=`) by
 // the routed detail / new pages so browser back/forward moves between them.
-export const PAGE_TAB_KEYS = ["about", "permissions", "policies", "implementation", "test", "history", "results"] as const;
+export const PAGE_TAB_KEYS = ["about", "implementation", "policies", "permissions", "results", "test", "history"] as const;
 
 export type PageTab = (typeof PAGE_TAB_KEYS)[number];
 
