@@ -103,6 +103,7 @@ def policies() -> MagicMock:
 def apply() -> MagicMock:
     mock = create_autospec(PolicyApplyService, instance=True)
     mock.run_policy.return_value = ApplyResult(attached=3, registered=1, ambiguous=[], registration_capped=True)
+    mock.run_policies.return_value = ApplyResult(attached=3, registered=1, ambiguous=[])
     return mock
 
 
@@ -233,8 +234,18 @@ class TestCreate:
         assert policies.create.call_count == 2
         modify_checks = [c.args[1] for c in perms.require_object.call_args_list if c.args[2] == Privilege.MODIFY]
         assert modify_checks == ["r1", "r2"]
-        ran = [c.args for c in apply.run_policy.call_args_list]
-        assert ran == [("p-r1", _acting_user()), ("p-r2", _acting_user())]
+        apply.run_policies.assert_called_once_with(["p-r1", "p-r2"], _acting_user())
+        apply.run_policy.assert_not_called()
+
+    def test_create_responds_before_evaluating(self, client, apply, apply_rules):
+        events: list[str] = []
+        apply_rules.count_bindings_by_policy.side_effect = lambda ids: events.append("respond") or {i: 0 for i in ids}
+        apply.run_policies.side_effect = lambda ids, user: events.append("evaluate") or ApplyResult(0, 0, [])
+
+        response = client.post(BASE, json={"rule_ids": ["r1", "r2"], "policy": _policy_body()})
+
+        assert response.status_code == 200
+        assert events == ["respond", "evaluate"]
 
     def test_per_rule_column_conditions_override_policy(self, client, policies, registry):
         registry.get_rule.side_effect = lambda rule_id: _rule(rule_id, ("a", "b") if rule_id == "r2" else ("column",))
@@ -265,7 +276,7 @@ class TestCreate:
 
         assert response.status_code == 403
         policies.create.assert_not_called()
-        apply.run_policy.assert_not_called()
+        apply.run_policies.assert_not_called()
 
     def test_viewer_cannot_create(self, client, role, policies):
         role[0] = UserRole.VIEWER
@@ -333,7 +344,7 @@ class TestCreate:
         assert response.status_code == 409
         assert "PII columns" not in response.json()["detail"]
         policies.delete.assert_called_once_with("p-r1")
-        apply.run_policy.assert_not_called()
+        apply.run_policies.assert_not_called()
 
     def test_unexpected_create_failure_is_generic_500_and_rolls_back(self, client, policies):
         def _create(rule_id, body, user_email):
@@ -350,7 +361,7 @@ class TestCreate:
         policies.delete.assert_called_once_with("p-r1")
 
     def test_run_failure_never_fails_the_save(self, client, apply):
-        apply.run_policy.side_effect = RuntimeError("boom")
+        apply.run_policies.side_effect = RuntimeError("boom")
 
         response = client.post(BASE, json={"rule_ids": ["r1"], "policy": _policy_body()})
 
@@ -372,7 +383,15 @@ class TestUpdate:
         assert response.json()["tables_matched"] == 2
         assert perms.require_object.call_args.args[1:3] == ("r1", Privilege.MODIFY)
         policies.update.assert_called_once()
-        apply.run_policy.assert_called_once_with("p1", _acting_user())
+        apply.run_policies.assert_called_once_with(["p1"], _acting_user())
+
+    def test_update_responds_before_evaluating(self, client, apply, apply_rules):
+        events: list[str] = []
+        apply_rules.count_bindings_by_policy.side_effect = lambda ids: events.append("respond") or {i: 0 for i in ids}
+        apply.run_policies.side_effect = lambda ids, user: events.append("evaluate") or ApplyResult(0, 0, [])
+
+        assert client.put(f"{BASE}/p1", json=_policy_body()).status_code == 200
+        assert events == ["respond", "evaluate"]
 
     def test_update_missing_is_404(self, client, policies):
         policies.get.return_value = None
@@ -389,14 +408,14 @@ class TestUpdate:
         response = client.put(f"{BASE}/p1", json=_policy_body(name="X"))
         assert response.status_code == 409
         assert "'X'" not in response.json()["detail"]
-        apply.run_policy.assert_not_called()
+        apply.run_policies.assert_not_called()
 
     def test_update_slot_mismatch_is_422(self, client, policies):
         assert client.put(f"{BASE}/p1", json=_policy_body(slots=("other",))).status_code == 422
         policies.update.assert_not_called()
 
     def test_update_run_failure_never_fails_the_save(self, client, apply):
-        apply.run_policy.side_effect = RuntimeError("boom")
+        apply.run_policies.side_effect = RuntimeError("boom")
         assert client.put(f"{BASE}/p1", json=_policy_body()).status_code == 200
 
 

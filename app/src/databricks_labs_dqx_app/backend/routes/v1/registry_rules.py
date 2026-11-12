@@ -68,7 +68,7 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
 )
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
-from databricks_labs_dqx_app.backend.services.policy_apply_service import PolicyApplyService
+from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 
 router = APIRouter()
@@ -96,6 +96,14 @@ def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
 def _mark_owner_unverified(out: OwnedObject) -> None:
     if isinstance(out, RegistryRuleOut):
         out.owner_unverified = True
+
+
+def _run_rule_policies(policy_apply: PolicyApplyService, rule_id: str, acting_user: ActingUser) -> None:
+    """Background task: evaluate an approved rule's policies; never raises."""
+    try:
+        policy_apply.run_rule(rule_id, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy run after approving rule {safe_log_value(rule_id)} failed", exc_info=True)
 
 
 def _fill_owner_display_names(
@@ -752,6 +760,7 @@ def submit_registry_rule(
 )
 def approve_registry_rule(
     rule_id: str,
+    background_tasks: BackgroundTasks,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
@@ -806,14 +815,9 @@ def approve_registry_rule(
             rationale=rationale,
         )
         # Rule policies: after a successful publish, run this rule's policies as
-        # the approving user so it attaches wherever they may apply it.
-        # Best-effort; guarded so it can never turn a successful approve into a 500.
-        try:
-            policy_apply.run_rule(rule_id, acting_user)
-        except Exception:
-            logger.warning(
-                f"Rule policy run after approving rule {safe_log_value(rule_id)} failed (non-fatal)", exc_info=True
-            )
+        # the approving user so it attaches wherever they may apply it. Runs after
+        # the response is sent (scope snapshots can take seconds); best-effort.
+        background_tasks.add_task(_run_rule_policies, policy_apply, rule_id, acting_user)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

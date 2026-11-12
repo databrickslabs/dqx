@@ -4,12 +4,14 @@ A rule policy says which tables (and columns) a registry rule is auto-applied
 to. Reading a policy needs SELECT on its rule; creating, editing, deleting and
 re-scanning need MODIFY on it. Every evaluation (after save, on re-scan, in
 preview) runs for the calling user, so it only reaches tables they may apply
-rules to. Evaluation after a save is best-effort and never fails the save.
+rules to. Evaluation after a save runs as a background task once the response
+is sent (best-effort; it never fails the save). Re-scan and preview stay
+synchronous; every snapshot read is time-boxed by the snapshot reader.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
@@ -140,11 +142,18 @@ def _rule_slot_names(registry: RegistryService, rule_id: str) -> set[str]:
     return {slot.name for slot in rule.definition.slots}
 
 
-def _run_best_effort(apply: PolicyApplyService, policy_id: str, user: ActingUser) -> None:
+def _run_best_effort(apply: PolicyApplyService, policy_ids: list[str], user: ActingUser) -> None:
+    """Background task: evaluate saved policies for *user*; never raises.
+
+    The request's OBO-backed services stay usable here: dependencies have no
+    teardown and the OBO client is a token-bearing SDK client, valid for the
+    token's lifetime.
+    """
     try:
-        apply.run_policy(policy_id, user)
+        apply.run_policies(policy_ids, user)
     except Exception:  # evaluating after a save must never fail the save
-        logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation after save failed", exc_info=True)
+        ids = ", ".join(safe_log_value(policy_id) for policy_id in policy_ids)
+        logger.warning(f"Rule policy evaluation after save failed ({ids})", exc_info=True)
 
 
 def _rollback(policies: RulePolicyService, created: list[RulePolicy]) -> None:
@@ -206,6 +215,7 @@ def get_rule_policy(
 )
 def create_rule_policies(
     body: CreateRulePoliciesIn,
+    background_tasks: BackgroundTasks,
     policies: Policies,
     registry: Registry,
     apply_rules: ApplyRules,
@@ -213,7 +223,7 @@ def create_rule_policies(
     caller: Caller,
     user: CurrentActingUser,
 ) -> list[RulePolicyOut]:
-    """Create one policy per rule in *rule_ids*, all or nothing, then evaluate each.
+    """Create one policy per rule in *rule_ids*, all or nothing; evaluate them after responding.
 
     MODIFY is checked on every rule and every rule's column conditions are
     validated before anything is written. If a create fails part-way, the
@@ -239,8 +249,7 @@ def create_rule_policies(
         logger.error("Failed to create rule policies", exc_info=True)
         raise _server_error("create rule policies")
 
-    for policy in created:
-        _run_best_effort(apply, policy.policy_id, user)
+    background_tasks.add_task(_run_best_effort, apply, [policy.policy_id for policy in created], user)
     try:
         return _to_out(created, apply_rules)
     except Exception:
@@ -257,6 +266,7 @@ def create_rule_policies(
 def update_rule_policy(
     policy_id: str,
     body: RulePolicyIn,
+    background_tasks: BackgroundTasks,
     policies: Policies,
     registry: Registry,
     apply_rules: ApplyRules,
@@ -264,7 +274,7 @@ def update_rule_policy(
     caller: Caller,
     user: CurrentActingUser,
 ) -> RulePolicyOut:
-    """Replace a policy's definition, then evaluate it."""
+    """Replace a policy's definition; evaluate it after responding."""
     existing = _load_policy(policies, policy_id)
     caller.require(existing.rule_id, Privilege.MODIFY)
     _require_slot_coverage(existing.rule_id, _rule_slot_names(registry, existing.rule_id), body.column_conditions)
@@ -278,7 +288,7 @@ def update_rule_policy(
         logger.error(f"Failed to update rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("update the rule policy")
 
-    _run_best_effort(apply, policy_id, user)
+    background_tasks.add_task(_run_best_effort, apply, [policy_id], user)
     try:
         return _to_out([updated], apply_rules)[0]
     except Exception:

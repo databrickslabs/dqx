@@ -655,3 +655,14 @@ def test_run_policies_is_best_effort(world: World) -> None:
     result = world.service().run_policies(["missing", "p2"], AUTHOR)
 
     assert result.attached == 1
+
+
+def test_run_policy_reads_its_scope_once(world: World) -> None:
+    world.bindings = {"c.s.a": "b1", "c.s.b": "b2"}
+    world.grants = {("b1", Privilege.APPLY), ("b2", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.a", _col("email", "pii")), _snap("c.s.b", _col("phone", "pii")))
+    world.policies.get.return_value = _policy()
+
+    assert world.service().run_policy("p1", AUTHOR).attached == 2
+    world.snapshots.for_scope.assert_called_once()
+    world.snapshots.for_tables.assert_not_called()

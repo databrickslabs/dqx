@@ -7,6 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
+import asyncio
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -18,6 +19,7 @@ from databricks_labs_dqx_app.backend.models import (
     BATCH_IMPORT_MAX_RULES,
     BatchImportRegistryRulesIn,
     CreateRegistryRuleIn,
+    RegistryRuleOut,
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
@@ -909,6 +911,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         result = approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -932,6 +935,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -958,6 +962,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -983,6 +988,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -1006,6 +1012,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -1035,6 +1042,7 @@ class TestLifecycleRoutes:
         monitored_tables = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -1066,6 +1074,7 @@ class TestLifecycleRoutes:
         app_settings.get_auto_upgrade_without_approval.return_value = True
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -1139,6 +1148,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -1153,13 +1163,12 @@ class TestLifecycleRoutes:
             )
         assert excinfo.value.status_code == 404
 
-    def test_approve_runs_the_rule_policies_for_the_approver(self):
-        """A successful approve evaluates the rule's policies once, as the approving user."""
+    def _approve(self, policy_apply: MagicMock, background_tasks: BackgroundTasks) -> RegistryRuleOut:
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
-        policy_apply = create_autospec(PolicyApplyService, instance=True)
-        approve_registry_rule(
+        return approve_registry_rule(
             "r1",
+            background_tasks,
             svc=svc,
             embeddings=MagicMock(),
             materializer=MagicMock(),
@@ -1172,29 +1181,30 @@ class TestLifecycleRoutes:
             acting_user=_ACTING_USER,
             user_email="alice@x",
         )
+
+    def test_approve_runs_the_rule_policies_after_responding(self):
+        """Approve returns before evaluating; the rule's policies then run once, as the approver."""
+        policy_apply = create_autospec(PolicyApplyService, instance=True)
+        background_tasks = BackgroundTasks()
+
+        self._approve(policy_apply, background_tasks)
+
+        policy_apply.run_rule.assert_not_called()
+        assert len(background_tasks.tasks) == 1
+        asyncio.run(background_tasks())
         policy_apply.run_rule.assert_called_once_with("r1", _ACTING_USER)
 
     def test_approve_policy_run_failure_is_non_fatal(self):
-        """A raising policy run must NOT turn a successful approve into a 500."""
-        svc = MagicMock()
-        svc.approve.return_value = _rule(status="approved", version=1)
+        """A raising background policy run is swallowed (logged) and never affects the approve."""
         policy_apply = create_autospec(PolicyApplyService, instance=True)
         policy_apply.run_rule.side_effect = RuntimeError("boom")
-        result = approve_registry_rule(
-            "r1",
-            svc=svc,
-            embeddings=MagicMock(),
-            materializer=MagicMock(),
-            version_svc=MagicMock(),
-            app_settings=_no_auto_upgrade(),
-            monitored_tables=MagicMock(),
-            apply_rules=MagicMock(),
-            pending=self._pending_stub(),
-            policy_apply=policy_apply,
-            acting_user=_ACTING_USER,
-            user_email="alice@x",
-        )
+        background_tasks = BackgroundTasks()
+
+        result = self._approve(policy_apply, background_tasks)
+
         assert result.status == "approved"
+        asyncio.run(background_tasks())
+        policy_apply.run_rule.assert_called_once()
 
 
 class TestBackfillRuleEmbeddings:
