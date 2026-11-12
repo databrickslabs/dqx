@@ -9,9 +9,13 @@ legacy ``error_summary`` shape.
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, create_autospec
 
 import pytest
+from pyspark.errors import AnalysisException
+from pyspark.sql import DataFrame
+
+from databricks.labs.dqx.errors import ComputationError, InvalidCheckError, UnsafeSqlQueryError
 
 # The runner lives in ``app/tasks/src``, which is a separate uv project.
 # Add it to sys.path so we can import it without depending on
@@ -26,6 +30,13 @@ def runner_module():
     import dqx_task_runner.runner as r  # type: ignore[import-not-found]
 
     return r
+
+
+@pytest.fixture
+def evaluated_rows_module():
+    import dqx_task_runner.evaluated_rows as m  # type: ignore[import-not-found]
+
+    return m
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +730,330 @@ class TestParseManifestConfig:
     def test_non_object_json_raises(self, runner_module):
         with pytest.raises(RuntimeError, match="not a JSON object"):
             runner_module._parse_manifest_config("[1, 2, 3]", "run1")
+
+
+# ---------------------------------------------------------------------------
+# build_evaluated_rows_metric — per-check evaluated-row counts
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEvaluatedRowsMetric:
+    def _row_check(self, name: str, flt: str | None, column: str = "a") -> dict:
+        check = {
+            "name": name,
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": column}},
+        }
+        if flt is not None:
+            check["filter"] = flt
+        return check
+
+    def test_metric_name_constant(self, evaluated_rows_module):
+        assert evaluated_rows_module.EVALUATED_ROWS_METRIC == "check_evaluated_rows"
+
+    def test_no_filtered_checks_returns_none(self, evaluated_rows_module):
+        assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("a_not_null", None)]) is None
+
+    def test_filtered_row_check_counts_rows_where_filter_true(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("a_not_null", "region = 'EU'")])
+        assert expr is not None
+        assert expr.endswith(" as check_evaluated_rows")
+        assert "count(case when (region = 'EU'\n) then 1 end)" in expr
+        assert "'\"a_not_null\"'" in expr
+
+    def test_expression_skeleton_joins_entries(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric(
+            [self._row_check("one", "a > 0"), self._row_check("two", "a < 5")]
+        )
+        assert expr is not None
+        assert expr.startswith("concat('[', concat_ws(',', ")
+        assert expr.count("count(case when") == 2
+        assert expr.index("'\"one\"'") < expr.index("'\"two\"'")
+
+    def test_dataset_check_with_filter_is_skipped(self, evaluated_rows_module):
+        check = {
+            "name": "uniq",
+            "criticality": "error",
+            "filter": "x > 1",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a"]}},
+        }
+        assert evaluated_rows_module.build_evaluated_rows_metric([check]) is None
+
+    def test_check_name_quotes_are_escaped(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("it's", "a > 0")])
+        assert expr is not None
+        assert "it\\'s" in expr
+
+    def test_unsafe_filter_fails_with_sanitized_check_name(self, evaluated_rows_module):
+        with pytest.raises(UnsafeSqlQueryError) as exc_info:
+            evaluated_rows_module.build_evaluated_rows_metric([self._row_check("bad\nname", "1=1; DROP TABLE x")])
+        message = str(exc_info.value)
+        assert "'bad name'" in message
+        assert "\n" not in message
+        assert "DROP TABLE" not in message
+
+    def test_double_dash_inside_string_literal_is_kept_verbatim(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "note = 'a--b'")])
+        assert expr is not None
+        assert "note = 'a--b'" in expr
+
+    def test_trailing_line_comment_cannot_swallow_closing_paren(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "a > 0 -- only positives")])
+        assert expr is not None
+        assert "count(case when (a > 0 -- only positives\n) then 1 end)" in expr
+
+    def test_for_each_column_gets_entry_per_expanded_rule(self, evaluated_rows_module):
+        check = {
+            "criticality": "error",
+            "filter": "region = 'EU'",
+            "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
+        }
+        expr = evaluated_rows_module.build_evaluated_rows_metric([check])
+        assert expr is not None
+        assert expr.count("count(case when (region = 'EU'\n) then 1 end)") == 2
+        assert "'\"a_is_null\"'" in expr
+        assert "'\"b_is_null\"'" in expr
+
+    def test_subquery_filter_is_not_observed(self, evaluated_rows_module):
+        flt = "x IN (SELECT id FROM t)"
+        assert evaluated_rows_module.build_evaluated_rows_metric([self._row_check("sub", flt)]) is None
+
+    def test_select_inside_string_literal_is_not_a_subquery(self, evaluated_rows_module):
+        expr = evaluated_rows_module.build_evaluated_rows_metric([self._row_check("c", "note = 'select me'")])
+        assert expr is not None
+        assert "note = 'select me'" in expr
+
+    def test_subquery_check_counted_separately_others_observed(self, evaluated_rows_module):
+        checks = [self._row_check("sub", "x in (select id from t)"), self._row_check("ok", "a > 0")]
+        expr = evaluated_rows_module.build_evaluated_rows_metric(checks)
+        assert expr is not None
+        assert "'\"ok\"'" in expr
+        assert "'\"sub\"'" not in expr
+        plan = evaluated_rows_module.plan_evaluated_rows(checks)
+        assert plan.observed_metric == expr
+        assert plan.separate_filters == [("sub", "x in (select id from t)")]
+        assert plan.filters == [("sub", "x in (select id from t)"), ("ok", "a > 0")]
+
+
+# ---------------------------------------------------------------------------
+# prepare_evaluated_rows / with_separate_evaluated_rows — fail runs whose filters cannot be counted
+# ---------------------------------------------------------------------------
+
+
+_FILTERED_CHECK = {
+    "name": "eu_not_null",
+    "criticality": "error",
+    "filter": "region = 'EU'",
+    "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+}
+
+
+_SUBQUERY_CHECK = {
+    "name": "known_region_not_null",
+    "criticality": "error",
+    "filter": "region IN (SELECT code FROM c.s.regions)",
+    "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+}
+
+
+def _analysing_df(failing_text: str | None = None) -> MagicMock:
+    """A DataFrame mock whose lazy *agg(...).schema* fails when any aggregate column mentions *failing_text*."""
+    df = create_autospec(DataFrame, instance=True)
+
+    def agg(*cols: object) -> MagicMock:
+        aggregated = MagicMock()
+        if failing_text is not None and any(failing_text in str(col) for col in cols):
+            type(aggregated).schema = PropertyMock(side_effect=AnalysisException("cannot resolve"))
+        return aggregated
+
+    df.agg.side_effect = agg
+    return df
+
+
+class TestPrepareEvaluatedRows:
+    def test_builds_observed_metric_when_filters_analyse(self, evaluated_rows_module):
+        df = _analysing_df()
+        plan = evaluated_rows_module.prepare_evaluated_rows(df, [_FILTERED_CHECK])
+        assert plan.observed_metric is not None
+        assert plan.observed_metric.endswith(" as check_evaluated_rows")
+        assert plan.separate_filters == []
+        # One lazy analysis of the filters on their own, one of the assembled metric; no job.
+        assert df.agg.call_count == 2
+        df.collect.assert_not_called()
+
+    def test_each_filter_reaches_spark_as_its_own_expression(self, evaluated_rows_module):
+        # Parens that only balance inside the count(case when (...)) template: parsed on its own the
+        # filter is malformed, so Spark must see it as a standalone expression and reject it.
+        breakout = "a > 0) then 1 end), (count(case when (1 = 1"
+        check = {**_FILTERED_CHECK, "filter": breakout}
+        df = _analysing_df(failing_text=breakout)
+        with pytest.raises(InvalidCheckError):
+            evaluated_rows_module.prepare_evaluated_rows(df, [check])
+        first_analysis = [str(col) for col in df.agg.call_args_list[0].args]
+        assert first_analysis == [f"Column<'count(CASE WHEN {breakout} THEN 1 END) AS _f0'>"]
+
+    def test_unanalysable_filter_fails_the_run_naming_only_that_check(self, evaluated_rows_module):
+        bad = {**_FILTERED_CHECK, "name": "eu\r\nnot null", "filter": "missing_col = 1"}
+        df = _analysing_df(failing_text="missing_col")
+        with pytest.raises(InvalidCheckError) as exc_info:
+            evaluated_rows_module.prepare_evaluated_rows(df, [_FILTERED_CHECK, bad])
+        message = str(exc_info.value)
+        assert "'eu  not null'" in message
+        assert "eu_not_null" not in message
+        assert "missing_col" not in message
+        assert "\n" not in message and "\r" not in message
+
+    def test_unanalysable_observed_metric_fails_the_run(self, evaluated_rows_module):
+        df = _analysing_df(failing_text="check_evaluated_rows")
+        with pytest.raises(InvalidCheckError) as exc_info:
+            evaluated_rows_module.prepare_evaluated_rows(df, [_FILTERED_CHECK])
+        assert "region = 'EU'" not in str(exc_info.value)
+
+    def test_unsafe_filter_fails_the_run(self, evaluated_rows_module):
+        unsafe = {**_FILTERED_CHECK, "filter": "1=1; DROP TABLE x"}
+        df = _analysing_df()
+        with pytest.raises(UnsafeSqlQueryError):
+            evaluated_rows_module.prepare_evaluated_rows(df, [unsafe])
+        df.agg.assert_not_called()
+
+    def test_subquery_filter_is_analysed_but_not_observed(self, evaluated_rows_module):
+        df = _analysing_df()
+        plan = evaluated_rows_module.prepare_evaluated_rows(df, [_SUBQUERY_CHECK])
+        assert plan.observed_metric is None
+        assert plan.separate_filters == [("known_region_not_null", _SUBQUERY_CHECK["filter"])]
+        df.agg.assert_called_once()
+
+    def test_no_filtered_checks_skips_analysis(self, evaluated_rows_module):
+        df = create_autospec(DataFrame, instance=True)
+        unfiltered = {k: v for k, v in _FILTERED_CHECK.items() if k != "filter"}
+        plan = evaluated_rows_module.prepare_evaluated_rows(df, [unfiltered])
+        assert plan.observed_metric is None
+        assert plan.separate_filters == []
+        df.agg.assert_not_called()
+
+
+def _counting_df(counts: list[int]) -> MagicMock:
+    df = create_autospec(DataFrame, instance=True)
+    df.agg.return_value.collect.return_value = [tuple(counts)]
+    return df
+
+
+class TestWithSeparateEvaluatedRows:
+    def test_merges_separate_counts_into_observed_payload(self, evaluated_rows_module):
+        plan = evaluated_rows_module.plan_evaluated_rows([_FILTERED_CHECK, _SUBQUERY_CHECK])
+        payload = '[{"check_name":"eu_not_null","evaluated_count":4}]'
+        observed = {"input_row_count": 10, "check_evaluated_rows": payload}
+        df = _counting_df([7])
+        merged = evaluated_rows_module.with_separate_evaluated_rows(df, plan, observed)
+        assert json.loads(merged["check_evaluated_rows"]) == [
+            {"check_name": "eu_not_null", "evaluated_count": 4},
+            {"check_name": "known_region_not_null", "evaluated_count": 7},
+        ]
+        assert merged["input_row_count"] == 10
+        assert observed["check_evaluated_rows"] == payload  # the snapshot is never mutated
+        df.agg.assert_called_once()
+
+    def test_creates_payload_when_observed_has_none(self, evaluated_rows_module):
+        plan = evaluated_rows_module.plan_evaluated_rows([_SUBQUERY_CHECK])
+        merged = evaluated_rows_module.with_separate_evaluated_rows(_counting_df([3]), plan, {"input_row_count": 5})
+        assert json.loads(merged["check_evaluated_rows"]) == [
+            {"check_name": "known_region_not_null", "evaluated_count": 3}
+        ]
+
+    def test_one_aggregate_for_all_separate_filters(self, evaluated_rows_module):
+        second = {**_SUBQUERY_CHECK, "name": "other", "filter": "EXISTS (SELECT 1 FROM c.s.r)"}
+        plan = evaluated_rows_module.plan_evaluated_rows([_SUBQUERY_CHECK, second])
+        df = _counting_df([3, 0])
+        merged = evaluated_rows_module.with_separate_evaluated_rows(df, plan, {})
+        assert [e["evaluated_count"] for e in json.loads(merged["check_evaluated_rows"])] == [3, 0]
+        df.agg.assert_called_once()
+        assert len(df.agg.call_args.args) == 2
+
+    def test_no_separate_filters_runs_nothing(self, evaluated_rows_module):
+        plan = evaluated_rows_module.plan_evaluated_rows([_FILTERED_CHECK])
+        df = create_autospec(DataFrame, instance=True)
+        observed = {"input_row_count": 1}
+        assert evaluated_rows_module.with_separate_evaluated_rows(df, plan, observed) == observed
+        df.agg.assert_not_called()
+
+    def test_failed_aggregate_fails_the_run(self, evaluated_rows_module):
+        plan = evaluated_rows_module.plan_evaluated_rows([_SUBQUERY_CHECK])
+        df = create_autospec(DataFrame, instance=True)
+        df.agg.return_value.collect.side_effect = AnalysisException("boom")
+        with pytest.raises(ComputationError) as exc_info:
+            evaluated_rows_module.with_separate_evaluated_rows(df, plan, {})
+        assert "'known_region_not_null'" in str(exc_info.value)
+        assert "SELECT" not in str(exc_info.value)
+
+
+def _persisted_metrics(spark: MagicMock) -> dict[str, str]:
+    """The metric_name -> metric_value rows the run wrote via *DQMetricsObserver.build_metrics_df*."""
+    from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
+
+    for call in spark.createDataFrame.call_args_list:
+        if call.kwargs.get("schema") is OBSERVATION_TABLE_SCHEMA:
+            return {row[7]: row[8] for row in call.args[0]}
+    raise AssertionError("no metrics were persisted")
+
+
+class TestRunEvaluatedRows:
+    def test_scheduled_run_fails_when_filter_cannot_be_analysed(self, runner_module):
+        # Scope-config schedules run through the scheduled path; the filters must be analysed
+        # against the source DataFrame there too, and an unanalysable one fails the run.
+        spark = MagicMock()
+        source_df = spark.table.return_value
+        type(source_df.agg.return_value).schema = PropertyMock(side_effect=AnalysisException("cannot resolve"))
+        config = {"checks": [_FILTERED_CHECK], "source_table_fqn": "c.s.t"}
+        with pytest.raises(InvalidCheckError):
+            runner_module._run_scheduled(spark, MagicMock(), "c.s.t", config, "c", "s", "run1", "user")
+        source_df.agg.assert_called()
+
+    @pytest.mark.parametrize("task", ["scheduled", "dryrun"])
+    def test_run_persists_separately_counted_subquery_filters(self, runner_module, monkeypatch, task):
+        import databricks.labs.dqx.engine as engine_module
+
+        observed = {"input_row_count": 10, "check_evaluated_rows": '[{"check_name":"eu_not_null","evaluated_count":4}]'}
+        invalid_df = MagicMock()
+        invalid_df.count.return_value = 0
+        observation = MagicMock()
+        observation.get = observed
+        engine_cls = MagicMock()
+        engine_cls.return_value.apply_checks_by_metadata_and_split.return_value = (MagicMock(), invalid_df, observation)
+        # DQEngine is the third-party boundary: the checks themselves are not under test here.
+        monkeypatch.setattr(engine_module, "DQEngine", engine_cls)
+        spark = MagicMock()
+        source_df = spark.table.return_value
+        source_df.agg.return_value.collect.return_value = [(7,)]
+        config = {"checks": [_FILTERED_CHECK, _SUBQUERY_CHECK], "source_table_fqn": "c.s.t", "sample_size": 0}
+        run = runner_module._run_scheduled if task == "scheduled" else runner_module._run_dryrun
+
+        run(spark, MagicMock(), "c.s.t", config, "c", "s", "run1", "user")
+
+        persisted = _persisted_metrics(spark)
+        assert json.loads(persisted["check_evaluated_rows"]) == [
+            {"check_name": "eu_not_null", "evaluated_count": 4},
+            {"check_name": "known_region_not_null", "evaluated_count": 7},
+        ]
+        assert persisted["input_row_count"] == "10"
+        # The engine ran on the very DataFrame the separate count aggregated.
+        assert engine_cls.return_value.apply_checks_by_metadata_and_split.call_args.args[0] is source_df
+
+
+class TestPersistedMetricCounts:
+    def test_evaluated_rows_metric_counts_as_builtin(self, runner_module, caplog):
+        observed = {"input_row_count": 10, "check_evaluated_rows": '[{"check_name":"c","evaluated_count":4}]'}
+        with caplog.at_level("INFO", logger="dqx_task_runner"):
+            runner_module._persist_observed_metrics(
+                spark=MagicMock(),
+                observed=observed,
+                run_id="run1",
+                run_name="dqx_app_scheduled",
+                input_location=None,
+                quarantine_location=None,
+                checks_location=None,
+                rule_set_fingerprint=None,
+                user_metadata=None,
+                result_catalog="c",
+                result_schema="s",
+            )
+        assert "builtin=2, custom=0" in caplog.text

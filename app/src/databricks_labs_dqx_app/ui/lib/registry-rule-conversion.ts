@@ -626,6 +626,13 @@ export function buildDqxCheckJson(
   if (definition.error_message) check.message_expr = definition.error_message;
   const slotsJson = slotsForCheckJson(definition.slots);
   if (slotsJson) check.slots = slotsJson;
+  // The rule-level filter renders as DQX's native top-level per-check
+  // `filter` (mirrors `materializer.render_check`, with `{{slot}}`
+  // placeholders left unsubstituted); omitted when blank so a rule that
+  // validates every row carries no `filter` key.
+  if (typeof definition.filter === "string" && definition.filter.trim()) {
+    check.filter = definition.filter.trim();
+  }
   return check;
 }
 
