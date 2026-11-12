@@ -4795,6 +4795,7 @@ export function RegistryRuleFormDialog({
               <Info className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabAbout")}
             </TabsTrigger>
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
             <TabsTrigger value="permissions" className="gap-1.5">
               <Shield className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabPermissions")}
@@ -4817,7 +4818,7 @@ export function RegistryRuleFormDialog({
                 <TooltipContent>{t("rulePolicies.tabSaveFirst")}</TooltipContent>
               </Tooltip>
             )}
-            {/* Muted vertical rule separating the metadata group (About /
+            {/* Muted vertical rule separating the access group (Permissions /
                 Permissions / Policies) from Implementation (item 10) — same divider the
                 MT/TS tab shells use; `muted-foreground/40` stays visible over
                 TabsList's `bg-muted` in both themes. */}
