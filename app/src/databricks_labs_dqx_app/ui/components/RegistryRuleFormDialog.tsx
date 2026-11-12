@@ -4799,15 +4799,6 @@ export function RegistryRuleFormDialog({
               <Shield className="h-3.5 w-3.5" />
               {t("rulesRegistry.tabPermissions")}
             </TabsTrigger>
-            {/* Muted vertical rule separating the metadata group (About /
-                Permissions) from Implementation (item 10) — same divider the
-                MT/TS tab shells use; `muted-foreground/40` stays visible over
-                TabsList's `bg-muted` in both themes. */}
-            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
-            <TabsTrigger value="implementation" className="gap-1.5">
-              <Wrench className="h-3.5 w-3.5" />
-              {t("rulesRegistry.tabImplementation")}
-            </TabsTrigger>
             {sourceRule ? (
               <TabsTrigger value="policies" className="gap-1.5">
                 <ScrollText className="h-3.5 w-3.5" />
@@ -4826,6 +4817,15 @@ export function RegistryRuleFormDialog({
                 <TooltipContent>{t("rulePolicies.tabSaveFirst")}</TooltipContent>
               </Tooltip>
             )}
+            {/* Muted vertical rule separating the metadata group (About /
+                Permissions / Policies) from Implementation (item 10) — same divider the
+                MT/TS tab shells use; `muted-foreground/40` stays visible over
+                TabsList's `bg-muted` in both themes. */}
+            <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
+            <TabsTrigger value="implementation" className="gap-1.5">
+              <Wrench className="h-3.5 w-3.5" />
+              {t("rulesRegistry.tabImplementation")}
+            </TabsTrigger>
             {/* Item 35: Results now sits at the TRAILING position of the
                 left/observability group (after Implementation) with its own
                 divider — the same relative placement Monitored Tables and

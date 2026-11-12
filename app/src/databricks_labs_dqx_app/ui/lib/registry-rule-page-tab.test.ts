@@ -16,4 +16,8 @@ describe("resolvePageTab", () => {
       expect(resolvePageTab(key)).toBe(key);
     }
   });
+
+  test("policies sits directly after permissions", () => {
+    expect(PAGE_TAB_KEYS.slice(0, 4)).toEqual(["about", "permissions", "policies", "implementation"]);
+  });
 });
