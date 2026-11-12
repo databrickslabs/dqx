@@ -11,7 +11,9 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
 )
 
 
-def _native(function: str, slots: list[str], params: list[dict] | None = None) -> RuleDefinition:
+def _native(
+    function: str, slots: list[str], params: list[dict] | None = None, rule_filter: str | None = None
+) -> RuleDefinition:
     args: dict[str, object] = {}
     if len(slots) == 1:
         args["column"] = "{{" + slots[0] + "}}"
@@ -22,6 +24,7 @@ def _native(function: str, slots: list[str], params: list[dict] | None = None) -
             "body": {"function": function, "arguments": args},
             "slots": [{"name": s, "family": "any", "position": i, "cardinality": "one"} for i, s in enumerate(slots)],
             "parameters": params or [],
+            "filter": rule_filter,
         }
     )
 
@@ -53,6 +56,22 @@ class TestShapeKey:
             "dqx_native", _native("is_unique", ["order_id", "line_id"]), None
         )
 
+    def test_filter_changes_the_shape(self):
+        unfiltered = shape_key("dqx_native", _native("is_in_list", ["status"]), None)
+        code_100 = shape_key("dqx_native", _native("is_in_list", ["status"], rule_filter="error_code = 100"), None)
+        code_200 = shape_key("dqx_native", _native("is_in_list", ["status"], rule_filter="error_code = 200"), None)
+        assert len({unfiltered, code_100, code_200}) == 3
+
+    def test_blank_filter_matches_no_filter(self):
+        assert shape_key("dqx_native", _native("is_not_null", ["x"], rule_filter="  "), None) == shape_key(
+            "dqx_native", _native("is_not_null", ["x"]), None
+        )
+
+    def test_filter_slot_names_do_not_change_the_shape(self):
+        a = shape_key("dqx_native", _native("is_not_null", ["order_id"], rule_filter="{{order_id}} > 0"), None)
+        b = shape_key("dqx_native", _native("is_not_null", ["value"], rule_filter="{{value}} > 0"), None)
+        assert a == b
+
 
 class TestGeneralize:
     def test_single_slot_becomes_column(self):
@@ -69,6 +88,12 @@ class TestGeneralize:
     def test_swapped_names_do_not_clobber(self):
         definition, _ = generalize("dqx_native", _native("is_unique", ["column_2", "column_1"]))
         assert definition.body["arguments"] == {"columns": ["{{column_1}}", "{{column_2}}"]}
+
+    def test_filter_placeholders_are_renamed(self):
+        definition, _ = generalize(
+            "dqx_native", _native("is_not_null", ["customer_id"], rule_filter="{{customer_id}} IS NOT NULL")
+        )
+        assert definition.filter == "{{column}} IS NOT NULL"
 
     def test_generalizing_preserves_the_shape(self):
         original = _native("is_not_null", ["email"])
@@ -122,6 +147,12 @@ class TestNamesAndRenames:
         limit = [{"name": "limit", "type": "number", "value": 0}]
         assert generic_name("dqx_native", _native("is_not_less_than", ["x"], limit)) == "Is not less than (limit: 0)"
         assert generic_name("sql", _native("is_not_null", ["x"])) is None
+
+    def test_generic_name_includes_the_filter(self):
+        allowed = [{"name": "allowed", "type": "list", "value": ["OK"]}]
+        code_100 = _native("is_in_list", ["x"], allowed, rule_filter=" error_code = 100 ")
+        assert generic_name("dqx_native", code_100) == "Is in list (allowed: ['OK']) where error_code = 100"
+        assert generic_name("dqx_native", _native("is_not_null", ["x"], rule_filter="  ")) == "Is not null"
 
     def test_slot_renames_between(self):
         assert slot_renames_between(
