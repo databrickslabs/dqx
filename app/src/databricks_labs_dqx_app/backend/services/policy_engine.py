@@ -9,6 +9,7 @@ its inputs, so it can be used by snapshot readers and orchestration alike.
 import itertools
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -51,6 +52,70 @@ class TableSnapshot:
     schema_tags: tuple[str, ...]
     table_tags: tuple[str, ...]
     columns: tuple[ColumnSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotNeeds:
+    """Which optional facts a snapshot must carry (names, columns, types and table owners always come)."""
+
+    column_tags: bool = False
+    table_tags: bool = False
+    schema_tags: bool = False
+    catalog_tags: bool = False
+    schema_owner: bool = False
+    catalog_owner: bool = False
+
+    def union(self, other: "SnapshotNeeds") -> "SnapshotNeeds":
+        return SnapshotNeeds(
+            column_tags=self.column_tags or other.column_tags,
+            table_tags=self.table_tags or other.table_tags,
+            schema_tags=self.schema_tags or other.schema_tags,
+            catalog_tags=self.catalog_tags or other.catalog_tags,
+            schema_owner=self.schema_owner or other.schema_owner,
+            catalog_owner=self.catalog_owner or other.catalog_owner,
+        )
+
+    def covers(self, other: "SnapshotNeeds") -> bool:
+        """True when a snapshot read with these needs has every fact *other* needs."""
+        return self.union(other) == self
+
+
+ALL_NEEDS = SnapshotNeeds(
+    column_tags=True, table_tags=True, schema_tags=True, catalog_tags=True, schema_owner=True, catalog_owner=True
+)
+_TAG_PREDICATES = ("has_tag", "not_has_tag")
+
+
+def _row_needs(row: ConditionRow) -> SnapshotNeeds:
+    tags = row.predicate in _TAG_PREDICATES
+    owner = row.predicate == "has_owner"
+    return SnapshotNeeds(
+        column_tags=tags and row.object == "column",
+        table_tags=tags and row.object == "table",
+        schema_tags=tags and row.object == "schema",
+        catalog_tags=tags and row.object == "catalog",
+        schema_owner=owner and row.object == "schema",
+        catalog_owner=owner and row.object == "catalog",
+    )
+
+
+def needs_of(policies: Iterable[RulePolicy]) -> SnapshotNeeds:
+    """The facts evaluating *policies* reads, so snapshots can skip the rest."""
+    needs = SnapshotNeeds()
+    for policy in policies:
+        table = policy.table_condition
+        if table.kind == "tags":
+            needs = needs.union(SnapshotNeeds(table_tags=True))
+        elif table.kind == "builder" and table.expr is not None:
+            for row in table.expr.rows:
+                needs = needs.union(_row_needs(row))
+        for cond in policy.column_conditions.values():
+            if cond.kind == "tags":
+                needs = needs.union(SnapshotNeeds(column_tags=True))
+            elif cond.expr is not None:
+                for row in cond.expr.rows:
+                    needs = needs.union(_row_needs(row))
+    return needs
 
 
 @dataclass(frozen=True)

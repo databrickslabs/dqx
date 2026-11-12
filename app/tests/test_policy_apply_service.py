@@ -37,7 +37,7 @@ from databricks_labs_dqx_app.backend.services.policy_apply_service import (
     PolicyApplyService,
     RuleNotFoundError,
 )
-from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, TableSnapshot
+from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, SnapshotNeeds, TableSnapshot
 from databricks_labs_dqx_app.backend.services.policy_snapshot import PolicySnapshotReader, SnapshotResult
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyNotFoundError, RulePolicyService
@@ -147,7 +147,7 @@ class World:
     def set_tables(self, *tables: TableSnapshot) -> None:
         result = SnapshotResult(tables=list(tables), truncated=False, unreadable_catalogs=[])
         self.snapshots.for_scope.return_value = result
-        self.snapshots.for_tables.side_effect = lambda fqns: SnapshotResult(
+        self.snapshots.for_tables.side_effect = lambda fqns, **_: SnapshotResult(
             tables=[t for t in tables if t.table_fqn in fqns], truncated=False, unreadable_catalogs=[]
         )
 
@@ -459,7 +459,8 @@ def test_evaluate_binding_runs_all_policies_for_table(world: World) -> None:
         ("b1", "r1", "email", "p1"),
         ("b1", "r2", "ssn", "p2"),
     }
-    world.snapshots.for_tables.assert_called_once_with(["c.s.t"])
+    world.snapshots.for_tables.assert_called_once()
+    assert world.snapshots.for_tables.call_args.args[0] == ["c.s.t"]
     assert set(world.registry.get_rules_many.call_args.args[0]) == {"r1", "r2"}
 
 
@@ -643,7 +644,8 @@ def test_run_policies_shares_one_snapshot_per_scope(world: World) -> None:
     result = world.service().run_policies(["p1", "p2", "p3"], AUTHOR)
 
     assert result.attached == 3
-    world.snapshots.for_tables.assert_called_once_with(["c.s.t"])
+    world.snapshots.for_tables.assert_called_once()
+    assert world.snapshots.for_tables.call_args.args[0] == ["c.s.t"]
     world.monitored.list_table_bindings.assert_called_once()
 
 
@@ -702,7 +704,8 @@ def test_policy_with_register_scans_the_scope(world: World) -> None:
 
     assert (result.attached, result.registered) == (2, 1)
     world.snapshots.for_scope.assert_called_once()
-    world.snapshots.for_tables.assert_called_once_with(["c.s.a"])
+    world.snapshots.for_tables.assert_called_once()
+    assert world.snapshots.for_tables.call_args.args[0] == ["c.s.a"]
     assert world.registered == ["c.s.new"]
 
 
@@ -738,7 +741,8 @@ def test_register_policy_for_a_user_who_cannot_register_reads_only_monitored(wor
     world.service().preview("r1", _policy_in(register_tables=True), VIEWER)
 
     world.snapshots.for_scope.assert_not_called()
-    world.snapshots.for_tables.assert_called_once_with(["c.s.a"])
+    world.snapshots.for_tables.assert_called_once()
+    assert world.snapshots.for_tables.call_args.args[0] == ["c.s.a"]
 
 
 def test_no_monitored_table_in_scope_reads_nothing(world: World) -> None:
@@ -829,3 +833,19 @@ def test_in_scope_policy_of_unapproved_rule_reads_nothing(world: World) -> None:
     assert svc.ambiguous_for_binding("b1", AUTHOR) == []
     world.snapshots.for_tables.assert_not_called()
     world.permissions.has_privilege.assert_not_called()
+
+
+def test_reads_ask_only_for_the_facts_the_policies_use(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    world.policies.get.return_value = _policy()
+    world.policies.list_all.return_value = [_policy()]
+    svc = world.service()
+
+    svc.run_policy("p1", AUTHOR)
+    svc.evaluate_binding("b1", AUTHOR)
+    svc.preview("r1", _policy_in(), AUTHOR)
+
+    needs = [c.kwargs["needs"] for c in world.snapshots.for_tables.call_args_list]
+    assert needs == [SnapshotNeeds(column_tags=True)] * 3

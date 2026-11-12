@@ -2,8 +2,13 @@ import threading
 import time
 from unittest.mock import create_autospec
 
+from databricks.sdk.errors import NotFound
+from databricks.sdk.service.catalog import ColumnInfo as SdkColumnInfo
+from databricks.sdk.service.catalog import TableInfo
+
 from databricks_labs_dqx_app.backend.cache import CacheFactory
 from databricks_labs_dqx_app.backend.policy_models import PolicyScope
+from databricks_labs_dqx_app.backend.services.policy_engine import SnapshotNeeds
 from databricks_labs_dqx_app.backend.services.policy_snapshot import MAX_SNAPSHOT_TABLES, PolicySnapshotReader
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -437,3 +442,109 @@ def test_owner_lookup_failure_still_yields_tables_without_owners():
     result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
     assert result.unreadable_catalogs == []
     assert {t.schema_owner for t in result.tables} == {None} and {t.catalog_owner for t in result.tables} == {None}
+
+
+# ---------------------------------------------------------------------------
+# Need-driven reads (perf P4)
+# ---------------------------------------------------------------------------
+
+
+def _kinds(queries: list[str]) -> list[str]:
+    return sorted(next(name for marker, name in _TABLE_KINDS if marker in q) for q in queries)
+
+
+def test_column_tags_only_reads_tables_columns_and_column_tags():
+    sql, queries = _make_sql(_main_data())
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]), needs=SnapshotNeeds(column_tags=True))
+    assert _kinds(queries) == ["column_tags", "columns", "tables"]
+    orders = next(t for t in result.tables if t.table_fqn == "main.sales.orders")
+    assert {c.name: c.tags for c in orders.columns}["email"] == ("class.pii", "sensitivity=high")
+    assert orders.owner == "alice" and orders.table_tags == () and orders.schema_owner is None
+
+
+def test_schema_tag_and_owner_needs_add_their_reads():
+    sql, queries = _make_sql(_main_data())
+    needs = SnapshotNeeds(schema_tags=True, schema_owner=True, catalog_owner=True)
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]), needs=needs)
+    assert _kinds(queries) == ["catalogs", "columns", "schema_tags", "schemata", "tables"]
+    orders = next(t for t in result.tables if t.table_fqn == "main.sales.orders")
+    assert (orders.schema_tags, orders.schema_owner, orders.catalog_owner) == (("tier",), "bob", "carol")
+
+
+def _table_info(fqn: str, owner: str, *columns: tuple[str, str]) -> TableInfo:
+    catalog, schema, name = fqn.split(".")
+    return TableInfo(
+        catalog_name=catalog,
+        schema_name=schema,
+        name=name,
+        owner=owner,
+        columns=[SdkColumnInfo(name=c, type_text=t, position=i) for i, (c, t) in enumerate(columns)],
+    )
+
+
+def _sdk_tables(known: dict[str, TableInfo], calls: list[str]):
+    def get_table(fqn: str) -> TableInfo:
+        calls.append(fqn)
+        if fqn not in known:
+            raise NotFound("no such table")
+        return known[fqn]
+
+    return get_table
+
+
+def test_small_table_set_uses_the_sdk_and_only_the_column_tags_statement():
+    sql, queries = _make_sql(_main_data())
+    calls: list[str] = []
+    known = {"main.sales.orders": _table_info("main.sales.orders", "alice", ("id", "bigint"), ("email", "string"))}
+    reader = PolicySnapshotReader(sql, lambda: [], get_table=_sdk_tables(known, calls))
+
+    result = reader.for_tables(["main.sales.orders", "main.sales.hidden"], needs=SnapshotNeeds(column_tags=True))
+
+    assert sorted(calls) == ["main.sales.hidden", "main.sales.orders"]
+    assert _kinds(queries) == ["column_tags"]
+    [orders] = result.tables
+    assert orders.owner == "alice"
+    assert [(c.name, c.type_name, c.tags) for c in orders.columns] == [
+        ("id", "bigint", ()),
+        ("email", "string", ("class.pii", "sensitivity=high")),
+    ]
+
+
+def test_small_table_set_without_tag_needs_issues_no_sql():
+    sql, queries = _make_sql(_main_data())
+    known = {"main.sales.orders": _table_info("main.sales.orders", "alice", ("id", "bigint"))}
+    reader = PolicySnapshotReader(sql, lambda: [], get_table=_sdk_tables(known, []))
+    assert [t.table_fqn for t in reader.for_tables(["main.sales.orders"], needs=SnapshotNeeds()).tables] == [
+        "main.sales.orders"
+    ]
+    assert queries == []
+
+
+def test_small_table_set_sdk_failure_marks_catalog_unreadable():
+    sql, _ = _make_sql(_main_data())
+
+    def boom(fqn: str) -> TableInfo:
+        raise RuntimeError("down")
+
+    result = PolicySnapshotReader(sql, lambda: [], get_table=boom).for_tables(["main.sales.orders"])
+    assert result.unreadable_catalogs == ["main"] and result.tables == []
+
+
+def test_large_table_sets_use_information_schema_even_with_the_sdk():
+    sql, queries = _make_sql({"main": {"tables": [["s", f"t{i}", None] for i in range(25)]}})
+    calls: list[str] = []
+    reader = PolicySnapshotReader(sql, lambda: [], get_table=_sdk_tables({}, calls))
+    assert len(reader.for_tables([f"main.s.t{i}" for i in range(25)], needs=SnapshotNeeds()).tables) == 25
+    assert calls == [] and _kinds(queries) == ["columns", "tables"]
+
+
+def test_cached_table_is_reused_only_when_it_has_the_needed_facts():
+    sql, queries = _make_sql(_main_data())
+    cache = CacheFactory()
+    _cached_reader(sql, cache).for_tables(["main.sales.orders"], needs=SnapshotNeeds(column_tags=True))
+    queries.clear()
+
+    _cached_reader(sql, cache).for_tables(["main.sales.orders"], needs=SnapshotNeeds())
+    assert queries == []  # fewer facts: served from cache
+    _cached_reader(sql, cache).for_tables(["main.sales.orders"], needs=SnapshotNeeds(table_tags=True))
+    assert "table_tags" in _kinds(queries)  # more facts: read again

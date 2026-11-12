@@ -37,7 +37,15 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRu
 from databricks_labs_dqx_app.backend.services.monitored_table_registration import can_register_tables
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
-from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch, TableSnapshot, evaluate, in_scope
+from databricks_labs_dqx_app.backend.services.policy_engine import (
+    ALL_NEEDS,
+    PolicyMatch,
+    SnapshotNeeds,
+    TableSnapshot,
+    evaluate,
+    in_scope,
+    needs_of,
+)
 from databricks_labs_dqx_app.backend.services.policy_snapshot import PolicySnapshotReader, SnapshotResult
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyNotFoundError, RulePolicyService
@@ -133,6 +141,7 @@ def _matched_columns(matches: list[PolicyMatch]) -> set[str]:
 class _RunReads:
     """What one evaluation run has read so far, shared by every policy it evaluates."""
 
+    needs: SnapshotNeeds = ALL_NEEDS  # facts the run's policies read (see policy_engine.needs_of)
     monitored: dict[str, str] | None = None  # table_fqn -> binding_id of every monitored table
     snapshots: dict[tuple[str, bool], tuple[SnapshotResult, dict[str, str]]] = field(default_factory=dict)
 
@@ -295,7 +304,7 @@ class PolicyApplyService:
             raise RuleNotFoundError(f"Registry rule '{rule_id}' not found.")
         policy = RulePolicy(**body.model_dump(), policy_id=_PREVIEW_POLICY_ID, rule_id=rule_id)
         may_register = policy.register_tables and can_register_tables(user.role)
-        snapshot, bindings = self._read_scope(policy.scope, may_register, _RunReads())
+        snapshot, bindings = self._read_scope(policy.scope, may_register, _RunReads(needs=needs_of([policy])))
         gate = _UserGate(user, self._permissions, self._apply_rules)
         tables: list[PreviewTable] = []
         for table in snapshot.tables:
@@ -342,7 +351,7 @@ class PolicyApplyService:
         try:
             rule = self._approved_rule(policy.rule_id)
             if rule is not None:
-                self._run_scope(policy, rule, user, totals, _RunReads())
+                self._run_scope(policy, rule, user, totals, _RunReads(needs=needs_of([policy])))
         except Exception:  # best-effort trigger: report what was done so far
             logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -358,7 +367,7 @@ class PolicyApplyService:
         except Exception:  # best-effort trigger: a storage failure must not fail the approval
             logger.warning(f"Could not load policies for rule {safe_log_value(rule_id)}", exc_info=True)
             return _EMPTY_RESULT
-        reads = _RunReads()
+        reads = _RunReads(needs=needs_of(policies))
         for policy in policies:
             try:
                 self._run_scope(policy, rule, user, totals, reads)
@@ -372,15 +381,21 @@ class PolicyApplyService:
         Best-effort and never raises: an unknown or failing policy is logged and skipped.
         """
         totals = self._totals()
-        reads = _RunReads()
+        runnable: list[tuple[RulePolicy, RegistryRule]] = []
         for policy_id in policy_ids:
             try:
                 policy = self._policies.get(policy_id)
                 rule = self._approved_rule(policy.rule_id) if policy is not None else None
                 if policy is not None and rule is not None:
-                    self._run_scope(policy, rule, user, totals, reads)
+                    runnable.append((policy, rule))
+            except Exception:  # best-effort trigger: one policy failing to load must not stop the others
+                logger.warning(f"Could not load rule policy {safe_log_value(policy_id)}", exc_info=True)
+        reads = _RunReads(needs=needs_of(policy for policy, _ in runnable))
+        for policy, rule in runnable:
+            try:
+                self._run_scope(policy, rule, user, totals, reads)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
-                logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
+                logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
         return totals.result()
 
     def evaluate_binding(self, binding_id: str, user: ActingUser) -> ApplyResult:
@@ -461,7 +476,7 @@ class PolicyApplyService:
             return hit
         snapshot, bindings = self._read_monitored(scope, reads)
         if full_scan:
-            scan = self._snapshots.for_scope(scope)
+            scan = self._snapshots.for_scope(scope, needs=reads.needs)
             known = {fqn.lower() for fqn in self._monitored(reads)}
             extra = [t for t in scan.tables if t.table_fqn.lower() not in known]
             snapshot = SnapshotResult(
@@ -481,7 +496,7 @@ class PolicyApplyService:
         reachable = {fqn: b for fqn, b in self._monitored(reads).items() if in_scope(scope, fqn)}
         if not reachable:
             return SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[]), {}
-        snapshot = self._snapshots.for_tables(list(reachable))
+        snapshot = self._snapshots.for_tables(list(reachable), needs=reads.needs)
         by_name = {fqn.lower(): b for fqn, b in reachable.items()}
         bindings = {
             t.table_fqn: by_name[t.table_fqn.lower()] for t in snapshot.tables if t.table_fqn.lower() in by_name
@@ -515,7 +530,8 @@ class PolicyApplyService:
         if not reaching:
             return
         allowed = {fqn: table_bindings[fqn] for fqn in reaching}
-        snapshot = self._snapshots.for_tables(list(reaching))
+        needs = needs_of(policy for policies in reaching.values() for policy in policies)
+        snapshot = self._snapshots.for_tables(list(reaching), needs=needs)
         tables = {table.table_fqn.lower(): table for table in snapshot.tables}
         for fqn, policies in reaching.items():
             table = tables.get(fqn.lower())

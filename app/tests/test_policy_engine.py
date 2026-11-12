@@ -14,8 +14,11 @@ from databricks_labs_dqx_app.backend.services.policy_engine import (
     TableSnapshot,
     column_condition_holds,
     evaluate,
+    ALL_NEEDS,
+    SnapshotNeeds,
     in_scope,
     like,
+    needs_of,
     table_condition_holds,
 )
 
@@ -249,3 +252,54 @@ def test_too_many_combinations_is_single_ambiguous():
     out = evaluate(p, [slot("a"), slot("b", 1)], snap(cols))
     assert len(out) == 1 and out[0].status == "ambiguous" and out[0].column_mapping == {}
     assert out[0].reason == "too many possible column combinations"
+
+
+# ---------------------------------------------------------------------------
+# Facts a policy needs from a snapshot (need-driven reads)
+# ---------------------------------------------------------------------------
+
+
+def _needs_policy(table: TableCondition | None = None, **columns: ColumnCondition) -> RulePolicy:
+    return RulePolicy(
+        name="p",
+        policy_id="p1",
+        rule_id="r1",
+        table_condition=table or TableCondition(),
+        column_conditions=columns,
+    )
+
+
+def _rows(*rows: tuple[str, str]) -> ConditionExpr:
+    return ConditionExpr(
+        rows=[
+            ConditionRow(combinator=None if i == 0 else "AND", object=obj, predicate=pred, value="x")
+            for i, (obj, pred) in enumerate(rows)
+        ]
+    )
+
+
+def test_needs_of_column_tags_only():
+    needs = needs_of([_needs_policy(column=ColumnCondition(kind="tags", tags=["class=pii"]))])
+    assert needs == SnapshotNeeds(column_tags=True)
+
+
+def test_needs_of_column_name_rows_need_no_tags():
+    cond = ColumnCondition(kind="builder", expr=_rows(("column", "name_like"), ("column", "has_name")))
+    assert needs_of([_needs_policy(column=cond)]) == SnapshotNeeds()
+
+
+def test_needs_of_table_builder_rows_pick_their_level():
+    table = TableCondition(
+        kind="builder",
+        expr=_rows(("schema", "has_tag"), ("catalog", "has_owner"), ("table", "not_has_tag"), ("schema", "has_owner")),
+    )
+    assert needs_of([_needs_policy(table)]) == SnapshotNeeds(
+        table_tags=True, schema_tags=True, schema_owner=True, catalog_owner=True
+    )
+
+
+def test_needs_of_unions_policies_and_table_tags_condition():
+    first = _needs_policy(TableCondition(kind="tags", tags=["domain"]))
+    second = _needs_policy(TableCondition(kind="builder", expr=_rows(("catalog", "has_tag"))))
+    assert needs_of([first, second]) == SnapshotNeeds(table_tags=True, catalog_tags=True)
+    assert ALL_NEEDS.covers(needs_of([first, second])) and not SnapshotNeeds().covers(ALL_NEEDS)

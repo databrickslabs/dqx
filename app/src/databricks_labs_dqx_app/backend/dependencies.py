@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import TableInfo
 from databricks.sdk.service.iam import User
 from fastapi import Depends, Header, HTTPException, Request, status
 
@@ -1524,17 +1525,22 @@ async def get_policy_snapshot_reader(
 
     Both the information_schema queries and the "All catalogs" listing run as the
     calling user, so a policy only ever sees tables that user can see. Per-table
-    snapshots are cached for 5 minutes per user (keyed by a hash of their email).
+    snapshots are cached for 5 minutes per user (keyed by a hash of their email);
+    small explicit table sets read columns and owners via the OBO ``tables.get``.
     """
 
     def _list_catalogs() -> list[str]:
         return sorted(c.name for c in obo_ws.catalogs.list() if c.name)
+
+    def _get_table(table_fqn: str) -> TableInfo:
+        return obo_ws.tables.get(full_name=table_fqn)
 
     return PolicySnapshotReader(
         sql=obo_sql,
         list_catalogs=_list_catalogs,
         cache=app_cache,
         cache_identity=snapshot_cache_identity(email),
+        get_table=_get_table,
     )
 
 
