@@ -429,6 +429,30 @@ def is_table_location(location: str) -> bool:
     )
 
 
+_LAKEBASE_ENDPOINT_PATTERN = re.compile(r"projects/[^/]+/branches/[^/]+/endpoints/[^/]+")
+
+
+def validate_lakebase_connection(instance_name: str | None, endpoint: str | None) -> None:
+    """Validate the Lakebase connection target of a checks storage config.
+
+    Args:
+        instance_name: Name of a Lakebase database instance.
+        endpoint: Resource name of a Lakebase Autoscaling endpoint.
+
+    Raises:
+        InvalidParameterError: If both *instance_name* and *endpoint* are set.
+        InvalidConfigError: If *endpoint* is not in the format 'projects/<p>/branches/<b>/endpoints/<e>'.
+    """
+    if instance_name and endpoint:
+        raise InvalidParameterError("Specify either 'instance_name' or 'endpoint', not both.")
+
+    if endpoint and not _LAKEBASE_ENDPOINT_PATTERN.fullmatch(endpoint):
+        raise InvalidConfigError(
+            f"Invalid Lakebase endpoint '{endpoint}'. "
+            "Must be in the format 'projects/<project>/branches/<branch>/endpoints/<endpoint>'."
+        )
+
+
 def _is_three_part_table_location(location: str) -> bool:
     """Return True if *location* is a table (not a file) with an exact three-part name.
 
@@ -550,7 +574,11 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     Args:
         location: Fully qualified name of the Lakebase table to store checks in the format 'database.schema.table'.
-        instance_name: Name of the Lakebase instance.
+        instance_name: Name of the Lakebase database instance (Lakebase Provisioned). Mutually exclusive with
+            *endpoint*.
+        endpoint: Resource name of a Lakebase Autoscaling endpoint, in the format
+            'projects/<project>/branches/<branch>/endpoints/<endpoint>' (for example, the Lakebase project that a
+            DQX Studio DAB install provisions). Mutually exclusive with *instance_name*.
         client_id: ID of the Databricks service principal to use for the Lakebase connection.
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
@@ -565,6 +593,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
 
     instance_name: str | None = None
+    endpoint: str | None = None
     client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
@@ -583,8 +612,13 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         if self.__class__ is not LakebaseChecksStorageConfig:
             return self
 
-        if not self.instance_name:
-            raise InvalidParameterError("Instance name must not be empty or None.")
+        if not self.instance_name and not self.endpoint:
+            raise InvalidParameterError(
+                "Instance name must not be empty or None. Set 'instance_name' for a Lakebase database instance "
+                "or 'endpoint' for a Lakebase Autoscaling endpoint."
+            )
+
+        validate_lakebase_connection(self.instance_name, self.endpoint)
 
         # Lakebase requires an exact three-part database.schema.table name that is a table, not a file.
         if not _is_three_part_table_location(self.location):
