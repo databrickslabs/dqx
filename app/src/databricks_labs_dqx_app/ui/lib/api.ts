@@ -18654,9 +18654,9 @@ export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeo
 /**
  * Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
-First evaluates every rule policy reaching this table as the caller (so it
-only attaches where they may apply rules), so newly-matching rules appear in
-the response immediately. Best-effort: a policy failure never blocks the read.
+After responding, evaluates every rule policy reaching this table as the
+caller (so it only attaches where they may apply rules); rules it attaches
+show up on the next read. Best-effort: a policy failure never affects the read.
  * @summary Get Monitored Table
  */
 export const getMonitoredTable = (
