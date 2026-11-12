@@ -138,8 +138,12 @@ def test_a_slow_load_from_an_older_generation_does_not_replace_the_current_entry
     assert loads == ["current"]  # the current generation's entry survived the slow store
 
 
-def test_releasing_a_claim_lets_the_next_open_run() -> None:
-    debounce = OpenEvaluationDebounce(PolicyGeneration(), clock=_Clock())
+def test_releasing_a_claim_retries_after_a_short_back_off() -> None:
+    clock = _Clock()
+    debounce = OpenEvaluationDebounce(PolicyGeneration(), failure_backoff_seconds=30, clock=clock)
     _, key = debounce.claim("u", "b1")
     debounce.release(key)
+    clock.now = 10
+    assert debounce.claim("u", "b1")[0] is OpenClaim.SKIP
+    clock.now = 31
     assert debounce.claim("u", "b1")[0] is OpenClaim.RUN

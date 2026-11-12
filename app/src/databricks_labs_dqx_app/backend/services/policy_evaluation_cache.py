@@ -32,6 +32,7 @@ from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 CATALOG_TTL_SECONDS = 60.0
 OPEN_DEBOUNCE_SECONDS = 300.0
 OPEN_RUNNING_TIMEOUT_SECONDS = 120.0  # a claimed evaluation that never finished is retried after this
+OPEN_FAILURE_BACKOFF_SECONDS = 30.0  # an incomplete evaluation is retried on open after this
 MAX_DEBOUNCE_ENTRIES = 10_000
 
 
@@ -136,6 +137,7 @@ class OpenClaim(Enum):
 class _OpenEntry:
     claimed_at: float
     running: bool
+    skip_for: float | None = None  # how long a finished entry skips opens (None = the debounce TTL)
 
 
 class OpenEvaluationDebounce:
@@ -147,12 +149,14 @@ class OpenEvaluationDebounce:
         *,
         ttl_seconds: float = OPEN_DEBOUNCE_SECONDS,
         running_timeout_seconds: float = OPEN_RUNNING_TIMEOUT_SECONDS,
+        failure_backoff_seconds: float = OPEN_FAILURE_BACKOFF_SECONDS,
         max_entries: int = MAX_DEBOUNCE_ENTRIES,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._generation = generation
         self._ttl = ttl_seconds
         self._running_timeout = running_timeout_seconds
+        self._failure_backoff = failure_backoff_seconds
         self._max_entries = max_entries
         self._clock = clock
         self._lock = threading.Lock()
@@ -167,7 +171,8 @@ class OpenEvaluationDebounce:
             if entry is not None:
                 if entry.running and now - entry.claimed_at < self._running_timeout:
                     return OpenClaim.PENDING, key
-                if not entry.running and now - entry.claimed_at < self._ttl:
+                window = self._ttl if entry.skip_for is None else entry.skip_for
+                if not entry.running and now - entry.claimed_at < window:
                     return OpenClaim.SKIP, key
             self._entries[key] = _OpenEntry(claimed_at=now, running=True)
             self._entries.move_to_end(key)
@@ -182,9 +187,14 @@ class OpenEvaluationDebounce:
                 entry.running = False
 
     def release(self, key: tuple[str, str, int]) -> None:
-        """Forget the claim under *key* (the evaluation failed or was incomplete): the next open runs again."""
+        """The evaluation under *key* failed or was incomplete: opens retry it after the short failure back-off.
+
+        A persistent failure (warehouse down, unreadable tombstones) therefore re-runs at
+        most once per back-off instead of on every poll.
+        """
         with self._lock:
-            self._entries.pop(key, None)
+            self._entries[key] = _OpenEntry(claimed_at=self._clock(), running=False, skip_for=self._failure_backoff)
+            self._entries.move_to_end(key)
 
     def _evict(self, now: float) -> None:
         horizon = max(self._ttl, self._running_timeout)

@@ -25,6 +25,15 @@ export function nextPolicyRefetchDelay(pending: boolean | undefined, attemptsSoF
   return elapsed + delay <= POLICY_REFETCH_BUDGET_MS ? delay : null;
 }
 
+/** Re-read count to continue from: a new evaluation (pending going false -> true) restarts the budget. */
+export function refetchAttemptsAfter(
+  previousPending: boolean | undefined,
+  pending: boolean | undefined,
+  attempts: number,
+): number {
+  return previousPending === false && pending === true ? 0 : attempts;
+}
+
 /** Persisted ids of the rows the editor loaded — sent with a save so it only removes what the user saw. */
 export function knownAppliedIds(rows: { id?: string | null }[]): string[] {
   return [...new Set(rows.map((row) => row.id).filter((id): id is string => typeof id === "string" && id !== ""))];

@@ -682,7 +682,11 @@ class ApplyRulesService:
         - An existing row of the rule whose mapping equals the entry's, or whose
           groups are all among the entry's groups, is kept and updated in place
           (pin / severity / filter / threshold / tags) via :meth:`apply_rule`.
-        - The entry's groups no kept row covers are inserted as one new row.
+        - The entry's groups no kept row covers are inserted as one new row (so adding
+          a column to a multi-column hand row adds a second row for it; both are kept
+          on later saves).
+        - A known auto-made row whose groups kept rows already cover (a duplicate
+          left by an earlier policy run) is dropped WITHOUT a tombstone.
         - Any other existing row (rule not desired, or a group no longer
           desired) is removed via :meth:`remove_applied` (which tombstones
           auto-made rows) — but only when it is in *known_applied_ids*.
@@ -724,7 +728,6 @@ class ApplyRulesService:
 
         # Validate every entry up front so a bad one never leaves a
         # half-applied set (no removals or upserts have happened yet).
-        desired_hashes: dict[str, str] = {}
         for entry in deduped_entries:
             rule = self._registry.get_rule(entry.rule_id)
             if rule is None:
@@ -736,13 +739,15 @@ class ApplyRulesService:
                 )
             self._validate_mapping_complete(entry.column_mapping, rule.definition.slots)
             validate_row_filter(entry.row_filter)
-            desired_hashes[entry.rule_id] = compute_mapping_hash(entry.column_mapping)
 
         known = None if known_applied_ids is None else set(known_applied_ids)
-        keep, unknown, remove = self._plan_reconcile(self.list_applied(binding_id), deduped_entries, known)
+        keep, unknown, remove, redundant = self._plan_reconcile(self.list_applied(binding_id), deduped_entries, known)
         for existing in remove:
             if existing.id is not None:
                 self.remove_applied(existing.id, user_email)
+        for existing in redundant:
+            if existing.id is not None:  # a duplicate of a kept row: nothing the user removed, so no tombstone
+                self.remove_applied(existing.id, user_email, record_suppression=False)
 
         results: list[AppliedRule] = []
         covered: dict[str, set[str]] = {}
@@ -775,8 +780,12 @@ class ApplyRulesService:
     @staticmethod
     def _plan_reconcile(
         existing: list[AppliedRule], entries: list[DesiredAppliedRule], known: set[str] | None
-    ) -> tuple[list[AppliedRule], list[AppliedRule], list[AppliedRule]]:
-        """Split *existing* rows into ``(keep, unknown, remove)`` for :meth:`save_applied_rules`."""
+    ) -> tuple[list[AppliedRule], list[AppliedRule], list[AppliedRule], list[AppliedRule]]:
+        """Split *existing* rows into ``(keep, unknown, remove, redundant)`` for :meth:`save_applied_rules`.
+
+        Rows whose whole mapping equals the entry's come first, then hand-applied rows, then
+        auto-made ones, so a duplicate auto row is the one found redundant.
+        """
         by_rule = {entry.rule_id: entry for entry in entries}
         exact = {entry.rule_id: compute_mapping_hash(entry.column_mapping) for entry in entries}
         groups = {entry.rule_id: set(_group_hashes(entry.column_mapping)) for entry in entries}
@@ -785,8 +794,12 @@ class ApplyRulesService:
         keep: list[AppliedRule] = []
         unknown: list[AppliedRule] = []
         remove: list[AppliedRule] = []
-        # Rows whose whole mapping equals the entry's are matched first.
-        for row in sorted(existing, key=lambda r: r.mapping_hash != exact.get(r.rule_id)):
+        redundant: list[AppliedRule] = []
+
+        def order(row: AppliedRule) -> tuple[bool, bool]:
+            return row.mapping_hash != exact.get(row.rule_id), row.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS
+
+        for row in sorted(existing, key=order):
             row_groups = set(_group_hashes(row.column_mapping))
             taken = covered.setdefault(row.rule_id, set())
             if row.rule_id in by_rule:
@@ -802,8 +815,12 @@ class ApplyRulesService:
                 unknown.append(row)  # created after the caller loaded the binding: never removed here
                 taken.update(row_groups)
                 continue
+            auto = row.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS
+            if auto and row.rule_id in by_rule and row_groups and row_groups <= taken:
+                redundant.append(row)
+                continue
             remove.append(row)
-        return keep, unknown, remove
+        return keep, unknown, remove, redundant
 
     def _reapply(
         self, binding_id: str, entry: DesiredAppliedRule, column_mapping: list[ColumnMappingGroup], user_email: str
@@ -928,7 +945,9 @@ class ApplyRulesService:
     # Remove
     # ------------------------------------------------------------------
 
-    def remove_applied(self, applied_rule_id: str, user_email: str | None = None) -> None:
+    def remove_applied(
+        self, applied_rule_id: str, user_email: str | None = None, *, record_suppression: bool = True
+    ) -> None:
         """Remove an applied rule and every ``dq_resolved_rules`` row it materialized.
 
         Suppression tombstone: when the removed row was auto-applied
@@ -945,6 +964,8 @@ class ApplyRulesService:
             applied_rule_id: The applied-rule row to remove.
             user_email: The acting remover, recorded as ``suppressed_by`` on a
                 tombstone when the removed row was auto-applied.
+            record_suppression: ``False`` drops an auto-made row without a tombstone
+                (a redundant duplicate the user did not remove).
 
         Raises:
             RuntimeError: *applied_rule_id* does not exist.
@@ -954,7 +975,7 @@ class ApplyRulesService:
             raise RuntimeError(f"Applied rule not found: {applied_rule_id}")
         self._sql.delete(self._quality_rules_table, where={"applied_rule_id": applied_rule_id})
         self._sql.delete(self._table, where={"id": applied_rule_id})
-        if existing.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS and existing.mapping_hash:
+        if record_suppression and existing.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS and existing.mapping_hash:
             self._record_suppression(existing.binding_id, existing.rule_id, existing.mapping_hash, user_email)
         logger.info(
             "Removed applied rule %s (binding=%s, rule=%s)", applied_rule_id, existing.binding_id, existing.rule_id

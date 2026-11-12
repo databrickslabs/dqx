@@ -1102,3 +1102,19 @@ class TestSaveAppliedRulesGuards:
 
         assert result.user_metadata == {"k": "v"}
         assert '"origin"' not in store.inserts[0]
+
+    def test_a_policy_row_duplicating_a_kept_hand_row_is_dropped_without_a_tombstone(self, svc, sql, registry):
+        # Legacy hand row {a, b} plus a policy row {a} attached before the gate knew per-group keys.
+        registry.get_rule.return_value = _published_rule()
+        both = [{"column": "a"}, {"column": "b"}]
+        hand = _applied_row(id_="ar-hand", column_mapping=both, mapping_hash=compute_mapping_hash(both))
+        for rows in ([hand, _policy_row("ar-pol", "a")], [_policy_row("ar-pol", "a"), hand]):  # either age order
+            store = _AppliedStore(sql, rows)
+            desired = [DesiredAppliedRule(rule_id="r1", column_mapping=both, severity_override="Low")]
+
+            results = svc.save_applied_rules("b1", desired, "alice@x", known_applied_ids=["ar-hand", "ar-pol"])
+
+            assert store.deleted == ["ar-pol"]
+            assert store.tombstones == []  # the user removed nothing: no suppression is recorded
+            assert store.inserts == []
+            assert [r.id for r in results] == ["ar-hand"]

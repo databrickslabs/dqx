@@ -295,3 +295,21 @@ def test_unsafe_legacy_tags_are_a_permanent_failure() -> None:
     assert deps.run() == 0
     deps.policies.create.assert_not_called()
     assert deps.rows[MIGRATED_MARKER_KEY] == "true"
+
+
+def test_unreadable_progress_fails_closed() -> None:
+    deps = _Deps({"tag_auto_apply": "true", "rule_policies_migrated_rules": "{not json"})
+    deps.registry.list_rules.return_value = [_rule("r1", "First", {"column": ["a"]})]
+
+    assert deps.run() == 0
+    deps.policies.create.assert_not_called()
+    assert MIGRATED_MARKER_KEY not in deps.rows
+
+
+def test_an_incidental_value_error_is_transient() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [_rule("r1", "First", {"column": ["a"]})]
+    deps.applied.restamp_tag_auto_to_policy.side_effect = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+
+    assert deps.run() == 0
+    assert MIGRATED_MARKER_KEY not in deps.rows

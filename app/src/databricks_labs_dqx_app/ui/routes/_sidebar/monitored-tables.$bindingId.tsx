@@ -108,6 +108,7 @@ import {
   appendMissingRows,
   knownAppliedIds,
   newServerRows,
+  refetchAttemptsAfter,
   nextPolicyRefetchDelay,
 } from "@/lib/policy-evaluation-refetch";
 import {
@@ -445,12 +446,20 @@ function MonitoredTableDetailPage() {
   // most), so the rules it attaches appear without a manual reload.
   const policyRefetchAttemptsRef = useRef(0);
   const policyRefetchBindingRef = useRef(bindingId);
+  const policyPendingRef = useRef<boolean | undefined>(undefined);
   const policyEvaluationPending = detail.policy_evaluation_pending;
   useEffect(() => {
     if (policyRefetchBindingRef.current !== bindingId) {
       policyRefetchBindingRef.current = bindingId;
       policyRefetchAttemptsRef.current = 0;
     }
+    // A later read can start a new evaluation (a policy or grant changed): give it a fresh budget.
+    policyRefetchAttemptsRef.current = refetchAttemptsAfter(
+      policyPendingRef.current,
+      policyEvaluationPending,
+      policyRefetchAttemptsRef.current,
+    );
+    policyPendingRef.current = policyEvaluationPending;
     const delay = nextPolicyRefetchDelay(policyEvaluationPending, policyRefetchAttemptsRef.current);
     if (delay === null) return;
     const timer = window.setTimeout(() => {

@@ -1090,7 +1090,8 @@ def test_a_failed_open_evaluation_is_retried_on_the_next_open(opening: _OpenWorl
     assert opening.open() is True
 
     opening.world.set_tables(_snap("c.s.t", _col("email", "pii")))
-    assert opening.open() is True  # the incomplete read released the claim instead of debouncing
+    opening.clock.now += 31  # after the short failure back-off, not the full debounce window
+    assert opening.open() is True
     assert opening.world.attach_calls == [("b1", "r1", [{"column": "email"}], "alice@x", "p1")]
 
 
@@ -1098,6 +1099,7 @@ def test_an_unreadable_tombstone_set_does_not_debounce_the_open(opening: _OpenWo
     opening.world.suppression_unreadable = {"b1"}
     assert opening.open() is True
     opening.world.suppression_unreadable = set()
+    opening.clock.now += 31
     assert opening.open() is True
     assert len(opening.world.attach_calls) == 1
 
@@ -1134,3 +1136,38 @@ def test_preview_flags_the_catalogs_of_tables_that_could_not_be_read(world: Worl
     preview = world.service().preview("r1", _policy_in(register_tables=True), AUTHOR)
 
     assert preview.unreadable_catalogs == ["c"]  # deduplicated case-insensitively
+
+
+def test_policy_never_attaches_a_group_a_multi_group_row_already_covers(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii"), _col("phone", "pii")))
+    world.applied["b1"] = [
+        AppliedRule(
+            id="hand",
+            binding_id="b1",
+            rule_id="r1",
+            column_mapping=[{"column": "email"}, {"column": "x"}],
+            mapping_hash=compute_mapping_hash([{"column": "email"}, {"column": "x"}]),
+        )
+    ]
+    world.policies.get.return_value = _policy()
+
+    result = world.service().run_policy("p1", AUTHOR)
+
+    assert _attached(world) == [("b1", {"column": "phone"})]  # email is already covered by the hand row
+    assert result.attached == 1
+
+
+def test_a_persistently_failing_open_is_retried_only_after_a_back_off(opening: _OpenWorld) -> None:
+    opening.world.snapshots.for_tables.side_effect = lambda fqns, **_: SnapshotResult(
+        tables=[], truncated=False, unreadable_catalogs=["c"]
+    )
+    assert opening.open() is True
+    calls = opening.world.snapshots.for_tables.call_count
+
+    opening.clock.now += 5
+    assert opening.open() is False  # a poll right after a failure does not start another evaluation
+    assert opening.world.snapshots.for_tables.call_count == calls
+    opening.clock.now += 30
+    assert opening.open() is True

@@ -225,14 +225,16 @@ class _UserGate:
         )
 
     def _applied_keys(self, binding_id: str) -> set[tuple[str, str]]:
-        keys = self._applied.get(binding_id)
-        if keys is None:
-            keys = {
-                (row.rule_id, row.mapping_hash)
-                for row in self._apply_rules.list_applied(binding_id)
-                if row.mapping_hash
-            }
-            self._applied[binding_id] = keys
+        cached = self._applied.get(binding_id)
+        if cached is not None:
+            return cached
+        keys: set[tuple[str, str]] = set()
+        for row in self._apply_rules.list_applied(binding_id):
+            if row.mapping_hash:
+                keys.add((row.rule_id, row.mapping_hash))
+            # A policy match is one mapping group: a group a multi-group row already covers is applied.
+            keys.update((row.rule_id, compute_mapping_hash([group])) for group in row.column_mapping)
+        self._applied[binding_id] = keys
         return keys
 
     def _suppressed_keys(self, binding_id: str) -> set[tuple[str, str]] | None:

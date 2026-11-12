@@ -4,6 +4,7 @@ import {
   POLICY_REFETCH_FIRST_DELAY_MS,
   appendMissingRows,
   knownAppliedIds,
+  refetchAttemptsAfter,
   newServerRows,
   nextPolicyRefetchDelay,
 } from "./policy-evaluation-refetch";
@@ -60,5 +61,17 @@ describe("appendMissingRows", () => {
     const rows = [{ key: "a" }];
     expect(appendMissingRows(rows, [{ key: "a", label: "server" }], key)).toBe(rows);
     expect(appendMissingRows(rows, [{ key: "b" }, { key: "b" }], key)).toEqual([{ key: "a" }, { key: "b" }]);
+  });
+});
+
+describe("refetchAttemptsAfter", () => {
+  test("restarts the budget when a new evaluation starts (pending goes false -> true)", () => {
+    expect(refetchAttemptsAfter(false, true, 6)).toBe(0);
+  });
+
+  test("keeps counting while the same evaluation stays pending or nothing is pending", () => {
+    expect(refetchAttemptsAfter(true, true, 2)).toBe(2);
+    expect(refetchAttemptsAfter(true, false, 2)).toBe(2);
+    expect(refetchAttemptsAfter(undefined, true, 0)).toBe(0);
   });
 });

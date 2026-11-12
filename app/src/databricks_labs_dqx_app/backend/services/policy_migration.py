@@ -18,6 +18,8 @@ suggestions.
 import json
 import logging
 
+from pydantic import ValidationError
+
 from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, PolicyScope, RulePolicy, RulePolicyIn
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, get_rule_name, get_slot_tags
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
@@ -49,8 +51,9 @@ def migrate_slot_tags_to_policies(
     the policies it already created instead of adding copies) and never raises: a failing rule
     is logged and skipped. When the setting or the rules cannot be read, or any rule failed
     transiently, nothing is marked so the next startup retries (skipping rules already
-    migrated). Permanent failures (``ValueError``: name collisions, invalid legacy tags) are
-    logged and do not block completion.
+    migrated; an unreadable progress value stops the migration). Permanent failures
+    (both policy names taken, legacy tags failing validation) are logged and do not block
+    completion.
     """
     try:
         if settings.get_setting(MIGRATED_MARKER_KEY) == _MARKER_VALUE:
@@ -58,6 +61,10 @@ def migrate_slot_tags_to_policies(
         flag = settings.get_setting(LEGACY_TAG_AUTO_APPLY_KEY)
         rules = registry.list_rules() if flag is not None and flag.strip().lower() == "true" else []
         done = _read_progress(settings.get_setting(MIGRATED_RULES_KEY)) if rules else set()
+    except _UnreadableProgress:
+        # Fail closed: starting over could recreate migrated policies an admin has since deleted.
+        logger.warning("Rule policy migration progress is unreadable; migration not run (fix or delete the setting)")
+        return 0
     except Exception:
         logger.warning("Rule policy migration could not read settings or rules; will retry", exc_info=True)
         return 0
@@ -73,7 +80,7 @@ def migrate_slot_tags_to_policies(
             done.add(rule.rule_id)
             settings.save_setting(MIGRATED_RULES_KEY, json.dumps(sorted(done)), user_email=_SYSTEM_USER)
             created += 1
-        except ValueError:  # permanent (validation, both names taken): retrying cannot help
+        except (DuplicatePolicyNameError, ValidationError):  # permanent (both names taken, invalid legacy tags)
             logger.warning(
                 f"Rule policy migration cannot migrate rule {safe_log_value(rule.rule_id)}; skipped", exc_info=True
             )
@@ -109,13 +116,22 @@ def _create_policy(policies: RulePolicyService, rule: RegistryRule, slot_tags: d
         return policies.create(rule.rule_id, body.model_copy(update={"name": suffixed}), _SYSTEM_USER)
 
 
+class _UnreadableProgress(Exception):
+    """The recorded migration progress cannot be parsed."""
+
+
 def _read_progress(raw: str | None) -> set[str]:
-    """Rule ids recorded by an earlier, partial run; an unreadable value counts as none."""
+    """Rule ids recorded by an earlier, partial run.
+
+    Raises:
+        _UnreadableProgress: the stored value is not a JSON list of rule ids.
+    """
     if not raw:
         return set()
     try:
         value = json.loads(raw)
-    except ValueError:
-        logger.warning("Rule policy migration progress is unreadable; starting over")
-        return set()
-    return {item for item in value if isinstance(item, str)} if isinstance(value, list) else set()
+    except ValueError as error:
+        raise _UnreadableProgress() from error
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise _UnreadableProgress()
+    return set(value)
