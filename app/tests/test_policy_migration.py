@@ -212,7 +212,7 @@ def test_partial_failure_is_retried_on_the_next_run_without_duplicate_policies()
 
     deps.applied.restamp_tag_auto_to_policy.side_effect = None
     deps.applied.restamp_tag_auto_to_policy.return_value = 0
-    assert deps.run() == 2
+    assert deps.run() == 1  # only the rule that failed is processed again
 
     assert deps.rows[MIGRATED_MARKER_KEY] == "true"
     assert "tag_auto_apply" not in deps.rows
@@ -220,10 +220,7 @@ def test_partial_failure_is_retried_on_the_next_run_without_duplicate_policies()
         "r1": ["First by tag"],
         "r2": ["Second by tag"],
     }
-    assert deps.applied.restamp_tag_auto_to_policy.call_args_list[-2:] == [
-        (("r1", "p-r1-1"),),
-        (("r2", "p-r2-2"),),
-    ]
+    assert deps.applied.restamp_tag_auto_to_policy.call_args_list[-1] == (("r1", "p-r1-1"),)
 
 
 def test_rerun_reuses_a_suffixed_system_policy() -> None:
@@ -251,3 +248,50 @@ def test_unreadable_rules_leave_the_marker_unset_for_a_retry() -> None:
 
     assert MIGRATED_MARKER_KEY not in deps.rows
     assert deps.rows["tag_auto_apply"] == "true"
+
+
+def test_a_retry_skips_rules_migrated_earlier_even_if_their_policy_was_deleted() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [
+        _rule("r1", "First", {"column": ["a"]}),
+        _rule("r2", "Second", {"column": ["b"]}),
+    ]
+    deps.applied.restamp_tag_auto_to_policy.side_effect = [3, RuntimeError("db blip")]
+
+    assert deps.run() == 1
+    assert MIGRATED_MARKER_KEY not in deps.rows
+    # An admin deletes r1's migrated policy before the next startup: it must not come back.
+    deps.policies.list_for_rule.return_value = []
+    deps.applied.restamp_tag_auto_to_policy.side_effect = None
+
+    assert deps.run() == 1
+    assert [rule_id for rule_id, _, _ in deps.created].count("r1") == 1  # r1's deleted policy is not recreated
+    assert deps.rows[MIGRATED_MARKER_KEY] == "true"
+
+
+def test_permanent_failures_are_skipped_and_the_migration_completes() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [
+        _rule("r1", "Taken", {"column": ["a"]}),
+        _rule("r2", "Fine", {"column": ["b"]}),
+    ]
+
+    def create(rule_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
+        if rule_id == "r1":
+            raise DuplicatePolicyNameError("both names taken")
+        return deps.create_policy(rule_id, body, user_email)
+
+    deps.policies.create.side_effect = create
+
+    assert deps.run() == 1
+    assert deps.rows[MIGRATED_MARKER_KEY] == "true"
+    assert "tag_auto_apply" not in deps.rows
+
+
+def test_unsafe_legacy_tags_are_a_permanent_failure() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [_rule("r1", "Odd", {"column": ["class x"]})]
+
+    assert deps.run() == 0
+    deps.policies.create.assert_not_called()
+    assert deps.rows[MIGRATED_MARKER_KEY] == "true"

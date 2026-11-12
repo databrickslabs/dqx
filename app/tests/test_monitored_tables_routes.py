@@ -1068,7 +1068,9 @@ class TestSaveAppliedRules:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         result = save_applied_rules(
             "b1",
             body=body,
@@ -1093,7 +1095,9 @@ class TestSaveAppliedRules:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = ("Not Null Check", "Completeness", "High", "ui")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         result = save_applied_rules(
             "b1",
             body=body,
@@ -1112,7 +1116,7 @@ class TestSaveAppliedRules:
     def test_empty_applications_removes_everything(self):
         svc = MagicMock()
         svc.save_applied_rules.return_value = []
-        body = SaveAppliedRulesIn(applications=[])
+        body = SaveAppliedRulesIn(applications=[], known_applied_ids=["ar1", "ar2"])
         result = save_applied_rules(
             "b1",
             body=body,
@@ -1123,12 +1127,19 @@ class TestSaveAppliedRules:
             perms=MagicMock(),
         )
         assert result == []
-        svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x")
+        # Only rows the editor had loaded may be removed by this save.
+        svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x", known_applied_ids=["ar1", "ar2"])
+
+    def test_the_editor_baseline_is_required(self):
+        with pytest.raises(ValidationError):
+            SaveAppliedRulesIn.model_validate({"applications": []})
 
     def test_mapping_incomplete_raises_422(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = MappingIncompleteError("missing slot")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1144,7 +1155,9 @@ class TestSaveAppliedRules:
     def test_unpublished_rule_raises_409(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = RuleNotPublishedError("not published")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1160,7 +1173,9 @@ class TestSaveAppliedRules:
     def test_missing_binding_or_rule_raises_404(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = RuntimeError("Monitored table not found: b1")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1182,13 +1197,14 @@ class TestSaveAppliedRules:
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
         body = SaveAppliedRulesIn(
+            known_applied_ids=[],
             applications=[
                 DesiredAppliedRuleIn(
                     rule_id="r1",
                     column_mapping=[{"column": "email"}],
                     column_pass_thresholds={"email": 90},
                 )
-            ]
+            ],
         )
         save_applied_rules(
             "b1",
@@ -1215,13 +1231,14 @@ class TestSaveAppliedRules:
             svc.save_applied_rules.return_value = [applied]
             svc.rule_display_tags.return_value = (None, None, None, None)
             body = SaveAppliedRulesIn(
+                known_applied_ids=[],
                 applications=[
                     DesiredAppliedRuleIn(
                         rule_id="r1",
                         column_mapping=[{"column": "id"}],
                         column_pass_thresholds=thresholds,
                     )
-                ]
+                ],
             )
             save_applied_rules(
                 "b1",
@@ -1250,6 +1267,7 @@ class TestSaveAppliedRules:
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
         body = SaveAppliedRulesIn(
+            known_applied_ids=[],
             applications=[
                 DesiredAppliedRuleIn(
                     rule_id="r1",
@@ -1259,7 +1277,7 @@ class TestSaveAppliedRules:
                     column_pass_thresholds=None,
                     tags={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90}, "team": "growth"},
                 )
-            ]
+            ],
         )
         save_applied_rules(
             "b1",

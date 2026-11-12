@@ -1081,3 +1081,56 @@ def test_suggestions_reuse_the_cached_policy_list_but_read_tombstones_live(openi
     assert {m.column_mapping["b"] for m in second} == {"r"}
     world.policies.list_all.assert_called_once()
     world.registry.get_rules_many.assert_called_once()
+
+
+def test_a_failed_open_evaluation_is_retried_on_the_next_open(opening: _OpenWorld) -> None:
+    opening.world.snapshots.for_tables.side_effect = lambda fqns, **_: SnapshotResult(
+        tables=[], truncated=False, unreadable_catalogs=["c"]
+    )
+    assert opening.open() is True
+
+    opening.world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    assert opening.open() is True  # the incomplete read released the claim instead of debouncing
+    assert opening.world.attach_calls == [("b1", "r1", [{"column": "email"}], "alice@x", "p1")]
+
+
+def test_an_unreadable_tombstone_set_does_not_debounce_the_open(opening: _OpenWorld) -> None:
+    opening.world.suppression_unreadable = {"b1"}
+    assert opening.open() is True
+    opening.world.suppression_unreadable = set()
+    assert opening.open() is True
+    assert len(opening.world.attach_calls) == 1
+
+
+def test_open_by_the_same_user_with_other_groups_evaluates(opening: _OpenWorld) -> None:
+    opening.open()
+    regrouped = ActingUser(email=AUTHOR.email, role=AUTHOR.role, principal_ids=AUTHOR.principal_ids | {"g-stewards"})
+
+    assert opening.open(regrouped) is True
+    assert opening.world.snapshots.for_tables.call_count == 2
+
+
+def test_a_failing_duplicate_lookup_skips_only_that_table(world: World) -> None:
+    world.set_tables(_snap("c.s.dup", _col("email", "pii")), _snap("c.s.new", _col("email", "pii")))
+    world.policies.get.return_value = _registering("p1", "r1", PolicyScope(catalogs=["c"]))
+    world.monitored.list_table_bindings.side_effect = dict
+    world.bindings = {"c.s.dup": "theirs"}
+    world.monitored.get_binding_ids_by_table_fqn.side_effect = RuntimeError("lookup failed")
+
+    result = world.service().run_policy("p1", AUTHOR)
+
+    assert world.registered == ["c.s.new"]
+    assert result.attached == 1
+
+
+def test_preview_flags_the_catalogs_of_tables_that_could_not_be_read(world: World) -> None:
+    world.bindings = {"c.s.a": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.snapshots.for_tables.side_effect = lambda fqns, **_: SnapshotResult(
+        tables=[], truncated=False, unreadable_catalogs=["c"], unreadable_tables=["c.s.a"]
+    )
+    world.snapshots.for_scope.return_value = SnapshotResult(tables=[], truncated=False, unreadable_catalogs=["C"])
+
+    preview = world.service().preview("r1", _policy_in(register_tables=True), AUTHOR)
+
+    assert preview.unreadable_catalogs == ["c"]  # deduplicated case-insensitively

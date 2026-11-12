@@ -19,6 +19,7 @@ job, called separately (typically right after `apply_rule`/`set_pin`/
 
 import json
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -99,6 +100,32 @@ def validate_row_filter(row_filter: str | None) -> None:
 
 # Cap the free-text per-rule filter so it can't bloat the row or the rendered check.
 _ROW_FILTER_MAX_LEN = 4000
+
+
+_ORIGIN_KEYS = (ORIGIN_KEY, POLICY_ID_KEY)
+
+
+def _without_origin(tags: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in tags.items() if key not in _ORIGIN_KEYS}
+
+
+def _origin_of(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {key: metadata[key] for key in _ORIGIN_KEYS if key in metadata}
+
+
+def _group_hashes(column_mapping: list[ColumnMappingGroup]) -> list[str]:
+    return [compute_mapping_hash([group]) for group in column_mapping]
+
+
+def _dedupe_groups(column_mapping: list[ColumnMappingGroup]) -> list[ColumnMappingGroup]:
+    seen: set[str] = set()
+    out: list[ColumnMappingGroup] = []
+    for group in column_mapping:
+        key = compute_mapping_hash([group])
+        if key not in seen:
+            seen.add(key)
+            out.append(group)
+    return out
 
 
 @dataclass
@@ -313,7 +340,7 @@ class ApplyRulesService:
             row_filter=_clean_row_filter(row_filter),
             pass_threshold=_clamp_pass_threshold(pass_threshold),
             column_mapping=column_mapping,
-            user_metadata=dict(tags or {}),
+            user_metadata=_without_origin(tags or {}),  # origin markers are only set by auto-attach
             mapping_hash=mapping_hash,
             created_by=user_email,
             created_at=now,
@@ -516,7 +543,8 @@ class ApplyRulesService:
         existing.row_filter = _clean_row_filter(row_filter)
         existing.pass_threshold = _clamp_pass_threshold(pass_threshold)
         if tags is not None:
-            existing.user_metadata = dict(tags)
+            # origin / policy_id are server-owned: the row keeps its own, whatever the caller sent.
+            existing.user_metadata = {**_without_origin(tags), **_origin_of(existing.user_metadata)}
         e_id = escape_sql_string(existing.id or "")
         metadata_expr = self._sql.json_literal_expr(json.dumps(existing.user_metadata))
         sql = (
@@ -633,6 +661,8 @@ class ApplyRulesService:
         binding_id: str,
         desired: list[DesiredAppliedRule],
         user_email: str,
+        *,
+        known_applied_ids: Collection[str] | None = None,
     ) -> list[AppliedRule]:
         """Reconcile the FULL desired set of applied rules for *binding_id* in one batch.
 
@@ -645,16 +675,26 @@ class ApplyRulesService:
 
         Reconciliation, per entry (keyed by ``rule_id`` — the UI enforces at
         most one entry per rule; if duplicates arrive anyway, the last one
-        in *desired* wins):
+        in *desired* wins), matched per mapping GROUP so a rule applied as
+        several rows (one per column, as rule policies attach it) is not
+        collapsed into one:
 
-        - Upserts via :meth:`apply_rule`, which already handles the
-          identical-mapping-hash update-in-place case.
-        - A mapping change (new ``mapping_hash``) inserts the new row via
-          :meth:`apply_rule` and removes the old row (via :meth:`remove_applied`,
-          which also cleans up any materialized ``dq_resolved_rules`` rows)
-          since it no longer matches any desired entry's hash.
-        - Any existing row whose ``rule_id`` isn't in *desired* at all is
-          removed the same way.
+        - An existing row of the rule whose mapping equals the entry's, or whose
+          groups are all among the entry's groups, is kept and updated in place
+          (pin / severity / filter / threshold / tags) via :meth:`apply_rule`.
+        - The entry's groups no kept row covers are inserted as one new row.
+        - Any other existing row (rule not desired, or a group no longer
+          desired) is removed via :meth:`remove_applied` (which tombstones
+          auto-made rows) — but only when it is in *known_applied_ids*.
+
+        *known_applied_ids* is the baseline the caller edited: the applied-row ids it
+        had loaded. A row created after that (for example attached by a rule policy
+        while the editor was open) is never removed or tombstoned by this save; it is
+        kept and returned. ``None`` (internal callers that replace the whole set)
+        treats every row as known.
+
+        The ``origin`` / ``policy_id`` markers in *tags* are server-owned: they are
+        never copied onto a saved row, and an updated row keeps its own.
 
         All entries are validated (published-rule + slot-coverage per group)
         BEFORE any mutation happens, so a single bad entry never leaves the
@@ -698,26 +738,25 @@ class ApplyRulesService:
             validate_row_filter(entry.row_filter)
             desired_hashes[entry.rule_id] = compute_mapping_hash(entry.column_mapping)
 
-        # Remove anything not present in the desired set (by rule_id) or
-        # superseded by a mapping change (hash mismatch for that rule_id).
-        for existing in self.list_applied(binding_id):
-            if existing.id is not None and desired_hashes.get(existing.rule_id) != existing.mapping_hash:
+        known = None if known_applied_ids is None else set(known_applied_ids)
+        keep, unknown, remove = self._plan_reconcile(self.list_applied(binding_id), deduped_entries, known)
+        for existing in remove:
+            if existing.id is not None:
                 self.remove_applied(existing.id, user_email)
 
-        results = [
-            self.apply_rule(
-                binding_id,
-                entry.rule_id,
-                entry.column_mapping,
-                user_email,
-                pinned_version=entry.pinned_version,
-                severity_override=entry.severity_override,
-                row_filter=entry.row_filter,
-                pass_threshold=entry.pass_threshold,
-                tags=entry.tags,
-            )
-            for entry in deduped_entries
-        ]
+        results: list[AppliedRule] = []
+        covered: dict[str, set[str]] = {}
+        for row in [*keep, *unknown]:
+            covered.setdefault(row.rule_id, set()).update(_group_hashes(row.column_mapping))
+        for entry in deduped_entries:
+            kept = [row for row in keep if row.rule_id == entry.rule_id]
+            for row in kept:
+                results.append(self._reapply(binding_id, entry, row.column_mapping, user_email))
+            done = covered.get(entry.rule_id, set())
+            remaining = [g for g in entry.column_mapping if compute_mapping_hash([g]) not in done]
+            if remaining or (not kept and not entry.column_mapping):
+                results.append(self._reapply(binding_id, entry, _dedupe_groups(remaining), user_email))
+        results.extend(unknown)
         # B2-118: stamp the binding's ``updated_at`` so this edit is recorded as
         # the monitored table's most-recent-change instant. The draft-run gate
         # (``DraftRunGateService.enforce``) compares a run's ``created_at``
@@ -732,6 +771,54 @@ class ApplyRulesService:
             len(results),
         )
         return results
+
+    @staticmethod
+    def _plan_reconcile(
+        existing: list[AppliedRule], entries: list[DesiredAppliedRule], known: set[str] | None
+    ) -> tuple[list[AppliedRule], list[AppliedRule], list[AppliedRule]]:
+        """Split *existing* rows into ``(keep, unknown, remove)`` for :meth:`save_applied_rules`."""
+        by_rule = {entry.rule_id: entry for entry in entries}
+        exact = {entry.rule_id: compute_mapping_hash(entry.column_mapping) for entry in entries}
+        groups = {entry.rule_id: set(_group_hashes(entry.column_mapping)) for entry in entries}
+        covered: dict[str, set[str]] = {}
+        exact_kept: set[str] = set()
+        keep: list[AppliedRule] = []
+        unknown: list[AppliedRule] = []
+        remove: list[AppliedRule] = []
+        # Rows whose whole mapping equals the entry's are matched first.
+        for row in sorted(existing, key=lambda r: r.mapping_hash != exact.get(r.rule_id)):
+            row_groups = set(_group_hashes(row.column_mapping))
+            taken = covered.setdefault(row.rule_id, set())
+            if row.rule_id in by_rule:
+                is_exact = row.mapping_hash == exact[row.rule_id] and row.rule_id not in exact_kept
+                is_subset = bool(row_groups) and row_groups <= groups[row.rule_id]
+                if (is_exact or is_subset) and not row_groups & taken:
+                    keep.append(row)
+                    taken.update(row_groups)
+                    if is_exact:
+                        exact_kept.add(row.rule_id)
+                    continue
+            if known is not None and row.id not in known:
+                unknown.append(row)  # created after the caller loaded the binding: never removed here
+                taken.update(row_groups)
+                continue
+            remove.append(row)
+        return keep, unknown, remove
+
+    def _reapply(
+        self, binding_id: str, entry: DesiredAppliedRule, column_mapping: list[ColumnMappingGroup], user_email: str
+    ) -> AppliedRule:
+        return self.apply_rule(
+            binding_id,
+            entry.rule_id,
+            column_mapping,
+            user_email,
+            pinned_version=entry.pinned_version,
+            severity_override=entry.severity_override,
+            row_filter=entry.row_filter,
+            pass_threshold=entry.pass_threshold,
+            tags=entry.tags,
+        )
 
     def rule_display_tags(self, rule_id: str) -> tuple[str | None, str | None, str | None, str | None]:
         """Return the ``(name, dimension, severity, source)`` for *rule_id*.

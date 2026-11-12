@@ -119,3 +119,27 @@ def test_registering_a_table_bumps_the_policy_generation() -> None:
     register_table("c.s.t", "a@x", monitored_tables=monitored, discovery=discovery)
 
     assert POLICY_GENERATION.current() > before
+
+
+def test_a_slow_load_from_an_older_generation_does_not_replace_the_current_entry() -> None:
+    generation = PolicyGeneration()
+    cache = PolicyCatalogCache(generation, clock=_Clock())
+    old = RulePolicy(name="old", policy_id="p-old", rule_id="r1")
+    new = RulePolicy(name="new", policy_id="p-new", rule_id="r1")
+    loads: list[str] = []
+
+    def slow_load() -> list[RulePolicy]:
+        generation.bump()  # a policy is saved while this load runs
+        assert cache.policies(lambda: loads.append("current") or [new]) == [new]
+        return [old]
+
+    assert cache.policies(slow_load) == [old]
+    assert cache.policies(lambda: loads.append("again") or [new]) == [new]
+    assert loads == ["current"]  # the current generation's entry survived the slow store
+
+
+def test_releasing_a_claim_lets_the_next_open_run() -> None:
+    debounce = OpenEvaluationDebounce(PolicyGeneration(), clock=_Clock())
+    _, key = debounce.claim("u", "b1")
+    debounce.release(key)
+    assert debounce.claim("u", "b1")[0] is OpenClaim.RUN

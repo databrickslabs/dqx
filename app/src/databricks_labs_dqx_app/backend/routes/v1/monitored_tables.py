@@ -1115,7 +1115,7 @@ def save_applied_rules(
                     tags=tags,
                 )
             )
-        applied = svc.save_applied_rules(binding_id, desired, user_email)
+        applied = svc.save_applied_rules(binding_id, desired, user_email, known_applied_ids=body.known_applied_ids)
         # Return the ENRICHED shape (rule_name/dimension/severity populated),
         # matching how the GET builds ``applied_rules`` via
         # ``AppliedRuleOut.from_summary`` (B2-26). The lean ``from_domain``

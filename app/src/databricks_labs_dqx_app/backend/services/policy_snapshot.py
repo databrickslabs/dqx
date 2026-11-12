@@ -534,27 +534,22 @@ class PolicySnapshotReader:
         unreadable: list[str] = []
         failed_tables: list[str] = []
         found: dict[str, list[tuple[str, TableInfo]]] = {}
-        answered: set[str] = set()  # catalogs (lower-cased) where at least one table read did not fail
         names: dict[str, str] = {}
         for fqn, info, error in outcomes:
             catalog = fqn.split(".")[0]
             names.setdefault(catalog.lower(), catalog)
             if isinstance(error, _DeadlineExceeded):
                 truncated = True
-                answered.add(catalog.lower())
             elif isinstance(error, (NotFound, PermissionDenied)):
-                answered.add(catalog.lower())  # the user cannot see it: same as information_schema returning no row
+                continue  # the user cannot see it: same as information_schema returning no row
             elif error is not None or info is None:
-                # Only this table is unreadable: it is left out (and not cached), the rest of its catalog is kept.
+                # Only this table is left out (and never cached as missing); its catalog is flagged as
+                # partly unreadable, but the rest of the catalog is still read.
                 logger.warning(f"Could not read table metadata (skipped): {safe_log_value(fqn)}")
                 failed_tables.append(fqn)
+                _add_catalog(unreadable, catalog)
             else:
-                answered.add(catalog.lower())
                 found.setdefault(catalog.lower(), []).append((fqn, info))
-        for fqn in failed_tables:
-            catalog = fqn.split(".")[0]
-            if catalog.lower() not in answered:  # every table of this catalog failed
-                _add_catalog(unreadable, names[catalog.lower()])
         tables: list[TableSnapshot] = []
         for key, items in found.items():
             catalog = names[key]

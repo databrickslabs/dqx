@@ -2,16 +2,32 @@
  *
  *  Opening a table evaluates the rule policies reaching it in the background; the
  *  detail response says so with `policy_evaluation_pending`. The page then re-reads
- *  the detail a few times, shortly after each response, until nothing is pending
- *  (the server debounces repeated opens, so the loop ends on its own), and merges
- *  rows the evaluation attached into the staged editor. */
+ *  the detail with a growing delay while it stays pending, for about a minute in
+ *  total (the server retries a claim that has run longer than that), and merges
+ *  rows the evaluation attached into the staged editor. The server debounces
+ *  repeated opens, so `pending` turns false once the evaluation is done. */
 
-export const POLICY_REFETCH_DELAY_MS = 2500;
-export const POLICY_REFETCH_MAX_ATTEMPTS = 3;
+export const POLICY_REFETCH_FIRST_DELAY_MS = 2500;
+export const POLICY_REFETCH_MAX_DELAY_MS = 15_000;
+export const POLICY_REFETCH_BUDGET_MS = 60_000;
+const BACKOFF = 1.6;
 
-/** Delay before the next re-read, or `null` when no re-read is due. */
+function delayFor(attempt: number): number {
+  return Math.min(Math.round(POLICY_REFETCH_FIRST_DELAY_MS * BACKOFF ** attempt), POLICY_REFETCH_MAX_DELAY_MS);
+}
+
+/** Delay before re-read number *attemptsSoFar* + 1, or `null` when no re-read is due. */
 export function nextPolicyRefetchDelay(pending: boolean | undefined, attemptsSoFar: number): number | null {
-  return pending === true && attemptsSoFar < POLICY_REFETCH_MAX_ATTEMPTS ? POLICY_REFETCH_DELAY_MS : null;
+  if (pending !== true) return null;
+  let elapsed = 0;
+  for (let attempt = 0; attempt < attemptsSoFar; attempt++) elapsed += delayFor(attempt);
+  const delay = delayFor(attemptsSoFar);
+  return elapsed + delay <= POLICY_REFETCH_BUDGET_MS ? delay : null;
+}
+
+/** Persisted ids of the rows the editor loaded — sent with a save so it only removes what the user saw. */
+export function knownAppliedIds(rows: { id?: string | null }[]): string[] {
+  return [...new Set(rows.map((row) => row.id).filter((id): id is string => typeof id === "string" && id !== ""))];
 }
 
 /** Rows in *current* whose key was not in *previous* (what appeared server-side between two reads). */

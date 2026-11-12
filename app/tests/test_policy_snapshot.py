@@ -575,7 +575,7 @@ def test_one_failing_sdk_table_read_keeps_the_rest_of_the_catalog():
     result = reader.for_tables(names, needs=SnapshotNeeds())
 
     assert sorted(t.table_fqn for t in result.tables) == sorted(n for n in names if n != "main.s.t3")
-    assert result.unreadable_catalogs == []
+    assert result.unreadable_catalogs == ["main"]  # flagged (so the preview says so), its other tables kept
     assert result.unreadable_tables == ["main.s.t3"]
     # The failed table is not remembered as "not visible": the next read retries it.
     retried: list[str] = []

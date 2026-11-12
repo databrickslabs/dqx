@@ -47,6 +47,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     DeferredTaskRunner,
@@ -1060,6 +1061,7 @@ class MonitoredTableService:
         )
         table.owner = owner
         table.updated_by = user_email
+        bump_policy_generation()  # the owner may apply rules: on-open policy evaluations re-run
         logger.info(
             "Set monitored table %s (binding_id=%s) owner to %s (by %s)",
             table.table_fqn,

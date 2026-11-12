@@ -104,7 +104,12 @@ import {
   type TableDataOut,
   type TagRuleSuggestionOut,
 } from "@/lib/api";
-import { appendMissingRows, newServerRows, nextPolicyRefetchDelay } from "@/lib/policy-evaluation-refetch";
+import {
+  appendMissingRows,
+  knownAppliedIds,
+  newServerRows,
+  nextPolicyRefetchDelay,
+} from "@/lib/policy-evaluation-refetch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -436,8 +441,8 @@ function MonitoredTableDetailPage() {
 
   // Rule policies: opening the table evaluates the policies reaching it in the
   // background (`policy_evaluation_pending`). Re-read the detail (and the tag
-  // suggestions) shortly after, up to a few times while it stays pending, so the
-  // rules it attaches appear without a manual reload.
+  // suggestions) with a growing delay while it stays pending (about a minute at
+  // most), so the rules it attaches appear without a manual reload.
   const policyRefetchAttemptsRef = useRef(0);
   const policyRefetchBindingRef = useRef(bindingId);
   const policyEvaluationPending = detail.policy_evaluation_pending;
@@ -503,8 +508,14 @@ function MonitoredTableDetailPage() {
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
   const persistStagedRows = useCallback(
-    () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
-    [saveMutation, bindingId, stagedRows],
+    () =>
+      saveMutation.mutateAsync({
+        bindingId,
+        // The baseline's ids tell the server which rows this save may remove: rows applied
+        // since (e.g. by a rule policy in the background) are kept even if the editor never saw them.
+        data: { applications: buildDesiredApplications(stagedRows), known_applied_ids: knownAppliedIds(baseline) },
+      }),
+    [saveMutation, bindingId, stagedRows, baseline],
   );
 
   // Persist staged applied-rule edits. Returns true on success. Shared by the

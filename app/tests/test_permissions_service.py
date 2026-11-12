@@ -20,6 +20,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
     Privilege,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import POLICY_GENERATION
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
@@ -1164,3 +1165,22 @@ def test_set_grant_monitored_table_all_privileges_unaffected(mock_sql, app_setti
     )
     executed = " ".join(str(c.args[0]) for c in mock_sql.execute.call_args_list)
     assert "ALL_PRIVILEGES" in executed
+
+
+def test_grant_changes_bump_the_policy_generation(mock_sql, app_settings_mock):
+    # Who may apply rules where changed: debounced on-open policy evaluations must re-run.
+    svc = PermissionsService(sql=mock_sql, app_settings=app_settings_mock)
+    before = POLICY_GENERATION.current()
+    svc.set_grant(
+        "monitored_table",
+        "b1",
+        "u1",
+        principal_type="user",
+        principal_name="Alice",
+        privileges={Privilege.APPLY},
+        inherit=True,
+        grantor="admin@x.com",
+    )
+    after_grant = POLICY_GENERATION.current()
+    svc.remove_grant("monitored_table", "b1", "u1", actor="admin@x.com")
+    assert before < after_grant < POLICY_GENERATION.current()

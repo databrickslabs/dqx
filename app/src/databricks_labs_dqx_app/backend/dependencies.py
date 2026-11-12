@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
 from databricks.sdk.service.catalog import TableInfo
 from databricks.sdk.service.iam import User
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -1527,6 +1528,22 @@ async def get_rule_policy_service(
     return RulePolicyService(sql=sql)
 
 
+_SNAPSHOT_HTTP_TIMEOUT_SECONDS = 10
+_SNAPSHOT_RETRY_TIMEOUT_SECONDS = 20  # within the snapshot reader's 30 s deadline
+
+
+def policy_snapshot_client_config(config: Config) -> Config:
+    """A copy of *config* whose HTTP calls are bounded by the policy snapshot deadline.
+
+    The shared OBO client keeps the SDK defaults (minutes of retries); the snapshot
+    reader's Unity Catalog calls (``tables.get``, catalog listing) must give up in time.
+    """
+    bounded = config.deep_copy()
+    bounded.http_timeout_seconds = _SNAPSHOT_HTTP_TIMEOUT_SECONDS
+    bounded.retry_timeout_seconds = _SNAPSHOT_RETRY_TIMEOUT_SECONDS
+    return bounded
+
+
 async def get_policy_snapshot_reader(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
@@ -1537,14 +1554,16 @@ async def get_policy_snapshot_reader(
     Both the information_schema queries and the "All catalogs" listing run as the
     calling user, so a policy only ever sees tables that user can see. Per-table
     snapshots are cached for 5 minutes per user (keyed by a hash of their email);
-    small explicit table sets read columns and owners via the OBO ``tables.get``.
+    small explicit table sets read columns and owners via the OBO ``tables.get``. Those
+    SDK calls use a client copy with short timeouts (see :func:`policy_snapshot_client_config`).
     """
+    bounded_ws = WorkspaceClient(config=policy_snapshot_client_config(obo_ws.config))
 
     def _list_catalogs() -> list[str]:
-        return sorted(c.name for c in obo_ws.catalogs.list() if c.name)
+        return sorted(c.name for c in bounded_ws.catalogs.list() if c.name)
 
     def _get_table(table_fqn: str) -> TableInfo:
-        return obo_ws.tables.get(full_name=table_fqn)
+        return bounded_ws.tables.get(full_name=table_fqn)
 
     return PolicySnapshotReader(
         sql=obo_sql,

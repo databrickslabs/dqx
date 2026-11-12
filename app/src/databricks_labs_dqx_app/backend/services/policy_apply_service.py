@@ -24,6 +24,7 @@ skipped. Each run registers at most ``MAX_REGISTRATIONS_PER_RUN`` tables and
 returns at most ``MAX_AMBIGUOUS_PER_RUN`` ambiguous matches.
 """
 
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -109,9 +110,21 @@ class ApplyResult:
     ambiguous: list[PolicyMatch]  # surfaced as suggestions
     registration_capped: bool = False  # True when MAX_REGISTRATIONS_PER_RUN stopped further registrations
     registrations_skipped: int = 0  # not-yet-monitored matching tables left unregistered by the cap
+    incomplete: bool = False  # something could not be read or failed: the evaluation may have missed matches
 
 
 _EMPTY_RESULT = ApplyResult(attached=0, registered=0, ambiguous=[])
+
+
+def _unique_catalogs(catalogs: list[str]) -> list[str]:
+    """*catalogs* without repeats, compared case-insensitively (first spelling kept)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for catalog in catalogs:
+        if catalog.lower() not in seen:
+            seen.add(catalog.lower())
+            out.append(catalog)
+    return out
 
 
 @dataclass(frozen=True)
@@ -130,6 +143,7 @@ class _Totals:
     attached: int = 0
     registered: int = 0
     registrations_skipped: int = 0
+    incomplete: bool = False
     ambiguous: list[PolicyMatch] = field(default_factory=list)
 
     def ambiguous_room(self) -> int:
@@ -142,6 +156,7 @@ class _Totals:
             ambiguous=list(self.ambiguous),
             registration_capped=self.registrations_skipped > 0,
             registrations_skipped=self.registrations_skipped,
+            incomplete=self.incomplete,
         )
 
 
@@ -178,6 +193,7 @@ class _UserGate:
         self._can_apply: dict[str, bool] = {}
         self._applied: dict[str, set[tuple[str, str]]] = {}
         self._suppressed: dict[str, set[tuple[str, str]] | None] = {}  # None = unreadable -> attach nothing
+        self.read_failed = False  # a tombstone read failed during this run
 
     def can_apply(self, binding_id: str) -> bool:
         cached = self._can_apply.get(binding_id)
@@ -229,6 +245,7 @@ class _UserGate:
                     exc_info=True,
                 )
                 self._suppressed[binding_id] = None
+                self.read_failed = True
         return self._suppressed[binding_id]
 
     def is_new(self, binding_id: str, match: PolicyMatch) -> bool:
@@ -361,7 +378,7 @@ class PolicyApplyService:
             columns_matched=sum(len(_matched_columns(t.matches)) for t in tables),
             new_tables=sum(1 for t in tables if not t.monitored),
             truncated=snapshot.truncated,
-            unreadable_catalogs=list(snapshot.unreadable_catalogs),
+            unreadable_catalogs=_unique_catalogs(snapshot.unreadable_catalogs),
         )
 
     # ------------------------------------------------------------------
@@ -443,6 +460,7 @@ class PolicyApplyService:
             if table_fqn is not None:
                 self._run_bindings({table_fqn: binding_id}, user, totals, attach=True)
         except Exception:  # best-effort trigger: opening or registering a table must never fail on this
+            totals.incomplete = True
             logger.warning(f"Policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
         return totals.result()
 
@@ -474,7 +492,8 @@ class PolicyApplyService:
             logger.warning(f"Policy coverage lookup for binding {safe_log_value(binding_id)} failed", exc_info=True)
         if self._open_debounce is None:
             return OpenEvaluation(pending=True, run=True)
-        user_key = f"{snapshot_cache_identity(user.email)}:{user.role.value}"
+        groups = hashlib.sha256("\n".join(sorted(user.principal_ids)).encode()).hexdigest()[:16]
+        user_key = f"{snapshot_cache_identity(user.email)}:{user.role.value}:{groups}"
         claim, key = self._open_debounce.claim(user_key, binding_id)
         if claim is OpenClaim.SKIP:
             return OpenEvaluation(pending=False, run=False)
@@ -483,12 +502,21 @@ class PolicyApplyService:
         return OpenEvaluation(pending=True, run=True, key=key)
 
     def evaluate_on_open(self, binding_id: str, opened: OpenEvaluation, user: ActingUser) -> ApplyResult:
-        """Run the evaluation :meth:`begin_open` scheduled, then release its debounce claim. Never raises."""
+        """Run the evaluation :meth:`begin_open` scheduled, then settle its debounce claim. Never raises.
+
+        A complete evaluation marks the claim done (reopening within the window skips); an
+        incomplete or failed one releases it, so the next open evaluates again.
+        """
+        result = ApplyResult(attached=0, registered=0, ambiguous=[], incomplete=True)
         try:
-            return self.evaluate_binding(binding_id, user)
+            result = self.evaluate_binding(binding_id, user)
+            return result
         finally:
             if opened.key is not None and self._open_debounce is not None:
-                self._open_debounce.finish(opened.key)
+                if result.incomplete:
+                    self._open_debounce.release(opened.key)
+                else:
+                    self._open_debounce.finish(opened.key)
 
     def ambiguous_for_binding(self, binding_id: str, user: ActingUser) -> list[PolicyMatch]:
         """Ambiguous policy pairings on one monitored table, offered as suggestions (nothing attached)."""
@@ -572,7 +600,8 @@ class PolicyApplyService:
             snapshot = SnapshotResult(
                 tables=snapshot.tables + extra,
                 truncated=snapshot.truncated or scan.truncated,
-                unreadable_catalogs=list(dict.fromkeys(snapshot.unreadable_catalogs + scan.unreadable_catalogs)),
+                unreadable_catalogs=_unique_catalogs(snapshot.unreadable_catalogs + scan.unreadable_catalogs),
+                unreadable_tables=snapshot.unreadable_tables + scan.unreadable_tables,
             )
         reads.snapshots[key] = (snapshot, bindings)
         return snapshot, bindings
@@ -619,6 +648,8 @@ class PolicyApplyService:
         allowed = {fqn: table_bindings[fqn] for fqn in reaching}
         needs = needs_of(policy for policies in reaching.values() for policy in policies)
         snapshot = self._snapshots.for_tables(list(reaching), needs=needs)
+        if snapshot.truncated or snapshot.unreadable_catalogs or snapshot.unreadable_tables:
+            totals.incomplete = True
         tables = {table.table_fqn.lower(): table for table in snapshot.tables}
         for fqn, policies in reaching.items():
             table = tables.get(fqn.lower())
@@ -631,11 +662,14 @@ class PolicyApplyService:
                         policy, rules[policy.rule_id], table, bindings, gate, user, totals, reads, attach=attach
                     )
                 except Exception:  # best-effort: one table failing must not stop the others
+                    totals.incomplete = True
                     logger.warning(
                         f"Rule policy {safe_log_value(policy.policy_id)} evaluation on binding "
                         f"{safe_log_value(allowed[fqn])} failed",
                         exc_info=True,
                     )
+        if gate.read_failed:  # nothing was attached where tombstones were unreadable
+            totals.incomplete = True
 
     def _apply_table(
         self,
@@ -695,16 +729,26 @@ class PolicyApplyService:
             return self._register_table(table_fqn, user.email).binding_id, True
         except DuplicateMonitoredTableError:
             # Registered meanwhile (another user or request): attach to the existing binding if permitted.
-            existing = self._monitored_tables.get_binding_ids_by_table_fqn([table_fqn])
-            binding_id = existing.get(table_fqn) or next(
-                (b for fqn, b in existing.items() if fqn.lower() == table_fqn.lower()), None
-            )
-            return (binding_id, False) if binding_id is not None else None
+            return self._existing_binding(policy, table_fqn)
         except Exception:  # best-effort: one table failing to register must not stop the others
             logger.warning(
                 f"Rule policy {safe_log_value(policy.policy_id)} could not register a matching table", exc_info=True
             )
             return None
+
+    def _existing_binding(self, policy: RulePolicy, table_fqn: str) -> tuple[str, bool] | None:
+        try:
+            existing = self._monitored_tables.get_binding_ids_by_table_fqn([table_fqn])
+        except Exception:  # best-effort: skip this table, keep evaluating the others
+            logger.warning(
+                f"Rule policy {safe_log_value(policy.policy_id)} could not look up an already registered table",
+                exc_info=True,
+            )
+            return None
+        binding_id = existing.get(table_fqn) or next(
+            (b for fqn, b in existing.items() if fqn.lower() == table_fqn.lower()), None
+        )
+        return (binding_id, False) if binding_id is not None else None
 
     def _attach(self, binding_id: str, match: PolicyMatch, user: ActingUser) -> bool:
         try:

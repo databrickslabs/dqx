@@ -1073,6 +1073,7 @@ class RegistryService:
             return 0
         self._sql.delete(self._versions_table, where={"rule_id": WhereIn(rule_ids)})
         self._sql.delete(self._table, where={"is_builtin": True})
+        bump_policy_generation()
         logger.info("Purged %d built-in registry rule(s)", len(rule_ids))
         return len(rule_ids)
 

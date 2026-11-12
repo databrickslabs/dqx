@@ -768,6 +768,12 @@ class TestLifecycle:
         updated = svc.deprecate("r1", "approver@x")
         assert updated.status == "deprecated"
 
+    def test_purging_builtin_rules_bumps_the_policy_generation(self, svc, sql):
+        sql.query.return_value = [["b1"]]
+        before = POLICY_GENERATION.current()
+        assert svc.delete_builtin_rules() == 1
+        assert POLICY_GENERATION.current() > before
+
     def test_status_changes_bump_the_policy_generation(self, svc, sql):
         # Rule policies only attach approved rules: approving or deprecating changes what they attach.
         pending = self._rule("pending_approval")

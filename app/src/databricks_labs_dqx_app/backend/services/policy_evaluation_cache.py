@@ -98,10 +98,10 @@ class PolicyCatalogCache:
             cached = self._current(generation).policies
         if cached is not None:
             return list(cached)
-        loaded = load()  # read outside the lock; a bump meanwhile makes the store below stale on the next read
+        loaded = load()  # read outside the lock
         with self._lock:
-            entry = self._current(generation)
-            if entry.generation == generation:
+            entry = self._entry
+            if entry is not None and entry.generation == generation:  # dropped when a bump happened meanwhile
                 entry.policies = list(loaded)
         return list(loaded)
 
@@ -118,8 +118,8 @@ class PolicyCatalogCache:
             fetched: dict[str, RegistryRule | None] = {rule_id: loaded.get(rule_id) for rule_id in missing}
             known.update(fetched)
             with self._lock:
-                entry = self._current(generation)
-                if entry.generation == generation:
+                entry = self._entry
+                if entry is not None and entry.generation == generation:  # dropped when a bump happened meanwhile
                     entry.rules = {**(entry.rules or {}), **fetched}
         return {rule_id: rule for rule_id in rule_ids if (rule := known.get(rule_id)) is not None}
 
@@ -180,6 +180,11 @@ class OpenEvaluationDebounce:
             entry = self._entries.get(key)
             if entry is not None:
                 entry.running = False
+
+    def release(self, key: tuple[str, str, int]) -> None:
+        """Forget the claim under *key* (the evaluation failed or was incomplete): the next open runs again."""
+        with self._lock:
+            self._entries.pop(key, None)
 
     def _evict(self, now: float) -> None:
         horizon = max(self._ttl, self._running_timeout)

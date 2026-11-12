@@ -1011,11 +1011,16 @@ class DesiredAppliedRuleIn(BaseModel):
 class SaveAppliedRulesIn(BaseModel):
     """Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
 
-    Anything currently applied to the binding that isn't (re)supplied here is
-    removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
+    Anything the editor had loaded (``known_applied_ids``) that isn't (re)supplied
+    here is removed; rows applied after that (for example by a rule policy) are
+    kept. See ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
     """
 
     applications: list[DesiredAppliedRuleIn] = Field(default_factory=list)
+    known_applied_ids: list[str] = Field(
+        description="Ids of the applied rules the editor loaded (its baseline). Only these may be removed by this save.",
+        max_length=10_000,
+    )
 
 
 class SetAppliedRulePinIn(BaseModel):
