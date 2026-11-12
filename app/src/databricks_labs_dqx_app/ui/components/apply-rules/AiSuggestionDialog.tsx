@@ -26,7 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useListRegistryRules, type RegistryRuleOut, type SuggestedRuleMappingOut } from "@/lib/api";
+import { useListRegistryRules, type RegistryRuleOut } from "@/lib/api";
 import type { LabelDefinition } from "@/lib/api-custom";
 import type { ColumnRef } from "./RulesByColumn";
 import { AI_BUTTON_BG, AI_GRADIENT_URL, AI_ICON_COLOR, AI_TEXT_GRADIENT } from "@/lib/ai-style";
@@ -49,12 +49,13 @@ import {
   type AppliedRuleMappingLike,
   type GroupMode,
   type GroupSelectState,
+  type SuggestionItem,
 } from "./ai-suggestion-utils";
 
 export interface SuggestRulesState {
   available: boolean;
   reason?: string;
-  suggestions: SuggestedRuleMappingOut[];
+  suggestions: SuggestionItem[];
 }
 
 interface AiSuggestionDialogProps {
@@ -145,7 +146,7 @@ export function AiSuggestionDialog({
   // Toggle every suggestion in one group at once: if the group is fully
   // selected, clicking the header deselects all of its items; otherwise (none
   // or only some) it selects all of them.
-  const toggleGroup = (items: SuggestedRuleMappingOut[]) => {
+  const toggleGroup = (items: SuggestionItem[]) => {
     const keys = items.map(suggestionKey);
     const allOn = keys.every((k) => selected.has(k));
     setSelected((prev) => {
@@ -159,7 +160,7 @@ export function AiSuggestionDialog({
   const dimColor = (dim?: string | null) =>
     dim ? colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dim) : undefined;
 
-  const stageSuggestions = (chosen: SuggestedRuleMappingOut[]) => {
+  const stageSuggestions = (chosen: SuggestionItem[]) => {
     if (chosen.length === 0) {
       toast.error(t("monitoredTables.suggestRulesNoneSelected"));
       return;
@@ -400,7 +401,7 @@ function GroupHeaderCheckbox({ state, onToggle, label }: { state: GroupSelectSta
 }
 
 /** The `column → {{slot}}` chips for one suggestion's mapping. */
-function MappingChipsInline({ suggestion: s }: { suggestion: SuggestedRuleMappingOut }) {
+function MappingChipsInline({ suggestion: s }: { suggestion: SuggestionItem }) {
   const entries = Object.entries(s.column_mapping ?? {});
   if (entries.length === 0) return null;
   return (
@@ -536,13 +537,13 @@ function RuleGroupCard({
   ruleDescription?: string;
   dimensionColor?: string;
   severityColor?: string;
-  items: SuggestedRuleMappingOut[];
+  items: SuggestionItem[];
   groupIndex: number;
   groupState: GroupSelectState;
   toggleAllLabel: string;
   onToggleGroup: () => void;
-  isSelected: (s: SuggestedRuleMappingOut) => boolean;
-  onToggle: (s: SuggestedRuleMappingOut) => void;
+  isSelected: (s: SuggestionItem) => boolean;
+  onToggle: (s: SuggestionItem) => void;
 }) {
   return (
     <SuggestionGroupCard
@@ -566,13 +567,24 @@ function RuleGroupCard({
   );
 }
 
+/** The suggestion's reason, plus the AI's extra explanation under a tag/policy reason. */
+function SuggestionExplanation({ suggestion: s }: { suggestion: SuggestionItem }) {
+  if (!s.explanation && !s.secondary_explanation) return null;
+  return (
+    <>
+      {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
+      {s.secondary_explanation && <p className="text-xs text-muted-foreground/70">{s.secondary_explanation}</p>}
+    </>
+  );
+}
+
 /** One column-mapping option under a rule header: chip(s) + explanation + toggle. */
 function MappingRow({
   suggestion: s,
   selected,
   onToggle,
 }: {
-  suggestion: SuggestedRuleMappingOut;
+  suggestion: SuggestionItem;
   selected: boolean;
   onToggle: () => void;
 }) {
@@ -580,7 +592,7 @@ function MappingRow({
   return (
     <SuggestionRow label={cols || s.rule_name || s.rule_id} selected={selected} onToggle={onToggle}>
       <MappingChipsInline suggestion={s} />
-      {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
+      <SuggestionExplanation suggestion={s} />
     </SuggestionRow>
   );
 }
@@ -603,14 +615,14 @@ function ColumnGroupCard({
   onToggle,
 }: {
   column: string;
-  items: SuggestedRuleMappingOut[];
+  items: SuggestionItem[];
   groupIndex: number;
   groupState: GroupSelectState;
   toggleAllLabel: string;
   labelDefinitions: LabelDefinition[];
   onToggleGroup: () => void;
-  isSelected: (s: SuggestedRuleMappingOut) => boolean;
-  onToggle: (s: SuggestedRuleMappingOut) => void;
+  isSelected: (s: SuggestionItem) => boolean;
+  onToggle: (s: SuggestionItem) => void;
 }) {
   return (
     <SuggestionGroupCard
@@ -643,7 +655,7 @@ function ColumnRuleRow({
   severityColor,
   onToggle,
 }: {
-  suggestion: SuggestedRuleMappingOut;
+  suggestion: SuggestionItem;
   selected: boolean;
   dimensionColor?: string;
   severityColor?: string;
@@ -656,7 +668,7 @@ function ColumnRuleRow({
         {s.dimension && <TagBadge label={s.dimension} color={dimensionColor} />}
         {s.severity && <SeverityBadge severity={s.severity} color={severityColor} />}
       </div>
-      {s.explanation && <p className="text-xs text-muted-foreground">{s.explanation}</p>}
+      <SuggestionExplanation suggestion={s} />
       <MappingChipsInline suggestion={s} />
     </SuggestionRow>
   );

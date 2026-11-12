@@ -150,7 +150,7 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
-import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
+import { mergeSuggestions } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
@@ -2234,17 +2234,10 @@ function ApplyRulesTab({
         aiReason = reason ?? t("monitoredTables.suggestRulesFetchFailed");
       }
 
-      // Union, de-duped by (rule_id + sorted slot->column set). AI is listed
-      // first so on an exact collision its explanation wins; every (rule,
-      // column) the AI did NOT also suggest keeps its "Matched tag …" reason.
-      const merged: SuggestedRuleMappingOut[] = [];
-      const seen = new Set<string>();
-      for (const s of [...aiSuggestions, ...tagSuggestions]) {
-        const key = suggestionKey(s);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(s);
-      }
+      // Union, de-duped by (rule_id + sorted slot->column set). On a collision the
+      // deterministic reason ("Matched tag …" / "Policy …: several possible columns")
+      // stays primary and the AI explanation is shown underneath it.
+      const merged = mergeSuggestions(aiSuggestions, tagSuggestions);
 
       // Available when EITHER source has something to offer. When tag
       // suggestions exist the dialog is available regardless of the AI, so the

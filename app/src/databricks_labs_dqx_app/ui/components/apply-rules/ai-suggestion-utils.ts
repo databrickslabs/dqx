@@ -50,6 +50,43 @@ export function suggestionKey(s: SuggestedRuleMappingOut): string {
   return `${s.rule_id}::${mappingSetKey(s.column_mapping ?? {})}`;
 }
 
+/** A suggestion as the dialog shows it: *secondary_explanation* is extra AI prose under a
+ *  deterministic reason (tag match or policy ambiguity) when both sources suggested it. */
+export type SuggestionItem = SuggestedRuleMappingOut & { secondary_explanation?: string };
+
+/** Union of AI and deterministic (tag / policy) suggestions, de-duped by `suggestionKey`.
+ *
+ * AI order comes first. On a collision the deterministic reason stays the primary line
+ * (it says why the rule fits this column) and the AI explanation, if any and different,
+ * becomes *secondary_explanation*. */
+export function mergeSuggestions(
+  ai: SuggestedRuleMappingOut[],
+  deterministic: SuggestedRuleMappingOut[],
+): SuggestionItem[] {
+  const byKey = new Map(deterministic.map((s) => [suggestionKey(s), s] as const));
+  const merged: SuggestionItem[] = [];
+  const seen = new Set<string>();
+  for (const s of ai) {
+    const key = suggestionKey(s);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fixed = byKey.get(key);
+    if (fixed?.explanation) {
+      const extra = s.explanation && s.explanation !== fixed.explanation ? s.explanation : undefined;
+      merged.push(extra ? { ...fixed, secondary_explanation: extra } : { ...fixed });
+    } else {
+      merged.push(fixed ? { ...fixed, explanation: s.explanation } : s);
+    }
+  }
+  for (const s of deterministic) {
+    const key = suggestionKey(s);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(s);
+  }
+  return merged;
+}
+
 /** Minimal shape of a staged/applied rule row this module reads. */
 export interface AppliedRuleMappingLike {
   rule_id: string;
@@ -106,7 +143,7 @@ export interface SuggestionGroup {
   /** Header label shown above the group's cards. */
   label: string;
   /** Suggestions in this group, first-seen order preserved. */
-  items: SuggestedRuleMappingOut[];
+  items: SuggestionItem[];
 }
 
 /**
@@ -121,12 +158,12 @@ export interface SuggestionGroup {
  * First-seen order is preserved for both groups and the items within them.
  */
 export function groupSuggestions(
-  suggestions: SuggestedRuleMappingOut[],
+  suggestions: SuggestionItem[],
   mode: GroupMode,
   unmappedLabel: string,
 ): SuggestionGroup[] {
   const groups = new Map<string, SuggestionGroup>();
-  const push = (key: string, label: string, s: SuggestedRuleMappingOut) => {
+  const push = (key: string, label: string, s: SuggestionItem) => {
     const g = groups.get(key);
     if (g) g.items.push(s);
     else groups.set(key, { key, label, items: [s] });
@@ -151,7 +188,7 @@ export function groupSuggestions(
 export type GroupSelectState = "all" | "some" | "none";
 
 export function groupSelectState(
-  items: SuggestedRuleMappingOut[],
+  items: SuggestionItem[],
   selected: Set<string>,
 ): GroupSelectState {
   let on = 0;
