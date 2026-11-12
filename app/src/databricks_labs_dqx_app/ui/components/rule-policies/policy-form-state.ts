@@ -274,7 +274,17 @@ const PREVIEW_NAME = "preview";
  * are fixed here: the serialized payload doubles as the preview's debounce key.
  */
 export function toPreviewPayload(draft: PolicyDraft): PreviewRulePolicyIn {
-  return { rule_id: draft.ruleId, policy: { ...toUpdatePayload(draft), name: PREVIEW_NAME, description: null } };
+  const policy = toUpdatePayload(draft);
+  return {
+    rule_id: draft.ruleId,
+    policy: {
+      ...policy,
+      name: PREVIEW_NAME,
+      description: null,
+      // Unmonitored tables can only be searched in chosen catalogs; until then preview the monitored ones.
+      register_tables: policy.register_tables && policy.scope?.catalogs !== ALL,
+    },
+  };
 }
 
 /** Editable draft from a stored policy. */
@@ -344,6 +354,10 @@ export function validateDraft(
     errors.scope = "rulePolicies.errors.scopeNeedsCatalog";
   } else if (narrowsBelowCatalog && catalogs.includes(ALL)) {
     errors.scope = "rulePolicies.errors.scopeNeedsCatalog";
+  }
+
+  if (draft.registerTables && catalogs.includes(ALL)) {
+    errors.registerScope = "rulePolicies.errors.registerNeedsCatalog";
   }
 
   const tableError = conditionError(draft.tableCondition);

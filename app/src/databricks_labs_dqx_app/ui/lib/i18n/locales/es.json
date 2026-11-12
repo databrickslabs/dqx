@@ -3542,6 +3542,7 @@
       "colState": "Estado",
       "colColumns": "Columnas",
       "monitored": "Supervisada",
+      "alreadyAttached": "Supervisada · ya tiene esta regla",
       "willBeAdded": "Se añadirá (borrador, sin programar)",
       "columnMapping": "Asignación de columnas",
       "matchedOn": "Coincide por",
@@ -3564,6 +3565,7 @@
       "nameRequired": "El nombre es obligatorio.",
       "nameTaken": "Ya existe una política con este nombre.",
       "scopeNeedsCatalog": "Elige al menos un catálogo para filtrar por esquema o tabla.",
+      "registerNeedsCatalog": "Elige los catálogos en los que buscar tablas que aún no se supervisan.",
       "tagsRequired": "Selecciona al menos una etiqueta.",
       "valuesRequired": "Rellena todos los valores de las condiciones."
     }

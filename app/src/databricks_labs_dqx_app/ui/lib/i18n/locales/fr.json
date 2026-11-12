@@ -3542,6 +3542,7 @@
       "colState": "État",
       "colColumns": "Colonnes",
       "monitored": "Surveillée",
+      "alreadyAttached": "Surveillée · a déjà cette règle",
       "willBeAdded": "Sera ajoutée (brouillon, non planifiée)",
       "columnMapping": "Association des colonnes",
       "matchedOn": "Correspondance sur",
@@ -3564,6 +3565,7 @@
       "nameRequired": "Le nom est obligatoire.",
       "nameTaken": "Une politique porte déjà ce nom.",
       "scopeNeedsCatalog": "Choisissez au moins un catalogue pour filtrer par schéma ou table.",
+      "registerNeedsCatalog": "Choisissez les catalogues dans lesquels rechercher les tables qui ne sont pas encore surveillées.",
       "tagsRequired": "Sélectionnez au moins un tag.",
       "valuesRequired": "Renseignez chaque valeur de condition."
     }

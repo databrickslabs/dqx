@@ -91,7 +91,11 @@ function MatchingTables({ tables }: { tables: RulePolicyPreviewTableOut[] }) {
                   </TableCell>
                   <TableCell className="px-2 font-mono text-xs">{tbl.table_fqn}</TableCell>
                   <TableCell className="px-2 text-xs text-muted-foreground">
-                    {tbl.monitored ? t("rulePolicies.preview.monitored") : t("rulePolicies.preview.willBeAdded")}
+                    {!tbl.monitored
+                      ? t("rulePolicies.preview.willBeAdded")
+                      : tbl.already_attached
+                        ? t("rulePolicies.preview.alreadyAttached")
+                        : t("rulePolicies.preview.monitored")}
                   </TableCell>
                   <TableCell className="px-2 text-right text-xs tabular-nums">{columns || "—"}</TableCell>
                 </TableRow>

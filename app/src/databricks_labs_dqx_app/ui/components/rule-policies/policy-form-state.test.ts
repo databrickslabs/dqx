@@ -292,6 +292,22 @@ describe("toCreatePayload / toUpdatePayload", () => {
 });
 
 describe("validateDraft", () => {
+  test("matching unmonitored tables needs specific catalogs, without blocking the preview", () => {
+    const draft = { ...namedDraft(emailRule), registerTables: true };
+    const errors = validateDraft(draft, []);
+    expect(errors).toEqual({ registerScope: "rulePolicies.errors.registerNeedsCatalog" });
+    expect(previewBlockedRuleIds(errors, ["r-email"]).size).toBe(0);
+    const narrowed = { ...draft, scope: { catalogs: ["main"], schemas: [ALL], tables: [ALL] } };
+    expect(validateDraft(narrowed, [])).toEqual({});
+  });
+
+  test("preview of a registering draft over all catalogs covers only monitored tables", () => {
+    const draft = { ...namedDraft(emailRule), registerTables: true };
+    expect(toPreviewPayload(draft).policy.register_tables).toBe(false);
+    const narrowed = { ...draft, scope: { catalogs: ["main"], schemas: [ALL], tables: [ALL] } };
+    expect(toPreviewPayload(narrowed).policy.register_tables).toBe(true);
+  });
+
   test("a complete draft has no errors", () => {
     expect(validateDraft(namedDraft(emailRule), [])).toEqual({});
   });

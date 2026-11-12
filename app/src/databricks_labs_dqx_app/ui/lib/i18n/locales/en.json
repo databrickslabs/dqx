@@ -3542,6 +3542,7 @@
       "colState": "State",
       "colColumns": "Columns",
       "monitored": "Monitored",
+      "alreadyAttached": "Monitored · already has this rule",
       "willBeAdded": "Will be added (draft, unscheduled)",
       "columnMapping": "Column mapping",
       "matchedOn": "Matched on",
@@ -3564,6 +3565,7 @@
       "nameRequired": "Name is required.",
       "nameTaken": "A policy with this name already exists.",
       "scopeNeedsCatalog": "Pick at least one catalog to narrow by schema or table.",
+      "registerNeedsCatalog": "Choose the catalogs to search for tables that aren't monitored yet.",
       "tagsRequired": "Select at least one tag.",
       "valuesRequired": "Fill in every condition value."
     }

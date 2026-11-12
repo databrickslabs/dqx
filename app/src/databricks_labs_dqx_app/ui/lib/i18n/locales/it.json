@@ -3542,6 +3542,7 @@
       "colState": "Stato",
       "colColumns": "Colonne",
       "monitored": "Monitorata",
+      "alreadyAttached": "Monitorata · ha già questa regola",
       "willBeAdded": "Verrà aggiunta (bozza, non pianificata)",
       "columnMapping": "Mappatura colonne",
       "matchedOn": "Corrispondenza su",
@@ -3564,6 +3565,7 @@
       "nameRequired": "Il nome è obbligatorio.",
       "nameTaken": "Esiste già una policy con questo nome.",
       "scopeNeedsCatalog": "Scegli almeno un catalogo per filtrare per schema o tabella.",
+      "registerNeedsCatalog": "Scegli i cataloghi in cui cercare le tabelle non ancora monitorate.",
       "tagsRequired": "Seleziona almeno un tag.",
       "valuesRequired": "Compila ogni valore delle condizioni."
     }

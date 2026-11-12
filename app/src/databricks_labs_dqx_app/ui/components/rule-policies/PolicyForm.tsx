@@ -489,6 +489,8 @@ export function PolicyForm({
         <FormSection title={t("rulePolicies.form.scopeTitle")} description={t("rulePolicies.form.scopeDescription")}>
           <ScopeFields value={draft.scope} onChange={(scope) => set("scope", scope)} disabled={readOnly} />
           <FieldError message={errors.scope ? t(errors.scope) : undefined} />
+          {/* Shown as soon as it applies (not only after a save attempt): it explains a preview without new tables. */}
+          <FieldError message={allErrors.registerScope ? t(allErrors.registerScope) : undefined} />
           <label className="flex cursor-pointer items-start gap-2.5 rounded-md border bg-card p-3">
             <Checkbox
               checked={draft.registerTables}
