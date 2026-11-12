@@ -124,3 +124,9 @@ def test_policy_in_defaults():
     assert body.register_tables is False
     assert body.column_conditions == {}
     assert body.table_condition.kind == "none"
+
+
+def test_policy_name_is_stripped_and_must_not_be_blank():
+    assert RulePolicyIn(name="  PII columns  ").name == "PII columns"
+    with pytest.raises(ValidationError):
+        RulePolicyIn(name="   ")

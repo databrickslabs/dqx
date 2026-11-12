@@ -36,9 +36,10 @@ def migrate_slot_tags_to_policies(
     policies: RulePolicyService,
     applied: ApplyRulesService,
 ) -> int:
-    """Turn legacy tag auto-apply into rule policies once; return the number of policies created.
+    """Turn legacy tag auto-apply into rule policies once; return the number of rules migrated.
 
-    Idempotent (a marker setting skips later runs) and never raises: a failing rule
+    Idempotent (a marker setting skips later runs; a re-run after a partial run reuses
+    the policies it already created instead of adding copies) and never raises: a failing rule
     is logged and skipped. When the setting or the rules cannot be read, nothing is
     marked so the next startup retries.
     """
@@ -78,4 +79,8 @@ def _create_policy(policies: RulePolicyService, rule: RegistryRule, slot_tags: d
     try:
         return policies.create(rule.rule_id, body, _SYSTEM_USER)
     except DuplicatePolicyNameError:
+        # A re-run after a partial migration finds its own earlier policy: reuse it.
+        for existing in policies.list_for_rule(rule.rule_id):
+            if existing.name == base and existing.created_by == _SYSTEM_USER:
+                return existing
         return policies.create(rule.rule_id, body.model_copy(update={"name": f"{base} (2)"}), _SYSTEM_USER)

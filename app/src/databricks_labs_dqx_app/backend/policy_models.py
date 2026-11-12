@@ -170,6 +170,12 @@ class RulePolicyIn(BaseModel):
     column_conditions: dict[str, ColumnCondition] = Field(default_factory=dict)
     register_tables: bool = False
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_name(cls, value: object) -> object:
+        # Strip before the length checks so a whitespace-only name is rejected.
+        return value.strip() if isinstance(value, str) else value
+
 
 class RulePolicy(RulePolicyIn):
     """A stored rule policy."""

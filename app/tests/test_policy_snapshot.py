@@ -248,3 +248,25 @@ def test_case_mismatched_scope_matches():
     sql, _ = _make_sql(_main_data())
     result = _reader(sql).for_scope(PolicyScope(catalogs=["MAIN"], schemas=["Main.Sales"]))
     assert {t.table_fqn for t in result.tables} == {"MAIN.sales.orders", "MAIN.sales.customers"}
+
+
+def test_information_schema_literals_escape_backslashes():
+    data = {"main": {"tables": [["back\\", "t", None]], "columns": [["back\\", "t", "c", "INT"]]}}
+    sql, queries = _make_sql(data)
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+    assert [t.table_fqn for t in result.tables] == ["main.back\\.t"]
+    follow = [q for q in queries if ".columns" in q]
+    assert "IN ('back\\\\')" in follow[0]
+
+
+def test_all_catalogs_skips_system_and_internal_catalogs():
+    sql, queries = _make_sql(_main_data())
+    result = _reader(sql, ["main", "system", "SYSTEM", "__databricks_internal_x"]).for_scope(PolicyScope())
+    assert {t.table_fqn for t in result.tables} == {"main.sales.orders", "main.sales.customers"}
+    assert not any("`system`" in q.lower() or "__databricks_internal" in q for q in queries)
+
+
+def test_explicit_system_catalog_is_still_read():
+    sql, queries = _make_sql({})
+    _reader(sql).for_scope(PolicyScope(catalogs=["system"]))
+    assert any("`system`" in q for q in queries)

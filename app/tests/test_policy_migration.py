@@ -54,6 +54,7 @@ class _Deps:
         self.policies = create_autospec(RulePolicyService, instance=True)
         self.created: list[tuple[str, RulePolicyIn, str]] = []
         self.policies.create.side_effect = self.create_policy
+        self.policies.list_for_rule.return_value = []
         self.applied = create_autospec(ApplyRulesService, instance=True)
         self.applied.restamp_tag_auto_to_policy.return_value = 1
 
@@ -127,6 +128,48 @@ def test_name_conflict_retries_with_suffix() -> None:
         return deps.create_policy(rule_id, body, user_email)
 
     deps.policies.create.side_effect = create
+
+    assert deps.run() == 1
+    assert [body.name for _, body, _ in deps.created] == ["Email not null by tag (2)"]
+
+
+def test_rerun_after_partial_migration_reuses_the_system_policy() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [_rule("r1", "Email not null", {"column": ["class.email_address"]})]
+    existing = RulePolicy(
+        name="Email not null by tag",
+        scope=PolicyScope(),
+        column_conditions={"column": ColumnCondition(kind="tags", tags=["class.email_address"])},
+        policy_id="p-old",
+        rule_id="r1",
+        created_by="system",
+    )
+
+    def create(rule_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
+        if body.name == existing.name:
+            raise DuplicatePolicyNameError("taken")
+        return deps.create_policy(rule_id, body, user_email)
+
+    deps.policies.create.side_effect = create
+    deps.policies.list_for_rule.return_value = [existing]
+
+    assert deps.run() == 1
+    assert deps.created == []
+    deps.applied.restamp_tag_auto_to_policy.assert_called_once_with("r1", "p-old")
+
+
+def test_name_taken_by_a_user_policy_still_gets_a_suffix() -> None:
+    deps = _Deps({"tag_auto_apply": "true"})
+    deps.registry.list_rules.return_value = [_rule("r1", "Email not null", {"column": ["class.email_address"]})]
+    mine = RulePolicy(name="Email not null by tag", policy_id="p-user", rule_id="r1", created_by="alice@example.com")
+
+    def create(rule_id: str, body: RulePolicyIn, user_email: str) -> RulePolicy:
+        if body.name == mine.name:
+            raise DuplicatePolicyNameError("taken")
+        return deps.create_policy(rule_id, body, user_email)
+
+    deps.policies.create.side_effect = create
+    deps.policies.list_for_rule.return_value = [mine]
 
     assert deps.run() == 1
     assert [body.name for _, body, _ in deps.created] == ["Email not null by tag (2)"]

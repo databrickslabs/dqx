@@ -17,12 +17,19 @@ from databricks_labs_dqx_app.backend.policy_models import ALL, PolicyScope
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, TableSnapshot, in_scope
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, validate_fqn, validate_identifier
+from databricks_labs_dqx_app.backend.sql_utils import (
+    escape_sql_string_strict,
+    quote_ident,
+    validate_fqn,
+    validate_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_SNAPSHOT_TABLES = 5000
 _READ_ERRORS = (ValueError, RuntimeError, OSError, DatabricksError)  # RuntimeError covers SqlStatementError
+_SYSTEM_CATALOG = "system"
+_INTERNAL_CATALOG_PREFIX = "__databricks_internal"
 _TABLE_TYPES = "('MANAGED','EXTERNAL','VIEW', 'MATERIALIZED_VIEW', 'STREAMING_TABLE')"
 
 
@@ -42,7 +49,8 @@ class _CatalogFilter:
 
 
 def _literal(value: str) -> str:
-    return f"'{escape_sql_string(value)}'"
+    # information_schema names are not validated FQNs, so backslashes must be escaped too.
+    return f"'{escape_sql_string_strict(value)}'"
 
 
 def _schema_in(column: str, schemas: frozenset[str]) -> str:
@@ -64,6 +72,11 @@ def _where(flt: _CatalogFilter, schema_col: str, table_col: str | None) -> str:
             )
             clauses.append(f"({ors})")
     return " AND ".join(clauses)
+
+
+def _user_catalogs(names: list[str]) -> list[str]:
+    """Drop the platform catalogs "All catalogs" never reaches (``system``, ``__databricks_internal*``)."""
+    return [n for n in names if n.lower() != _SYSTEM_CATALOG and not n.lower().startswith(_INTERNAL_CATALOG_PREFIX)]
 
 
 Row = dict[str, str | None]
@@ -90,7 +103,7 @@ class PolicySnapshotReader:
 
     def for_scope(self, scope: PolicyScope, *, limit: int = MAX_SNAPSHOT_TABLES) -> SnapshotResult:
         try:
-            catalogs = self._list_catalogs() if scope.catalogs == ALL else list(scope.catalogs)
+            catalogs = _user_catalogs(self._list_catalogs()) if scope.catalogs == ALL else list(scope.catalogs)
         except _READ_ERRORS:
             logger.warning("Could not list catalogs for policy snapshot")
             return SnapshotResult(tables=[], truncated=False, unreadable_catalogs=[ALL])
