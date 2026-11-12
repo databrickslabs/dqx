@@ -93,6 +93,7 @@ import {
   useQueryTableData,
   useGetSampleQuestions,
   useRevertMonitoredTable,
+  getListTagSuggestionsQueryKey,
   getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
@@ -103,6 +104,7 @@ import {
   type TableDataOut,
   type TagRuleSuggestionOut,
 } from "@/lib/api";
+import { appendMissingRows, newServerRows, nextPolicyRefetchDelay } from "@/lib/policy-evaluation-refetch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -294,7 +296,7 @@ function MonitoredTableDetailPage() {
     [navigate, bindingId],
   );
 
-  const { data } = useGetMonitoredTableSuspense(bindingId);
+  const { data, dataUpdatedAt } = useGetMonitoredTableSuspense(bindingId);
   const detail = data.data;
   const table = detail.table;
   const appliedRules = useMemo(() => detail.applied_rules ?? [], [detail.applied_rules]);
@@ -431,6 +433,44 @@ function MonitoredTableDetailPage() {
     },
     [setStagedRows, stagedRowKey],
   );
+
+  // Rule policies: opening the table evaluates the policies reaching it in the
+  // background (`policy_evaluation_pending`). Re-read the detail (and the tag
+  // suggestions) shortly after, up to a few times while it stays pending, so the
+  // rules it attaches appear without a manual reload.
+  const policyRefetchAttemptsRef = useRef(0);
+  const policyRefetchBindingRef = useRef(bindingId);
+  const policyEvaluationPending = detail.policy_evaluation_pending;
+  useEffect(() => {
+    if (policyRefetchBindingRef.current !== bindingId) {
+      policyRefetchBindingRef.current = bindingId;
+      policyRefetchAttemptsRef.current = 0;
+    }
+    const delay = nextPolicyRefetchDelay(policyEvaluationPending, policyRefetchAttemptsRef.current);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      policyRefetchAttemptsRef.current += 1;
+      void queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) });
+      void queryClient.invalidateQueries({ queryKey: getListTagSuggestionsQueryKey(bindingId) });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [policyEvaluationPending, dataUpdatedAt, bindingId, queryClient]);
+
+  // Rows that appear server-side between two reads of this table (attached by a
+  // rule policy evaluation) join both the baseline and the staged selection, so
+  // they show up in the editor without marking it dirty — and a later Save never
+  // drops them. Only rows NEW since the previous read are merged: anything the
+  // user removed locally, or a stale read from before their own save, is left alone.
+  const lastServerRowsRef = useRef({ bindingId, rows: appliedRules });
+  useEffect(() => {
+    const previous = lastServerRowsRef.current;
+    lastServerRowsRef.current = { bindingId, rows: appliedRules };
+    if (previous.bindingId !== bindingId || previous.rows === appliedRules) return;
+    const added = newServerRows(normalizeStagedRows(previous.rows), normalizeStagedRows(appliedRules), stagedRowKey);
+    if (added.length === 0) return;
+    setBaseline((prev) => appendMissingRows(prev, added, stagedRowKey));
+    setStagedRows((prev) => appendMissingRows(prev, added, stagedRowKey));
+  }, [appliedRules, bindingId, stagedRowKey]);
 
   const adminDefaultThreshold = useDefaultPassThreshold();
   const isDirty =

@@ -35,7 +35,10 @@ from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, Regi
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.monitored_table_registration import can_register_tables
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    DuplicateMonitoredTableError,
+    MonitoredTableService,
+)
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.policy_engine import (
     ALL_NEEDS,
@@ -46,7 +49,16 @@ from databricks_labs_dqx_app.backend.services.policy_engine import (
     in_scope,
     needs_of,
 )
-from databricks_labs_dqx_app.backend.services.policy_snapshot import PolicySnapshotReader, SnapshotResult
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import (
+    OpenClaim,
+    OpenEvaluationDebounce,
+    PolicyCatalogCache,
+)
+from databricks_labs_dqx_app.backend.services.policy_snapshot import (
+    PolicySnapshotReader,
+    SnapshotResult,
+    snapshot_cache_identity,
+)
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyNotFoundError, RulePolicyService
 
@@ -102,6 +114,15 @@ class ApplyResult:
 _EMPTY_RESULT = ApplyResult(attached=0, registered=0, ambiguous=[])
 
 
+@dataclass(frozen=True)
+class OpenEvaluation:
+    """What opening a monitored table does about rule policies (see :meth:`PolicyApplyService.begin_open`)."""
+
+    pending: bool  # an evaluation was scheduled now or is still running: attached rules may appear shortly
+    run: bool  # the caller must run :meth:`PolicyApplyService.evaluate_on_open` (in the background)
+    key: tuple[str, str, int] | None = None  # debounce claim to release when the evaluation finishes
+
+
 @dataclass
 class _Totals:
     max_registrations: int
@@ -143,6 +164,7 @@ class _RunReads:
 
     needs: SnapshotNeeds = ALL_NEEDS  # facts the run's policies read (see policy_engine.needs_of)
     monitored: dict[str, str] | None = None  # table_fqn -> binding_id of every monitored table
+    registered: dict[str, str] = field(default_factory=dict)  # lower-cased table_fqn -> binding_id found this run
     snapshots: dict[tuple[str, bool], tuple[SnapshotResult, dict[str, str]]] = field(default_factory=dict)
 
 
@@ -270,7 +292,17 @@ class PolicyApplyService:
         *,
         max_registrations_per_run: int = MAX_REGISTRATIONS_PER_RUN,
         max_ambiguous_per_run: int = MAX_AMBIGUOUS_PER_RUN,
+        catalog_cache: PolicyCatalogCache | None = None,
+        open_debounce: OpenEvaluationDebounce | None = None,
     ) -> None:
+        """Create the service.
+
+        Args:
+            catalog_cache: Optional process-wide cache of the policy list and their rules
+                (used by the per-table evaluations: open, register, suggestions).
+            open_debounce: Optional process-wide debounce of on-open evaluations
+                (see :meth:`begin_open`); without one every open evaluates.
+        """
         self._policies = policies
         self._registry = registry
         self._monitored_tables = monitored_tables
@@ -280,6 +312,8 @@ class PolicyApplyService:
         self._register_table = register_table
         self._max_registrations = max_registrations_per_run
         self._max_ambiguous = max_ambiguous_per_run
+        self._catalog_cache = catalog_cache
+        self._open_debounce = open_debounce
 
     # ------------------------------------------------------------------
     # Preview (dry run)
@@ -351,7 +385,8 @@ class PolicyApplyService:
         try:
             rule = self._approved_rule(policy.rule_id)
             if rule is not None:
-                self._run_scope(policy, rule, user, totals, _RunReads(needs=needs_of([policy])))
+                gate = self._gate(user)
+                self._run_scope(policy, rule, user, totals, _RunReads(needs=needs_of([policy])), gate)
         except Exception:  # best-effort trigger: report what was done so far
             logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -368,9 +403,10 @@ class PolicyApplyService:
             logger.warning(f"Could not load policies for rule {safe_log_value(rule_id)}", exc_info=True)
             return _EMPTY_RESULT
         reads = _RunReads(needs=needs_of(policies))
+        gate = self._gate(user)  # one gate per run: permission / applied / tombstone reads happen once per binding
         for policy in policies:
             try:
-                self._run_scope(policy, rule, user, totals, reads)
+                self._run_scope(policy, rule, user, totals, reads, gate)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
                 logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -391,9 +427,10 @@ class PolicyApplyService:
             except Exception:  # best-effort trigger: one policy failing to load must not stop the others
                 logger.warning(f"Could not load rule policy {safe_log_value(policy_id)}", exc_info=True)
         reads = _RunReads(needs=needs_of(policy for policy, _ in runnable))
+        gate = self._gate(user)  # one gate per run: permission / applied / tombstone reads happen once per binding
         for policy, rule in runnable:
             try:
-                self._run_scope(policy, rule, user, totals, reads)
+                self._run_scope(policy, rule, user, totals, reads, gate)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
                 logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
         return totals.result()
@@ -421,6 +458,38 @@ class PolicyApplyService:
             logger.warning("Policy evaluation for registered tables failed", exc_info=True)
         return totals.result()
 
+    def begin_open(self, binding_id: str, table_fqn: str, user: ActingUser) -> OpenEvaluation:
+        """Decide what opening *binding_id* (monitored table *table_fqn*) does about rule policies.
+
+        Nothing runs when no policy of an approved rule has the table in scope, or when the
+        same user opened it in the current policy generation within the debounce window (its
+        evaluation finished). When an earlier evaluation is still running the result is
+        ``pending`` without scheduling another. Never raises: on a lookup failure the
+        evaluation runs.
+        """
+        try:
+            if not self._reaching(table_fqn):
+                return OpenEvaluation(pending=False, run=False)
+        except Exception:  # best-effort: let the background evaluation decide
+            logger.warning(f"Policy coverage lookup for binding {safe_log_value(binding_id)} failed", exc_info=True)
+        if self._open_debounce is None:
+            return OpenEvaluation(pending=True, run=True)
+        user_key = f"{snapshot_cache_identity(user.email)}:{user.role.value}"
+        claim, key = self._open_debounce.claim(user_key, binding_id)
+        if claim is OpenClaim.SKIP:
+            return OpenEvaluation(pending=False, run=False)
+        if claim is OpenClaim.PENDING:
+            return OpenEvaluation(pending=True, run=False)
+        return OpenEvaluation(pending=True, run=True, key=key)
+
+    def evaluate_on_open(self, binding_id: str, opened: OpenEvaluation, user: ActingUser) -> ApplyResult:
+        """Run the evaluation :meth:`begin_open` scheduled, then release its debounce claim. Never raises."""
+        try:
+            return self.evaluate_binding(binding_id, user)
+        finally:
+            if opened.key is not None and self._open_debounce is not None:
+                self._open_debounce.finish(opened.key)
+
     def ambiguous_for_binding(self, binding_id: str, user: ActingUser) -> list[PolicyMatch]:
         """Ambiguous policy pairings on one monitored table, offered as suggestions (nothing attached)."""
         totals = self._totals()
@@ -439,6 +508,27 @@ class PolicyApplyService:
     def _totals(self) -> _Totals:
         return _Totals(max_registrations=self._max_registrations, max_ambiguous=self._max_ambiguous)
 
+    def _gate(self, user: ActingUser) -> _UserGate:
+        return _UserGate(user, self._permissions, self._apply_rules)
+
+    def _all_policies(self) -> list[RulePolicy]:
+        if self._catalog_cache is None:
+            return self._policies.list_all()
+        return self._catalog_cache.policies(self._policies.list_all)
+
+    def _rules(self, rule_ids: list[str]) -> dict[str, RegistryRule]:
+        if self._catalog_cache is None:
+            return self._registry.get_rules_many(rule_ids)
+        return self._catalog_cache.rules(rule_ids, self._registry.get_rules_many)
+
+    def _reaching(self, table_fqn: str) -> list[RulePolicy]:
+        """Policies of approved rules that have *table_fqn* in scope."""
+        policies = [p for p in self._all_policies() if in_scope(p.scope, table_fqn)]
+        if not policies:
+            return []
+        rules = self._rules(sorted({p.rule_id for p in policies}))
+        return [p for p in policies if (rule := rules.get(p.rule_id)) is not None and rule.status == "approved"]
+
     def _approved_rule(self, rule_id: str) -> RegistryRule | None:
         rule = self._registry.get_rule(rule_id)
         return rule if rule is not None and rule.status == "approved" else None
@@ -450,15 +540,15 @@ class PolicyApplyService:
         user: ActingUser,
         totals: _Totals,
         reads: _RunReads,
+        gate: _UserGate,
     ) -> None:
-        """Evaluate *policy* across its scope, reusing what this run (*reads*) already read."""
+        """Evaluate *policy* across its scope, reusing what this run (*reads*, *gate*) already read."""
         full_scan = policy.register_tables and can_register_tables(user.role)
         snapshot, bindings = self._read_scope(policy.scope, full_scan, reads)
         if snapshot.truncated:
             logger.info(f"Rule policy {safe_log_value(policy.policy_id)} evaluation was capped at the snapshot limits")
-        gate = _UserGate(user, self._permissions, self._apply_rules)
         for table in snapshot.tables:
-            self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=True)
+            self._apply_table(policy, rule, table, bindings, gate, user, totals, reads, attach=True)
 
     def _read_scope(
         self, scope: PolicyScope, full_scan: bool, reads: _RunReads
@@ -511,17 +601,14 @@ class PolicyApplyService:
         """
         if not table_bindings:
             return
-        all_policies = self._policies.list_all()
+        all_policies = self._all_policies()
         reaching = {fqn: [p for p in all_policies if in_scope(p.scope, fqn)] for fqn in table_bindings}
         rule_ids = sorted({p.rule_id for ps in reaching.values() for p in ps})
         if not rule_ids:
             return
-        rules = {
-            rule_id: rule
-            for rule_id, rule in self._registry.get_rules_many(rule_ids).items()
-            if rule.status == "approved"
-        }
-        gate = _UserGate(user, self._permissions, self._apply_rules)
+        rules = {rule_id: rule for rule_id, rule in self._rules(rule_ids).items() if rule.status == "approved"}
+        gate = self._gate(user)
+        reads = _RunReads()
         reaching = {
             fqn: approved
             for fqn, policies in reaching.items()
@@ -540,7 +627,9 @@ class PolicyApplyService:
             bindings = {table.table_fqn: allowed[fqn]}
             for policy in policies:
                 try:
-                    self._apply_table(policy, rules[policy.rule_id], table, bindings, gate, user, totals, attach=attach)
+                    self._apply_table(
+                        policy, rules[policy.rule_id], table, bindings, gate, user, totals, reads, attach=attach
+                    )
                 except Exception:  # best-effort: one table failing must not stop the others
                     logger.warning(
                         f"Rule policy {safe_log_value(policy.policy_id)} evaluation on binding "
@@ -557,6 +646,7 @@ class PolicyApplyService:
         gate: _UserGate,
         user: ActingUser,
         totals: _Totals,
+        reads: _RunReads,
         *,
         attach: bool,
     ) -> None:
@@ -567,19 +657,27 @@ class PolicyApplyService:
         ambiguous = [m for m in matches if m.status == "ambiguous" and (m.column_mapping or not slots)]
         if not autos and not ambiguous:
             return
-        binding_id = bindings.get(table.table_fqn)
+        # A table another policy of this run registered (or found registered) is monitored now.
+        binding_id = bindings.get(table.table_fqn) or reads.registered.get(table.table_fqn.lower())
         if binding_id is None:
             if not attach or not autos or not policy.register_tables or not can_register_tables(user.role):
                 return
             if totals.registered >= totals.max_registrations:
                 totals.registrations_skipped += 1
                 return
-            binding_id = self._register(policy, table.table_fqn, user)
-            if binding_id is None:
+            registration = self._register(policy, table.table_fqn, user)
+            if registration is None:
                 return
+            binding_id, owned = registration
             bindings[table.table_fqn] = binding_id
-            gate.grant_owner(binding_id)
-            totals.registered += 1
+            reads.registered[table.table_fqn.lower()] = binding_id
+            if reads.monitored is not None:
+                reads.monitored[table.table_fqn] = binding_id
+            if owned:
+                gate.grant_owner(binding_id)
+                totals.registered += 1
+            elif not gate.can_apply(binding_id):
+                return
         elif not gate.can_apply(binding_id):
             return
         if attach:
@@ -591,9 +689,17 @@ class PolicyApplyService:
         if ambiguous and room:
             totals.ambiguous.extend(gate.fresh(binding_id, ambiguous, room))
 
-    def _register(self, policy: RulePolicy, table_fqn: str, user: ActingUser) -> str | None:
+    def _register(self, policy: RulePolicy, table_fqn: str, user: ActingUser) -> tuple[str, bool] | None:
+        """Register *table_fqn* for *user*: ``(binding_id, True)``, or ``(binding_id, False)`` when it already was."""
         try:
-            return self._register_table(table_fqn, user.email).binding_id
+            return self._register_table(table_fqn, user.email).binding_id, True
+        except DuplicateMonitoredTableError:
+            # Registered meanwhile (another user or request): attach to the existing binding if permitted.
+            existing = self._monitored_tables.get_binding_ids_by_table_fqn([table_fqn])
+            binding_id = existing.get(table_fqn) or next(
+                (b for fqn, b in existing.items() if fqn.lower() == table_fqn.lower()), None
+            )
+            return (binding_id, False) if binding_id is not None else None
         except Exception:  # best-effort: one table failing to register must not stop the others
             logger.warning(
                 f"Rule policy {safe_log_value(policy.policy_id)} could not register a matching table", exc_info=True
@@ -603,7 +709,12 @@ class PolicyApplyService:
     def _attach(self, binding_id: str, match: PolicyMatch, user: ActingUser) -> bool:
         try:
             applied = self._apply_rules.attach_policy_mapping(
-                binding_id, match.rule_id, [match.column_mapping], user.email, match.policy_id
+                binding_id,
+                match.rule_id,
+                [match.column_mapping],
+                user.email,
+                match.policy_id,
+                suppression_checked=True,  # only fresh matches get here: the gate read the binding's tombstones
             )
         except Exception:  # best-effort: one failing attach must not stop the others
             logger.warning(

@@ -82,6 +82,7 @@ from databricks_labs_dqx_app.backend.policy_models import RulePolicy
 from databricks_labs_dqx_app.backend.services.policy_apply_service import (
     ActingUser,
     ApplyResult,
+    OpenEvaluation,
     PolicyApplyService,
 )
 from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch
@@ -161,7 +162,11 @@ def _policy_apply_mock(attached: int = 0) -> MagicMock:
     policy_apply.evaluate_binding.return_value = ApplyResult(attached=attached, registered=0, ambiguous=[])
     policy_apply.evaluate_tables.return_value = ApplyResult(attached=0, registered=0, ambiguous=[])
     policy_apply.ambiguous_for_binding.return_value = []
+    policy_apply.begin_open.return_value = _OPEN_RUN
     return policy_apply
+
+
+_OPEN_RUN = OpenEvaluation(pending=True, run=True, key=("u", "b1", 0))
 
 
 class TestListAndGet:
@@ -238,24 +243,43 @@ class TestListAndGet:
         assert result.applied_rules[0].rule_name == "Not Null"
         # Opening the table responds first; the policies reaching it are evaluated
         # afterwards, once, as the caller, and the detail is read only once.
-        policy_apply.evaluate_binding.assert_not_called()
+        policy_apply.begin_open.assert_called_once_with("b1", "cat.schema.tbl", _ACTING_USER)
+        assert result.policy_evaluation_pending is True
+        policy_apply.evaluate_on_open.assert_not_called()
         assert len(bt.tasks) == 1
         asyncio.run(bt())
-        policy_apply.evaluate_binding.assert_called_once_with("b1", _ACTING_USER)
+        policy_apply.evaluate_on_open.assert_called_once_with("b1", _OPEN_RUN, _ACTING_USER)
         svc.get.assert_called_once_with("b1")
+
+    @pytest.mark.parametrize(
+        "opened",
+        [OpenEvaluation(pending=False, run=False), OpenEvaluation(pending=True, run=False)],
+        ids=["debounced-or-uncovered", "still-running"],
+    )
+    def test_get_schedules_nothing_unless_the_open_claims_an_evaluation(self, opened: OpenEvaluation):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(), applied_rules=[])
+        policy_apply = _policy_apply_mock()
+        policy_apply.begin_open.return_value = opened
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
+        assert result.policy_evaluation_pending is opened.pending
+        assert bt.tasks == []
 
     def test_get_policy_failure_is_non_fatal(self):
         svc = MagicMock()
         svc.get.return_value = MonitoredTableDetail(table=_table(), applied_rules=[])
         policy_apply = _policy_apply_mock()
-        policy_apply.evaluate_binding.side_effect = RuntimeError("boom")
+        policy_apply.evaluate_on_open.side_effect = RuntimeError("boom")
         bt = BackgroundTasks()
         result = get_monitored_table(
             "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
         )
         assert result.table.binding_id == "b1"
         asyncio.run(bt())  # the background failure is swallowed (logged)
-        policy_apply.evaluate_binding.assert_called_once()
+        policy_apply.evaluate_on_open.assert_called_once()
 
     def test_get_missing_binding_raises_404(self):
         svc = MagicMock()
@@ -267,7 +291,7 @@ class TestListAndGet:
                 "missing", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
             )
         assert excinfo.value.status_code == 404
-        policy_apply.evaluate_binding.assert_not_called()
+        policy_apply.begin_open.assert_not_called()
 
 
 class TestRegister:

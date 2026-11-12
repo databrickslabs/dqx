@@ -40,6 +40,7 @@ from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, RuleP
 from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.services.policy_apply_service import (
     ActingUser,
     PolicyApplyService,
@@ -375,6 +376,7 @@ def rescan_rule_policy(
     """Re-evaluate a policy across its scope and attach anything new."""
     existing = _load_policy(policies, policy_id)
     caller.require(existing.rule_id, Privilege.MODIFY)
+    bump_policy_generation()  # a re-scan asks for fresh evaluations everywhere, including on table open
     try:
         result = apply.run_policy(policy_id, user)
     except RulePolicyNotFoundError:

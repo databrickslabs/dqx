@@ -400,6 +400,20 @@ class TestAttachPolicyMapping:
         insert_sql = sql.execute.call_args[0][0]
         assert "INSERT INTO dqx_test.dqx_app_test.dq_applied_rules" in insert_sql
 
+    def test_suppression_already_checked_skips_the_tombstone_query(self, svc, sql, registry):
+        # The policy run already read every tombstone of the binding (and fails closed itself).
+        registry.get_rule.return_value = _published_rule()
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists
+            [],  # no existing row for the natural key
+        ]
+        applied = svc.attach_policy_mapping(
+            "b1", "r1", [{"column": "customer_id"}], "alice@x", "p1", suppression_checked=True
+        )
+        assert applied is not None
+        assert sql.query.call_count == 2
+        assert all("dq_tag_auto_suppressions" not in c.args[0] for c in sql.query.call_args_list)
+
     def test_rejects_missing_binding(self, svc, sql, registry):
         sql.query.return_value = []  # binding lookup empty
         with pytest.raises(RuntimeError, match="Monitored table not found"):
@@ -573,6 +587,30 @@ class TestSaveAppliedRules:
         assert any("UPDATE dqx_test.dqx_app_test.dq_monitored_tables" in c and "updated_at" in c for c in calls)
         assert not any("DELETE" in c for c in calls)
         assert not any("INSERT" in c for c in calls)
+
+    def test_accepting_a_suggestion_a_policy_already_attached_is_a_no_op(self, svc, sql, registry):
+        # The user accepts a suggestion while a background policy evaluation attached the same
+        # mapping: the save keeps the single existing row (no error, no duplicate, no tombstone).
+        registry.get_rule.return_value = _published_rule()
+        mapping = [{"column": "customer_id"}]
+        policy_row = _applied_row(
+            id_="ar-policy",
+            column_mapping=mapping,
+            mapping_hash=compute_mapping_hash(mapping),
+            user_metadata={"origin": "policy", "policy_id": "p1"},
+        )
+        sql.query.side_effect = [
+            [["b1"]],  # binding exists (save_applied_rules)
+            [policy_row],  # list_applied: the policy-made row (same hash as the accepted suggestion)
+            [["b1"]],  # binding exists (apply_rule)
+            [policy_row],  # apply_rule -> natural-key match -> update in place
+        ]
+        results = svc.save_applied_rules("b1", [DesiredAppliedRule(rule_id="r1", column_mapping=mapping)], "alice@x")
+        assert [r.id for r in results] == ["ar-policy"]
+        calls = [c.args[0] for c in sql.execute.call_args_list]
+        assert not any("INSERT" in c for c in calls)
+        assert not any("DELETE" in c for c in calls)
+        sql.upsert.assert_not_called()  # no suppression tombstone
 
     def test_allows_empty_mapping_to_stage(self, svc, sql, registry):
         registry.get_rule.return_value = _published_rule()

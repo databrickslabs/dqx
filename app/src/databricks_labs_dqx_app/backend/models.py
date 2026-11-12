@@ -1212,12 +1212,22 @@ class MonitoredTableDetailOut(BaseModel):
 
     table: MonitoredTableOut
     applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+    policy_evaluation_pending: bool = Field(
+        default=False,
+        description=(
+            "True when a rule policy evaluation for this table was started by this read or is still "
+            "running, so rules it attaches may appear on a re-read shortly."
+        ),
+    )
 
     @classmethod
-    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+    def from_domain(
+        cls, detail: MonitoredTableDetail, *, policy_evaluation_pending: bool = False
+    ) -> "MonitoredTableDetailOut":
         return cls(
             table=MonitoredTableOut.from_domain(detail.table),
             applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+            policy_evaluation_pending=policy_evaluation_pending,
         )
 
 

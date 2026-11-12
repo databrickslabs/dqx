@@ -2603,6 +2603,8 @@ export interface ModelServicesOut {
 export interface MonitoredTableDetailOut {
   table: MonitoredTableOut;
   applied_rules?: AppliedRuleOut[];
+  /** True when a rule policy evaluation for this table was started by this read or is still running, so rules it attaches may appear on a re-read shortly. */
+  policy_evaluation_pending?: boolean;
 }
 
 export type MonitoredTableOutOwner = string | null;
@@ -18656,7 +18658,10 @@ export function useListImplementedRulesSuspense<TData = Awaited<ReturnType<typeo
 
 After responding, evaluates every rule policy reaching this table as the
 caller (so it only attaches where they may apply rules); rules it attaches
-show up on the next read. Best-effort: a policy failure never affects the read.
+show up on the next read, and ``policy_evaluation_pending`` tells the client
+to re-read shortly. Nothing is evaluated when no policy reaches the table, or
+when the caller opened it within the last few minutes and no policy, rule or
+registration changed since. Best-effort: a policy failure never affects the read.
  * @summary Get Monitored Table
  */
 export const getMonitoredTable = (

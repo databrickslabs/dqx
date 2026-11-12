@@ -326,6 +326,8 @@ class ApplyRulesService:
         column_mapping: list[ColumnMappingGroup],
         user_email: str,
         policy_id: str,
+        *,
+        suppression_checked: bool = False,
     ) -> AppliedRule | None:
         """Idempotently attach a mapping produced by a rule policy.
 
@@ -359,6 +361,10 @@ class ApplyRulesService:
                 match the rule's slot names.
             user_email: Attributed as ``created_by`` on a newly inserted row.
             policy_id: The rule policy that produced the mapping.
+            suppression_checked: The caller already read this binding's tombstones (in one
+                :meth:`list_suppressed_keys` call) and found none for this mapping, so the
+                per-mapping tombstone query is skipped. A caller whose tombstone read failed
+                must not attach at all (fail closed).
 
         Returns:
             The existing :class:`AppliedRule` (unchanged) when one already
@@ -378,6 +384,7 @@ class ApplyRulesService:
             column_mapping,
             user_email,
             {ORIGIN_KEY: ORIGIN_POLICY, POLICY_ID_KEY: policy_id},
+            suppression_checked=suppression_checked,
         )
 
     def _attach_origin_mapping(
@@ -387,11 +394,13 @@ class ApplyRulesService:
         column_mapping: list[ColumnMappingGroup],
         user_email: str,
         origin_metadata: dict[str, str],
+        *,
+        suppression_checked: bool = False,
     ) -> AppliedRule | None:
         rule = self._validate_applicable_rule(binding_id, rule_id, column_mapping)
 
         mapping_hash = compute_mapping_hash(column_mapping)
-        if self.is_suppressed(binding_id, rule_id, mapping_hash):
+        if not suppression_checked and self.is_suppressed(binding_id, rule_id, mapping_hash):
             # An owner deliberately removed this auto mapping; the sweep must
             # not re-add it. See remove_applied's tombstone write.
             logger.info("Skipped auto-attach of rule %s to binding %s: mapping is suppressed", rule_id, binding_id)

@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.policy_models import RulePolicy, RulePolicyIn
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -91,7 +93,8 @@ class RulePolicyService:
             if _is_unique_violation(exc):
                 raise DuplicatePolicyNameError(f"This rule already has a policy named '{name}'.") from exc
             raise
-        logger.info("Created rule policy %s for rule %s", policy_id, rule_id)
+        bump_policy_generation()
+        logger.info(f"Created rule policy {safe_log_value(policy_id)} for rule {safe_log_value(rule_id)}")
         return RulePolicy(
             **body.model_dump(),
             policy_id=policy_id,
@@ -148,7 +151,8 @@ class RulePolicyService:
             if _is_unique_violation(exc):
                 raise DuplicatePolicyNameError(f"This rule already has a policy named '{name}'.") from exc
             raise
-        logger.info("Updated rule policy %s", policy_id)
+        bump_policy_generation()
+        logger.info(f"Updated rule policy {safe_log_value(policy_id)}")
         refreshed = self.get(policy_id)
         if refreshed is None:
             raise RulePolicyNotFoundError(f"Rule policy '{policy_id}' not found.")
@@ -163,14 +167,16 @@ class RulePolicyService:
         if self._sql.count(self._table, where={"policy_id": policy_id}) == 0:
             raise RulePolicyNotFoundError(f"Rule policy '{policy_id}' not found.")
         self._sql.delete(self._table, where={"policy_id": policy_id})
-        logger.info("Deleted rule policy %s", policy_id)
+        bump_policy_generation()
+        logger.info(f"Deleted rule policy {safe_log_value(policy_id)}")
 
     def delete_for_rule(self, rule_id: str) -> int:
         """Delete every policy of *rule_id*; return how many were removed."""
         count = self._sql.count(self._table, where={"rule_id": rule_id})
         if count:
             self._sql.delete(self._table, where={"rule_id": rule_id})
-            logger.info("Deleted %d rule policies for rule %s", count, rule_id)
+            bump_policy_generation()
+            logger.info(f"Deleted {count} rule policies for rule {safe_log_value(rule_id)}")
         return count
 
     # ------------------------------------------------------------------

@@ -14,6 +14,7 @@ from databricks_labs_dqx_app.backend.policy_models import (
     RulePolicyIn,
     TableCondition,
 )
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import POLICY_GENERATION
 from databricks_labs_dqx_app.backend.services.rule_policy_service import (
     DuplicatePolicyNameError,
     RulePolicyNotFoundError,
@@ -221,3 +222,18 @@ def test_create_other_db_errors_propagate(svc, sql):
 
     with pytest.raises(RuntimeError):
         svc.create("r1", _body(), "alice@example.com")
+
+
+def test_every_policy_change_bumps_the_policy_generation(svc, sql):
+    before = POLICY_GENERATION.current()
+    svc.create("r1", _body(), "alice@example.com")
+    after_create = POLICY_GENERATION.current()
+    sql.query_dicts.side_effect = [[_row()], [_row()]]
+    svc.update("p1", _body(), "alice@example.com")
+    after_update = POLICY_GENERATION.current()
+    sql.query.return_value = [["1"]]
+    svc.delete("p1")
+    after_delete = POLICY_GENERATION.current()
+    svc.delete_for_rule("r1")
+
+    assert before < after_create < after_update < after_delete < POLICY_GENERATION.current()

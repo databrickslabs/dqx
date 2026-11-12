@@ -10,6 +10,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.registry_models import MonitoredTable
 from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 
 REGISTER_TABLE_ROLES: tuple[UserRole, ...] = (UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR)
 
@@ -46,9 +47,11 @@ def register_table(
         ValueError: *table_fqn* is not a valid three-part name.
     """
     resolved_owner = owner or discovery.get_table_owner(table_fqn)
-    return monitored_tables.register(
+    table = monitored_tables.register(
         table_fqn,
         user_email,
         owner=resolved_owner,
         owner_display_name=owner_display_name,
     )
+    bump_policy_generation()  # a new binding is a new table rule policies can reach
+    return table

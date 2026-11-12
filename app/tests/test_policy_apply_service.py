@@ -27,7 +27,10 @@ from databricks_labs_dqx_app.backend.registry_models import (
     compute_mapping_hash,
 )
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
-from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
+from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    DuplicateMonitoredTableError,
+    MonitoredTableService,
+)
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.policy_apply_service import (
     MAX_AMBIGUOUS_PER_RUN,
@@ -36,6 +39,11 @@ from databricks_labs_dqx_app.backend.services.policy_apply_service import (
     ApplyResult,
     PolicyApplyService,
     RuleNotFoundError,
+)
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import (
+    OpenEvaluationDebounce,
+    PolicyCatalogCache,
+    PolicyGeneration,
 )
 from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, SnapshotNeeds, TableSnapshot
 from databricks_labs_dqx_app.backend.services.policy_snapshot import PolicySnapshotReader, SnapshotResult
@@ -121,6 +129,8 @@ class World:
     def register_table(self, table_fqn: str, user_email: str) -> MonitoredTable:
         if table_fqn in self.register_fails:
             raise RuntimeError("register failed")
+        if table_fqn in self.bindings:
+            raise DuplicateMonitoredTableError(f"already monitored: {table_fqn}")
         binding_id = f"new-{len(self.registered) + 1}"
         self.registered.append(table_fqn)
         self.bindings[table_fqn] = binding_id
@@ -131,9 +141,17 @@ class World:
             raise RuntimeError("suppression lookup failed")
         return {(r, h) for b, r, h in self.suppressed if b == binding_id}
 
-    def service(self, **caps: int) -> PolicyApplyService:
+    def service(
+        self,
+        *,
+        catalog_cache: PolicyCatalogCache | None = None,
+        open_debounce: OpenEvaluationDebounce | None = None,
+        **caps: int,
+    ) -> PolicyApplyService:
         register: Callable[[str, str], MonitoredTable] = self.register_table
         return PolicyApplyService(
+            catalog_cache=catalog_cache,
+            open_debounce=open_debounce,
             policies=self.policies,
             registry=self.registry,
             monitored_tables=self.monitored,
@@ -189,7 +207,13 @@ def world() -> World:
     w.apply_rules.list_suppressed_keys.side_effect = w.suppressed_keys
 
     def attach(
-        binding_id: str, rule_id: str, mapping: list[dict[str, str]], user_email: str, policy_id: str
+        binding_id: str,
+        rule_id: str,
+        mapping: list[dict[str, str]],
+        user_email: str,
+        policy_id: str,
+        *,
+        suppression_checked: bool = False,
     ) -> AppliedRule:
         w.attach_calls.append((binding_id, rule_id, mapping, user_email, policy_id))
         if binding_id in w.attach_fails:
@@ -849,3 +873,211 @@ def test_reads_ask_only_for_the_facts_the_policies_use(world: World) -> None:
 
     needs = [c.kwargs["needs"] for c in world.snapshots.for_tables.call_args_list]
     assert needs == [SnapshotNeeds(column_tags=True)] * 3
+
+
+# ---------------------------------------------------------------------------
+# One run: registrations visible to later policies, one gate
+# ---------------------------------------------------------------------------
+
+
+def _registering(policy_id: str, rule_id: str, scope: PolicyScope) -> RulePolicy:
+    return _policy(policy_id, rule_id=rule_id, register_tables=True).model_copy(update={"scope": scope})
+
+
+def test_table_registered_by_one_policy_is_attached_by_the_next(world: World) -> None:
+    world.set_tables(_snap("c.s.new", _col("email", "pii")))
+    stored = {
+        "p1": _registering("p1", "r1", PolicyScope(catalogs=["c"])),
+        "p2": _registering("p2", "r2", PolicyScope(catalogs=["c"], schemas=["c.s"])),  # overlapping scope
+    }
+    world.policies.get.side_effect = stored.get
+
+    result = world.service().run_policies(["p1", "p2"], AUTHOR)
+
+    assert world.registered == ["c.s.new"]
+    assert result.registered == 1
+    assert {(b, r) for b, r, _, _, _ in world.attach_calls} == {("new-1", "r1"), ("new-1", "r2")}
+
+
+def test_table_registered_meanwhile_is_attached_to_the_existing_binding(world: World) -> None:
+    world.set_tables(_snap("c.s.new", _col("email", "pii")))
+    world.policies.get.return_value = _registering("p1", "r1", PolicyScope(catalogs=["c"]))
+    world.grants = {("theirs", Privilege.APPLY)}
+    svc = world.service()
+    world.monitored.list_table_bindings.side_effect = dict  # not monitored when the run read the list
+    world.bindings = {"c.s.new": "theirs"}  # ...but registered by someone else before this run registers it
+
+    result = svc.run_policy("p1", AUTHOR)
+
+    assert world.registered == []
+    assert result.registered == 0
+    assert world.attach_calls == [("theirs", "r1", [{"column": "email"}], "alice@x", "p1")]
+
+
+def test_table_registered_meanwhile_without_permission_attaches_nothing(world: World) -> None:
+    world.set_tables(_snap("c.s.new", _col("email", "pii")))
+    world.policies.get.return_value = _registering("p1", "r1", PolicyScope(catalogs=["c"]))
+    world.monitored.list_table_bindings.side_effect = dict
+    world.bindings = {"c.s.new": "theirs"}
+
+    assert world.service().run_policy("p1", AUTHOR).attached == 0
+    world.apply_rules.attach_policy_mapping.assert_not_called()
+
+
+def test_one_permission_and_tombstone_read_per_binding_per_run(world: World) -> None:
+    n = 4
+    world.bindings = {f"c.s.t{i}": f"b{i}" for i in range(n)}
+    world.grants = {(f"b{i}", Privilege.APPLY) for i in range(n)}
+    world.set_tables(*[_snap(f"c.s.t{i}", _col("email", "pii"), _col("ssn", "gov")) for i in range(n)])
+    stored = {
+        "p1": _policy("p1", rule_id="r1", conditions={"column": ["pii"]}),
+        "p2": _policy("p2", rule_id="r2", conditions={"column": ["gov"]}),
+    }
+    world.policies.get.side_effect = stored.get
+    world.policies.list_for_rule.return_value = [
+        _policy("p1", conditions={"column": ["pii"]}),
+        _policy("p2", conditions={"column": ["gov"]}),
+    ]
+
+    for run in (
+        lambda svc: svc.run_policies(["p1", "p2"], AUTHOR),
+        lambda svc: svc.run_rule("r1", AUTHOR),
+    ):
+        world.permissions.get_object_owner.reset_mock()
+        world.apply_rules.list_suppressed_keys.reset_mock()
+        world.apply_rules.list_applied.reset_mock()
+        world.attach_calls.clear()
+
+        assert run(world.service()).attached == 2 * n
+        assert world.permissions.get_object_owner.call_count == n
+        assert world.apply_rules.list_suppressed_keys.call_count == n
+        assert world.apply_rules.list_applied.call_count == n
+    world.apply_rules.is_suppressed.assert_not_called()
+    assert all(
+        c.kwargs.get("suppression_checked") is True for c in world.apply_rules.attach_policy_mapping.call_args_list
+    )
+
+
+# ---------------------------------------------------------------------------
+# Opening a table: coverage check, debounce, cached policy list
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@dataclass
+class _OpenWorld:
+    world: World
+    generation: PolicyGeneration
+    clock: _Clock
+    catalog: PolicyCatalogCache
+    debounce: OpenEvaluationDebounce
+
+    def service(self) -> PolicyApplyService:
+        return self.world.service(catalog_cache=self.catalog, open_debounce=self.debounce)
+
+    def open(self, user: ActingUser = AUTHOR) -> bool:
+        svc = self.service()
+        opened = svc.begin_open("b1", "c.s.t", user)
+        if opened.run:
+            svc.evaluate_on_open("b1", opened, user)
+        return opened.pending
+
+
+@pytest.fixture
+def opening(world: World) -> _OpenWorld:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY), ("b1", Privilege.MANAGE)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+    world.policies.list_all.return_value = [_policy()]
+    generation = PolicyGeneration()
+    clock = _Clock()
+    return _OpenWorld(
+        world=world,
+        generation=generation,
+        clock=clock,
+        catalog=PolicyCatalogCache(generation, clock=clock),
+        debounce=OpenEvaluationDebounce(generation, clock=clock),
+    )
+
+
+def test_second_open_within_the_window_does_not_evaluate(opening: _OpenWorld) -> None:
+    assert opening.open() is True
+    assert opening.world.snapshots.for_tables.call_count == 1
+
+    opening.clock.now += 30
+    assert opening.open() is False
+    assert opening.world.snapshots.for_tables.call_count == 1
+    opening.world.policies.list_all.assert_called_once()  # the policy list is cached too
+    opening.world.registry.get_rules_many.assert_called_once()
+
+
+def test_open_evaluates_again_after_a_policy_change(opening: _OpenWorld) -> None:
+    opening.open()
+    opening.generation.bump()  # e.g. a rule policy was saved
+
+    assert opening.open() is True
+    assert opening.world.snapshots.for_tables.call_count == 2
+    assert opening.world.policies.list_all.call_count == 2
+
+
+def test_open_by_a_different_user_evaluates(opening: _OpenWorld) -> None:
+    opening.open()
+    bob = ActingUser(email="bob@x", role=UserRole.RULE_AUTHOR, principal_ids=frozenset({"u-bob"}))
+
+    assert opening.open(bob) is True
+    assert opening.world.snapshots.for_tables.call_count == 2
+
+
+def test_open_evaluates_again_after_the_window(opening: _OpenWorld) -> None:
+    opening.open()
+    opening.clock.now += 301
+
+    assert opening.open() is True
+    assert opening.world.snapshots.for_tables.call_count == 2
+
+
+def test_open_while_an_evaluation_runs_is_pending_without_scheduling_another(opening: _OpenWorld) -> None:
+    svc = opening.service()
+    first = svc.begin_open("b1", "c.s.t", AUTHOR)
+    second = svc.begin_open("b1", "c.s.t", AUTHOR)
+
+    assert (first.pending, first.run) == (True, True)
+    assert (second.pending, second.run) == (True, False)
+    svc.evaluate_on_open("b1", first, AUTHOR)
+    third = svc.begin_open("b1", "c.s.t", AUTHOR)
+    assert (third.pending, third.run) == (False, False)
+
+
+def test_open_of_a_table_no_policy_reaches_schedules_nothing(opening: _OpenWorld) -> None:
+    elsewhere = _policy().model_copy(update={"scope": PolicyScope(catalogs=["other"])})
+    opening.world.policies.list_all.return_value = [elsewhere]
+
+    opened = opening.service().begin_open("b1", "c.s.t", AUTHOR)
+
+    assert (opened.pending, opened.run) == (False, False)
+    opening.world.snapshots.for_tables.assert_not_called()
+
+
+def test_suggestions_reuse_the_cached_policy_list_but_read_tombstones_live(opening: _OpenWorld) -> None:
+    world = opening.world
+    world.registry.get_rules_many.side_effect = lambda ids: {i: _rule(i, slots=["a", "b"]) for i in ids}
+    # p, q, r share no name stems -> every pairing ties -> ambiguous.
+    world.set_tables(_snap("c.s.t", _col("p", "pii"), _col("q", "tel"), _col("r", "tel")))
+    world.policies.list_all.return_value = [_policy(conditions={"a": ["pii"], "b": ["tel"]})]
+
+    first = opening.service().ambiguous_for_binding("b1", AUTHOR)
+    assert {m.column_mapping["b"] for m in first} == {"q", "r"}
+    dismissed = next(m for m in first if m.column_mapping["b"] == "q")
+    world.suppressed.add(("b1", "r1", compute_mapping_hash([dismissed.column_mapping])))  # the user dismissed it
+
+    second = opening.service().ambiguous_for_binding("b1", AUTHOR)
+    assert {m.column_mapping["b"] for m in second} == {"r"}
+    world.policies.list_all.assert_called_once()
+    world.registry.get_rules_many.assert_called_once()

@@ -134,7 +134,11 @@ from databricks_labs_dqx_app.backend.services.profiling_suggestion_service impor
     BindingNotFoundError as ProfilingBindingNotFoundError,
     ProfilingSuggestionService,
 )
-from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
+from databricks_labs_dqx_app.backend.services.policy_apply_service import (
+    ActingUser,
+    OpenEvaluation,
+    PolicyApplyService,
+)
 from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch
 from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
@@ -295,6 +299,16 @@ def list_implemented_rules(
         raise HTTPException(status_code=500, detail="Failed to list implemented rules.")
 
 
+def _evaluate_on_open(
+    policy_apply: PolicyApplyService, binding_id: str, opened: OpenEvaluation, acting_user: ActingUser
+) -> None:
+    """Background task: the evaluation a table open scheduled; never raises."""
+    try:
+        policy_apply.evaluate_on_open(binding_id, opened, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
+
+
 def _evaluate_binding(policy_apply: PolicyApplyService, binding_id: str, acting_user: ActingUser) -> None:
     """Background task: evaluate the policies reaching one binding; never raises."""
     try:
@@ -328,14 +342,19 @@ def get_monitored_table(
 
     After responding, evaluates every rule policy reaching this table as the
     caller (so it only attaches where they may apply rules); rules it attaches
-    show up on the next read. Best-effort: a policy failure never affects the read.
+    show up on the next read, and ``policy_evaluation_pending`` tells the client
+    to re-read shortly. Nothing is evaluated when no policy reaches the table, or
+    when the caller opened it within the last few minutes and no policy, rule or
+    registration changed since. Best-effort: a policy failure never affects the read.
     """
     try:
         detail = svc.get(binding_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
-        background_tasks.add_task(_evaluate_binding, policy_apply, binding_id, acting_user)
-        return MonitoredTableDetailOut.from_domain(detail)
+        opened = policy_apply.begin_open(binding_id, detail.table.table_fqn, acting_user)
+        if opened.run:
+            background_tasks.add_task(_evaluate_on_open, policy_apply, binding_id, opened, acting_user)
+        return MonitoredTableDetailOut.from_domain(detail, policy_evaluation_pending=opened.pending)
     except HTTPException:
         raise
     except Exception as e:

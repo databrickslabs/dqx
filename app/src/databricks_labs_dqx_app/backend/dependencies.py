@@ -72,6 +72,7 @@ from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
 from .services.monitored_table_registration import register_table
 from .services.policy_apply_service import ActingUser, PolicyApplyService
+from .services.policy_evaluation_cache import OPEN_EVALUATION_DEBOUNCE, POLICY_CATALOG_CACHE
 from .services.policy_snapshot import PolicySnapshotReader, snapshot_cache_identity
 from .services.rule_policy_service import RulePolicyService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
@@ -1556,7 +1557,8 @@ async def get_policy_apply_service(
     """Create a PolicyApplyService for the calling user.
 
     Registration of matching tables goes through the same helper as the register
-    route, reading the table's UC owner via the caller's OBO discovery service.
+    route, reading the table's UC owner via the caller's OBO discovery service. The
+    policy list and on-open debounce are process-wide (the app runs one worker).
     """
     register = functools.partial(register_table, monitored_tables=monitored_tables, discovery=discovery)
     return PolicyApplyService(
@@ -1567,6 +1569,8 @@ async def get_policy_apply_service(
         permissions=perms,
         snapshots=snapshots,
         register_table=register,
+        catalog_cache=POLICY_CATALOG_CACHE,
+        open_debounce=OPEN_EVALUATION_DEBOUNCE,
     )
 
 
