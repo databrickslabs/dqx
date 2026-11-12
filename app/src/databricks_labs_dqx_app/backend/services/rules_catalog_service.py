@@ -568,21 +568,52 @@ class RulesCatalogService:
                 )
 
     def _check_no_duplicate_pending_or_approved(self, entry: RuleCatalogEntry) -> None:
-        """Raise ValueError if another pending/approved rule with the same check exists."""
-        check_sig = json.dumps(entry.checks[0].get("check", {}) if entry.checks else {}, sort_keys=True)
-        siblings = self.list_rules_for_table(entry.table_fqn)
-        for sibling in siblings:
+        """Raise ValueError if another pending/approved rule on the table duplicates *entry*.
+
+        A duplicate renders the same check function + arguments AND the same
+        rule-level *filter*: two checks that only differ by which rows they
+        validate (e.g. an unfiltered and a region-filtered not-null on one
+        column) are distinct rules. Between two registry-materialized rows the
+        content alone never decides it — each row is unique per applied rule
+        and mapping, and two different registry rules may legitimately render
+        the same check on one column — so such rows only collide when they also
+        come from the same registry rule.
+        """
+        entry_sig = self._pending_duplicate_signature(entry)
+        entry_registry_id = self._registry_rule_id(entry)
+        for sibling in self.list_rules_for_table(entry.table_fqn):
             if sibling.rule_id == entry.rule_id:
                 continue
             if sibling.status not in ("pending_approval", "approved"):
                 continue
-            sib_sig = json.dumps(sibling.checks[0].get("check", {}) if sibling.checks else {}, sort_keys=True)
-            if sib_sig == check_sig:
-                raise ValueError(
-                    f"A duplicate rule with the same check already exists "
-                    f"(rule_id={sibling.rule_id}, status={sibling.status}). "
-                    f"Cannot submit a duplicate for approval."
-                )
+            if self._pending_duplicate_signature(sibling) != entry_sig:
+                continue
+            sibling_registry_id = self._registry_rule_id(sibling)
+            if entry_registry_id is not None and sibling_registry_id is not None:
+                if entry_registry_id != sibling_registry_id:
+                    continue
+            raise ValueError(
+                f"A duplicate rule with the same check already exists "
+                f"(rule_id={sibling.rule_id}, status={sibling.status}). "
+                f"Cannot submit a duplicate for approval."
+            )
+
+    @staticmethod
+    def _pending_duplicate_signature(entry: RuleCatalogEntry) -> str:
+        """Identity of a rule for the submit-time duplicate guard: check body plus rule filter."""
+        check = entry.checks[0] if entry.checks else {}
+        raw_filter = check.get("filter")
+        rule_filter = raw_filter.strip() if isinstance(raw_filter, str) else ""
+        return json.dumps({"check": check.get("check", {}), "filter": rule_filter}, sort_keys=True)
+
+    @staticmethod
+    def _registry_rule_id(entry: RuleCatalogEntry) -> str | None:
+        """Registry rule a materialized row was rendered from, or None for authored rows."""
+        if entry.source != RuleSource.registry.value or not entry.checks:
+            return None
+        metadata = entry.checks[0].get("user_metadata")
+        registry_rule_id = metadata.get("registry_rule_id") if isinstance(metadata, dict) else None
+        return registry_rule_id if isinstance(registry_rule_id, str) and registry_rule_id else None
 
     def _row_to_entry(self, row: list[str]) -> RuleCatalogEntry:
         """Convert a query result row to a RuleCatalogEntry.

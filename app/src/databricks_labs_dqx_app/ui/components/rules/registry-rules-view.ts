@@ -7,13 +7,14 @@ import { labelToken, tokenToLabel } from "@/lib/format-utils";
 /** "No filter" value of the dimension, severity and owner pills. */
 export const RULES_FILTER_ALL = "all";
 
-export type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "owner";
+export type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "level" | "owner";
 export const RULE_GROUP_BY_VALUES: readonly RuleGroupBy[] = [
   "none",
   "columnType",
   "dimension",
   "severity",
   "mode",
+  "level",
   "owner",
 ];
 

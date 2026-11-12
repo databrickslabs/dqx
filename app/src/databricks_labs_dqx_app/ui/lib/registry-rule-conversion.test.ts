@@ -293,6 +293,69 @@ describe("parseDqxCheckJson — reusable slot names survive the round-trip (item
   });
 });
 
+describe("buildDqxCheckJson — the rule filter survives the JSON round-trip", () => {
+  const isNotNull = fn({ name: "is_not_null", params: [param("column", "column")] });
+  const withFilter = (
+    mode: "dqx_native" | "sql" | "lowcode",
+    body: Record<string, unknown>,
+    filter?: string,
+  ) => ({
+    mode,
+    polarity: mode === "dqx_native" ? null : ("pass" as const),
+    definition: { body, slots: [], parameters: [], filter } as unknown as RuleDefinition,
+    user_metadata: {},
+  });
+  const roundTrip = (rule: ReturnType<typeof withFilter>) =>
+    parseDqxCheckJson(
+      JSON.stringify(buildDqxCheckJson(rule)),
+      rule.definition,
+      null,
+      [isNotNull],
+      identity,
+      rule.mode,
+    );
+
+  test("emits the filter as a top-level key next to the check", () => {
+    const check = buildDqxCheckJson(
+      withFilter("dqx_native", { function: "is_not_null", arguments: { column: "{{id}}" } }, "{{region}} = 'EU'"),
+    );
+    expect(check.filter).toBe("{{region}} = 'EU'");
+    expect((check.check as Record<string, unknown>).arguments).toEqual({ column: "{{id}}" });
+  });
+
+  test("omits the filter key when the rule has none or a blank one", () => {
+    const native = { function: "is_not_null", arguments: { column: "{{id}}" } };
+    expect("filter" in buildDqxCheckJson(withFilter("dqx_native", native))).toBe(false);
+    expect("filter" in buildDqxCheckJson(withFilter("dqx_native", native, "   "))).toBe(false);
+  });
+
+  test("keeps the filter through build then parse for a native rule", () => {
+    const rule = withFilter("dqx_native", { function: "is_not_null", arguments: { column: "{{id}}" } }, "active");
+    const parsed = roundTrip(rule);
+    expect(parsed.mode).toBe("dqx_native");
+    expect(parsed.definition.filter).toBe("active");
+  });
+
+  test("keeps the filter through build then parse for a SQL rule", () => {
+    const parsed = roundTrip(withFilter("sql", { predicate: "amount > 0" }, "status = 'open'"));
+    expect(parsed.mode).toBe("sql");
+    expect(parsed.definition.filter).toBe("status = 'open'");
+  });
+
+  test("keeps the filter through build then parse for a low-code rule", () => {
+    const parsed = roundTrip(
+      withFilter("lowcode", { sql_query: "SELECT 1", lowcode_ast: { rows: [] } }, "x IS NOT NULL"),
+    );
+    expect(parsed.mode).toBe("lowcode");
+    expect(parsed.definition.filter).toBe("x IS NOT NULL");
+  });
+
+  test("a rule with no filter round-trips without one", () => {
+    const parsed = roundTrip(withFilter("sql", { predicate: "amount > 0" }));
+    expect(parsed.definition.filter).toBeUndefined();
+  });
+});
+
 describe("parseDqxCheckJson — severity is authoritative on import (item 56)", () => {
   const isNotNull = fn({ name: "is_not_null", params: [param("column", "column")] });
   const severityOf = (result: { userMetadata: Record<string, string> }) => result.userMetadata.severity;
