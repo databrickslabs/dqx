@@ -50,7 +50,7 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
 - **Schema Validation**: Generates one `has_valid_schema` rule per schema when enabled (default strict; optional permissive)
-- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength, format); other options such as `exclusiveMinimum` or `exclusiveMaximum` are ignored
+- **Property Constraints**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, maxLength, format); other options such as `multipleOf` or `maxItems` are ignored
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
 - **Version Compatibility**: Loads ODCS v3.x contracts (v3.0.x and later); versions before v3.0 are not supported
 
@@ -181,6 +181,7 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minimum` + `maximum` | `logicalTypeOptions` | `is_in_range` | Age, amount limits |
 | `minimum` only | `logicalTypeOptions` | `is_not_less_than` | Positive amounts |
 | `maximum` only | `logicalTypeOptions` | `is_not_greater_than` | Upper bounds |
+| `exclusiveMinimum` / `exclusiveMaximum` | `logicalTypeOptions` | `is_greater_than` / `is_less_than`; see [Exclusive bounds](#exclusive-bounds) | Strictly positive amounts, percentages below 100 |
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
@@ -196,20 +197,33 @@ will fail when checks run.
 
 #### Range constraints
 
-ODCS defines `minimum` and `maximum` for each value, so DQX generates row-level checks that flag only the rows outside the bounds. The bounds are passed to the check as written. As in the ODCS schema, an `integer` or `number` field takes number bounds, and a `date` or `timestamp` field (`timestamp` from ODCS v3.1.0) takes date or timestamp bounds: `2020-01-01`, `2020-01-01T10:00:00` or `2020-01-01T10:00:00+00:00` (a `Z` offset is passed as `+00:00`). A field without a logical type takes either kind.
+ODCS defines `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` for each value, so DQX generates row-level checks that flag only the rows outside the bounds. The bounds are passed to the checks as written. As in the ODCS schema, an `integer` or `number` field takes number bounds, and a `date` or `timestamp` field (`timestamp` from ODCS v3.1.0) takes date or timestamp bounds: `2020-01-01`, `2020-01-01T10:00:00` or `2020-01-01T10:00:00+00:00` (a `Z` offset is passed as `+00:00`). A field without a logical type takes either kind.
 
 These are skipped with a warning, so a contract value is never evaluated as a SQL expression:
 - a bound of another kind, such as `minimum: "5"` on an `integer` field, `minimum: other_column`, `.inf`, or a date written without dashes (`20240101`);
 - bounds on other logical types, which ODCS gives no range (`time` bounds aren't supported yet);
-- a `minimum` greater than its `maximum`, since no value could pass.
-
-`exclusiveMinimum` and `exclusiveMaximum` are not supported yet and are ignored ([#1635](https://github.com/databrickslabs/dqx/issues/1635)).
+- bounds that no value could satisfy, such as a `minimum` greater than its `maximum`, or `exclusiveMinimum: 5` with `exclusiveMaximum: 5`.
 
 A column stored as text (`STRING`, `VARCHAR`, `CHAR`) is compared through `try_cast` to its logical type: `DATE` for `date`, `TIMESTAMP` for `timestamp`, and `DOUBLE` for `integer` and `number` (exact up to 2<sup>53</sup>). Without a logical type, it follows the bounds. A malformed value then doesn't fail the run under ANSI mode. The range check passes it, so use `format` or `pattern` to flag it.
 
 <Admonition type="note" title="Previous behavior">
 In DQX v0.17.2 and earlier, a `minimum` or `maximum` on its own generated a dataset-level aggregate check (`is_aggr_not_less_than` / `is_aggr_not_greater_than`) for integers and dates, so one out-of-range value flagged every row, and float bounds generated `sql_expression` checks. The rule names are unchanged; regenerate checks saved from a contract to get the row-level checks.
 </Admonition>
+
+##### Exclusive bounds
+
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.18.0" heading={false} />
+</FeatureTags>
+
+`exclusiveMinimum` and `exclusiveMaximum` have two forms, and DQX reads both, whatever the contract's `apiVersion`:
+
+| ODCS version | Form | Example | Generated rules |
+|---|---|---|---|
+| v3.0.x | A flag that makes `minimum` / `maximum` exclusive | `minimum: 0` with `exclusiveMinimum: true` | `<column>_at_or_below_exclusive_minimum` (value &gt; 0), instead of `<column>_below_minimum` |
+| v3.1.0 and later | A bound of its own | `exclusiveMaximum: 100` | `<column>_at_or_above_exclusive_maximum` (value &lt; 100) |
+
+Each exclusive bound gets its own rule, with `is_greater_than` or `is_less_than`. In the v3.0.x form, the flagged side is checked only strictly, so `minimum: 18`, `maximum: 100` and `exclusiveMaximum: true` give `<column>_below_minimum` (value &gt;= 18) and `<column>_at_or_above_exclusive_maximum` (value &lt; 100). `exclusiveMinimum: true` without a `minimum` is skipped with a warning.
 
 ### Example Contract with Predefined Rules
 

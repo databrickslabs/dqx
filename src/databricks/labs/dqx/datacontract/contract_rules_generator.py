@@ -187,6 +187,37 @@ def _text_cast_type(logical_type: str | None, physical_type: str | None, bounds:
     return "TIMESTAMP" if has_time else "DATE"
 
 
+def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
+    """Return the row-level checks and rule name suffixes for validated range bounds.
+
+    Inclusive bounds use *is_in_range*, *is_not_less_than* or *is_not_greater_than*; each exclusive bound uses
+    *is_greater_than* or *is_less_than*.
+    """
+    minimum = next((bound.value for bound in bounds if bound.lower and not bound.strict), None)
+    maximum = next((bound.value for bound in bounds if not bound.lower and not bound.strict), None)
+    checks = []
+    if minimum is not None and maximum is not None:
+        arguments = {"column": column, "min_limit": minimum, "max_limit": maximum}
+        checks.append(({"function": "is_in_range", "arguments": arguments}, "out_of_range"))
+    elif minimum is not None:
+        checks.append(
+            ({"function": "is_not_less_than", "arguments": {"column": column, "limit": minimum}}, "below_minimum")
+        )
+    elif maximum is not None:
+        checks.append(
+            ({"function": "is_not_greater_than", "arguments": {"column": column, "limit": maximum}}, "above_maximum")
+        )
+    for bound in bounds:
+        if bound.strict:
+            function, name_suffix = (
+                ("is_greater_than", "at_or_below_exclusive_minimum")
+                if bound.lower
+                else ("is_less_than", "at_or_above_exclusive_maximum")
+            )
+            checks.append(({"function": function, "arguments": {"column": column, "limit": bound.value}}, name_suffix))
+    return checks
+
+
 class _FormatCheck(NamedTuple):
     """Check generated for a logicalTypeOptions format."""
 
@@ -891,12 +922,12 @@ class DataContractRulesGenerator(DQEngineBase):
             )
 
         # Handle range constraints from minimum and maximum
-        if opts.get('minimum') is not None or opts.get('maximum') is not None:
-            rules.extend(
-                self._generate_range_rules_from_options(
-                    column_path, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
-                )
+        # Handle range constraints from minimum, maximum and their exclusive variants (no rules if none is set)
+        rules.extend(
+            self._generate_range_rules_from_options(
+                column_path, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
             )
+        )
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
@@ -979,13 +1010,17 @@ class DataContractRulesGenerator(DQEngineBase):
         opts: dict,
     ) -> list[dict]:
         """
-        Generate a range rule from logicalTypeOptions minimum/maximum.
+        Generate range rules from logicalTypeOptions minimum/maximum and exclusiveMinimum/exclusiveMaximum.
 
-        ODCS defines both bounds per value, so the rule is a row-level check that flags only the rows out of range.
-        Bounds are taken for integer, number, date and timestamp fields (or fields without a logical type), and must be
-        of the kind ODCS gives them: numbers, or dates and timestamps. Anything else is skipped with a warning, as is
-        a minimum and maximum that no value could satisfy. A column stored as text is compared through *try_cast*.
+        ODCS defines every bound per value, so each becomes a row-level check that flags only the rows out of range.
+        An exclusive bound comes in either ODCS form: a flag that makes minimum/maximum exclusive (v3.0.x), or a bound
+        of its own (v3.1.0+). Bounds are taken for integer, number, date and timestamp fields (or fields without a
+        logical type), and must be of the kind ODCS gives them: numbers, or dates and timestamps. Anything else is
+        skipped with a warning, as are bounds that no value could satisfy. A column stored as text is compared
+        through *try_cast*.
         """
+        if all(opts.get(option) is None for option in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")):
+            return []
         expected_kind = _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type or "")
         if logical_type and expected_kind is None:
             reason = (
@@ -999,10 +1034,13 @@ class DataContractRulesGenerator(DQEngineBase):
             return []
 
         bounds = []
-        for option, lower in (("minimum", True), ("maximum", False)):
-            bound = _range_bound(column_path, option, opts.get(option), expected_kind, lower=lower)
-            if bound is not None:
-                bounds.append(bound)
+        for inclusive_option, exclusive_option, lower in (
+            ("minimum", "exclusiveMinimum", True),
+            ("maximum", "exclusiveMaximum", False),
+        ):
+            bounds.extend(
+                self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
+            )
         if not bounds:
             return []
         empty_reason = _empty_range_reason(bounds)
@@ -1012,20 +1050,11 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        minimum = next((bound.value for bound in bounds if bound.lower), None)
-        maximum = next((bound.value for bound in bounds if not bound.lower), None)
-        if minimum is not None and maximum is not None:
-            function, name_suffix, limits = "is_in_range", "out_of_range", {"min_limit": minimum, "max_limit": maximum}
-        elif minimum is not None:
-            function, name_suffix, limits = "is_not_less_than", "below_minimum", {"limit": minimum}
-        else:
-            function, name_suffix, limits = "is_not_greater_than", "above_maximum", {"limit": maximum}
-
         cast_type = _text_cast_type(logical_type, physical_type, bounds)
         column = f"try_cast({normalize_column_expr(column_path)} AS {cast_type})" if cast_type else column_path
         return [
             {
-                "check": {"function": function, "arguments": {"column": column, **limits}},
+                "check": check,
                 "name": f"{column_path}_{name_suffix}",
                 "criticality": criticality,
                 "user_metadata": {
@@ -1034,7 +1063,38 @@ class DataContractRulesGenerator(DQEngineBase):
                     "rule_type": "predefined",
                 },
             }
+            for check, name_suffix in _range_checks(column, bounds)
         ]
+
+    @staticmethod
+    def _side_bounds(
+        column_path: str,
+        inclusive_option: str,
+        exclusive_option: str,
+        opts: dict,
+        expected_kind: str | None,
+        *,
+        lower: bool,
+    ) -> list[_RangeBound]:
+        """Return the validated bounds on one side of the range: minimum/exclusiveMinimum or maximum/exclusiveMaximum.
+
+        ODCS v3.0.x makes the exclusive option a flag that turns the inclusive bound exclusive; from v3.1.0 it is a
+        bound of its own. The form is taken from the value's type, not from apiVersion, because contracts often keep
+        an older one.
+        """
+        inclusive = _range_bound(column_path, inclusive_option, opts.get(inclusive_option), expected_kind, lower=lower)
+        exclusive = opts.get(exclusive_option)
+        if not isinstance(exclusive, bool):  # checked first: bool is a subclass of int
+            strict = _range_bound(column_path, exclusive_option, exclusive, expected_kind, lower=lower, strict=True)
+            return [bound for bound in (inclusive, strict) if bound is not None]
+        if exclusive and opts.get(inclusive_option) is None:
+            logger.warning(
+                f"Skipping {exclusive_option} on '{sanitize_for_logging(column_path)}': it is true, but there is no "
+                f"{inclusive_option} to make exclusive."
+            )
+        if inclusive is None:
+            return []
+        return [inclusive._replace(strict=exclusive)]
 
     def _generate_string_length_rules_from_options(
         self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
