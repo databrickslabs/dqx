@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from collections.abc import Generator
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -56,6 +56,7 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import Draf
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RuleCatalogEntry,
     RulesCatalogService,
@@ -2036,6 +2037,11 @@ class TestDryRunRoutes:
         sql.fqn.return_value = "cat.sch.dq_validation_runs"
         return sql
 
+    @pytest.fixture
+    def mock_wake(self) -> MagicMock:
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        return wake
+
     def test_submit_dry_run_success(
         self,
         mock_job_svc: JobService,
@@ -2043,6 +2049,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should validate checks, create view, submit job and return run ids."""
         validation = ChecksValidationStatus()
@@ -2058,12 +2065,14 @@ class TestDryRunRoutes:
             validate_checks_fn=lambda checks: validation,
             settings_svc=mock_settings_svc,
             sql=mock_sql,
+            wake=mock_wake,
         )
 
         assert isinstance(result, DryRunSubmitOut)
         assert result.job_run_id == 88888
         assert len(result.run_id) > 0
         mock_view_svc.create_view.assert_called_once_with("cat.sch.tbl")  # type: ignore[attr-defined]
+        mock_wake.signal.assert_called_once_with()
 
     def test_submit_dry_run_raises_400_on_invalid_checks(
         self,
@@ -2072,6 +2081,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
         validation = ChecksValidationStatus(errors=["Unknown function: bad_func"])
@@ -2086,6 +2096,7 @@ class TestDryRunRoutes:
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
                 sql=mock_sql,
+                wake=mock_wake,
             )
 
         assert exc.value.status_code == 400
@@ -2097,6 +2108,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should raise HTTP 500 when view creation fails."""
         validation = ChecksValidationStatus()
@@ -2112,6 +2124,7 @@ class TestDryRunRoutes:
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
                 sql=mock_sql,
+                wake=mock_wake,
             )
 
         assert exc.value.status_code == 500

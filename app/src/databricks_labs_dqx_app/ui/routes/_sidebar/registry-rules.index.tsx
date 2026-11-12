@@ -56,6 +56,7 @@ import {
   useDeleteRegistryRule,
   useRevokeRegistryRule,
   useCurrentUser,
+  useListCheckFunctions,
   type RegistryRuleOut,
 } from "@/lib/api";
 import {
@@ -91,7 +92,14 @@ import {
   type RulesTableSortKey,
   type RulesTableSelection,
 } from "@/components/rules/RulesTable";
-import { compareRuleColumnTypeGroups, ruleColumnTypeGroup } from "@/lib/rule-taxonomy";
+import {
+  RULE_LEVEL_ORDER,
+  compareRuleColumnTypeGroups,
+  datasetCheckFunctionNames,
+  ruleColumnTypeGroup,
+  ruleLevel,
+  type RuleLevel,
+} from "@/lib/rule-taxonomy";
 import { compareSortValues } from "@/components/data-table/sort";
 import {
   RESERVED_NAME_KEY,
@@ -150,13 +158,14 @@ function RegistryRulesSkeleton() {
 const ALL = "all";
 const PAGE_SIZE = 25;
 const FILTER_CLASS = FILTER_TRIGGER_CLASS;
-type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "owner";
+type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "level" | "owner";
 const GROUP_BY_OPTIONS: readonly { value: RuleGroupBy; labelKey: string }[] = [
   { value: "none", labelKey: "rulesRegistry.groupByNone" },
   { value: "columnType", labelKey: "rulesRegistry.groupByColumnType" },
   { value: "dimension", labelKey: "rulesRegistry.groupByDimension" },
   { value: "severity", labelKey: "rulesRegistry.groupBySeverity" },
   { value: "mode", labelKey: "rulesRegistry.groupByRuleType" },
+  { value: "level", labelKey: "rulesRegistry.groupByLevel" },
   { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
 ];
 
@@ -171,6 +180,11 @@ const FILTERS: Record<RulesFilterKey, FilterLayoutDef> = {
   labels: { labelKey: "rulesRegistry.filterLabels", defaultVisible: true },
   groupBy: { labelKey: "common.groupBy", defaultVisible: false, pinned: true },
 };
+
+/** Group order for the Level group-by; an unknown (still loading) level sorts last. */
+function levelRank(level: RuleLevel | null): number {
+  return level ? RULE_LEVEL_ORDER.indexOf(level) : RULE_LEVEL_ORDER.length;
+}
 
 function RegistryRulesPage() {
   const { t } = useTranslation();
@@ -264,6 +278,18 @@ function RegistryRulesPage() {
     });
   }, [serverFilteredRules, ownerFilter, labelFilter, nameSearch]);
 
+  // Each check function's registered rule type (row / dataset) drives the
+  // Level column and group-by; until the list loads the level is unknown.
+  const { data: checkFunctionsData } = useListCheckFunctions();
+  const datasetFunctions = useMemo(() => {
+    const functions = checkFunctionsData?.data?.functions;
+    return functions ? datasetCheckFunctionNames(functions) : null;
+  }, [checkFunctionsData]);
+  const levelForRule = useCallback(
+    (rule: RegistryRuleOut): RuleLevel | null => (datasetFunctions ? ruleLevel(rule, datasetFunctions) : null),
+    [datasetFunctions],
+  );
+
   const [sortKey, setSortKey] = useState<RulesTableSortKey | null>("modified");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -308,6 +334,14 @@ function RegistryRulesPage() {
                   ? t("rulesRegistry.coreConditionBuilder")
                   : t("rulesRegistry.coreSql"),
           };
+        case "level": {
+          const level = levelForRule(rule);
+          if (!level) return { key: "__pending", label: "—" };
+          return {
+            key: level,
+            label: level === "table" ? t("rulesRegistry.levelTable") : t("rulesRegistry.levelRow"),
+          };
+        }
         case "owner":
           return {
             key: rule.owner || "__unowned",
@@ -317,7 +351,7 @@ function RegistryRulesPage() {
           return { key: "all", label: "" };
       }
     },
-    [groupBy, t],
+    [groupBy, levelForRule, t],
   );
 
   // Grouped views sort by group first (so each group's rows are contiguous
@@ -338,7 +372,10 @@ function RegistryRulesPage() {
                   getTag(b, RESERVED_SEVERITY_KEY),
                   severityValues,
                 )
-              : groupForRule(a).label.localeCompare(groupForRule(b).label);
+              : groupBy === "level"
+                ? // Row before Table in every locale, not alphabetical.
+                  levelRank(levelForRule(a)) - levelRank(levelForRule(b))
+                : groupForRule(a).label.localeCompare(groupForRule(b).label);
         if (groupOrder !== 0) return groupOrder;
       }
       if (!sortKey || !sortConfig) return 0;
@@ -350,7 +387,7 @@ function RegistryRulesPage() {
       );
     });
     return copy;
-  }, [rules, sortKey, sortDir, groupBy, groupForRule, severityValues]);
+  }, [rules, sortKey, sortDir, groupBy, groupForRule, levelForRule, severityValues]);
 
   const pagedRules = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
@@ -1123,6 +1160,7 @@ function RegistryRulesPage() {
               rows={isPending ? [] : visibleRules}
               labelDefinitions={labelDefinitions}
               groupForRule={groupBy === "none" ? undefined : groupForRule}
+              levelForRule={levelForRule}
               forceGroupsExpanded={nameSearch.trim().length > 0}
               sortKey={sortKey}
               sortDir={sortDir}
