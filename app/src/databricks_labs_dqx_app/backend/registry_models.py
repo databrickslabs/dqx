@@ -122,12 +122,12 @@ class RuleDefinition(BaseModel):
     filter: str | None = Field(
         default=None,
         description=(
-            "Optional rule-level row filter (a SQL WHERE predicate), mirroring "
-            "DQRule.filter. Supports {{slot}} placeholders substituted at materialize "
-            "time. Validated for SQL safety on create/update. Threaded through create/"
-            "update and frozen into each dq_rule_versions snapshot as part of the "
-            "definition. Materialized as a top-level 'filter' key on the rendered "
-            "dq_resolved_rules check when set; omitted entirely when None or empty."
+            "Default row filter (a SQL WHERE predicate) for tables this rule is "
+            "applied to. Applied rules may override it with ``row_filter``; an empty "
+            "applied filter inherits this default. Supports {{slot}} placeholders "
+            "substituted at materialize time. Validated for SQL safety on create/update. "
+            "Not part of the rule fingerprint — two rules that differ only by filter "
+            "are the same check."
         ),
     )
 
@@ -839,6 +839,88 @@ def _canonical_label_value(value: str, allowed: list[str], aliases: dict[str, st
     return by_lower.get(lowered) or by_lower.get(aliases.get(lowered, ""))
 
 
+def generic_rule_metadata(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the reserved keys a generic (registry) rule keeps.
+
+    Custom tags (business terms, ownership, contract provenance, …) describe
+    how a rule is used on one table, so they belong on the applied rule
+    (``dq_applied_rules.user_metadata`` / apply ``tags``), not on the reusable
+    registry rule. Callers that persist a registry rule must pass the result of
+    this helper — see :meth:`RegistryService.create_rule` /
+    :meth:`RegistryService.update_draft`.
+    """
+    return {k: v for k, v in (user_metadata or {}).items() if k in RESERVED_RULE_METADATA_KEYS}
+
+
+def application_tags(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the custom tags in *user_metadata* that belong on an applied rule."""
+    return {k: v for k, v in (user_metadata or {}).items() if k not in RESERVED_RULE_METADATA_KEYS}
+
+
+def _severity_value_criticality(label_definitions: list[dict]) -> dict[str, str]:
+    """Configured ``value_criticality`` map for the reserved severity label."""
+    for definition in label_definitions:
+        if definition.get("key") != _SEVERITY_LABEL_KEY:
+            continue
+        mapping = definition.get("value_criticality")
+        return {str(k): str(v) for k, v in mapping.items()} if isinstance(mapping, dict) else {}
+    return {}
+
+
+def _criticality_of_severity(value: str, label_definitions: list[dict]) -> str | None:
+    """DQX criticality for *value*, using the configured map then the built-in names."""
+    mapping = _severity_value_criticality(label_definitions)
+    if value in mapping:
+        return mapping[value]
+    by_lower = {k.lower(): v for k, v in mapping.items()}
+    if value.lower() in by_lower:
+        return by_lower[value.lower()]
+    return SEVERITY_TO_CRITICALITY.get(value) or next(
+        (crit for name, crit in SEVERITY_TO_CRITICALITY.items() if name.lower() == value.lower()),
+        None,
+    )
+
+
+def _canonical_severity_value(value: str, allowed: list[str], label_definitions: list[dict]) -> str | None:
+    """Configured severity that matches *value* by spelling or by criticality."""
+    direct = _canonical_label_value(value, allowed, {})
+    if direct is not None:
+        return direct
+    if value in allowed:
+        return None
+    crit = _criticality_of_severity(value, label_definitions)
+    if crit is None:
+        return None
+    for name in allowed:
+        if _criticality_of_severity(name, label_definitions) == crit:
+            return name
+    return None
+
+
+def imported_severity_error(user_metadata: dict[str, Any] | None, label_definitions: list[dict]) -> str | None:
+    """Why an imported rule's ``severity`` tag can't be accepted, or ``None`` if it can.
+
+    Severity is required on every rule and must be one of the configured values
+    (case-insensitive, as :func:`canonicalize_reserved_label_values` folds case).
+    Built-in names such as ``High`` that YAML back-fills from ``criticality``
+    also match a renamed vocabulary (P1–P4) via ``value_criticality``.
+    Not enforced when no severity vocabulary is configured.
+    """
+    allowed = _configured_label_values(label_definitions, _SEVERITY_LABEL_KEY)
+    if not allowed:
+        return None
+    raw = (user_metadata or {}).get(RESERVED_SEVERITY_KEY)
+    value = raw.strip() if isinstance(raw, str) else ""
+    choices = ", ".join(allowed)
+    if not value:
+        return f"Severity is required. Use one of: {choices}."
+    if value.lower() in {v.lower() for v in allowed}:
+        return None
+    if _canonical_severity_value(value, allowed, label_definitions) is not None:
+        return None
+    return f"Invalid severity '{value}'. Use one of: {choices}."
+
+
 def canonicalize_reserved_label_values(
     user_metadata: dict[str, Any] | None,
     label_definitions: list[dict],
@@ -867,7 +949,12 @@ def canonicalize_reserved_label_values(
         value = get_reserved_tag(result, key)
         if value is None:
             continue
-        canonical = _canonical_label_value(value, _configured_label_values(label_definitions, key), aliases)
+        allowed = _configured_label_values(label_definitions, key)
+        canonical = (
+            _canonical_severity_value(value, allowed, label_definitions)
+            if key == _SEVERITY_LABEL_KEY
+            else _canonical_label_value(value, allowed, aliases)
+        )
         if canonical is not None:
             result = set_reserved_tag(result, key, canonical)
     return result

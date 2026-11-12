@@ -37,15 +37,23 @@ from databricks_labs_dqx_app.backend.models import (
     BatchImportRegistryRulesFailure,
     BatchImportRegistryRulesIn,
     BatchImportRegistryRulesOut,
+    BatchImportRuleMatch,
     CreateRegistryRuleIn,
     CreateRegistryRuleOut,
     LifecycleRationaleIn,
+    PreviewBatchImportRegistryRulesIn,
+    PreviewBatchImportRegistryRulesOut,
     RegistryRuleDetailOut,
     RegistryRuleOut,
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
+from databricks_labs_dqx_app.backend.registry_models import (
+    RegistryRule,
+    canonicalize_reserved_label_values,
+    imported_severity_error,
+)
+from databricks_labs_dqx_app.backend.routes.v1.check_functions import imported_native_params_error
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -61,6 +69,7 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
     generic_name,
     has_generalized_slots,
     shape_key,
+    similar_key,
     slot_renames_between,
 )
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
@@ -245,14 +254,17 @@ def _has_neutral_slots(rule: RegistryRule | RegistryRuleOut) -> bool:
     return has_generalized_slots(rule.definition)
 
 
-def _active_rules_by_shape(svc: RegistryService) -> dict[str, RegistryRuleOut]:
-    """Best active rule per shape: approved first, then neutral slot names, then curated.
+_MAX_SIMILAR_RULES = 3
+
+
+def _ranked_reusable_rules(svc: RegistryService) -> list[RegistryRule]:
+    """Active rules offered for reuse, best first: approved, then neutral slot names, then curated.
 
     Earlier per-column imports (``source == "import"`` with column-named slots,
     e.g. ``customer_id is not null``) are not offered for reuse — another
     column should get the generic rule, not a copy named after a different column.
     """
-    ranked = sorted(
+    return sorted(
         (
             r
             for r in svc.list_rules()
@@ -265,10 +277,98 @@ def _active_rules_by_shape(svc: RegistryService) -> dict[str, RegistryRuleOut]:
             str((r.user_metadata or {}).get("name") or r.rule_id).lower(),
         ),
     )
+
+
+def _best_rule_by_shape(ranked: list[RegistryRule]) -> dict[str, RegistryRuleOut]:
     best: dict[str, RegistryRuleOut] = {}
     for rule in ranked:
         best.setdefault(shape_key(rule.mode, rule.definition, rule.polarity), RegistryRuleOut.from_domain(rule))
     return best
+
+
+def _identical_active_rule(
+    svc: RegistryService,
+    rule_in: CreateRegistryRuleIn,
+    generalize_slots: bool,
+    best_by_shape: dict[str, RegistryRuleOut],
+) -> RegistryRuleOut | None:
+    """The active rule a skip_duplicates import reuses for *rule_in*, if any."""
+    match = best_by_shape.get(shape_key(rule_in.mode, rule_in.definition, rule_in.polarity))
+    if match is not None:
+        return match
+    exact = svc.get_active_rule_by_fingerprint(
+        svc.compute_definition_fingerprint(rule_in.mode, rule_in.definition, rule_in.polarity)
+    )
+    if exact is not None and (not generalize_slots or exact.source != "import" or _has_neutral_slots(exact)):
+        return RegistryRuleOut.from_domain(exact)
+    return None
+
+
+def _chosen_rules_by_index(svc: RegistryService, reuse_rule_ids: dict[int, str]) -> dict[int, RegistryRuleOut]:
+    """``reuse_rule_ids`` keyed by input index; unknown or inactive rules are skipped."""
+    chosen: dict[int, RegistryRuleOut] = {}
+    loaded: dict[str, RegistryRuleOut] = {}
+    for index, rule_id in reuse_rule_ids.items():
+        if rule_id not in loaded:
+            rule = svc.get_rule(rule_id)
+            if rule is None or rule.status not in _ACTIVE_STATUS_RANK:
+                continue
+            loaded[rule_id] = RegistryRuleOut.from_domain(rule)
+        match = loaded.get(rule_id)
+        if match is not None:
+            chosen[index] = match
+    return chosen
+
+
+def _imported_row_filter(imported_definition: object, stored_definition: object) -> str | None:
+    """Population filter from the import that the reused rule does not already default to."""
+    imported = getattr(imported_definition, "filter", None)
+    stored = getattr(stored_definition, "filter", None)
+    imported_filter = imported.strip() if isinstance(imported, str) else ""
+    stored_filter = stored.strip() if isinstance(stored, str) else ""
+    if imported_filter and imported_filter != stored_filter:
+        return imported_filter
+    return None
+
+
+@router.post(
+    "/batch-import/preview",
+    response_model=PreviewBatchImportRegistryRulesOut,
+    operation_id="previewBatchImportRegistryRules",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def preview_batch_import_registry_rules(
+    body: PreviewBatchImportRegistryRulesIn,
+    svc: Annotated[RegistryService, Depends(get_registry_service)],
+) -> PreviewBatchImportRegistryRulesOut:
+    """Report, per imported rule, the identical rule a batch import would reuse or similar existing rules.
+
+    "Similar" rules run the same check on the same slots but with different
+    parameters (e.g. ``trim_strings``); the importer decides whether to reuse
+    one by passing it in ``reuse_rule_ids`` (input index -> rule id) on the batch import.
+    """
+    ranked = _ranked_reusable_rules(svc)
+    best_by_shape = _best_rule_by_shape(ranked)
+    by_similarity: dict[str, list[RegistryRule]] = {}
+    for rule in ranked:
+        by_similarity.setdefault(similar_key(rule.mode, rule.definition, rule.polarity), []).append(rule)
+
+    matches: list[BatchImportRuleMatch] = []
+    for index, rule_in in enumerate(body.rules):
+        exact = _identical_active_rule(svc, rule_in, body.generalize_slots, best_by_shape)
+        similar = (
+            []
+            if exact is not None
+            else [
+                RegistryRuleOut.from_domain(r)
+                for r in by_similarity.get(similar_key(rule_in.mode, rule_in.definition, rule_in.polarity), [])[
+                    :_MAX_SIMILAR_RULES
+                ]
+            ]
+        )
+        if exact is not None or similar:
+            matches.append(BatchImportRuleMatch(index=index, exact=exact, similar=similar))
+    return PreviewBatchImportRegistryRulesOut(matches=matches)
 
 
 @router.post(
@@ -300,6 +400,13 @@ def batch_import_registry_rules(
     Imported ``dimension``/``severity`` tags are folded onto the configured
     label vocabulary first (an ODCS contract spells them lowercase), so they
     match the values the rest of the app filters and colours by.
+
+    When the workspace has a configured severity vocabulary, every imported
+    rule must carry a ``severity`` tag that maps onto that vocabulary —
+    missing or unknown values fail that row (Marketplace and direct API
+    callers included). Custom tags beyond the reserved keys are dropped from
+    the registry rule; callers that apply the rule should pass them as
+    applied-rule ``tags``.
     """
     # auto_approve publishes each imported rule outright; only approver-level
     # roles may bypass the queue. A non-approver asking for it is a client bug
@@ -321,33 +428,45 @@ def batch_import_registry_rules(
     # shape, so a contract that lists the same generic check on several
     # columns collapses to one rule (skip_duplicates only).
     seen_in_batch: dict[str, RegistryRuleOut] = {}
-    existing_by_shape = _active_rules_by_shape(svc) if body.skip_duplicates else {}
+    best_by_shape = _best_rule_by_shape(_ranked_reusable_rules(svc)) if body.skip_duplicates else {}
+    chosen_by_index = _chosen_rules_by_index(svc, body.reuse_rule_ids)
 
     for index, rule_in in enumerate(body.rules):
         try:
-            key: str | None = None
-            if body.skip_duplicates:
+            severity_error = imported_severity_error(rule_in.user_metadata, label_definitions)
+            if severity_error is not None:
+                raise ValueError(severity_error)
+            param_error = imported_native_params_error(rule_in.mode, rule_in.definition)
+            if param_error is not None:
+                raise ValueError(param_error)
+            # Prefer the importer's per-index choice over in-batch / skip_duplicates
+            # matches, and never let reuse_rule_ids alone turn on in-batch dedup.
+            match: RegistryRuleOut | None = None
+            chosen = chosen_by_index.get(index)
+            if chosen is not None:
+                if similar_key(chosen.mode, chosen.definition, chosen.polarity) != similar_key(
+                    rule_in.mode, rule_in.definition, rule_in.polarity
+                ):
+                    raise ValueError("Chosen rule does not run the same check")
+                match = chosen
+            elif body.skip_duplicates:
                 key = shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)
-                match = seen_in_batch.get(key) or existing_by_shape.get(key)
-                if match is None:
-                    exact = svc.get_active_rule_by_fingerprint(
-                        svc.compute_definition_fingerprint(rule_in.mode, rule_in.definition, rule_in.polarity)
+                match = seen_in_batch.get(key) or _identical_active_rule(
+                    svc, rule_in, body.generalize_slots, best_by_shape
+                )
+            if match is not None:
+                renames = slot_renames_between(rule_in.definition, match.definition)
+                reused.append(
+                    CreateRegistryRuleOut(
+                        rule=match,
+                        input_index=index,
+                        slot_renames={k: v for k, v in renames.items() if k != v},
+                        row_filter=_imported_row_filter(rule_in.definition, match.definition),
                     )
-                    if exact is not None and (
-                        not body.generalize_slots or exact.source != "import" or _has_neutral_slots(exact)
-                    ):
-                        match = RegistryRuleOut.from_domain(exact)
-                if match is not None:
-                    renames = slot_renames_between(rule_in.definition, match.definition)
-                    reused.append(
-                        CreateRegistryRuleOut(
-                            rule=match,
-                            input_index=index,
-                            slot_renames={k: v for k, v in renames.items() if k != v},
-                        )
-                    )
-                    seen_in_batch[key] = match
-                    continue
+                )
+                if body.skip_duplicates:
+                    seen_in_batch[shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)] = match
+                continue
 
             definition = rule_in.definition
             user_metadata = rule_in.user_metadata
@@ -385,8 +504,8 @@ def batch_import_registry_rules(
                     slot_renames={k: v for k, v in renames.items() if k != v},
                 )
             )
-            if key is not None:
-                seen_in_batch[key] = rule_out
+            if body.skip_duplicates:
+                seen_in_batch[shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)] = rule_out
 
             if body.auto_approve:
                 # Publish outright: submit to leave draft, then approve to

@@ -13,6 +13,7 @@ import json
 import re
 from typing import Any
 
+from databricks_labs_dqx_app.backend.registry_canonical import canonical_parameters, canonical_polarity
 from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleSlot
 
 # Modes whose body references slots only through ``{{slot}}`` placeholders, so
@@ -47,6 +48,31 @@ def rename_slots(definition: RuleDefinition, renames: dict[str, str]) -> RuleDef
     return renamed
 
 
+def _structure(mode: str, definition: RuleDefinition, polarity: str | None) -> dict[str, Any]:
+    ordered = _ordered_slots(definition.slots)
+    positional = {s.name: f"__slot_{i}" for i, s in enumerate(ordered)}
+    renameable = mode in _RENAMEABLE_MODES
+    body = _rename_placeholders(definition.body, positional) if renameable else definition.body
+    rule_filter = (definition.filter or "").strip()
+    if renameable:
+        rule_filter = _rename_placeholders(rule_filter, positional)
+    return {
+        "mode": mode,
+        "polarity": canonical_polarity(polarity),
+        "body": body,
+        "filter": rule_filter,
+        "slots": (
+            [positional[s.name] + ":" + s.cardinality for s in ordered]
+            if renameable
+            else [s.name + ":" + s.cardinality for s in ordered]
+        ),
+    }
+
+
+def _digest(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def shape_key(mode: str, definition: RuleDefinition, polarity: str | None) -> str:
     """Hash of the rule's structure with slots renamed to their position.
 
@@ -55,29 +81,12 @@ def shape_key(mode: str, definition: RuleDefinition, polarity: str | None) -> st
     Unlike the fingerprint, the filter is trimmed and a blank filter counts as
     no filter.
     """
-    ordered = _ordered_slots(definition.slots)
-    positional = {s.name: f"__slot_{i}" for i, s in enumerate(ordered)}
-    renameable = mode in _RENAMEABLE_MODES
-    body = _rename_placeholders(definition.body, positional) if renameable else definition.body
-    rule_filter = (definition.filter or "").strip()
-    if renameable:
-        rule_filter = _rename_placeholders(rule_filter, positional)
-    payload = {
-        "mode": mode,
-        "polarity": polarity,
-        "body": body,
-        "filter": rule_filter,
-        "slots": (
-            [positional[s.name] + ":" + s.cardinality for s in ordered]
-            if renameable
-            else [s.name + ":" + s.cardinality for s in ordered]
-        ),
-        "parameters": sorted(
-            ({"name": p.name, "type": p.type, "value": p.value} for p in definition.parameters),
-            key=lambda p: p["name"],
-        ),
-    }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+    return _digest({**_structure(mode, definition, polarity), "parameters": canonical_parameters(mode, definition)})
+
+
+def similar_key(mode: str, definition: RuleDefinition, polarity: str | None) -> str:
+    """Like :func:`shape_key` but ignoring parameters: same check, possibly configured differently."""
+    return _digest(_structure(mode, definition, polarity))
 
 
 def slot_renames_between(source: RuleDefinition, target: RuleDefinition) -> dict[str, str]:
