@@ -125,6 +125,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
@@ -319,7 +320,10 @@ def get_monitored_table(
         try:
             attached = policy_apply.evaluate_binding(binding_id, acting_user).attached
         except Exception:
-            logger.warning(f"Rule policy evaluation on open of binding {binding_id} failed (non-fatal)", exc_info=True)
+            logger.warning(
+                f"Rule policy evaluation on open of binding {safe_log_value(binding_id)} failed (non-fatal)",
+                exc_info=True,
+            )
             attached = 0
         # Re-read only when policies actually attached rows, so the response
         # includes them; otherwise reuse the detail we already loaded.
@@ -1773,14 +1777,18 @@ def list_tag_suggestions(
     try:
         suggestions = TagSuggestionsOut.from_domain(svc.suggest(binding_id)).suggestions
     except Exception:
-        logger.warning(f"Failed to list tag suggestions for monitored table {binding_id}", exc_info=True)
+        logger.warning(
+            f"Failed to list tag suggestions for monitored table {safe_log_value(binding_id)}", exc_info=True
+        )
         suggestions = []
     try:
         from_policies = _policy_suggestions(
             policy_apply.ambiguous_for_binding(binding_id, acting_user), policies, registry
         )
     except Exception:
-        logger.warning(f"Failed to list rule policy suggestions for monitored table {binding_id}", exc_info=True)
+        logger.warning(
+            f"Failed to list rule policy suggestions for monitored table {safe_log_value(binding_id)}", exc_info=True
+        )
         from_policies = []
     seen = {(s.rule_id, compute_mapping_hash([s.column_mapping])) for s in suggestions}
     for suggestion in from_policies:

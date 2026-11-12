@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.policy_models import RulePolicy, RulePolicyIn
 from databricks_labs_dqx_app.backend.registry_models import MonitoredTable, RegistryRule, compute_mapping_hash
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.monitored_table_registration import can_register_tables
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -179,7 +180,10 @@ class _UserGate:
             try:
                 self._suppressed[binding_id] = self._apply_rules.list_suppressed_keys(binding_id)
             except Exception:  # fail closed: unreadable tombstones block every attach on this binding
-                logger.warning(f"Suppression lookup failed for binding {binding_id}; attaching nothing", exc_info=True)
+                logger.warning(
+                    f"Suppression lookup failed for binding {safe_log_value(binding_id)}; attaching nothing",
+                    exc_info=True,
+                )
                 self._suppressed[binding_id] = None
         return self._suppressed[binding_id]
 
@@ -297,7 +301,7 @@ class PolicyApplyService:
         try:
             policy = self._policies.get(policy_id)
         except Exception:  # best-effort trigger: a storage failure must not fail the parent action
-            logger.warning(f"Could not load rule policy {policy_id}", exc_info=True)
+            logger.warning(f"Could not load rule policy {safe_log_value(policy_id)}", exc_info=True)
             return _EMPTY_RESULT
         if policy is None:
             raise RulePolicyNotFoundError(f"Rule policy '{policy_id}' not found.")
@@ -307,7 +311,7 @@ class PolicyApplyService:
             if rule is not None:
                 self._run_scope(policy, rule, user, totals)
         except Exception:  # best-effort trigger: report what was done so far
-            logger.warning(f"Rule policy {policy_id} evaluation failed", exc_info=True)
+            logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation failed", exc_info=True)
         return totals.result()
 
     def run_rule(self, rule_id: str, user: ActingUser) -> ApplyResult:
@@ -319,13 +323,13 @@ class PolicyApplyService:
                 return _EMPTY_RESULT
             policies = self._policies.list_for_rule(rule_id)
         except Exception:  # best-effort trigger: a storage failure must not fail the approval
-            logger.warning(f"Could not load policies for rule {rule_id}", exc_info=True)
+            logger.warning(f"Could not load policies for rule {safe_log_value(rule_id)}", exc_info=True)
             return _EMPTY_RESULT
         for policy in policies:
             try:
                 self._run_scope(policy, rule, user, totals)
             except Exception:  # best-effort trigger: one policy failing must not stop the others
-                logger.warning(f"Rule policy {policy.policy_id} evaluation failed", exc_info=True)
+                logger.warning(f"Rule policy {safe_log_value(policy.policy_id)} evaluation failed", exc_info=True)
         return totals.result()
 
     def evaluate_binding(self, binding_id: str, user: ActingUser) -> ApplyResult:
@@ -334,7 +338,7 @@ class PolicyApplyService:
         try:
             self._run_binding(binding_id, user, totals, attach=True)
         except Exception:  # best-effort trigger: opening or registering a table must never fail on this
-            logger.warning(f"Policy evaluation for binding {binding_id} failed", exc_info=True)
+            logger.warning(f"Policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
         return totals.result()
 
     def ambiguous_for_binding(self, binding_id: str, user: ActingUser) -> list[PolicyMatch]:
@@ -343,7 +347,7 @@ class PolicyApplyService:
         try:
             self._run_binding(binding_id, user, totals, attach=False)
         except Exception:  # best-effort: suggestions are optional
-            logger.warning(f"Policy suggestions for binding {binding_id} failed", exc_info=True)
+            logger.warning(f"Policy suggestions for binding {safe_log_value(binding_id)} failed", exc_info=True)
         return totals.ambiguous
 
     # ------------------------------------------------------------------
@@ -360,7 +364,9 @@ class PolicyApplyService:
     def _run_scope(self, policy: RulePolicy, rule: RegistryRule, user: ActingUser, totals: _Totals) -> None:
         snapshot = self._snapshots.for_scope(policy.scope)
         if snapshot.truncated:
-            logger.info(f"Rule policy {policy.policy_id} evaluation was capped at the snapshot table limit")
+            logger.info(
+                f"Rule policy {safe_log_value(policy.policy_id)} evaluation was capped at the snapshot table limit"
+            )
         bindings = self._binding_ids([table.table_fqn for table in snapshot.tables])
         gate = _UserGate(user, self._permissions, self._apply_rules)
         for table in snapshot.tables:
@@ -433,7 +439,9 @@ class PolicyApplyService:
         try:
             return self._register_table(table_fqn, user.email).binding_id
         except Exception:  # best-effort: one table failing to register must not stop the others
-            logger.warning(f"Rule policy {policy.policy_id} could not register a matching table", exc_info=True)
+            logger.warning(
+                f"Rule policy {safe_log_value(policy.policy_id)} could not register a matching table", exc_info=True
+            )
             return None
 
     def _attach(self, binding_id: str, match: PolicyMatch, user: ActingUser) -> bool:
@@ -443,7 +451,8 @@ class PolicyApplyService:
             )
         except Exception:  # best-effort: one failing attach must not stop the others
             logger.warning(
-                f"Rule policy {match.policy_id} could not attach rule {match.rule_id} to binding {binding_id}",
+                f"Rule policy {safe_log_value(match.policy_id)} could not attach rule {safe_log_value(match.rule_id)} "
+                f"to binding {safe_log_value(binding_id)}",
                 exc_info=True,
             )
             return False

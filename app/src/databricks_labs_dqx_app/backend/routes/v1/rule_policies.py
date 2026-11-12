@@ -35,6 +35,7 @@ from databricks_labs_dqx_app.backend.models import (
     RulePolicyRunOut,
 )
 from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, RulePolicy, RulePolicyIn
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.policy_apply_service import (
@@ -106,7 +107,7 @@ def _load_policy(policies: RulePolicyService, policy_id: str) -> RulePolicy:
     try:
         policy = policies.get(policy_id)
     except Exception:
-        logger.error(f"Failed to load rule policy {policy_id}", exc_info=True)
+        logger.error(f"Failed to load rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("load the rule policy")
     if policy is None:
         raise HTTPException(status_code=404, detail=_POLICY_NOT_FOUND)
@@ -132,7 +133,7 @@ def _rule_slot_names(registry: RegistryService, rule_id: str) -> set[str]:
     try:
         rule = registry.get_rule(rule_id)
     except Exception:
-        logger.error(f"Failed to load registry rule {rule_id}", exc_info=True)
+        logger.error(f"Failed to load registry rule {safe_log_value(rule_id)}", exc_info=True)
         raise _server_error("load the registry rule")
     if rule is None:
         raise HTTPException(status_code=404, detail=_RULE_NOT_FOUND)
@@ -143,7 +144,7 @@ def _run_best_effort(apply: PolicyApplyService, policy_id: str, user: ActingUser
     try:
         apply.run_policy(policy_id, user)
     except Exception:  # evaluating after a save must never fail the save
-        logger.warning(f"Rule policy {policy_id} evaluation after save failed", exc_info=True)
+        logger.warning(f"Rule policy {safe_log_value(policy_id)} evaluation after save failed", exc_info=True)
 
 
 def _rollback(policies: RulePolicyService, created: list[RulePolicy]) -> None:
@@ -151,7 +152,7 @@ def _rollback(policies: RulePolicyService, created: list[RulePolicy]) -> None:
         try:
             policies.delete(policy.policy_id)
         except Exception:
-            logger.error(f"Could not roll back rule policy {policy.policy_id}", exc_info=True)
+            logger.error(f"Could not roll back rule policy {safe_log_value(policy.policy_id)}", exc_info=True)
 
 
 # ------------------------------------------------------------------
@@ -171,7 +172,7 @@ def list_rule_policies(
     try:
         return _to_out(policies.list_for_rule(rule_id), apply_rules)
     except Exception:
-        logger.error(f"Failed to list rule policies for rule {rule_id}", exc_info=True)
+        logger.error(f"Failed to list rule policies for rule {safe_log_value(rule_id)}", exc_info=True)
         raise _server_error("list rule policies")
 
 
@@ -188,7 +189,7 @@ def get_rule_policy(
     try:
         return _to_out([policy], apply_rules)[0]
     except Exception:
-        logger.error(f"Failed to read rule policy {policy_id}", exc_info=True)
+        logger.error(f"Failed to read rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("load the rule policy")
 
 
@@ -274,14 +275,14 @@ def update_rule_policy(
     except RulePolicyNotFoundError:
         raise HTTPException(status_code=404, detail=_POLICY_NOT_FOUND)
     except Exception:
-        logger.error(f"Failed to update rule policy {policy_id}", exc_info=True)
+        logger.error(f"Failed to update rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("update the rule policy")
 
     _run_best_effort(apply, policy_id, user)
     try:
         return _to_out([updated], apply_rules)[0]
     except Exception:
-        logger.warning(f"Could not count tables for rule policy {policy_id}", exc_info=True)
+        logger.warning(f"Could not count tables for rule policy {safe_log_value(policy_id)}", exc_info=True)
         return RulePolicyOut.from_domain(updated, 0)
 
 
@@ -301,7 +302,7 @@ def delete_rule_policy(policy_id: str, policies: Policies, caller: Caller) -> Re
     except RulePolicyNotFoundError:
         raise HTTPException(status_code=404, detail=_POLICY_NOT_FOUND)
     except Exception:
-        logger.error(f"Failed to delete rule policy {policy_id}", exc_info=True)
+        logger.error(f"Failed to delete rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("delete the rule policy")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -325,7 +326,7 @@ def preview_rule_policy(
     except RuleNotFoundError:
         raise HTTPException(status_code=404, detail=_RULE_NOT_FOUND)
     except Exception:
-        logger.error(f"Failed to preview a rule policy for rule {body.rule_id}", exc_info=True)
+        logger.error(f"Failed to preview a rule policy for rule {safe_log_value(body.rule_id)}", exc_info=True)
         raise _server_error("preview the rule policy")
     return RulePolicyPreviewOut(
         tables_matched=preview.tables_matched,
@@ -368,7 +369,7 @@ def rescan_rule_policy(
     except RulePolicyNotFoundError:
         raise HTTPException(status_code=404, detail=_POLICY_NOT_FOUND)
     except Exception:
-        logger.error(f"Failed to re-scan rule policy {policy_id}", exc_info=True)
+        logger.error(f"Failed to re-scan rule policy {safe_log_value(policy_id)}", exc_info=True)
         raise _server_error("re-scan the rule policy")
     return RulePolicyRunOut(
         attached=result.attached,

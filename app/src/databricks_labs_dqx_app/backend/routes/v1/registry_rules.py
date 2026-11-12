@@ -48,6 +48,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -565,7 +566,7 @@ def delete_registry_rule(
     try:
         policies.delete_for_rule(rule_id)
     except Exception:  # best-effort: orphaned policies attach nothing (their rule is gone)
-        logger.warning(f"Could not delete rule policies of deleted rule {rule_id}", exc_info=True)
+        logger.warning(f"Could not delete rule policies of deleted rule {safe_log_value(rule_id)}", exc_info=True)
     return {"status": "deleted", "rule_id": rule_id}
 
 
@@ -810,7 +811,9 @@ def approve_registry_rule(
         try:
             policy_apply.run_rule(rule_id, acting_user)
         except Exception:
-            logger.warning(f"Rule policy run after approving rule {rule_id} failed (non-fatal)", exc_info=True)
+            logger.warning(
+                f"Rule policy run after approving rule {safe_log_value(rule_id)} failed (non-fatal)", exc_info=True
+            )
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

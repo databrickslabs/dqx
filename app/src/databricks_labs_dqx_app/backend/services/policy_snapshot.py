@@ -14,6 +14,7 @@ from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.sdk.errors.base import DatabricksError
 
 from databricks_labs_dqx_app.backend.policy_models import ALL, PolicyScope
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.policy_engine import ColumnSnapshot, TableSnapshot, in_scope
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, validate_fqn, validate_identifier
@@ -150,7 +151,7 @@ class PolicySnapshotReader:
                 validate_identifier(catalog)
                 found, truncated = self._read_catalog(catalog, flt, limit - len(tables), accept)
             except _READ_ERRORS:
-                logger.warning(f"Could not read information_schema for catalog (skipped): {_safe(catalog)}")
+                logger.warning(f"Could not read information_schema for catalog (skipped): {safe_log_value(catalog)}")
                 unreadable.append(catalog)
                 continue
             tables.extend(found)
@@ -260,7 +261,7 @@ class PolicySnapshotReader:
                 if name and name.lower() == catalog.lower():
                     catalog_owner = r.get("catalog_owner")
         except _READ_ERRORS:
-            logger.warning(f"Catalog owner lookup failed: {_safe(catalog)}")
+            logger.warning(f"Catalog owner lookup failed: {safe_log_value(catalog)}")
         try:
             for r in self._run(
                 f"SELECT schema_name, schema_owner FROM {base}.schemata WHERE {_where(flt, 'schema_name', None)}"
@@ -268,10 +269,5 @@ class PolicySnapshotReader:
                 if r.get("schema_name"):
                     schema_owners[str(r["schema_name"])] = r.get("schema_owner")
         except _READ_ERRORS:
-            logger.warning(f"Schema owner lookup failed: {_safe(catalog)}")
+            logger.warning(f"Schema owner lookup failed: {safe_log_value(catalog)}")
         return catalog_owner, schema_owners
-
-
-def _safe(value: str) -> str:
-    """Strip control characters from a name before logging (CWE-117)."""
-    return "".join(ch if ch.isprintable() else "?" for ch in value)
