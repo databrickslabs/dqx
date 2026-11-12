@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest.mock import create_autospec
 
 from databricks_labs_dqx_app.backend.cache import CacheFactory
@@ -389,3 +391,49 @@ def test_for_tables_chunks_long_table_lists():
     assert len(table_queries) == 3
     assert all(q.count("lower(table_name) =") <= 200 for q in table_queries)
     assert len(result.tables) == 450
+
+
+# ---------------------------------------------------------------------------
+# Concurrent follow-up reads (perf P3)
+# ---------------------------------------------------------------------------
+
+
+def test_follow_up_statements_run_concurrently():
+    sql, _ = _make_sql(_main_data())
+    real = sql.query_dicts.side_effect
+    lock = threading.Lock()
+    active = {"now": 0, "peak": 0}
+
+    def slowish(statement: str, **kwargs: object):
+        with lock:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+        try:
+            time.sleep(0.05)
+            return real(statement, **kwargs)
+        finally:
+            with lock:
+                active["now"] -= 1
+
+    sql.query_dicts.side_effect = slowish
+    concurrent = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+
+    sequential_sql, _ = _make_sql(_main_data())
+    sequential = _reader(sequential_sql).for_scope(PolicyScope(catalogs=["main"]))
+
+    assert active["peak"] > 1
+    assert concurrent == sequential
+
+
+def test_concurrent_follow_up_failure_still_marks_catalog_unreadable():
+    for kind in ("columns", "table_tags", "schema_tags", "catalog_tags"):
+        sql, _ = _make_sql(_main_data(), failing={f"main:{kind}"})
+        result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+        assert result.unreadable_catalogs == ["main"] and result.tables == [], kind
+
+
+def test_owner_lookup_failure_still_yields_tables_without_owners():
+    sql, _ = _make_sql(_main_data(), failing={"main:schemata", "main:catalogs"})
+    result = _reader(sql).for_scope(PolicyScope(catalogs=["main"]))
+    assert result.unreadable_catalogs == []
+    assert {t.schema_owner for t in result.tables} == {None} and {t.catalog_owner for t in result.tables} == {None}

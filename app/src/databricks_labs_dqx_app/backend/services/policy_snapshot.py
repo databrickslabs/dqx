@@ -8,7 +8,8 @@ only what the calling user can see.
 Every read is bounded by a deadline (``DEFAULT_DEADLINE_SECONDS`` per call):
 when it passes, reading stops and the result is ``truncated``. ``for_tables``
 can share a per-table, per-user TTL cache so opening the same table again (or
-asking for its suggestions) does not re-read Unity Catalog.
+asking for its suggestions) does not re-read Unity Catalog. Within a catalog,
+the follow-up statements (columns, tags, owners) run concurrently.
 """
 
 import functools
@@ -19,6 +20,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from databricks.labs.blueprint.parallel import Threads
 from databricks.labs.dqx.utils import is_sql_query_safe
 from databricks.sdk.errors.base import DatabricksError
 
@@ -114,6 +116,7 @@ def _user_catalogs(names: list[str]) -> list[str]:
 
 Row = dict[str, str | None]
 _PAIR_CHUNK = 200
+_MAX_PARALLEL_STATEMENTS = 8
 
 
 def _tag(name: str | None, value: str | None) -> str | None:
@@ -317,49 +320,77 @@ class PolicySnapshotReader:
             return [], truncated
         owners = {(str(r["table_schema"]), str(r["table_name"])): r.get("table_owner") for r in rows}
         followups = self._followup_filters(flt, list(owners))
+        schema_filter = _CatalogFilter(schemas=frozenset(schema.lower() for schema, _ in owners))
+
+        # Every follow-up statement depends only on the candidate tables, so they run concurrently.
+        required: dict[str, str] = {}
+        for n, sub in enumerate(followups):
+            required[f"column_tags:{n}"] = (
+                "SELECT schema_name, table_name, column_name, tag_name, tag_value "
+                f"FROM {base}.column_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
+            )
+            required[f"columns:{n}"] = (
+                "SELECT table_schema, table_name, column_name, data_type "
+                f"FROM {base}.columns WHERE {_where(sub, 'table_schema', 'table_name')} "
+                "ORDER BY table_schema, table_name, ordinal_position"
+            )
+            required[f"table_tags:{n}"] = (
+                "SELECT schema_name, table_name, tag_name, tag_value "
+                f"FROM {base}.table_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
+            )
+        required["schema_tags"] = (
+            "SELECT schema_name, tag_name, tag_value "
+            f"FROM {base}.schema_tags WHERE {_where(schema_filter, 'schema_name', None)}"
+        )
+        required["catalog_tags"] = f"SELECT tag_name, tag_value FROM {base}.catalog_tags"
+        optional = {  # best-effort owners: a failure only leaves them None
+            "catalog_owner": (
+                f"SELECT catalog_name, catalog_owner FROM {base}.catalogs "
+                f"WHERE lower(catalog_name) = {_literal(catalog.lower())}"
+            ),
+            "schema_owners": (
+                f"SELECT schema_name, schema_owner FROM {base}.schemata "
+                f"WHERE {_where(schema_filter, 'schema_name', None)}"
+            ),
+        }
+        results = self._run_all(catalog, required, optional, deadline)
 
         column_tags: dict[tuple[str, str, str], list[Row]] = {}
         columns: dict[tuple[str, str], list[ColumnSnapshot]] = {}
         table_tags: dict[tuple[str, str], list[Row]] = {}
-        for sub in followups:
-            for r in run(
-                "SELECT schema_name, table_name, column_name, tag_name, tag_value "
-                f"FROM {base}.column_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
-            ):
+        for n in range(len(followups)):
+            for r in results[f"column_tags:{n}"]:
                 sch, tbl, col = r.get("schema_name"), r.get("table_name"), r.get("column_name")
                 if sch and tbl and col:
                     column_tags.setdefault((sch, tbl, col), []).append(r)
-            for r in run(
-                "SELECT table_schema, table_name, column_name, data_type "
-                f"FROM {base}.columns WHERE {_where(sub, 'table_schema', 'table_name')} "
-                "ORDER BY table_schema, table_name, ordinal_position"
-            ):
+            for r in results[f"table_tags:{n}"]:
+                sch, tbl = r.get("schema_name"), r.get("table_name")
+                if sch and tbl:
+                    table_tags.setdefault((sch, tbl), []).append(r)
+        for n in range(len(followups)):
+            for r in results[f"columns:{n}"]:
                 schema, table, column = r.get("table_schema"), r.get("table_name"), r.get("column_name")
                 if schema and table and column and (schema, table) in owners:
                     tags = _tags(column_tags.get((schema, table, column), []))
                     columns.setdefault((schema, table), []).append(
                         ColumnSnapshot(column, r.get("data_type") or "", tags)
                     )
-            for r in run(
-                "SELECT schema_name, table_name, tag_name, tag_value "
-                f"FROM {base}.table_tags WHERE {_where(sub, 'schema_name', 'table_name')}"
-            ):
-                sch, tbl = r.get("schema_name"), r.get("table_name")
-                if sch and tbl:
-                    table_tags.setdefault((sch, tbl), []).append(r)
-
-        schema_filter = _CatalogFilter(schemas=frozenset(schema.lower() for schema, _ in owners))
         schema_tags: dict[str, list[Row]] = {}
-        for r in run(
-            "SELECT schema_name, tag_name, tag_value "
-            f"FROM {base}.schema_tags WHERE {_where(schema_filter, 'schema_name', None)}"
-        ):
+        for r in results["schema_tags"]:
             sch = r.get("schema_name")
             if sch:
                 schema_tags.setdefault(sch, []).append(r)
-        catalog_tags = _tags(run(f"SELECT tag_name, tag_value FROM {base}.catalog_tags"))
-
-        catalog_owner, schema_owners = self._owners(catalog, base, schema_filter, deadline)
+        catalog_tags = _tags(results["catalog_tags"])
+        catalog_owner: str | None = None
+        for r in results.get("catalog_owner", []):
+            name = r.get("catalog_name")
+            if name and name.lower() == catalog.lower():
+                catalog_owner = r.get("catalog_owner")
+        schema_owners: dict[str, str | None] = {
+            str(r["schema_name"]): r.get("schema_owner")
+            for r in results.get("schema_owners", [])
+            if r.get("schema_name")
+        }
         snapshots = [
             TableSnapshot(
                 table_fqn=f"{catalog}.{schema}.{table}",
@@ -375,29 +406,40 @@ class PolicySnapshotReader:
         ]
         return snapshots, truncated
 
-    def _owners(
-        self, catalog: str, base: str, flt: _CatalogFilter, deadline: float
-    ) -> tuple[str | None, dict[str, str | None]]:
-        """Best-effort catalog/schema owners; any read failure yields ``None`` owners."""
-        run = functools.partial(self._run, deadline=deadline)
-        catalog_owner: str | None = None
-        schema_owners: dict[str, str | None] = {}
-        try:
-            for r in run(
-                f"SELECT catalog_name, catalog_owner FROM {base}.catalogs "
-                f"WHERE lower(catalog_name) = {_literal(catalog.lower())}"
-            ):
-                name = r.get("catalog_name")
-                if name and name.lower() == catalog.lower():
-                    catalog_owner = r.get("catalog_owner")
-        except _READ_ERRORS:
-            logger.warning(f"Catalog owner lookup failed: {safe_log_value(catalog)}")
-        try:
-            for r in run(
-                f"SELECT schema_name, schema_owner FROM {base}.schemata WHERE {_where(flt, 'schema_name', None)}"
-            ):
-                if r.get("schema_name"):
-                    schema_owners[str(r["schema_name"])] = r.get("schema_owner")
-        except _READ_ERRORS:
-            logger.warning(f"Schema owner lookup failed: {safe_log_value(catalog)}")
-        return catalog_owner, schema_owners
+    def _run_all(
+        self, catalog: str, required: dict[str, str], optional: dict[str, str], deadline: float
+    ) -> dict[str, list[Row]]:
+        """Run independent statements concurrently; returns rows by key.
+
+        A failing *required* statement fails the whole catalog read (re-raised, the time
+        limit taking precedence); a failing *optional* one is logged and left out.
+        """
+        statements = {**required, **optional}
+
+        def task(key: str) -> tuple[str, list[Row] | None, Exception | None]:
+            try:
+                return key, self._run(statements[key], deadline), None
+            except Exception as error:  # collected and re-raised below, by kind
+                return key, None, error
+
+        outcomes, _ = Threads.gather(
+            "policy-snapshot",
+            [functools.partial(task, key) for key in statements],
+            num_threads=min(_MAX_PARALLEL_STATEMENTS, len(statements)),
+        )
+        results: dict[str, list[Row]] = {}
+        failures: dict[str, Exception] = {}
+        for key, rows, error in outcomes:
+            if error is not None:
+                failures[key] = error
+            elif rows is not None:
+                results[key] = rows
+        if any(isinstance(error, _DeadlineExceeded) for error in failures.values()):
+            raise _DeadlineExceeded()
+        for key, error in failures.items():
+            if key in required:
+                raise error
+            if not isinstance(error, _READ_ERRORS):
+                raise error
+            logger.warning(f"Owner lookup ({key}) failed: {safe_log_value(catalog)}")
+        return results
