@@ -197,7 +197,7 @@ choose **SQL** under Custom condition. You can write either:
 - a **plain condition** over placeholders (always
   [row-level](/docs/studio/authoring/create-a-rule/row-and-dataset-level)), or
 - a **full query** (`SELECT … FROM {{input_view}} …`), where you set
-  **Applies to** to **Row-level** or **Dataset-level**.
+  **Applies to** to **Row-level** or **Table-level**.
 
 This is also the path for complex
 [cross-table](/docs/studio/authoring/create-a-rule/cross-table-rules) comparisons. The query
@@ -221,11 +221,11 @@ There are three ways to write one:
   boolean `condition` column where `TRUE` means fail. You can also write a
   boolean expression followed by `JOIN` clauses and let Studio wrap it.
 
-Step-by-step examples (including row-level vs dataset-level SQL, permissions, and
+Step-by-step examples (including row-level vs table-level SQL, permissions, and
 common pitfalls) live on
 [Cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules). For when to use
-**Row-level** vs **Dataset-level**, see
-[Row-level vs dataset-level rules](/docs/studio/authoring/create-a-rule/row-and-dataset-level).
+**Row-level** vs **Table-level**, see
+[Row-level vs table-level rules](/docs/studio/authoring/create-a-rule/row-and-dataset-level).
 
 ## Generate a rule with AI
 
