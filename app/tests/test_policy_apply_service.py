@@ -792,3 +792,40 @@ def test_preview_with_some_mappings_attached_is_not_already_attached(world: Worl
     [table] = world.service().preview("r1", _policy_in(), AUTHOR).tables
 
     assert len(table.matches) == 2 and table.already_attached is False
+
+
+# ---------------------------------------------------------------------------
+# Lakebase-only pre-check before any snapshot read (perf P2)
+# ---------------------------------------------------------------------------
+
+
+def _out_of_scope_world(world: World) -> None:
+    world.bindings = {"c.s.t": "b1"}
+    world.grants = {("b1", Privilege.APPLY)}
+    world.set_tables(_snap("c.s.t", _col("email", "pii")))
+
+
+def test_no_policy_in_scope_reads_nothing(world: World) -> None:
+    _out_of_scope_world(world)
+    elsewhere = _policy().model_copy(update={"scope": PolicyScope(catalogs=["other"])})
+    world.policies.list_all.return_value = [elsewhere]
+    svc = world.service()
+
+    assert svc.evaluate_binding("b1", AUTHOR).attached == 0
+    assert svc.evaluate_tables(["c.s.t"], AUTHOR).attached == 0
+    assert svc.ambiguous_for_binding("b1", AUTHOR) == []
+    world.snapshots.for_tables.assert_not_called()
+    world.snapshots.for_scope.assert_not_called()
+    world.permissions.has_privilege.assert_not_called()
+
+
+def test_in_scope_policy_of_unapproved_rule_reads_nothing(world: World) -> None:
+    _out_of_scope_world(world)
+    world.policies.list_all.return_value = [_policy()]
+    world.registry.get_rules_many.side_effect = lambda ids: {i: _rule(i, status="draft") for i in ids}
+    svc = world.service()
+
+    assert svc.evaluate_binding("b1", AUTHOR).attached == 0
+    assert svc.ambiguous_for_binding("b1", AUTHOR) == []
+    world.snapshots.for_tables.assert_not_called()
+    world.permissions.has_privilege.assert_not_called()

@@ -489,17 +489,32 @@ class PolicyApplyService:
         return snapshot, bindings
 
     def _run_bindings(self, table_bindings: dict[str, str], user: ActingUser, totals: _Totals, *, attach: bool) -> None:
-        """Evaluate the policies reaching each ``table_fqn -> binding_id``, reading one snapshot for all."""
-        gate = _UserGate(user, self._permissions, self._apply_rules)
-        allowed = {fqn: binding_id for fqn, binding_id in table_bindings.items() if gate.can_apply(binding_id)}
-        if not allowed:
+        """Evaluate the policies reaching each ``table_fqn -> binding_id``, reading one snapshot for all.
+
+        Cheap Lakebase-only checks come first: tables no approved rule's policy has in scope,
+        and tables the user may not apply rules to, are dropped before any warehouse read.
+        """
+        if not table_bindings:
             return
         all_policies = self._policies.list_all()
-        reaching = {fqn: [p for p in all_policies if in_scope(p.scope, fqn)] for fqn in allowed}
-        reaching = {fqn: policies for fqn, policies in reaching.items() if policies}
+        reaching = {fqn: [p for p in all_policies if in_scope(p.scope, fqn)] for fqn in table_bindings}
+        rule_ids = sorted({p.rule_id for ps in reaching.values() for p in ps})
+        if not rule_ids:
+            return
+        rules = {
+            rule_id: rule
+            for rule_id, rule in self._registry.get_rules_many(rule_ids).items()
+            if rule.status == "approved"
+        }
+        gate = _UserGate(user, self._permissions, self._apply_rules)
+        reaching = {
+            fqn: approved
+            for fqn, policies in reaching.items()
+            if (approved := [p for p in policies if p.rule_id in rules]) and gate.can_apply(table_bindings[fqn])
+        }
         if not reaching:
             return
-        rules = self._registry.get_rules_many(sorted({p.rule_id for ps in reaching.values() for p in ps}))
+        allowed = {fqn: table_bindings[fqn] for fqn in reaching}
         snapshot = self._snapshots.for_tables(list(reaching))
         tables = {table.table_fqn.lower(): table for table in snapshot.tables}
         for fqn, policies in reaching.items():
@@ -508,11 +523,8 @@ class PolicyApplyService:
                 continue
             bindings = {table.table_fqn: allowed[fqn]}
             for policy in policies:
-                rule = rules.get(policy.rule_id)
-                if rule is None or rule.status != "approved":
-                    continue
                 try:
-                    self._apply_table(policy, rule, table, bindings, gate, user, totals, attach=attach)
+                    self._apply_table(policy, rules[policy.rule_id], table, bindings, gate, user, totals, attach=attach)
                 except Exception:  # best-effort: one table failing must not stop the others
                     logger.warning(
                         f"Rule policy {safe_log_value(policy.policy_id)} evaluation on binding "
