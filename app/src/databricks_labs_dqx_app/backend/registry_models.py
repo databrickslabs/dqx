@@ -840,12 +840,14 @@ def _canonical_label_value(value: str, allowed: list[str], aliases: dict[str, st
 
 
 def generic_rule_metadata(user_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Return the reserved keys a generic (registry) rule uses for identity.
+    """Return the reserved keys a generic (registry) rule keeps.
 
-    Custom tags still persist on the registry rule until an applied-rule
-    migration copies them onto ``dq_applied_rules.user_metadata``. This helper
-    is the reserved-key *view* (fingerprint/modified comparison), not a strip
-    on write.
+    Custom tags (business terms, ownership, contract provenance, …) describe
+    how a rule is used on one table, so they belong on the applied rule
+    (``dq_applied_rules.user_metadata`` / apply ``tags``), not on the reusable
+    registry rule. Callers that persist a registry rule must pass the result of
+    this helper — see :meth:`RegistryService.create_rule` /
+    :meth:`RegistryService.update_draft`.
     """
     return {k: v for k, v in (user_metadata or {}).items() if k in RESERVED_RULE_METADATA_KEYS}
 

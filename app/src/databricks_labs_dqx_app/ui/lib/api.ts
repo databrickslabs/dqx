@@ -17009,8 +17009,8 @@ one by passing it in ``reuse_rule_ids`` on the batch import.
 export const previewBatchImportRegistryRules = (
     previewBatchImportRegistryRulesIn: PreviewBatchImportRegistryRulesIn, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<PreviewBatchImportRegistryRulesOut>> => {
-    
-    
+
+
     return axios.default.post(
       `/api/v1/registry-rules/batch-import/preview`,
       previewBatchImportRegistryRulesIn,options
@@ -17030,7 +17030,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, axios: undefined};
 
-      
+
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, {data: PreviewBatchImportRegistryRulesIn}> = (props) => {
@@ -17039,7 +17039,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
           return  previewBatchImportRegistryRules(data,axiosOptions)
         }
 
-        
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -17064,7 +17064,7 @@ export const usePreviewBatchImportRegistryRules = <TError = AxiosError<HTTPValid
 
       return useMutation(mutationOptions, queryClient);
     }
-    
+
 /**
  * Bulk-create registry drafts from imported checks in a single request.
 

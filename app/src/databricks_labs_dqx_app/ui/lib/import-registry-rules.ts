@@ -42,6 +42,12 @@ export interface ImportRegistryRulesResult {
   saved: number;
   /** Rules matched to an existing active rule by fingerprint — reused, not created. */
   reused: number;
+  /**
+   * Reused rules whose import carried a population filter that differs from the
+   * reused rule's default. Rules-only import (YAML / Marketplace) has nowhere to
+   * store that filter — set it on the applied rule when you apply later.
+   */
+  reusedWithFilter: number;
   submitted: number;
   submitFailed: number;
   failed: number;
@@ -343,6 +349,7 @@ export async function importChecksAsRegistryDrafts({
     return {
       saved: 0,
       reused: 0,
+      reusedWithFilter: 0,
       submitted: 0,
       submitFailed: 0,
       failed: parseErrors.length,
@@ -379,9 +386,13 @@ export async function importChecksAsRegistryDrafts({
       : f.error;
   });
 
+  const reused = data.reused ?? [];
   return {
     saved: data.saved ?? 0,
-    reused: (data.reused ?? []).length,
+    reused: reused.length,
+    // Backend returns the differing filter so table-import paths can apply it;
+    // rules-only callers surface this so the filter is not silently dropped.
+    reusedWithFilter: reused.filter((r) => Boolean(r.row_filter?.trim())).length,
     submitted: data.submitted ?? 0,
     submitFailed: data.submit_failed ?? 0,
     failed: parseErrors.length + failedList.length,

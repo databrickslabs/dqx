@@ -37,6 +37,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleMode,
     RuleStatus,
     RuleVersion,
+    generic_rule_metadata,
     get_rule_dimension,
     get_rule_severity,
 )
@@ -311,10 +312,17 @@ class RegistryService:
         return compute_registry_rule_fingerprint(probe)
 
     def refresh_fingerprints(self) -> int:
-        """Rewrite stored fingerprints that no longer match the current algorithm. Returns the count."""
+        """Rewrite stored fingerprints that no longer match the current algorithm.
+
+        Returns the count of rows updated. Also logs fingerprints that more than
+        one active rule now shares — a rewrite can collapse previously-distinct
+        rules onto the same key when the algorithm drops fields (e.g. filter).
+        """
         refreshed = 0
+        by_fingerprint: dict[str, list[str]] = {}
         for rule in self.list_rules():
             fingerprint = compute_registry_rule_fingerprint(rule)
+            by_fingerprint.setdefault(fingerprint, []).append(rule.rule_id)
             if fingerprint == rule.fingerprint:
                 continue
             self._sql.execute(
@@ -324,6 +332,15 @@ class RegistryService:
             refreshed += 1
         if refreshed:
             logger.info("Refreshed the fingerprint of %d registry rule(s)", refreshed)
+        for fingerprint, rule_ids in by_fingerprint.items():
+            if len(rule_ids) < 2:
+                continue
+            logger.warning(
+                "Fingerprint %s is shared by %d registry rule(s): %s",
+                fingerprint,
+                len(rule_ids),
+                ", ".join(rule_ids),
+            )
         return refreshed
 
     def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
@@ -642,7 +659,8 @@ class RegistryService:
             polarity=polarity,
             author_kind=author_kind,
             definition=definition,
-            user_metadata=dict(user_metadata or {}),
+            # Custom tags belong on applied rules; keep only reserved keys here.
+            user_metadata=generic_rule_metadata(user_metadata),
             owner=resolved_owner,
             owner_display_name=owner_display_name,
             is_builtin=False,
@@ -784,7 +802,7 @@ class RegistryService:
         elif clear_polarity:
             rule.polarity = None
         if user_metadata is not None:
-            rule.user_metadata = dict(user_metadata)
+            rule.user_metadata = generic_rule_metadata(user_metadata)
         if owner is not None:
             rule.owner = owner
             # Owner changed without an explicit display name → resolve it at
