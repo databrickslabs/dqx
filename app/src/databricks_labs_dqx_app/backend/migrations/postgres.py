@@ -103,6 +103,105 @@ class PgMigration:
 # can be re-targeted for tests/dev/prod without copy-paste.
 _S = "{schema}"
 
+# dq_data_product_versions — a collection as approved at each version (name,
+# description, owner, members and their pins), so View changes can compare
+# versions. Shared by the baseline and v5, so an upgraded install gets exactly
+# the table a fresh install creates.
+_DATA_PRODUCT_VERSIONS_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_product_versions ("
+    "  id          TEXT PRIMARY KEY,"
+    "  product_id  TEXT NOT NULL,"
+    "  version     INTEGER NOT NULL,"
+    "  state_json  JSONB NOT NULL,"
+    "  created_by  TEXT,"
+    "  created_at  TIMESTAMPTZ,"
+    "  CONSTRAINT uq_dq_data_product_versions_product_version "
+    "    UNIQUE (product_id, version)"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_dq_data_product_versions_product_id "
+    f"  ON {_S}.dq_data_product_versions (product_id);"
+)
+
+# dq_lifecycle_history — one append-only audit trail for the review lifecycle of
+# registry rules, monitored tables and collections (create, edits, submit /
+# approve / reject / withdraw, deprecate / reinstate, delete). Every kind is
+# written and read the same way, keyed by (object_type, object_id), so a
+# lifecycle step means the same thing whichever object it's about.
+# ``details`` describes what changed (a rule's definition, an applied rule, a
+# member); ``snapshot`` is the object's whole state after the step (a table's
+# rendered checks, a collection's settings and members, a rule's definition),
+# so any step can be compared with the one before it. Frozen approved versions
+# stay in the per-kind ``*_versions`` tables.
+# ``is_automatic`` marks a step the app took on the actor's behalf (an
+# auto-approval). Shared by the baseline and v5.
+_LIFECYCLE_HISTORY_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_lifecycle_history ("
+    "  history_id   BIGSERIAL PRIMARY KEY,"
+    "  object_type  TEXT NOT NULL,"
+    "  object_id    TEXT NOT NULL,"
+    "  action       TEXT NOT NULL,"
+    "  prev_status  TEXT,"
+    "  new_status   TEXT,"
+    "  version      INTEGER,"
+    "  details      JSONB,"
+    "  snapshot     JSONB,"
+    "  rationale    TEXT,"
+    "  changed_by   TEXT,"
+    "  is_automatic BOOLEAN NOT NULL DEFAULT FALSE,"
+    "  changed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),"
+    "  CONSTRAINT chk_dq_lifecycle_history_object_type "
+    "    CHECK (object_type IN ('registry_rule','monitored_table','data_product'))"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_dq_lifecycle_history_object "
+    f"  ON {_S}.dq_lifecycle_history (object_type, object_id, changed_at DESC);"
+)
+
+# v5 moves the registry-rule trail from ``dq_rules_history`` into
+# ``dq_lifecycle_history`` and drops it. Its action names are translated once
+# here: ``status:<new>`` becomes the step it was, and a ``status:approved`` that
+# left review is a rejection when it carries a note (a withdrawal never did).
+# The legacy table is created first (a no-op on an upgrade) so the copy also
+# runs on a fresh install, which never has it.
+_AUTO_SUFFIX_SQL = "' (auto)'"
+_RULES_HISTORY_TO_LIFECYCLE_HISTORY = (
+    f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
+    "  history_id    BIGSERIAL PRIMARY KEY,"
+    "  rule_id       TEXT,"
+    "  definition    JSONB,"
+    "  version       INTEGER,"
+    "  action        TEXT NOT NULL,"
+    "  prev_status   TEXT,"
+    "  new_status    TEXT,"
+    "  rationale     TEXT,"
+    "  changed_by    TEXT,"
+    "  changed_at    TIMESTAMPTZ"
+    ");"
+    f"INSERT INTO {_S}.dq_lifecycle_history "
+    "(object_type, object_id, action, prev_status, new_status, version, details, rationale, "
+    "changed_by, is_automatic, changed_at) "
+    "SELECT 'registry_rule', rule_id, "
+    "CASE"
+    " WHEN action IN ('create', 'seed') THEN 'create'"
+    " WHEN action = 'revoke' THEN 'withdraw'"
+    " WHEN action = 'status:pending_approval' THEN 'submit'"
+    " WHEN action = 'status:rejected' THEN 'reject'"
+    " WHEN action = 'status:deprecated' THEN 'deprecate'"
+    " WHEN action = 'status:draft' THEN 'withdraw'"
+    " WHEN action = 'status:approved' AND prev_status = 'pending_approval'"
+    "  THEN CASE WHEN COALESCE(rationale, '') <> '' THEN 'reject' ELSE 'withdraw' END"
+    " WHEN action = 'status:approved' AND prev_status = 'deprecated' THEN 'reinstate'"
+    " ELSE action END, "
+    "prev_status, new_status, version, "
+    "CASE WHEN definition IS NULL THEN NULL ELSE jsonb_build_object('definition', definition) END, "
+    "rationale, "
+    f"CASE WHEN right(changed_by, 7) = {_AUTO_SUFFIX_SQL} THEN left(changed_by, length(changed_by) - 7) "
+    "ELSE changed_by END, "
+    f"COALESCE(right(changed_by, 7) = {_AUTO_SUFFIX_SQL}, FALSE), "
+    "COALESCE(changed_at, now()) "
+    f"FROM {_S}.dq_rules_history WHERE rule_id IS NOT NULL ORDER BY history_id;"
+    f"DROP TABLE IF EXISTS {_S}.dq_rules_history;"
+)
+
 
 PG_MIGRATIONS: list[PgMigration] = [
     PgMigration(
@@ -344,27 +443,6 @@ PG_MIGRATIONS: list[PgMigration] = [
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_rule_versions_rule_id ON {_S}.dq_rule_versions (rule_id);"
             # ----------------------------------------------------------
-            # dq_rules_history — append-only audit trail for the
-            # registry rule lifecycle (create/update/status transitions/
-            # delete), mirroring ``dq_resolved_rules_history``'s shape.
-            # ----------------------------------------------------------
-            f"CREATE TABLE IF NOT EXISTS {_S}.dq_rules_history ("
-            "  history_id    BIGSERIAL PRIMARY KEY,"
-            "  rule_id       TEXT,"
-            "  definition    JSONB,"
-            "  version       INTEGER,"
-            "  action        TEXT NOT NULL,"
-            "  prev_status   TEXT,"
-            "  new_status    TEXT,"
-            # Free-text note the actor attached to this transition (submit /
-            # approve / reject), so the audit trail explains *why* not just what.
-            "  rationale     TEXT,"
-            "  changed_by    TEXT,"
-            "  changed_at    TIMESTAMPTZ"
-            ");"
-            f"CREATE INDEX IF NOT EXISTS idx_dq_rules_history_rule_changed_at "
-            f"  ON {_S}.dq_rules_history (rule_id, changed_at DESC);"
-            # ----------------------------------------------------------
             # dq_monitored_tables — Layer 2: thin binding recording that a
             # table is under active governance (see design spec §3.1/§7).
             # Profiling data itself lives in the existing
@@ -564,7 +642,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "    UNIQUE (product_id, binding_id)"
             ");"
             f"CREATE INDEX IF NOT EXISTS idx_dq_data_product_members_product_id "
-            f"  ON {_S}.dq_data_product_members (product_id);"
+            f"  ON {_S}.dq_data_product_members (product_id);" + _DATA_PRODUCT_VERSIONS_DDL + _LIFECYCLE_HISTORY_DDL +
             # ----------------------------------------------------------
             # dq_run_sets — one row per product-level run, grouping the
             # per-binding runs it fanned out into (``dq_run_set_members``).
@@ -814,18 +892,31 @@ PG_MIGRATIONS: list[PgMigration] = [
             "('pending','success','partial_failure','failed','skipped'));"
         ),
     ),
+    PgMigration(
+        version=5,
+        description="Collection versions and one lifecycle history for rules, tables and collections",
+        sql=_DATA_PRODUCT_VERSIONS_DDL + _LIFECYCLE_HISTORY_DDL + _RULES_HISTORY_TO_LIFECYCLE_HISTORY,
+    ),
 ]
 
 
 _CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
 
 
+_DROP_TABLE_RE = re.compile(r"DROP TABLE IF EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+
+
 def _created_table_names() -> tuple[str, ...]:
-    """Return OLTP table names derived from the authoritative Postgres DDL."""
+    """Return OLTP table names derived from the authoritative Postgres DDL.
+
+    A table a migration drops (e.g. one it copied into another and retired)
+    isn't part of the schema, even though that migration creates it first.
+    """
+    dropped = {name for migration in PG_MIGRATIONS for name in _DROP_TABLE_RE.findall(migration.sql)}
     names: list[str] = []
     for migration in PG_MIGRATIONS:
         for name in _CREATE_TABLE_RE.findall(migration.sql):
-            if name not in names:
+            if name not in names and name not in dropped:
                 names.append(name)
     return tuple(names)
 

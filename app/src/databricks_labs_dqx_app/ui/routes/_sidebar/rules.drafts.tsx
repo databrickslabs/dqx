@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
 import { formatDateShort as formatDate, getUserMetadata } from "@/lib/format-utils";
 import { SeverityBadge } from "@/components/RegistryRuleBadges";
 import { useTranslation } from "react-i18next";
@@ -41,14 +42,8 @@ import {
   ApprovalTh,
   ReadOnlyActionHint,
 } from "@/components/drafts/ApprovalQueueCard";
-import {
-  RegistryRuleDiffDialog,
-  MonitoredTableDiffDialog,
-  TableSpaceDiffDialog,
-  type RegistryDiffTarget,
-  type MonitoredTableDiffTarget,
-  type TableSpaceDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
+import { RuleChangesDialog, type RuleChangesTarget } from "@/components/changes/RuleChangesDialog";
+import { CollectionChangesDialog, type CollectionChangesTarget } from "@/components/changes/CollectionChangesDialog";
 import {
   useApproveRegistryRuleWithRationale,
   useRejectRegistryRuleWithRationale,
@@ -232,7 +227,7 @@ function RegistryApprovalsSection({
       t("rulesDrafts.registryToastFailedRevoke"),
     );
 
-  const [diffTarget, setDiffTarget] = useState<RegistryDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<RuleChangesTarget | null>(null);
 
   return (
     <>
@@ -352,7 +347,7 @@ function RegistryApprovalsSection({
         })}
       />
 
-      <RegistryRuleDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <RuleChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>
@@ -396,7 +391,7 @@ function RegistryApprovalsSection({
  * belongs in the same single approvals queue as registry rules and Table
  * Spaces. Driven by ``useListMonitoredTables`` filtered to the
  * ``pending_approval`` status; the change-diff popout reuses the two most
- * recent frozen version snapshots (see MonitoredTableDiffDialog).
+ * recent frozen version snapshots (see TableChangesDialog).
  */
 function MonitoredTablesApprovalsSection({
   canApproveRules,
@@ -417,7 +412,7 @@ function MonitoredTablesApprovalsSection({
   // Reject discards the submitter's pending binding, so it keeps a plain
   // yes/no confirm (no rationale textarea). Approve fires directly.
   const [rejectTarget, setRejectTarget] = useState<MonitoredTableSummaryOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
 
   const runAction = useCallback(
     (bindingId: string, mutate: () => Promise<unknown>, successMsg: string, errorMsg: string) => {
@@ -541,7 +536,7 @@ function MonitoredTablesApprovalsSection({
         })}
       />
 
-      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>
@@ -598,7 +593,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
   // Reject discards the submitter's pending collection, so it keeps a plain
   // yes/no confirm (no rationale textarea). Approve fires directly.
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<CollectionChangesTarget | null>(null);
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
@@ -729,7 +724,7 @@ function TableSpacesApprovalsSection({ canApproveRules }: { canApproveRules: boo
         })}
       />
 
-      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <CollectionChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={rejectTarget !== null} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>

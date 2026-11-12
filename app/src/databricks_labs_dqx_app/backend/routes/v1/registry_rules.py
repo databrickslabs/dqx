@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_lifecycle_history_reader,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -32,6 +33,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.models import (
     BackfillRuleEmbeddingsOut,
     BatchImportRegistryRulesFailure,
@@ -43,6 +45,8 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleDetailOut,
     RegistryRuleOut,
     RegistryRuleVersionOut,
+    HistoryEventOut,
+    RegistryRuleSnapshotOut,
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
@@ -181,9 +185,45 @@ def list_registry_rule_versions(
         raise HTTPException(status_code=500, detail=f"Failed to list registry rule versions: {e}")
 
 
-# ------------------------------------------------------------------
-# Create / update
-# ------------------------------------------------------------------
+@router.get(
+    "/{rule_id}/history",
+    response_model=list[HistoryEventOut],
+    operation_id="listRegistryRuleHistory",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_registry_rule_history(
+    rule_id: str,
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_reader)],
+) -> list[HistoryEventOut]:
+    """A registry rule's history, newest first: created, edits, and each submit, approve, reject and withdraw."""
+    try:
+        events = history.list_events("registry_rule", rule_id)
+    except Exception as e:
+        logger.error(f"Failed to list review events for registry rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
+    return [HistoryEventOut(**vars(e)) for e in events]
+
+
+@router.get(
+    "/{rule_id}/history/{history_id}",
+    response_model=RegistryRuleSnapshotOut,
+    operation_id="getRegistryRuleSnapshot",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def get_registry_rule_snapshot(
+    rule_id: str,
+    history_id: int,
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_reader)],
+) -> RegistryRuleSnapshotOut:
+    """The rule as one step of its history left it, to compare with any version or other step."""
+    try:
+        found, snapshot = history.get_snapshot("registry_rule", rule_id, history_id)
+    except Exception:
+        logger.error(f"Failed to read a history step of registry rule {rule_id}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to read this history step")
+    if not found:
+        raise HTTPException(status_code=404, detail=f"History step not found: {history_id}")
+    return RegistryRuleSnapshotOut(history_id=history_id, snapshot=snapshot if isinstance(snapshot, dict) else None)
 
 
 @router.post(

@@ -18,6 +18,7 @@ import pytest
 from databricks_labs_dqx_app.backend.demo import manifest, redate
 from databricks_labs_dqx_app.backend.demo.seed_service import DemoSeedService
 from databricks_labs_dqx_app.backend.demo.status import DemoStatusStore
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import ResourceTaggingService, demo_tag_targets
 
@@ -385,6 +386,48 @@ def test_run_approves_bindings_and_products_not_relying_on_auto_publish():
     assert deps["materializer"].materialize_binding.called
     assert deps["version_service"].freeze_new_version.called
     assert deps["data_products"].approve.called
+
+
+def test_run_records_each_table_and_collection_lifecycle_like_the_routes():
+    # The seed drives tables and collections through services, not the routes
+    # that record their history, so it records the same steps itself.
+    history = create_autospec(LifecycleHistoryService, instance=True)
+    svc, deps = _svc(history=history)
+    _use_create_path(deps)
+    deps["monitored_tables"].register.side_effect = lambda fqn, _user: MagicMock(binding_id=f"b:{fqn}")
+    deps["version_service"].freeze_new_version.return_value = 1
+    deps["data_products"].create.side_effect = lambda name, *_a: MagicMock(product_id=f"p:{name}")
+    deps["data_products"].approve.return_value = MagicMock(version=1)
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    steps = [(c.args[0], c.args[1], c.args[2], c.kwargs.get("version")) for c in history.record.call_args_list]
+    first_table = f"b:{svc_table_fqn(manifest.BINDINGS[0].table)}"
+    assert [(a, v) for kind, oid, a, v in steps if kind == "monitored_table" and oid == first_table] == [
+        ("create", None),
+        ("update", None),
+        ("submit", None),
+        ("approve", 1),
+    ]
+    first_product = f"p:{manifest.DATA_PRODUCTS[0].name}"
+    product_steps = [(a, v) for kind, oid, a, v in steps if kind == "data_product" and oid == first_product]
+    assert product_steps[0] == ("create", None)
+    assert product_steps[-2:] == [("submit", None), ("approve", 1)]
+    assert [a for a, _ in product_steps[1:-2]] == ["update"]
+    member_steps = [
+        c
+        for c in history.record.call_args_list
+        if c.args[0] == "data_product" and c.args[1] == first_product and c.args[2] == "update"
+    ]
+    # The tables are added in one save, so one edit, recorded as the save endpoint
+    # records it (back to draft, the tables it added).
+    assert len(member_steps) == 1
+    assert member_steps[0].kwargs["new_status"] == "draft"
+    assert len(member_steps[0].kwargs["details"]["members_added"]) == len(manifest.DATA_PRODUCTS[0].members)
+
+
+def svc_table_fqn(table: str) -> str:
+    return f"dqx.{DEMO_SCHEMA}.{table}"
 
 
 def test_weekly_trend_uses_passed_rule_map_never_refingerprints():

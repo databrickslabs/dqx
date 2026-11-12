@@ -8,22 +8,24 @@ RULE_AUTHOR+; approve/reject approvers-only (same gate as the monitored-table
 approve/reject routes); run is gated on CAN_RUN_ROLES (ADMIN + RULE_AUTHOR).
 """
 
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_lifecycle_history_reader,
+    get_lifecycle_history_service,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
     get_data_product_service,
     get_draft_run_gate_service,
-    get_monitored_table_version_service,
     get_obo_ws,
     get_permissions_service,
     get_schedule_grant_service,
@@ -40,16 +42,18 @@ from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
+    CollectionChangeOut,
     CreateDataProductIn,
+    DataProductChangesOut,
     DataProductOut,
-    DataProductReviewChangesOut,
-    DataProductReviewMemberOut,
+    DataProductVersionOut,
+    HistoryEventOut,
     LifecycleRationaleIn,
     RunDataProductIn,
+    SaveDataProductIn,
     RunDataProductOut,
     UpdateDataProductIn,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     WarehouseUnavailableError,
@@ -57,7 +61,9 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     ScheduleGrantService,
     manage_block_detail,
 )
+from databricks_labs_dqx_app.backend.services.lifecycle_history import LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.data_product_service import (
+    compare_collection_states,
     BindingNotApprovedError,
     DataProductService,
     DuplicateDataProductNameError,
@@ -129,58 +135,117 @@ def get_data_product(
 
 
 @router.get(
-    "/{product_id}/review-changes",
-    response_model=DataProductReviewChangesOut,
-    operation_id="getDataProductReviewChanges",
+    "/{product_id}/changes",
+    response_model=DataProductChangesOut,
+    operation_id="getDataProductChanges",
     dependencies=[require_role(*_VIEWERS_PLUS)],
 )
-def get_data_product_review_changes(
+def get_data_product_changes(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
-    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
-) -> DataProductReviewChangesOut:
-    """Return the recoverable prior/proposed state for a Table Space under review.
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_reader)],
+    base: Annotated[int | None, Query(ge=0, description="Base version (0 = nothing approved)")] = None,
+    target: Annotated[int | None, Query(ge=1, description="Target version; omit for the current members")] = None,
+    base_step: Annotated[
+        int | None, Query(ge=1, description="History step on the base side, instead of a version")
+    ] = None,
+    target_step: Annotated[
+        int | None, Query(ge=1, description="History step on the target side, instead of a version")
+    ] = None,
+) -> DataProductChangesOut:
+    """Compare a collection between two sides: its settings, then each member (added / removed / modified / unchanged).
 
-    Table Spaces have no per-version snapshot store, so there is no true
-    "previous product version" to diff against (documented limitation). What
-    is recoverable is the CURRENT proposed definition — the members being
-    approved and each member's frozen (pinned, else latest-approved) checks.
-    The Drafts & Review popout shows this with a note that no prior product
-    snapshot exists, rather than fabricating a diff.
+    A side is an approved version, a history step (the state a saved draft or
+    other step left), or for the target the current members. With no *base*
+    or *target*: a collection with changes not yet approved compares its
+    approved version with its current members; otherwise its latest version
+    with the one before it.
     """
+    if (base is not None and base_step is not None) or (target is not None and target_step is not None):
+        raise HTTPException(status_code=400, detail="Give a version or a history step for each side, not both")
+    steps = base_step is not None or target_step is not None
     try:
-        detail = svc.get(product_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
-        members: list[DataProductReviewMemberOut] = []
-        for member in detail.members:
-            effective_version = member.pinned_version or member.binding_version
-            checks: list[dict[str, object]] = []
-            if effective_version and effective_version > 0:
-                try:
-                    checks = version_svc.get_checks(member.binding_id, effective_version)
-                except LookupError:
-                    checks = []
-            members.append(
-                DataProductReviewMemberOut(
-                    binding_id=member.binding_id,
-                    table_fqn=member.table_fqn,
-                    pinned_version=member.pinned_version,
-                    binding_version=member.binding_version,
-                    checks=checks,
-                )
+        result = svc.changes(product_id, None if steps else base, None if steps else target)
+        if steps:
+            if target is not None and target > result.approved_version:
+                raise ValueError(f"Version {target} doesn't exist (latest is {result.approved_version})")
+            states = {v.version: v.state for v in result.versions}
+            before = (
+                _step_state(history, product_id, base_step)
+                if base_step is not None
+                else (states.get(base) if base else None)
             )
-        return DataProductReviewChangesOut(
-            product_id=detail.product.product_id,
-            name=detail.product.name,
-            version=detail.product.version,
-            members=members,
-        )
-    except HTTPException:
-        raise
+            if target_step is not None:
+                after = _step_state(history, product_id, target_step)
+            elif target is not None:
+                after = states.get(target)
+            else:
+                after = svc.current_state(product_id)
+            result.changes = compare_collection_states(before, after)
+            result.base_version = base or 0
+            result.target_version = target
+            # A version side approved before collections recorded their versions can't be shown.
+            result.base_recorded = all(not v or v in states for v in (base, target))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to get review changes for data product {product_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get data product review changes: {e}")
+        logger.error(f"Failed to compare data product {product_id} changes: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compare data product changes: {e}")
+    counts = {status: 0 for status in ("added", "removed", "modified", "unchanged")}
+    for change in result.changes:
+        counts[change.status] += 1
+    return DataProductChangesOut(
+        product_id=product_id,
+        approved_version=result.approved_version,
+        has_pending_changes=result.has_pending_changes,
+        base_version=result.base_version,
+        target_version=result.target_version,
+        base_step=base_step,
+        target_step=target_step,
+        base_recorded=result.base_recorded,
+        counts=counts,
+        versions=[
+            DataProductVersionOut(version=v.version, created_by=v.created_by, created_at=v.created_at)
+            for v in result.versions
+        ],
+        changes=[
+            CollectionChangeOut(key=c.key, name=c.name, status=c.status, before=c.before, after=c.after)
+            for c in result.changes
+        ],
+    )
+
+
+@router.get(
+    "/{product_id}/history",
+    response_model=list[HistoryEventOut],
+    operation_id="listDataProductHistory",
+    dependencies=[require_role(*_VIEWERS_PLUS)],
+)
+def list_data_product_history(
+    product_id: str,
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_reader)],
+) -> list[HistoryEventOut]:
+    """A collection's history, newest first: created, edits, and each submit, approve, reject and withdraw."""
+    try:
+        events = history.list_events("data_product", product_id)
+    except Exception as e:
+        logger.error(f"Failed to list review events for data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list review events: {e}")
+    return [HistoryEventOut(**vars(e)) for e in events]
+
+
+def _step_state(history: LifecycleHistoryService, product_id: str, history_id: int) -> dict[str, Any] | None:
+    """The state a history step of the collection left, or None if it recorded none.
+
+    Raises:
+        LookupError: *history_id* isn't one of the collection's steps (HTTP 404).
+    """
+    found, snapshot = history.get_snapshot("data_product", product_id, history_id)
+    if not found:
+        raise LookupError(f"History step not found: {history_id}")
+    return snapshot if isinstance(snapshot, dict) else None
 
 
 # ------------------------------------------------------------------
@@ -198,6 +263,7 @@ def create_data_product(
     body: CreateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> DataProductOut:
     """Create a new data product (status ``draft``, no approver gate)."""
@@ -209,6 +275,14 @@ def create_data_product(
             body.owner,
             user_email,
             owner_display_name=body.owner_display_name,
+        )
+        history.record(
+            "data_product",
+            product.product_id,
+            "create",
+            user_email,
+            new_status=product.status,
+            details={"name": product.name},
         )
         detail = svc.get(product.product_id)
         assert detail is not None  # just created
@@ -233,6 +307,7 @@ def update_data_product(
     body: UpdateDataProductIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -262,42 +337,18 @@ def update_data_product(
     )
     updates = body.model_dump(exclude_unset=True)
 
-    # Only gate/grant when a schedule is actually being set/enabled on the
-    # collection — a non-empty cron. Clearing or unrelated partial updates skip.
-    if (updates.get("schedule_cron") or "").strip():
-        member_fqns = svc.member_table_fqns(product_id)
-        # Resolve the caller identity once so the per-table MANAGE gate below
-        # reads it from cache instead of re-issuing current_user.me() each time.
-        grant_svc.prime_caller_identity()
-        grant_svc.prime_read_probes(member_fqns)
-        blocked: list[tuple[str, list[dict[str, str]]]] = []
-        try:
-            for fqn in member_fqns:
-                if not grant_svc.can_schedule(fqn):
-                    blocked.append((fqn, grant_svc.manage_holders(fqn)))
-        except WarehouseUnavailableError as e:
-            logger.warning("Collection schedule gate inconclusive for %s: %s", product_id, e)
-            raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
-        if blocked:
-            raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
-        try:
-            # Every member passed can_schedule above, so grant with the precleared
-            # call — grant_select_to_schedulers would re-run the same ownership +
-            # effective-privilege round-trips, doubling the UC calls per table.
-            grant_svc.prime_scheduler_sp_identities()
-            for fqn in member_fqns:
-                grant_svc.grant_select_precleared(fqn)
-        except CannotManageError as e:
-            raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
-        except Exception as e:
-            logger.error(f"Failed to grant scheduler access for product {product_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=502,
-                detail="Could not grant the scheduler read access to the collection's tables.",
-            )
+    _require_schedule_grants(product_id, updates, lambda: svc.member_table_fqns(product_id), grant_svc)
 
     try:
-        svc.update(product_id, updates, user_email)
+        updated = svc.update(product_id, updates, user_email)
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status=updated.status,
+            details={"fields": sorted(updates)},
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just updated
         return DataProductOut.from_domain(detail)
@@ -312,6 +363,54 @@ def update_data_product(
         raise HTTPException(status_code=500, detail=f"Failed to update data product: {e}")
 
 
+def _require_schedule_grants(
+    product_id: str,
+    updates: dict[str, object],
+    member_fqns_of: Callable[[], list[str]],
+    grant_svc: ScheduleGrantService,
+) -> None:
+    """When *updates* set a schedule, grant the scheduler read access to every member table, or refuse.
+
+    Scheduled runs have no OBO token and read as the scheduler service
+    principals, so the caller must be able to grant them SELECT on each member
+    (403 naming the tables they can't, with who can; 503 when it can't be checked).
+    *member_fqns_of* gives the member tables the schedule will read, only read
+    when a schedule is being set.
+    """
+    if not (str(updates.get("schedule_cron") or "")).strip():
+        return
+    member_fqns = member_fqns_of()
+    # Resolve the caller identity once so the per-table MANAGE gate below
+    # reads it from cache instead of re-issuing current_user.me() each time.
+    grant_svc.prime_caller_identity()
+    grant_svc.prime_read_probes(member_fqns)
+    blocked: list[tuple[str, list[dict[str, str]]]] = []
+    try:
+        for fqn in member_fqns:
+            if not grant_svc.can_schedule(fqn):
+                blocked.append((fqn, grant_svc.manage_holders(fqn)))
+    except WarehouseUnavailableError as e:
+        logger.warning("Collection schedule gate inconclusive for %s: %s", product_id, e)
+        raise HTTPException(status_code=503, detail=inspection_failure_detail(e))
+    if blocked:
+        raise HTTPException(status_code=403, detail=manage_block_detail(blocked))
+    try:
+        # Every member passed can_schedule above, so grant with the precleared
+        # call — grant_select_to_schedulers would re-run the same ownership +
+        # effective-privilege round-trips, doubling the UC calls per table.
+        grant_svc.prime_scheduler_sp_identities()
+        for fqn in member_fqns:
+            grant_svc.grant_select_precleared(fqn)
+    except CannotManageError as e:
+        raise HTTPException(status_code=403, detail=manage_block_detail([(e.fqn, e.manage_holders)]))
+    except Exception as e:
+        logger.error(f"Failed to grant scheduler access for product {product_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not grant the scheduler read access to the collection's tables.",
+        )
+
+
 @router.delete(
     "/{product_id}",
     operation_id="deleteDataProduct",
@@ -321,6 +420,7 @@ def delete_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -339,6 +439,7 @@ def delete_data_product(
     )
     try:
         svc.delete(product_id)
+        history.record("data_product", product_id, "delete", _current_user_email(obo_ws))
         return {"status": "deleted", "product_id": product_id}
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -363,6 +464,7 @@ def add_data_product_member(
     body: AddDataProductMemberIn,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -387,6 +489,14 @@ def add_data_product_member(
     )
     try:
         svc.add_member(product_id, body.binding_id, body.pinned_version, user_email)
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status="draft",
+            details={"member": body.binding_id, "pinned_version": body.pinned_version},
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just added a member to it
         return DataProductOut.from_domain(detail)
@@ -410,6 +520,7 @@ def remove_data_product_member(
     member_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
@@ -429,6 +540,14 @@ def remove_data_product_member(
     )
     try:
         svc.remove_member(product_id, member_id, user_email)
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status="draft",
+            details={"removed_member": member_id},
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just removed a member from it
         return DataProductOut.from_domain(detail)
@@ -437,6 +556,100 @@ def remove_data_product_member(
     except Exception as e:
         logger.error(f"Failed to remove member {member_id} from data product {product_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to remove data product member: {e}")
+
+
+@router.post(
+    "/{product_id}/save",
+    response_model=DataProductOut,
+    operation_id="saveDataProduct",
+    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+)
+def save_data_product(
+    product_id: str,
+    body: SaveDataProductIn,
+    svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
+) -> DataProductOut:
+    """Save the collection's page in one request: its changed settings, then its tables and pins.
+
+    The same as ``updateDataProduct`` followed by adding, re-pinning and
+    removing members (with the same permissions: ``MODIFY`` for settings,
+    ``APPLY`` for members, and the schedule grant gate), recorded as one edit
+    in the collection's history.
+    """
+    user_email = _current_user_email(obo_ws)
+    updates = body.updates.model_dump(exclude_unset=True) if body.updates else {}
+    detail = svc.get(product_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Data product not found: {product_id}")
+    current = {m.binding_id: m for m in detail.members}
+    desired = {m.binding_id: m.pinned_version for m in body.members} if body.members is not None else None
+    added = [b for b in desired if b not in current] if desired is not None else []
+    repinned = (
+        [b for b, pin in desired.items() if b in current and current[b].pinned_version != pin]
+        if desired is not None
+        else []
+    )
+    removed = [m for b, m in current.items() if b not in desired] if desired is not None else []
+    for privilege, needed in ((Privilege.MODIFY, bool(updates)), (Privilege.APPLY, bool(added or repinned or removed))):
+        if needed:
+            perms.require_object(
+                ObjectType.DATA_PRODUCT.value,
+                product_id,
+                privilege,
+                role=role,
+                principal_ids=set(principal_ids),
+                principal_email=user_email,
+            )
+    if not (updates or added or repinned or removed):
+        return DataProductOut.from_domain(detail)
+    # The schedule reads the members after this save, so the scheduler is granted on those.
+    after = list(desired) if desired is not None else list(current)
+    _require_schedule_grants(product_id, updates, lambda: svc.table_fqns_of(after), grant_svc)
+    try:
+        # Refuse before writing anything if a table can't join, so a save doesn't half-apply.
+        svc.require_approved_bindings(added)
+        status = detail.product.status
+        if updates:
+            status = svc.update(product_id, updates, user_email).status
+        for binding_id in [*added, *repinned]:
+            svc.add_member(product_id, binding_id, desired[binding_id] if desired else None, user_email)
+            status = "draft"
+        for member in removed:
+            svc.remove_member(product_id, member.id, user_email)
+            status = "draft"
+        history.record(
+            "data_product",
+            product_id,
+            "update",
+            user_email,
+            new_status=status,
+            details={
+                "fields": sorted(updates),
+                "members_added": added,
+                "members_repinned": repinned,
+                "members_removed": [m.binding_id for m in removed],
+            },
+        )
+        saved = svc.get(product_id)
+        assert saved is not None  # just saved
+        return DataProductOut.from_domain(saved)
+    except (LookupError, RuntimeError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except BindingNotApprovedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except DuplicateDataProductNameError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save data product {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save the collection")
 
 
 # ------------------------------------------------------------------
@@ -464,6 +677,7 @@ def submit_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Submit a Table Space for review — moves ``draft``/``rejected`` -> ``pending_approval``.
@@ -497,6 +711,17 @@ def submit_data_product(
             last_change_time=gate_detail.product.updated_at,
         )
         svc.submit(product_id, user_email, rationale=rationale)
+        # A re-submit of a collection already in review only counts when it adds a note.
+        if gate_detail.product.status != "pending_approval" or rationale:
+            history.record(
+                "data_product",
+                product_id,
+                "submit",
+                user_email,
+                prev_status=gate_detail.product.status,
+                new_status="pending_approval",
+                rationale=rationale,
+            )
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip
         # its permission + owner lookups entirely.
@@ -510,7 +735,17 @@ def submit_data_product(
             principal_email=user_email,
         )
         if should_auto_approve(mode, can_edit_and_approve=can_edit_and_approve):
-            svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            approved = svc.approve(product_id, mark_auto_approver(user_email), rationale=rationale)
+            history.record(
+                "data_product",
+                product_id,
+                "approve",
+                mark_auto_approver(user_email),
+                prev_status="pending_approval",
+                new_status="approved",
+                version=approved.version,
+                rationale=rationale,
+            )
             # Auto-approve activates any cron on the space — wake the scheduler.
             scheduler_registry.notify_scheduler()
         detail = svc.get(product_id)
@@ -539,6 +774,7 @@ def approve_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Approve a Table Space — bumps ``version`` by 1 and sets ``status='approved'``.
@@ -547,7 +783,18 @@ def approve_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.approve(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        approved = svc.approve(product_id, user_email, rationale=rationale)
+        history.record(
+            "data_product",
+            product_id,
+            "approve",
+            user_email,
+            prev_status="pending_approval",
+            new_status="approved",
+            version=approved.version,
+            rationale=rationale,
+        )
         # Approval activates any cron on the space — wake the scheduler so its
         # first run does not wait out the idle poll interval.
         scheduler_registry.notify_scheduler()
@@ -573,6 +820,7 @@ def reject_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
     body: LifecycleRationaleIn | None = None,
 ) -> DataProductOut:
     """Reject a Table Space — sets ``status='rejected'``.
@@ -581,7 +829,17 @@ def reject_data_product(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        svc.reject(product_id, user_email, rationale=body.rationale if body else None)
+        rationale = body.rationale if body else None
+        svc.reject(product_id, user_email, rationale=rationale)
+        history.record(
+            "data_product",
+            product_id,
+            "reject",
+            user_email,
+            prev_status="pending_approval",
+            new_status="rejected",
+            rationale=rationale,
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just rejected it
         return DataProductOut.from_domain(detail)
@@ -605,6 +863,7 @@ def revert_data_product(
     product_id: str,
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    history: Annotated[LifecycleHistoryService, Depends(get_lifecycle_history_service)],
 ) -> DataProductOut:
     """Withdraw a pending submission — ``pending_approval`` -> ``draft``.
 
@@ -614,6 +873,9 @@ def revert_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         svc.revert(product_id, user_email)
+        history.record(
+            "data_product", product_id, "withdraw", user_email, prev_status="pending_approval", new_status="draft"
+        )
         detail = svc.get(product_id)
         assert detail is not None  # just reverted it
         return DataProductOut.from_domain(detail)

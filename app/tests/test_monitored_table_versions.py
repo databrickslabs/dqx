@@ -28,7 +28,10 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
 )
-from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import (
+    MonitoredTableVersionService,
+    compare_checks,
+)
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 
 _TABLES = "dqx_test.dqx_app_test.dq_monitored_tables"
@@ -472,3 +475,180 @@ class TestSnapshotCountsMany:
         service.snapshot_counts_many([("b1", 1), ("b1", 1)])
         stmt = sql.query.call_args[0][0]
         assert stmt.count("binding_id = 'b1'") == 1
+
+
+# ---------------------------------------------------------------------------
+# changed_since_version
+# ---------------------------------------------------------------------------
+
+
+def _applied(aid: str, **overrides: object) -> AppliedRule:
+    fields: dict = {"id": aid, "binding_id": "b1", "rule_id": "r1", "column_mapping": [{"column": aid}]}
+    fields.update(overrides)
+    return AppliedRule(**fields)
+
+
+def _frozen_state(applied: list[AppliedRule], *, legacy: bool = False) -> dict:
+    """The state_json a freeze writes for *applied* (legacy: no pass_threshold / pins recorded)."""
+    refs, display = [], []
+    for a in applied:
+        ref = {
+            "applied_rule_id": a.id,
+            "rule_id": a.rule_id,
+            "registry_version": 1,
+            "severity_override": a.severity_override,
+            "pass_threshold": a.pass_threshold,
+            "column_mapping": a.column_mapping,
+            "user_metadata": a.user_metadata,
+        }
+        entry = {"applied_rule_id": a.id, "rule_id": a.rule_id, "pinned_version": a.pinned_version}
+        if legacy:
+            ref.pop("pass_threshold")
+            entry.pop("pinned_version")
+        refs.append(ref)
+        display.append(entry)
+    return {"rule_refs": refs, "applied_rules": display, "check_count": len(refs)}
+
+
+def _live(monitored_tables, applied: list[AppliedRule]) -> None:
+    monitored_tables.get.return_value = MonitoredTableDetail(
+        table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.customers", status="approved", version=3),
+        applied_rules=[
+            AppliedRuleSummary(
+                applied_rule=a, rule_name="Not Null", rule_dimension="Completeness", rule_severity="High"
+            )
+            for a in applied
+        ],
+    )
+
+
+class TestChangedSinceVersion:
+    """A saved edit on an approved table must be detectable even when no check is pending."""
+
+    FROZEN = [_applied("ar1"), _applied("ar2", severity_override="High", pass_threshold=0, pinned_version=2)]
+
+    def _compare(self, service, sql, monitored_tables, live: list[AppliedRule], *, legacy: bool = False) -> bool:
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state(self.FROZEN, legacy=legacy))]]})
+        _live(monitored_tables, live)
+        return service.changed_since_version("b1", 3)
+
+    def test_unchanged_rules_are_not_a_change(self, service, sql, monitored_tables):
+        assert not self._compare(service, sql, monitored_tables, list(self.FROZEN))
+
+    def test_a_removed_rule_is_a_change(self, service, sql, monitored_tables):
+        assert self._compare(service, sql, monitored_tables, [self.FROZEN[0]])
+
+    def test_an_added_rule_is_a_change(self, service, sql, monitored_tables):
+        assert self._compare(service, sql, monitored_tables, [*self.FROZEN, _applied("ar3")])
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            {"column_mapping": [{"column": "other"}]},
+            {"severity_override": "Low"},
+            {"pass_threshold": None},  # 0 ("never warn") -> admin default is a real change
+            {"user_metadata": {"monitor_only": "true"}},
+            {"pinned_version": None},
+            {"rule_id": "r2"},
+        ],
+    )
+    def test_an_edited_application_is_a_change(self, service, sql, monitored_tables, edit):
+        edited = self.FROZEN[1].model_copy(update=edit)
+        assert self._compare(service, sql, monitored_tables, [self.FROZEN[0], edited])
+
+    def test_fields_a_legacy_snapshot_did_not_record_are_not_compared(self, service, sql, monitored_tables):
+        edited = self.FROZEN[1].model_copy(update={"pass_threshold": 50, "pinned_version": None})
+        assert not self._compare(service, sql, monitored_tables, [self.FROZEN[0], edited], legacy=True)
+
+    def test_empty_tags_match_missing_tags(self, service, sql, monitored_tables):
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state([_applied("ar1", user_metadata={})]))]]})
+        _live(monitored_tables, [_applied("ar1")])
+        assert not service.changed_since_version("b1", 3)
+
+    def test_a_table_the_caller_already_loaded_is_not_read_again(self, service, sql, monitored_tables):
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state(self.FROZEN))]]})
+        _live(monitored_tables, list(self.FROZEN))
+        detail = monitored_tables.get.return_value
+        monitored_tables.get.reset_mock()
+
+        assert not service.changed_since_version("b1", 3, detail)
+        monitored_tables.get.assert_not_called()
+
+    def test_no_approved_version_or_snapshot_is_not_a_change(self, service, sql, monitored_tables):
+        _live(monitored_tables, [_applied("ar1")])
+        assert not service.changed_since_version("b1", 0)
+        sql.query.return_value = []
+        assert not service.changed_since_version("b1", 3)
+
+
+# ---------------------------------------------------------------------------
+# compare / compare_checks — the View changes dialog's per-rule diff
+# ---------------------------------------------------------------------------
+
+
+def _rule_check(aid: str, name: str, column: str = "id", **meta: str) -> dict:
+    return {
+        "name": f"{name}_{column}",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": column}},
+        "user_metadata": {"applied_rule_id": aid, "name": name, **meta},
+    }
+
+
+class TestCompareChecks:
+    def test_rules_are_paired_by_applied_rule_and_classified(self):
+        before = [_rule_check("a1", "Keep"), _rule_check("a2", "Drop"), _rule_check("a3", "Edit", column="x")]
+        after = [_rule_check("a1", "Keep"), _rule_check("a3", "Edit", column="y"), _rule_check("a4", "New")]
+
+        changes = {c.key: c for c in compare_checks(before, after)}
+
+        assert {k: c.status for k, c in changes.items()} == {
+            "a1": "unchanged",
+            "a3": "modified",
+            "a4": "added",
+            "a2": "removed",
+        }
+        assert changes["a2"].rule_name == "Drop"
+        assert changes["a2"].after == [] and len(changes["a2"].before) == 1
+
+    def test_removed_rules_come_after_the_proposed_side(self):
+        changes = compare_checks([_rule_check("a1", "Gone"), _rule_check("a2", "Stay")], [_rule_check("a2", "Stay")])
+        assert [c.key for c in changes] == ["a2", "a1"]
+
+    def test_a_reordered_rule_is_not_a_change(self):
+        before = [_rule_check("a1", "One"), _rule_check("a2", "Two")]
+        changes = compare_checks(before, list(reversed(before)))
+        assert {c.status for c in changes} == {"unchanged"}
+
+    def test_run_stamps_are_not_a_change(self):
+        stamped = _rule_check("a1", "One", run_mode="published", binding_version="7")
+        [change] = compare_checks([_rule_check("a1", "One")], [stamped])
+        assert change.status == "unchanged"
+        assert "run_mode" not in change.after[0]["user_metadata"]
+
+    def test_a_new_rule_version_is_a_change(self):
+        [change] = compare_checks(
+            [_rule_check("a1", "One", registry_version="2")], [_rule_check("a1", "One", registry_version="3")]
+        )
+        assert change.status == "modified"
+
+
+class TestCompare:
+    def test_proposed_side_renders_the_current_rules(self, service, sql, materializer):
+        state = {"rule_refs": [{"applied_rule_id": "a1", "rule_id": "r1", "registry_version": 1}]}
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(state)]], f"FROM {_TABLES}": [["cat.schema.customers"]]})
+        materializer.render_applied_checks.return_value = [_rule_check("a1", "Gone")]
+        materializer.render_binding_checks.return_value = []
+
+        [change] = service.compare("b1", 3, None)
+
+        materializer.render_binding_checks.assert_called_once_with("b1")
+        assert change.status == "removed"
+
+    def test_version_zero_or_missing_snapshot_is_an_empty_side(self, service, sql, materializer):
+        materializer.render_binding_checks.return_value = [_rule_check("a1", "New")]
+        sql.query.return_value = []
+
+        [change] = service.compare("b1", 0, None)
+        assert change.status == "added"
+        assert service.compare("b1", 2, 3) == []

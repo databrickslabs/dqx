@@ -102,6 +102,8 @@ def _build_client(fake: _FakeOltp, *, principal_ids: frozenset[str]) -> TestClie
     app.dependency_overrides[deps.get_apply_rules_service] = lambda: MagicMock()
     app.dependency_overrides[deps.get_monitored_table_service] = lambda: MagicMock()
     app.dependency_overrides[deps.get_data_product_service] = lambda: MagicMock()
+    # The lifecycle history snapshots tables through the versions service.
+    app.dependency_overrides[deps.get_monitored_table_version_service] = lambda: MagicMock()
     # Schedule-grant service depends on the SP WorkspaceClient (get_sp_ws); override
     # it so dependency resolution never constructs a real client (Task 12). It is
     # only used after the permission gate, so a 403 never reaches it.

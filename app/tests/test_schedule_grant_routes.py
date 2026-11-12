@@ -192,7 +192,17 @@ class TestDataProductScheduleGate:
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.raises(HTTPException) as exc:
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         assert exc.value.status_code == 403
         blocked = {t["fqn"] for t in exc.value.detail["tables"]}
@@ -211,7 +221,17 @@ class TestDataProductScheduleGate:
                 "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
                 SimpleNamespace(from_domain=lambda d: "out"),
             )
-            result = update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            result = update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         # Precleared grant: every member is MANAGE-gated once above, so the grant
         # must NOT re-run the ownership + effective-privilege round-trips.
@@ -238,7 +258,17 @@ class TestDataProductScheduleGate:
                 "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
                 SimpleNamespace(from_domain=lambda d: "out"),
             )
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         assert grant_svc.can_schedule.call_count == 3
         assert grant_svc.grant_select_precleared.call_count == 3
@@ -256,7 +286,17 @@ class TestDataProductScheduleGate:
                 "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
                 SimpleNamespace(from_domain=lambda d: "out"),
             )
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         grant_svc.prime_caller_identity.assert_called_once()
         grant_svc.prime_scheduler_sp_identities.assert_called_once()
@@ -270,7 +310,17 @@ class TestDataProductScheduleGate:
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.raises(HTTPException):
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         grant_svc.grant_select_precleared.assert_not_called()
 
@@ -282,7 +332,17 @@ class TestDataProductScheduleGate:
         body = UpdateDataProductIn(schedule_cron="0 0 * * *")
 
         with pytest.raises(HTTPException) as exc:
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         assert exc.value.status_code == 502
         assert exc.value.detail == "Could not grant the scheduler read access to the collection's tables."
@@ -298,7 +358,17 @@ class TestDataProductScheduleGate:
                 "databricks_labs_dqx_app.backend.routes.v1.data_products.DataProductOut",
                 SimpleNamespace(from_domain=lambda d: "out"),
             )
-            update_data_product("p1", body, svc, obo_ws, UserRole.ADMIN, frozenset(), perms, grant_svc)
+            update_data_product(
+                "p1",
+                body,
+                svc=svc,
+                obo_ws=obo_ws,
+                history=MagicMock(),
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=perms,
+                grant_svc=grant_svc,
+            )
 
         grant_svc.can_schedule.assert_not_called()
         grant_svc.grant_select_to_schedulers.assert_not_called()

@@ -46,6 +46,7 @@ from .services.pending_application_service import PendingApplicationService
 from .services.materializer import Materializer
 from .services.metadata_dim_service import MetadataDimService
 from .services.monitored_table_versions import MonitoredTableVersionService
+from .services.lifecycle_history import HistoryObjectType, LifecycleHistoryService, Snapshotter
 from .services.run_sets import RunSetService
 from .services.binding_run_service import BindingRunService
 from .services.data_product_service import DataProductService
@@ -1061,6 +1062,32 @@ async def get_data_product_service(
     )
 
 
+def lifecycle_snapshotters(
+    version_service: MonitoredTableVersionService, data_products: DataProductService
+) -> dict[HistoryObjectType, Snapshotter]:
+    """What a history step of each kind records as the object's state after it.
+
+    Rules record their own steps (in :class:`RegistryService`) and pass their snapshot in.
+    """
+    return {"monitored_table": version_service.current_checks, "data_product": data_products.current_state}
+
+
+async def get_lifecycle_history_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+    version_service: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+) -> LifecycleHistoryService:
+    """Create the LifecycleHistoryService for routes that record steps (it snapshots tables and collections)."""
+    return LifecycleHistoryService(sql, snapshotters=lifecycle_snapshotters(version_service, data_products))
+
+
+async def get_lifecycle_history_reader(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> LifecycleHistoryService:
+    """A LifecycleHistoryService for routes that only read history (no snapshotters, so none of their services)."""
+    return LifecycleHistoryService(sql)
+
+
 async def get_export_service(
     registry: Annotated[RegistryService, Depends(get_registry_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -1193,6 +1220,7 @@ async def get_demo_seed_service(
         status=status,
         reset_service=reset_service,
         embeddings=embeddings,
+        history=LifecycleHistoryService(oltp, snapshotters=lifecycle_snapshotters(version_service, data_products)),
         job_service=job_service,
         profiler_view=profiler_view,
         schedule_config=schedule_config,

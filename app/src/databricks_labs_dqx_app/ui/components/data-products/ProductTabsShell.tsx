@@ -127,7 +127,8 @@ export function ProductTabsShell({ activeTab, onTabChange, disabledTabs = new Se
       </div>
 
       {(Object.keys(children) as ProductTabKey[]).map((key) => (
-        <TabsContent key={key} value={key} className="mt-6">
+        // Same width as the header and the tab bar, so every tab lines up with them.
+        <TabsContent key={key} value={key} className="mt-6 w-full max-w-5xl min-w-0">
           {children[key]}
         </TabsContent>
       ))}

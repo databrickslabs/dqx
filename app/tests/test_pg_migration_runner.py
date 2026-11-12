@@ -163,12 +163,36 @@ _ADD_COLUMN_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*) (.+)"
 )
 _DROP_TABLE_RE = re.compile(r"DROP TABLE IF EXISTS \{schema\}\.([a-z_][a-z0-9_]*)")
+_COPY_ROWS_RE = re.compile(
+    r"INSERT INTO \{schema\}\.([a-z_][a-z0-9_]*) \(.+?\) SELECT .+ FROM \{schema\}\.([a-z_][a-z0-9_]*)( .*)?"
+)
 _DROP_CONSTRAINT_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) DROP CONSTRAINT IF EXISTS ([a-z_][a-z0-9_]*)"
 )
 _ADD_CONSTRAINT_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD CONSTRAINT ([a-z_][a-z0-9_]*) CHECK \(.+\)"
 )
+
+
+def _dropped_tables(sql: str) -> set[str]:
+    return {m.group(1) for stmt in _statements(sql) if (m := _DROP_TABLE_RE.fullmatch(stmt))}
+
+
+def _is_retiring_copy(stmt: str, migration_sql: str, baseline: list[str]) -> bool:
+    """Whether *stmt* is part of retiring a table by copying its rows into a baseline table.
+
+    The migration re-creates the retired table first (a no-op on an upgrade, an
+    empty table on a fresh install, so the copy runs on both), copies its rows
+    into a table the baseline creates, then drops it.
+    """
+    dropped = _dropped_tables(migration_sql)
+    if stmt.startswith("CREATE TABLE IF NOT EXISTS"):
+        return bool(set(_created_tables(stmt)) & dropped)
+    if match := _COPY_ROWS_RE.fullmatch(stmt):
+        target, source = match.group(1), match.group(2)
+        target_create = f"CREATE TABLE IF NOT EXISTS {{schema}}.{target} ("
+        return source in dropped and any(b.startswith(target_create) for b in baseline)
+    return False
 
 
 class TestBaselineCatalogue:
@@ -179,13 +203,16 @@ class TestBaselineCatalogue:
     upgrade deployments that already applied v1. Each column they add must
     already be in the baseline, and each table they drop must not be, so a
     fresh install and an upgraded one end up with the same shape. Constraint
-    replacements are allowed when the CHECK they add is already in v1.
+    replacements are allowed when the CHECK they add is already in v1. A table
+    can be retired into a baseline table by copying its rows across and
+    dropping it (see :func:`_is_retiring_copy`).
     """
 
     def test_baseline_is_version_one(self):
         assert PG_MIGRATIONS[0].version == 1
 
     def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+        baseline = _statements(_baseline())
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
                 assert (
@@ -193,7 +220,35 @@ class TestBaselineCatalogue:
                     or _DROP_TABLE_RE.fullmatch(stmt)
                     or _DROP_CONSTRAINT_RE.fullmatch(stmt)
                     or _ADD_CONSTRAINT_RE.fullmatch(stmt)
-                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
+                    or stmt in baseline
+                    or _is_retiring_copy(stmt, " ".join(m.sql.split()), baseline)
+                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, CHECK constraint rewrite or baseline statement: {stmt[:120]}"
+
+    def test_a_table_added_later_is_created_exactly_as_the_baseline_creates_it(self):
+        # A later migration may create a table only by repeating the
+        # baseline's own CREATE TABLE / CREATE INDEX statements, so the
+        # baseline stays the single description of the schema.
+        baseline = _statements(_baseline())
+        for m in PG_MIGRATIONS[1:]:
+            sql = " ".join(m.sql.split())
+            for stmt in _statements(sql):
+                if stmt.startswith(("CREATE TABLE", "CREATE INDEX")) and not _is_retiring_copy(stmt, sql, baseline):
+                    assert stmt in baseline, f"v{m.version}: {stmt[:120]} is not in the baseline"
+
+    def test_a_retired_table_is_copied_into_a_baseline_table_before_it_is_dropped(self):
+        baseline = _statements(_baseline())
+        for m in PG_MIGRATIONS[1:]:
+            statements = _statements(" ".join(m.sql.split()))
+            for index, stmt in enumerate(statements):
+                if match := _COPY_ROWS_RE.fullmatch(stmt):
+                    source = match.group(2)
+                    later = statements[index + 1 :]
+                    assert f"DROP TABLE IF EXISTS {{schema}}.{source}" in later, f"v{m.version} keeps {source}"
+                    earlier = statements[:index]
+                    assert any(
+                        s.startswith(f"CREATE TABLE IF NOT EXISTS {{schema}}.{source} (") for s in earlier
+                    ), f"v{m.version} copies from {source} without creating it for a fresh install"
+                    assert _is_retiring_copy(stmt, " ".join(m.sql.split()), baseline)
 
     def test_dropped_tables_are_not_in_the_baseline(self):
         for m in PG_MIGRATIONS[1:]:
@@ -320,7 +375,7 @@ class TestBaselineShape:
         sql = _baseline()
         assert sql.count("pending_rationale TEXT,") == 3
         assert sql.count("last_decision_rationale TEXT,") == 3
-        # dq_rules_history keeps the per-transition note under a bare name.
+        # The shared lifecycle history keeps the per-step note under a bare name.
         assert sql.count(" rationale TEXT,") == 1
 
     def test_sticky_object_notes_are_gone(self):
