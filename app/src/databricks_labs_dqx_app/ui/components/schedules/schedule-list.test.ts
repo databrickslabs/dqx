@@ -52,6 +52,10 @@ describe("scheduleHealth", () => {
     expect(scheduleHealth(row({ run_status: "skipped" }))).toBe("skipped");
   });
 
+  it("is awaiting approval when the table or collection has no approved version", () => {
+    expect(scheduleHealth(row({ awaiting_approval: true }))).toBe("awaiting");
+  });
+
   it("is active otherwise", () => {
     expect(scheduleHealth(row({ run_status: "success" }))).toBe("active");
     expect(scheduleHealth(row())).toBe("active");
@@ -79,6 +83,12 @@ describe("matchesScheduleFilters", () => {
   it("excludes paused rows from the active status", () => {
     expect(matchesScheduleFilters(row({ paused: true }), { ...EMPTY_SCHEDULE_FILTERS, status: "active" })).toBe(false);
     expect(matchesScheduleFilters(row({ paused: true }), { ...EMPTY_SCHEDULE_FILTERS, status: "paused" })).toBe(true);
+  });
+
+  it("counts awaiting-approval schedules as active", () => {
+    expect(
+      matchesScheduleFilters(row({ awaiting_approval: true }), { ...EMPTY_SCHEDULE_FILTERS, status: "active" }),
+    ).toBe(true);
   });
 
   it("searches name, target and owner case-insensitively", () => {

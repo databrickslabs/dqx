@@ -2503,16 +2503,18 @@ class FailedRowOut(BaseModel):
 class FailedRowsOut(BaseModel):
     """Filtered failing-rows sample (dqlake shape plus *suppressed*).
 
-    *total* is the number of matching rows found within the scanned
-    window — it can exceed ``len(rows)`` when capped by *limit*.
+    *total* is the number of matching rows for the resolved run when known
+    (it can exceed ``len(rows)`` when capped by *limit*). ``None`` when the
+    run has no stored metrics. *run_id* is the run the page was read from.
     *suppressed* is True when the source table carries fine-grained
     access controls (Task 7 semantics); an empty non-suppressed response
     is also what a caller without SELECT on the source table receives.
     """
 
     rows: list[FailedRowOut] = Field(default_factory=list)
-    total: int = 0
+    total: int | None = None
     suppressed: bool = False
+    run_id: str | None = None
 
 
 class SeverityOut(BaseModel):
@@ -2795,6 +2797,7 @@ class ScheduleOverviewOut(BaseModel):
     next_run_at: str | None = None
     last_run_id: str | None = None
     run_status: str | None = None
+    awaiting_approval: bool = False
 
 
 class SchedulePauseIn(BaseModel):

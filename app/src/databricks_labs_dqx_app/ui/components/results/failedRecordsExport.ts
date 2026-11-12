@@ -26,6 +26,58 @@ export function toFailingRecords(
  *  `le` on the failed-rows endpoint, so a download can pull the whole set. */
 export const EXPORT_ROW_LIMIT = 100000;
 
+/** Page size for CSV/XLSX downloads. A single warehouse call with a huge
+ *  LIMIT is truncated to the first INLINE chunk (~25 MiB), which for fat
+ *  uniqueness quarantine JSON lands around a few thousand rows even when
+ *  the drilldown total is much larger. Smaller pages keep each response
+ *  inside one chunk; we walk `offset` until `total` is covered. */
+export const FAILED_ROWS_DOWNLOAD_PAGE_SIZE = 5000;
+
+export type FailedRowsPage = {
+  rows?: FailedRowsOut["rows"];
+  total?: number | null;
+  run_id?: string | null;
+};
+
+/** Fetch every failed row matching the active filters, paging by `total`.
+ *
+ *  Continues even when a page is shorter than `limit` as long as
+ *  `all.length < total` — that is the truncated-INLINE case (first chunk
+ *  of a large LIMIT, `total` still reports the full matching set).
+ *  When `total` is omitted (legacy run with no metrics), keep paging
+ *  while a page comes back full. Pins `run_id` after the first page so
+ *  a new run finishing mid-download cannot mix rows. */
+export async function collectFailedRowPages(
+  fetchPage: (args: {
+    offset: number;
+    limit: number;
+    run_id?: string;
+  }) => Promise<FailedRowsPage>,
+  options?: { pageSize?: number; maxRows?: number },
+): Promise<FailingRecord[]> {
+  const pageSize = options?.pageSize ?? FAILED_ROWS_DOWNLOAD_PAGE_SIZE;
+  const maxRows = options?.maxRows ?? EXPORT_ROW_LIMIT;
+  const all: FailingRecord[] = [];
+  let offset = 0;
+  let pinnedRunId: string | undefined;
+  let knownTotal: number | undefined;
+  while (all.length < maxRows) {
+    const limit = Math.min(pageSize, maxRows - all.length);
+    const page = await fetchPage({ offset, limit, run_id: pinnedRunId });
+    if (typeof page.run_id === "string" && page.run_id) pinnedRunId = page.run_id;
+    const records = toFailingRecords(page.rows);
+    all.push(...records);
+    if (typeof page.total === "number" && Number.isFinite(page.total)) {
+      knownTotal = page.total;
+    }
+    offset += records.length;
+    if (records.length === 0 || all.length >= maxRows) break;
+    if (knownTotal !== undefined && all.length >= knownTotal) break;
+    if (knownTotal === undefined && records.length < limit) break;
+  }
+  return all;
+}
+
 /** Source columns for the export/table = union of all rows' row_values keys
  *  AND their failed_columns, in first-seen order. Callers pass only rows; the
  *  columns are derived here.

@@ -64,6 +64,11 @@
           "unknown": "Ces commandes n'ont pas pu être exécutées. Copiez-les et exécutez-les dans le SQL Editor (dans la barre latérale de Databricks), ou envoyez-les au propriétaire du catalogue ou du schéma."
         }
       }
+    },
+    "approvalNotice": {
+      "title": "Ne s'exécutera pas avant l'approbation",
+      "descriptionTable": "Les exécutions planifiées utilisent les dernières règles approuvées, et cette table n'en a pas encore. Vous pouvez enregistrer la planification maintenant ; elle démarrera dès que la table sera approuvée.",
+      "descriptionCollection": "Les exécutions planifiées utilisent la dernière version approuvée, et cette collection n'en a pas encore. Vous pouvez enregistrer la planification maintenant ; elle démarrera dès que la collection sera approuvée."
     }
   },
   "lifecycle": {
@@ -1820,6 +1825,7 @@
     "toastUpdated": "Règle mise à jour.",
     "saveFailed": "Échec de l'enregistrement de la règle.",
     "toastSavedSubmitFailed": "Règle enregistrée, mais elle n'a pas pu être soumise pour revue : {{error}}",
+    "toastSavedApproveFailed": "Règle enregistrée, mais elle n'a pas pu être approuvée : {{error}}",
     "submitNoRevisionTooltip": "Rien à revoir — cette modification prend effet dès que vous l'enregistrez. Seules les modifications de la logique ou des métadonnées de la règle créent une nouvelle version à approuver.",
     "dialogSrDescription": "Créer ou modifier une règle de qualité des données réutilisable.",
     "createTitle": "Nouvelle règle du registre",
@@ -2114,7 +2120,8 @@
     "filterDimensions": "Dimensions",
     "filterSeverities": "Sévérités",
     "filterOwners": "Propriétaires",
-    "filterLabels": "Libellés"
+    "filterLabels": "Libellés",
+    "actionEditAndApprove": "Modifier et approuver"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",
@@ -3459,6 +3466,8 @@
     "pickCollectionTitle": "Ajouter une collection",
     "pickCollectionDescription": "Choisissez la collection exécutée par cette planification. Toutes ses tables s'exécutent selon la planification.",
     "pickCollectionSearch": "Rechercher des collections",
-    "pickCollectionEmpty": "Aucune collection ne correspond."
+    "pickCollectionEmpty": "Aucune collection ne correspond.",
+    "awaitingApproval": "En attente d'approbation",
+    "awaitingApprovalHint": "Cette planification commencera à s'exécuter une fois qu'elle aura une version approuvée."
   }
 }

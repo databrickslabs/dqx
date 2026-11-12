@@ -1298,12 +1298,12 @@ def get_dq_results_failed_rows(
     # (2) Cheap denial, as the caller. Empty 200 — not 403/404 — so an
     # unauthorized caller cannot confirm or deny the table's existence.
     if not QuarantineSampleService.user_can_select(obo_sql, table_fqn):
-        return FailedRowsOut(rows=[], total=0, suppressed=False)
+        return FailedRowsOut(rows=[], total=0, suppressed=False, run_id=run_id)
 
     # (3) Fine-grained controls (or an unverifiable state) suppress the
     # sample entirely — copied quarantine rows can't replicate the policy.
     if QuarantineSampleService.has_fine_grained_access_control(obo_ws, table_fqn):
-        return FailedRowsOut(rows=[], total=0, suppressed=True)
+        return FailedRowsOut(rows=[], total=0, suppressed=True, run_id=run_id)
 
     # Piggyback (P4.1): the caller just passed the exact gates the Genie
     # failing-rows view relies on, so cache the entitlement now — the tables
@@ -1311,7 +1311,8 @@ def get_dq_results_failed_rows(
     # After BOTH gates deliberately: a fine-grained-controlled table must not
     # open in v_dq_failing_rows when this endpoint itself suppresses it.
     # Best-effort (never raises) and never affects this response.
-    entitlements.record_entitlement(email, table_fqn)
+    if offset == 0:
+        entitlements.record_entitlement(email, table_fqn)
 
     facets = _facets(dimension, severity, rule, column)
     active = facets.any_active()
@@ -1391,20 +1392,25 @@ def get_dq_results_failed_rows(
     #  - No active facets: the run's authoritative distinct failing-row count
     #    from dq_metrics (input_row_count - valid_row_count), so the "download
     #    to view all N" headline is correct even when the page is capped.
+    resolved_run_id = run_id
+    if raw_rows and not resolved_run_id:
+        resolved_run_id = raw_rows[0].get("run_id")
     if active:
-        total = int(raw_rows[0].get("total_count") or 0) if raw_rows else 0
+        total: int | None = int(raw_rows[0].get("total_count") or 0) if raw_rows else 0
+    elif offset > 0:
+        # Later pages of a download already learned *total* from page 0;
+        # skip the dq_metrics GROUP BY (and keep paging on a full page).
+        total = None
+    elif not raw_rows:
+        total = 0
     else:
-        total = len(rows)
-        if raw_rows:
-            # Every returned row belongs to exactly ONE run (the WHERE clause
-            # pins it), so the effective run is the pin or the run the page carries.
-            resolved_run_id = run_id or raw_rows[0].get("run_id")
-            if resolved_run_id:
-                failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
-                true_total = failed_by_run.get((table_fqn, resolved_run_id))
-                if true_total is not None:
-                    total = true_total
-    return FailedRowsOut(rows=rows, total=total, suppressed=False)
+        total = None
+        if resolved_run_id:
+            failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
+            true_total = failed_by_run.get((table_fqn, resolved_run_id))
+            if true_total is not None:
+                total = true_total
+    return FailedRowsOut(rows=rows, total=total, suppressed=False, run_id=resolved_run_id)
 
 
 # ---------------------------------------------------------------------------

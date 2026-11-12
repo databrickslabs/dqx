@@ -1247,7 +1247,7 @@ class TestFailedRowsSecurity:
         obo_sql_mock.query.side_effect = RuntimeError("PERMISSION_DENIED: no SELECT on table")
         resp = client.get(FAILED_ROWS_URL)
         assert resp.status_code == 200
-        assert resp.json() == {"rows": [], "total": 0, "suppressed": False}
+        assert resp.json() == {"rows": [], "total": 0, "suppressed": False, "run_id": None}
         # The caller does not even learn whether the table has
         # fine-grained controls.
         obo_ws_mock.tables.get.assert_not_called()
@@ -1262,7 +1262,7 @@ class TestFailedRowsSecurity:
             row_filter=TableRowFilter(function_name="main.sales.f", input_column_names=["region"])
         )
         resp = client.get(FAILED_ROWS_URL)
-        assert resp.json() == {"rows": [], "total": 0, "suppressed": True}
+        assert resp.json() == {"rows": [], "total": 0, "suppressed": True, "run_id": None}
         sql_mock.query_dicts.assert_not_called()
 
     def test_column_mask_suppresses_sample(self, client, obo_ws_mock, sql_mock):
@@ -1365,7 +1365,7 @@ class TestFailedRowsShapeAndFilters:
             )
         ]
         body = client.get(FAILED_ROWS_URL).json()
-        assert body["total"] == 1
+        assert body["total"] is None
         row = body["rows"][0]
         assert row["record_key"] == "q1"
         assert row["row_values"] == {"id": "1", "amount": None}
@@ -1572,11 +1572,11 @@ class TestFailedRowsTrueTotal:
         body = client.get(FAILED_ROWS_URL, params={"run_id": "r2"}).json()
         assert body["total"] == 960  # r2's count, not r1's (1) or the sample size
 
-    def test_missing_metrics_falls_back_to_sample_count(self, client, sql_mock):
-        # dq_metrics has no row for the run — degrade to the scanned count
-        # rather than reporting a wrong or empty total.
+    def test_missing_metrics_reports_unknown_total(self, client, sql_mock):
+        # dq_metrics has no row for the run — do not pretend the page size
+        # is the full set (downloads would stop after one page).
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")], metrics_rows=[])
-        assert client.get(FAILED_ROWS_URL).json()["total"] == 1
+        assert client.get(FAILED_ROWS_URL).json()["total"] is None
 
     def test_faceted_total_skips_metrics_read(self, client, sql_mock):
         # With filters active the true FILTERED count can't come from the
@@ -1752,7 +1752,7 @@ class TestIncludeDrafts:
         # published run's rows.
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL).json()
-        assert body["total"] == 1
+        assert body["rows"]
         stmt = _quarantine_stmt(sql_mock)
         assert "dq_quarantine_records" in stmt
         assert (
@@ -1767,7 +1767,7 @@ class TestIncludeDrafts:
         # filter drops from the resolve subselect) — never the run count.
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])
         body = client.get(FAILED_ROWS_URL, params={"include_drafts": "true"}).json()
-        assert body["total"] == 1
+        assert body["rows"]
         stmt = _quarantine_stmt(sql_mock)
         assert "run_mode" not in stmt
         assert SHAPING_VIEW_NAME in stmt
@@ -1831,7 +1831,7 @@ class TestFailedRowsRunScoping:
         self._two_run_dispatch(sql_mock)
         body = client.get(FAILED_ROWS_URL).json()
         assert [r["record_key"] for r in body["rows"]] == ["q-new"]
-        assert body["total"] == 1
+        assert body["total"] is None
 
     def test_default_never_uses_the_stacking_in_subselect(self, client, sql_mock):
         sql_dispatch(sql_mock, quarantine_rows=[quarantine_row("q1")])

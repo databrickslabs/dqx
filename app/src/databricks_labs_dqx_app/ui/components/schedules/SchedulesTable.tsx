@@ -97,6 +97,16 @@ function HealthBadge({ row }: { row: ScheduleOverviewOut }) {
           {t("schedules.paused")}
         </Badge>
       );
+    case "awaiting":
+      return (
+        <Badge
+          variant="outline"
+          className="text-[10px] border-sky-500/40 text-sky-700"
+          title={t("schedules.awaitingApprovalHint")}
+        >
+          {t("schedules.awaitingApproval")}
+        </Badge>
+      );
     case "failed":
       return (
         <Badge variant="outline" className="text-[10px] border-red-500 text-red-600">

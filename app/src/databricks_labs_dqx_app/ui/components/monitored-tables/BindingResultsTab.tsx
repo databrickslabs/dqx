@@ -46,10 +46,7 @@ import { DimensionBreakdown } from "@/components/results/DimensionBreakdown";
 import { FilterChips } from "@/components/results/FilterChips";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
-import {
-  EXPORT_ROW_LIMIT,
-  toFailingRecords,
-} from "@/components/results/failedRecordsExport";
+import { collectFailedRowPages, toFailingRecords } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
 import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift";
 
@@ -584,13 +581,16 @@ function ResultsBody({
   const sevRanks = Object.fromEntries(severities.map((s) => [s.name, s.rank]));
 
   // Failing records: NON-suspense so filter changes refetch only this section.
+  const failedRowsParams = {
+    ...facetQueryParams(filters),
+    run_id: failedRowsRunId,
+    include_drafts: draftsParam,
+  };
   const failedRowsQuery = useGetDqResultsFailedRows(
     tableFqn,
     {
-      ...facetQueryParams(filters),
-      run_id: failedRowsRunId,
+      ...failedRowsParams,
       limit: 200,
-      include_drafts: draftsParam,
     },
     {
       query: { placeholderData: keepPreviousData, ...RESULTS_QUERY_OPTIONS },
@@ -811,17 +811,16 @@ function ResultsBody({
 
   const failingRows = toFailingRecords(failedRows?.rows);
 
-  // Download fetches the WHOLE undrilled set for the selected run (no facet
-  // filters, high limit) — independent of the 200-capped, filtered on-screen
-  // table, but scoped to the same single run.
-  const fetchAllFailedRows = async () => {
-    const res = await getDqResultsFailedRows(tableFqn, {
-      run_id: failedRowsRunId,
-      limit: EXPORT_ROW_LIMIT,
-      include_drafts: draftsParam,
+  const fetchAllFailedRows = async () =>
+    collectFailedRowPages(async ({ offset, limit, run_id }) => {
+      const res = await getDqResultsFailedRows(tableFqn, {
+        ...failedRowsParams,
+        run_id: run_id ?? failedRowsParams.run_id,
+        offset,
+        limit,
+      });
+      return res.data;
     });
-    return toFailingRecords(res.data.rows);
-  };
 
   /** A small per-widget spinner overlay for the over-time charts (F1). */
   const ChartFrame = ({
@@ -1123,7 +1122,7 @@ function ResultsBody({
               ) : (
                 <FailingRecordsTable
                   rows={failingRows}
-                  total={failedRows?.total}
+                  total={failedRows?.total ?? undefined}
                   loading={failedRowsQuery.isFetching || failedRowsQuery.isPending}
                   severityColors={sevColors}
                   severityRanks={sevRanks}

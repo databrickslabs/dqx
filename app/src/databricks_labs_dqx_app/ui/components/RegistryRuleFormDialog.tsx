@@ -44,6 +44,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Code2,
@@ -2191,7 +2192,13 @@ interface RegistryRuleFormDialogProps {
    */
   headerActions?: ReactNode;
   /**
-   * "page" variant only: the page's title block (name + status/version
+   * Called after a pending rule is saved (if dirty) so the parent can
+   * publish it. When set on a ``pending_approval`` edit, Save/Submit are
+   * replaced by "Edit and approve".
+   */
+  onApprove?: () => Promise<void>;
+  /**
+   * "page" variant only: the page's title block (name + status/version)
    * badges). Rendered on the LEFT of the single top-right header row so the
    * title and the Save/Submit + Approve/Reject + "…" actions share one line
    * (B2-78) — no dropped action row, no extra vertical gap above the tabs.
@@ -2393,6 +2400,7 @@ export function RegistryRuleFormDialog({
   jsonDialogOpen: controlledJsonDialogOpen,
   onJsonDialogOpenChange,
   headerActions,
+  onApprove,
   headerTitle,
   initialAiProposal = null,
 }: RegistryRuleFormDialogProps) {
@@ -3787,6 +3795,85 @@ export function RegistryRuleFormDialog({
         return;
       }
       toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), { duration: 6000 });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditAndApprove = async () => {
+    if (readOnly || !editingRule || !onApprove) return;
+    if (isDirty && (!validate() || !canSubmit)) return;
+    setSaving(true);
+    let didSave = false;
+    try {
+      if (isDirty) {
+        const definition = buildDefinition();
+        const userMetadata = buildUserMetadata();
+        try {
+          await updateMutation.mutateAsync({
+            ruleId: editingRule.rule_id,
+            data: {
+              mode,
+              definition,
+              polarity: polarityIsMeaningful ? polarity : null,
+              user_metadata: userMetadata,
+              owner: owner.trim() || null,
+              owner_display_name: ownerDisplayName.trim() || null,
+              author_kind: authorKind,
+            },
+          });
+          didSave = true;
+        } catch (err) {
+          toast.error(extractApiError(err, t("rulesRegistry.saveFailed")), {
+            duration: 6000,
+          });
+          return;
+        }
+        if (ownerGrantIntent) {
+          const capturedIntent = ownerGrantIntent;
+          setOwnerGrantIntent(null);
+          try {
+            await setGrantMut.mutateAsync({
+              objectType: "registry_rule",
+              objectId: editingRule.rule_id,
+              data: {
+                principal_id: capturedIntent.newPrincipalId,
+                principal_type: capturedIntent.newPrincipalType,
+                principal_name: capturedIntent.newPrincipalName,
+                privileges: ["SELECT", "MODIFY", "APPLY"],
+                inherit: false,
+              },
+            });
+            if (capturedIntent.removeOldPrincipalId) {
+              await removeGrantMut.mutateAsync({
+                objectType: "registry_rule",
+                objectId: editingRule.rule_id,
+                principalId: capturedIntent.removeOldPrincipalId,
+              });
+            }
+            queryClient.invalidateQueries({
+              queryKey: getListObjectGrantsQueryKey("registry_rule", editingRule.rule_id),
+            });
+          } catch (grantErr) {
+            toast.error(extractApiError(grantErr, t("permissions.ownerGrantFailed")), {
+              duration: 6000,
+            });
+          }
+        }
+      }
+      try {
+        await onApprove();
+        onSaved(editingRule.rule_id);
+        closeAndReset();
+      } catch (approveErr) {
+        if (didSave) onSaved(editingRule.rule_id);
+        toast.error(
+          t(didSave ? "rulesRegistry.toastSavedApproveFailed" : "rulesRegistry.toastApproveFailed", {
+            error: extractApiError(approveErr, t("rulesRegistry.saveFailed")),
+          }),
+          { duration: 8000 },
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -5727,6 +5814,19 @@ export function RegistryRuleFormDialog({
   // submit-only branch, and the missing-fields tooltips) is preserved verbatim.
   const renderSaveSubmitButtons = (showSubmitIcon: boolean): ReactNode => {
     if (readOnly) return null;
+    const isPendingApproverEdit = editingRule?.status === "pending_approval" && !!onApprove;
+    if (isPendingApproverEdit) {
+      return (
+        <Button
+          onClick={() => void handleEditAndApprove()}
+          disabled={saving || (isDirty && !canSubmit)}
+          className="gap-2"
+        >
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          {isDirty ? t("rulesRegistry.actionEditAndApprove") : t("rulesRegistry.actionApprove")}
+        </Button>
+      );
+    }
     const submitIcon = showSubmitIcon ? <Send className="h-3.5 w-3.5" /> : null;
     return (
       <>

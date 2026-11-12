@@ -582,10 +582,12 @@ def update_registry_rule(
 ) -> RegistryRuleOut:
     """Update a registry rule's live definition/tags in place.
 
-    Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
-    revision path — the edits stay inert behind the frozen vN snapshot until
-    the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
-    any other status.
+    Editable for ``draft`` and ``approved`` rules (the edit-in-place revision
+    path — the edits stay inert behind the frozen vN snapshot until the rule
+    is re-submitted and re-approved as vN+1) and for ``pending_approval``
+    rules so an approver or admin can correct the submitted definition before
+    publishing. Authors with MODIFY cannot edit a pending rule. Rejected with
+    400 for any other status.
 
     Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
     inherited, or via ownership) unless the caller is an admin/approver.
@@ -611,6 +613,7 @@ def update_registry_rule(
             author_kind=body.author_kind,
             # An explicit "polarity": null clears it; an omitted field leaves it.
             clear_polarity="polarity" in body.model_fields_set and body.polarity is None,
+            editor_role=role,
         )
         return RegistryRuleOut.from_domain(rule)
     except UnsafeSqlQueryError as e:

@@ -523,7 +523,8 @@ choice is driven entirely by `databricks.yml`:
 | **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
 `MigrationRunner` creates the Delta tables (`v1` analytical baseline,
-`v2` staged run configs) and `PgMigrationRunner` provisions the OLTP
+`v2` staged run configs, `v3` BIGINT row-count widening for existing
+INT columns) and `PgMigrationRunner` provisions the OLTP
 tables in Postgres.
 
 ### Key types

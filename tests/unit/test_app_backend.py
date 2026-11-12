@@ -1704,8 +1704,10 @@ class TestMigrationRunner:
         # schema + meta table + applied_at_map query + per-migration calls
         # Most migrations: 1 DDL + 1 INSERT = 2 calls each
         # Multi-statement migrations (v13, v14): 2 DDL + 1 INSERT = 3 calls each
+        # v3 inspects information_schema before deciding whether to skip DDL
         extra_stmts = sum(m.sql_template.count(";") for m in MIGRATIONS)
-        total_responses = 3 + 2 * len(MIGRATIONS) + extra_stmts
+        v3_inspect = 1
+        total_responses = 3 + 2 * len(MIGRATIONS) + extra_stmts + v3_inspect
         ws.statement_execution.execute_statement.side_effect = [_ok_response()] * total_responses  # type: ignore[attr-defined]
 
         runner = MigrationRunner(sql=SqlExecutor(ws=ws, warehouse_id="wh", catalog="cat", schema="sch"))
