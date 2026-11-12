@@ -5631,6 +5631,36 @@ def test_warning_sql_query_refers_to_error_results(ws, spark: SparkSession):
     }
 
 
+@pytest.mark.parametrize(
+    "check_func_kwargs",
+    [
+        {"query": "SELECT count(*) < 1 AS condition FROM {{ input_view }}"},
+        {"query": "SELECT id, id < 0 AS condition FROM {{ input_view }}", "merge_columns": ["id"]},
+    ],
+)
+def test_independent_sql_queries_grow_plan_linearly(ws, spark: SparkSession, capsys, check_func_kwargs: dict):
+    check_count = 8
+    checks = [
+        DQDatasetRule(
+            name=f"query_{index}",
+            criticality="error",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs=check_func_kwargs,
+        )
+        for index in range(check_count)
+    ]
+
+    checked = DQEngine(ws).apply_checks(spark.range(10), checks)
+    capsys.readouterr()
+    checked.explain(extended=True)
+    analyzed_plan = (
+        capsys.readouterr().out.split("== Analyzed Logical Plan ==")[1].split("== Optimized Logical Plan ==")[0]
+    )
+
+    assert analyzed_plan.count("Range (") <= check_count + 1
+    assert checked.filter(F.col("_errors").isNull()).count() == 10
+
+
 @pytest.mark.parametrize("limit, expected_count_errors", [(3, []), (2, ["row_count_at_most_limit"])])
 def test_sql_query_with_non_unique_merge_columns_preserves_rows_for_later_aggregate(
     ws, spark: SparkSession, limit: int, expected_count_errors: list[str]
