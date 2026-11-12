@@ -1118,3 +1118,20 @@ class TestSaveAppliedRulesGuards:
             assert store.tombstones == []  # the user removed nothing: no suppression is recorded
             assert store.inserts == []
             assert [r.id for r in results] == ["ar-hand"]
+
+    def test_removing_a_policy_column_covered_only_by_an_unseen_row_is_tombstoned(self, svc, sql, registry):
+        # Another session added hand row {a, c} after the editor loaded; the user then removed column a.
+        registry.get_rule.return_value = _published_rule()
+        unseen = [{"column": "a"}, {"column": "c"}]
+        rows = [
+            _policy_row("ar-pol", "a"),
+            _applied_row(id_="ar-new", column_mapping=unseen, mapping_hash=compute_mapping_hash(unseen)),
+        ]
+        store = _AppliedStore(sql, rows)
+        desired = [DesiredAppliedRule(rule_id="r1", column_mapping=[{"column": "b"}])]
+
+        svc.save_applied_rules("b1", desired, "alice@x", known_applied_ids=["ar-pol"])
+
+        assert "ar-pol" in store.deleted
+        assert "ar-new" not in store.deleted
+        assert len(store.tombstones) == 1  # a real removal: the policy must not re-attach column a

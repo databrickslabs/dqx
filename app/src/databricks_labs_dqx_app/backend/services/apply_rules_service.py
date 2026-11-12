@@ -790,6 +790,7 @@ class ApplyRulesService:
         exact = {entry.rule_id: compute_mapping_hash(entry.column_mapping) for entry in entries}
         groups = {entry.rule_id: set(_group_hashes(entry.column_mapping)) for entry in entries}
         covered: dict[str, set[str]] = {}
+        kept_covered: dict[str, set[str]] = {}
         exact_kept: set[str] = set()
         keep: list[AppliedRule] = []
         unknown: list[AppliedRule] = []
@@ -808,6 +809,7 @@ class ApplyRulesService:
                 if (is_exact or is_subset) and not row_groups & taken:
                     keep.append(row)
                     taken.update(row_groups)
+                    kept_covered.setdefault(row.rule_id, set()).update(row_groups)
                     if is_exact:
                         exact_kept.add(row.rule_id)
                     continue
@@ -816,7 +818,10 @@ class ApplyRulesService:
                 taken.update(row_groups)
                 continue
             auto = row.user_metadata.get(ORIGIN_KEY) in AUTO_ORIGINS
-            if auto and row.rule_id in by_rule and row_groups and row_groups <= taken:
+            # Redundant only when kept rows (not rows the caller never saw) already cover every
+            # group and the caller still wants them; otherwise it is a real removal (tombstoned).
+            still_desired = row.rule_id in by_rule and row_groups <= groups[row.rule_id]
+            if auto and still_desired and row_groups and row_groups <= kept_covered.get(row.rule_id, set()):
                 redundant.append(row)
                 continue
             remove.append(row)
