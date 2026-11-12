@@ -62,6 +62,7 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 )
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SCHEDULER_WAKE_MARKER_PATH, SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
 from databricks_labs_dqx_app.backend.services.view_service import mark_tmp_schema_ready
@@ -791,6 +792,7 @@ async def _start_scheduler(
             ),
             monitored_table_service=monitored_tables,
             reconcile_scores_on_start=True,
+            wake_marker=SchedulerWakeMarker(SCHEDULER_WAKE_MARKER_PATH),
         )
         set_scheduler(scheduler)
         scheduler.start()
