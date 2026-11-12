@@ -40,9 +40,11 @@ describe("defaultReuseRuleIds", () => {
   });
   const caseOf = (value: string) => ({ parameters: [{ name: "case", type: "string" as const, value }] });
 
-  test("reuses a rule whose settings only add to the imported ones", () => {
+  test("reuses a rule only when parameters match exactly", () => {
     const choices = [{ rule: { ...rule("trimmed"), definition: trim(true) } as RegistryRuleOut, inputIndexes: [0] }];
-    expect([...defaultReuseRuleIds(choices, [{ definition: trim(null) }])]).toEqual(["trimmed"]);
+    // Candidate fills in trim_strings when the import left it blank — opt-in, not default.
+    expect([...defaultReuseRuleIds(choices, [{ definition: trim(null) }])]).toEqual([]);
+    expect([...defaultReuseRuleIds(choices, [{ definition: trim(true) }])]).toEqual(["trimmed"]);
   });
 
   test("does not reuse a rule that sets a parameter to a different value", () => {

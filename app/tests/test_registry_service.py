@@ -92,15 +92,17 @@ def _cas_confirm_row(rule, *, approver: str) -> list[str]:
 
 
 class TestCreateRule:
-    def test_create_rule_keeps_custom_tags(self, svc):
+    def test_create_rule_strips_custom_tags(self, svc):
+        # Custom tags belong on applied rules; the registry keeps reserved keys only.
         rule, _ = svc.create_rule(
             mode="dqx_native",
             definition=_native_definition(),
             user_email="alice@x",
             user_metadata={"name": "Amount present", "businessTerm": "GGR", "owner_team": "risk"},
         )
-        assert rule.user_metadata["businessTerm"] == "GGR"
-        assert rule.user_metadata["owner_team"] == "risk"
+        assert rule.user_metadata == {"name": "Amount present"}
+        assert "businessTerm" not in rule.user_metadata
+        assert "owner_team" not in rule.user_metadata
 
     def test_creates_draft_rule_with_fingerprint(self, svc, sql):
         rule, warning = svc.create_rule(

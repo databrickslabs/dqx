@@ -45,6 +45,37 @@ To import:
    committing. No data is changed by a test.
 4. Save. The rules are added to your Rules Registry as drafts.
 
+### Similar rules and reuse
+
+When an imported check matches an existing active rule that runs the same check
+on the same slots (possibly with different parameters), Studio offers to **reuse**
+that rule instead of creating a duplicate. Reuse is opt-in when parameters differ;
+rules with identical parameters are pre-selected.
+
+Custom tags on the import (business terms, ownership, and so on) are **not**
+stored on the registry rule. They belong on the applied rule — set them when you
+apply the rule to a table. Reserved keys (`name`, `description`, `dimension`,
+`severity`) stay on the registry rule.
+
+### Required severity and parameters
+
+If your workspace has a configured severity vocabulary, every imported rule must
+include a `severity` tag that maps onto that vocabulary. Missing or unknown
+values fail that row for YAML, contract, Marketplace, and API imports alike.
+
+Studio also requires `ref_table`, `date_format`, and `timestamp_format` whenever
+the check uses them — leaving them blank is a different check (or one Studio
+cannot run).
+
+### Population filters
+
+A check's `filter` is the rule's **default** population filter. It is not part of
+the rule fingerprint, so two checks that differ only by filter can reuse the same
+registry rule. When you apply the rule to a table, the applied `row_filter`
+**replaces** that default (it does not AND with it). An empty applied filter
+inherits the rule default. On a rules-only YAML import, a reused rule's differing
+filter is not stored — set it on Apply Rules when you apply the rule.
+
 ### Don't have YAML yet? Generate it
 
 If you know what you want to check but not how to write it, use the **Generate**

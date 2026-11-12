@@ -1,10 +1,10 @@
 /**
  * Custom tags (business terms, ownership, pass rates, contract provenance, ...)
  * describe how a rule is used on one table, so they live on the applied rule
- * (`dq_applied_rules.user_metadata`), not on the reusable registry rule. The
- * backend drops non-reserved keys from registry rules; these helpers keep the
- * UI's split identical to `registry_models.generic_rule_metadata` /
- * `application_tags`.
+ * (`dq_applied_rules.user_metadata` / apply `tags`), not on the reusable
+ * registry rule. The backend strips non-reserved keys on create/update; these
+ * helpers keep the UI's split identical to
+ * `registry_models.generic_rule_metadata` / `application_tags`.
  */
 
 /** Mirrors backend `RESERVED_RULE_METADATA_KEYS`. */

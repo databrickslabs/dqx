@@ -401,6 +401,13 @@ def batch_import_registry_rules(
     Imported ``dimension``/``severity`` tags are folded onto the configured
     label vocabulary first (an ODCS contract spells them lowercase), so they
     match the values the rest of the app filters and colours by.
+
+    When the workspace has a configured severity vocabulary, every imported
+    rule must carry a ``severity`` tag that maps onto that vocabulary —
+    missing or unknown values fail that row (Marketplace and direct API
+    callers included). Custom tags beyond the reserved keys are dropped from
+    the registry rule; callers that apply the rule should pass them as
+    applied-rule ``tags``.
     """
     # auto_approve publishes each imported rule outright; only approver-level
     # roles may bypass the queue. A non-approver asking for it is a client bug
@@ -433,26 +440,34 @@ def batch_import_registry_rules(
             param_error = imported_native_params_error(rule_in.mode, rule_in.definition)
             if param_error is not None:
                 raise ValueError(param_error)
-            key: str | None = None
-            if body.skip_duplicates or chosen_by_index:
+            # Prefer the importer's per-index choice over in-batch / skip_duplicates
+            # matches, and never let reuse_rule_ids alone turn on in-batch dedup.
+            match: RegistryRuleOut | None = None
+            chosen = chosen_by_index.get(index)
+            if chosen is not None:
+                if similar_key(chosen.mode, chosen.definition, chosen.polarity) != similar_key(
+                    rule_in.mode, rule_in.definition, rule_in.polarity
+                ):
+                    raise ValueError("Chosen rule does not run the same check")
+                match = chosen
+            elif body.skip_duplicates:
                 key = shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)
-                match = seen_in_batch.get(key)
-                if match is None and body.skip_duplicates:
-                    match = _identical_active_rule(svc, rule_in, body.generalize_slots, best_by_shape)
-                if match is None:
-                    match = chosen_by_index.get(index)
-                if match is not None:
-                    renames = slot_renames_between(rule_in.definition, match.definition)
-                    reused.append(
-                        CreateRegistryRuleOut(
-                            rule=match,
-                            input_index=index,
-                            slot_renames={k: v for k, v in renames.items() if k != v},
-                            row_filter=_imported_row_filter(rule_in.definition, match.definition),
-                        )
+                match = seen_in_batch.get(key) or _identical_active_rule(
+                    svc, rule_in, body.generalize_slots, best_by_shape
+                )
+            if match is not None:
+                renames = slot_renames_between(rule_in.definition, match.definition)
+                reused.append(
+                    CreateRegistryRuleOut(
+                        rule=match,
+                        input_index=index,
+                        slot_renames={k: v for k, v in renames.items() if k != v},
+                        row_filter=_imported_row_filter(rule_in.definition, match.definition),
                     )
-                    seen_in_batch[key] = match
-                    continue
+                )
+                if body.skip_duplicates:
+                    seen_in_batch[shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)] = match
+                continue
 
             definition = promote_sql_parameter_slots(rule_in.definition)
             user_metadata = rule_in.user_metadata
@@ -490,8 +505,8 @@ def batch_import_registry_rules(
                     slot_renames={k: v for k, v in renames.items() if k != v},
                 )
             )
-            if key is not None:
-                seen_in_batch[key] = rule_out
+            if body.skip_duplicates:
+                seen_in_batch[shape_key(rule_in.mode, rule_in.definition, rule_in.polarity)] = rule_out
 
             if body.auto_approve:
                 # Publish outright: submit to leave draft, then approve to

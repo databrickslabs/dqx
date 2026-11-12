@@ -67,6 +67,7 @@ import {
   type RecordPendingApplicationIn,
 } from "@/lib/api-custom";
 import { normalizeImportedCheck, parseChecksForImport } from "@/lib/import-registry-rules";
+import { applicationTagsFrom } from "@/lib/application-tags";
 import { resolveCriticality, severityValueCriticality } from "@/lib/registry-rule-conversion";
 import { orderSeverityValuesForDisplay, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
 import { buildGenericSlotMapping } from "@/lib/slot-mapping";
@@ -391,6 +392,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           groupKeys: Set<string>;
           outcomes: SchemaOutcome[];
           rowFilter: string | null;
+          tags: Record<string, string>;
         }
       >();
 
@@ -420,6 +422,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             reused: boolean;
             slotRenames: Record<string, string>;
             rowFilter: string | null;
+            tags: Record<string, string>;
           }[];
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally
@@ -437,18 +440,22 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             });
             const created = resp.data.created ?? [];
             const reused = resp.data.reused ?? [];
+            const tagsFor = (inputIndex: number | null | undefined) =>
+              applicationTagsFrom(ruleChunk[inputIndex ?? -1]?.user_metadata);
             processed = [
               ...created.map((cr) => ({
                 rule: cr.rule,
                 reused: false,
                 slotRenames: cr.slot_renames ?? {},
                 rowFilter: cr.row_filter ?? null,
+                tags: tagsFor(cr.input_index),
               })),
               ...reused.map((cr) => ({
                 rule: cr.rule,
                 reused: true,
                 slotRenames: cr.slot_renames ?? {},
                 rowFilter: cr.row_filter ?? null,
+                tags: tagsFor(cr.input_index),
               })),
             ];
             const failed = resp.data.failed ?? [];
@@ -506,7 +513,9 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               continue;
             }
 
-            const targetKey = `${bindingId}\u0000${rule.rule_id}`;
+            // Include the filter so two imports of the same rule with different
+            // population filters on one table stay as separate applications.
+            const targetKey = `${bindingId}\u0000${rule.rule_id}\u0000${entryRule.rowFilter ?? ""}`;
             let target = targets.get(targetKey);
             if (!target) {
               target = {
@@ -518,6 +527,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 groupKeys: new Set(),
                 outcomes: [],
                 rowFilter: entryRule.rowFilter,
+                tags: entryRule.tags,
               };
               targets.set(targetKey, target);
             }
@@ -555,6 +565,8 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule_id: target.ruleId,
             column_mapping: target.groups,
             row_filter: target.rowFilter,
+            // Custom tags stay off the registry rule; attach them here.
+            ...(Object.keys(target.tags).length > 0 ? { tags: target.tags } : {}),
           });
           for (const o of affectedOutcomes) o.applied += 1;
           anyApplied = true;
