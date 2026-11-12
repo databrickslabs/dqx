@@ -754,7 +754,7 @@ export function RuleConfigCard({
                 {rule.rule_name || rule.rule_id}
               </Link>
               {dimension && (
-                <span className="shrink-0">
+                <span className="inline-flex shrink-0 items-center">
                   <TagBadge
                     label={dimension}
                     color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)}

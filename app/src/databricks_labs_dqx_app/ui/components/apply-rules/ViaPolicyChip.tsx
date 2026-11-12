@@ -27,7 +27,7 @@ export function ViaPolicyChip({ ruleId, userMetadata }: ViaPolicyChipProps) {
           search={{ tab: "policies" }}
           target="_blank"
           onClick={(e) => e.stopPropagation()}
-          className="shrink-0"
+          className="inline-flex shrink-0 items-center"
         >
           <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
             {t("rulePolicies.viaPolicy")}

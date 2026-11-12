@@ -92,6 +92,7 @@ import {
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
+  useListMonitoredTables,
   useRevertMonitoredTable,
   getListTagSuggestionsQueryKey,
   getListTagSuggestionsQueryOptions,
@@ -104,6 +105,7 @@ import {
   type TableDataOut,
   type TagRuleSuggestionOut,
 } from "@/lib/api";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
 import {
   appendMissingRows,
   knownAppliedIds,
@@ -991,7 +993,11 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab
+              table={table}
+              onColumnClick={handleColumnDeepLink}
+              onOpenResults={() => handleTabChange("results")}
+            />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -1437,8 +1443,11 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 function AboutTab({
   table,
   onColumnClick,
+  onOpenResults,
 }: {
   table: MonitoredTableOut;
+  /** Switches to the Results tab (the DQ score row links there). */
+  onOpenResults: () => void;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
@@ -1453,6 +1462,12 @@ function AboutTab({
 
   const parts = table.table_fqn.split(".");
   const [catalog, schema, tableName] = parts;
+
+  // The cached DQ score comes from the Tables list (same query + cache the
+  // list page uses); the detail payload doesn't carry it. Status already
+  // shows in the page header, so the About row shows the score instead.
+  const tablesQuery = useListMonitoredTables({});
+  const dqScore = tablesQuery.data?.data?.find((row) => row.table.binding_id === table.binding_id)?.score;
 
   const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
     query: { enabled: parts.length === 3 },
@@ -1506,9 +1521,16 @@ function AboutTab({
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutTableName")}</dt>
             <dd className="font-mono">{tableName ?? t("monitoredTables.aboutUnknown")}</dd>
 
-            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.colDqScore")}</dt>
             <dd>
-              <StatusBadge status={table.status} />
+              <button
+                type="button"
+                onClick={onOpenResults}
+                aria-label={t("monitoredTables.tabResults")}
+                className="flex w-40 items-center rounded-sm hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ScoreBarCell score={dqScore} />
+              </button>
             </dd>
 
             {/* Owner is edited on the Permissions tab, not here. */}

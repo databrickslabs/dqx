@@ -2284,7 +2284,7 @@
     "latestBadge": "Più recente (v{{version}})",
     "defaultLabel": "(predefinito)",
     "moreOptionsLabel": "Altre opzioni",
-    "deselectRuleMenuItem": "Deseleziona regola",
+    "deselectRuleMenuItem": "Rimuovi regola",
     "collapseLabel": "Comprimi",
     "expandLabel": "Espandi",
     "pinFollowLatestVersioned": "Segui la più recente (v{{version}})",
