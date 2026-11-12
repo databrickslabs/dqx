@@ -80,8 +80,8 @@ class TestUpdateRunStatus:
 
     def test_swallows_executor_errors(self, sql_executor_mock, app_config):
         sql_executor_mock.execute.side_effect = RuntimeError("boom")
-        # Must NOT raise — the function logs the error and returns.
-        update_run_status(
+        # Must NOT raise — the function logs the error and reports the failure.
+        updated = update_run_status(
             sql=sql_executor_mock,
             app_conf=app_config,
             table_name="dq_validation_runs",
@@ -89,6 +89,18 @@ class TestUpdateRunStatus:
             status="FAILED",
             error_message=None,
         )
+        assert updated is False
+
+    def test_reports_a_successful_update(self, sql_executor_mock, app_config):
+        updated = update_run_status(
+            sql=sql_executor_mock,
+            app_conf=app_config,
+            table_name="dq_validation_runs",
+            run_id="x",
+            status="FAILED",
+            error_message=None,
+        )
+        assert updated is True
 
 
 # ---------------------------------------------------------------------------
