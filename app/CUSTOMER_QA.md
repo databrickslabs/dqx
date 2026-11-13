@@ -138,7 +138,7 @@ Four primary roles plus one orthogonal:
 - **`ADMIN`** — configure the app (review-status catalogue, custom metrics, labels, role mappings, retention, role↔group mapping)
 - **`RULE_APPROVER`** — move rules from `proposed` to `approved`
 - **`RULE_AUTHOR`** — create/edit drafts and propose rules
-- **`VIEWER`** — read runs, dashboards, results
+- **`VIEWER`** — read runs and results
 - **`RUNNER`** (orthogonal) — can execute approved rules on-demand
 
 Roles are resolved from **Databricks workspace-group membership** via the `dq_role_mappings` table. Customers map their existing IAM groups onto DQX roles — we never invent a new identity system.
@@ -320,7 +320,7 @@ Stated up front, because it's real:
 1. **Multi-source out of the box.** ~15 connectors (Snowflake, BigQuery, Redshift, Postgres, MSSQL, Spark, Databricks, …). If the customer has a heterogeneous stack — Snowflake + Databricks + Postgres — Soda monitors all three from one UI. DQX Studio is Databricks-only.
 2. **Anomaly detection** (Sherlock algorithm). Soda Cloud auto-detects "row count dropped 30 % vs the last 14 days" without you writing a rule. DQX is rule-driven; you'd need to write the equivalent expectation manually (and tune it).
 3. **Incident management.** Soda Cloud has first-class incidents — assign to a person, link to a Slack thread, mark resolved, see MTTR over time. DQX has comments + review status, which is enough for triage but isn't an incident workflow.
-4. **Alerting.** Soda Cloud routes check failures to Slack / Teams / PagerDuty / email / webhooks. DQX has scheduled runs and a dashboard; **there is no built-in alerting today** — you'd build it from `dq_validation_runs` (e.g. a SQL alert on a Databricks dashboard, or a downstream Lakeflow job). Honest gap.
+4. **Alerting.** Soda Cloud routes check failures to Slack / Teams / PagerDuty / email / webhooks. DQX has scheduled runs and result tables in UC; **there is no built-in alerting today** — you'd build it from `dq_validation_runs` (e.g. a SQL alert on a Databricks dashboard, or a downstream Lakeflow job). Honest gap.
 5. **Time-tested at scale.** Soda has been shipping since ~2020 with a dedicated team. DQX is younger and field-maintained (Databricks Labs).
 
 If the customer needs any of those five things, **Soda is the better choice** and we should say so. The next question (11.3) is where DQX usually wins back.

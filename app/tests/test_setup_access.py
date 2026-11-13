@@ -318,7 +318,9 @@ def test_genie_space_acl_read_falls_back_to_the_setup_administrator(workspace, s
     reader = create_autospec(WorkspaceClient, instance=True)
     reader.permissions.get.return_value = _acl(("data-team", PermissionLevel.CAN_RUN))
 
-    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(reader_ws=reader)
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(
+        reader_ws=reader
+    )
 
     assert step.state == StepState.PASSED
     reader.permissions.get.assert_called_with("genie", "space-1")
@@ -347,7 +349,9 @@ def test_acl_unreadable_by_every_identity_fails_closed(workspace, sql) -> None:
     reader = create_autospec(WorkspaceClient, instance=True)
     reader.permissions.get.side_effect = PermissionError("denied")
 
-    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(reader_ws=reader)
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(
+        reader_ws=reader
+    )
 
     assert step.code == "shared_resource_check_failed"
 

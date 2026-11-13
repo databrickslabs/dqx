@@ -69,6 +69,10 @@ def test_audience_never_gets_genie_select_or_main_access(bundle: dict) -> None:
     assert _UC_AUDIENCE not in _grants(bundle, "schemas", "main_schema")
 
 
+def test_deployer_has_no_main_schema_grant(bundle: dict) -> None:
+    assert "${workspace.current_user.userName}" not in _grants(bundle, "schemas", "main_schema")
+
+
 def test_uc_grants_never_name_workspace_groups(bundle: dict) -> None:
     for schema in bundle["resources"]["schemas"].values():
         principals = {grant["principal"] for grant in schema["grants"]}

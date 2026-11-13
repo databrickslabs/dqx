@@ -515,6 +515,10 @@ cd app && databricks bundle deploy -p <your-profile> -t <your-target>
 # The app restarts automatically after deployment
 ```
 
+### Upgrading: starter dashboard removed
+
+Earlier Studio bundles shipped a starter AI/BI dashboard. The first `bundle deploy` after upgrading **deletes** `[<target>] DQX Quality Overview` and revokes the deployer's `USE SCHEMA` / `SELECT` grant on the main schema (`<catalog>.<prefix>`), which existed only so that dashboard could query with embedded credentials. If you customised the dashboard, copy it first: open it in **AI/BI Dashboards** and use **Clone** (or export the `.lvdash.json`) before you redeploy. A cloned dashboard that embeds credentials needs its owner to hold `SELECT` on the Studio result tables.
+
 ## Monitor and Manage
 
 Replace `<app-name>` with the deployed app name (the value of `app_name` for your target — default `dqx-studio`):
