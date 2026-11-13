@@ -4,10 +4,6 @@
 
 Pins DQX Core 0.17.2 (was 0.17.0) for the app and the task runner, on both DAB and Marketplace.
 
-### Packaging and deployment
-
-- New `make lock-marketplace DQX_VERSION=x.y.z` regenerates `app/marketplace_templates/uv.lock` for a DQX release, using `app/uv.lock` as version preferences, and points every URL at public PyPI. A different version also updates `dqx_version` in `app/databricks.yml`. This replaces the manual lock-refresh steps in `DEPLOYMENT.md`.
-
 ## 0.1.2
 
 ### Fixes

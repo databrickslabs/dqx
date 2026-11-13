@@ -461,12 +461,6 @@ lock-app-dependencies: ## Regenerate app/uv.lock, app/yarn.lock, app/.build-cons
 	  uv pip compile --generate-hashes --universal --no-header - > app/build-constraints-new.txt
 	mv app/build-constraints-new.txt app/.build-constraints.txt
 
-# Regenerate the committed Marketplace lock for the release pyproject (DQX pinned to DQX_VERSION,
-# default dqx_version in app/databricks.yml; a different version also updates databricks.yml),
-# resolved through the configured index and rewritten so customers install from public PyPI.
-lock-marketplace: ## Regenerate app/marketplace_templates/uv.lock (DQX_VERSION=x.y.z)
-	cd app && $(UV_RUN) python scripts/lock_marketplace.py $(if $(DQX_VERSION),--dqx-version $(DQX_VERSION))
-
 # Regenerate the MCP server lockfile and scrub private-proxy URLs so the
 # committed file resolves against whatever registry the install environment
 # is configured for (JFrog in CI, public in fork PRs). Same normalization as
