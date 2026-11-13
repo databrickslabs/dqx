@@ -55,6 +55,7 @@ from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
+    TableUniverseRow,
 )
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
@@ -110,6 +111,7 @@ def registry_mock() -> MagicMock:
 def data_products_mock() -> MagicMock:
     mock = create_autospec(DataProductService, instance=True)
     mock.get.return_value = None
+    mock.member_fqns.return_value = set()
     return mock
 
 
@@ -945,6 +947,110 @@ class TestGlobalResults:
         resp = client.get("/api/v1/dq-results/global")
         assert resp.status_code == 200
         assert resp.json()["by_table"][0]["binding_id"] is None
+
+
+class TestGlobalUniverseFilters:
+    ROWS = [
+        check_row("c1", errors=10, total=100, fqn="main.sales.orders"),
+        check_row("c2", errors=10, total=100, fqn="main.sales.items"),
+        check_row("c3", errors=10, total=100, fqn="dev.sales.users"),
+        check_row("c4", errors=10, total=100, fqn="secret.hr.salaries"),
+    ]
+
+    @staticmethod
+    def universe_row(fqn, score=None, owner=None, display=None, created_by=None):
+        return TableUniverseRow(
+            binding_id=f"b-{fqn}",
+            table_fqn=fqn,
+            owner=owner,
+            owner_display_name=display,
+            created_by=created_by,
+            score=score,
+        )
+
+    def labels(self, client, **params):
+        body = client.get("/api/v1/dq-results/global", params=params).json()
+        return sorted(g["label"] for g in body["by_table"])
+
+    def test_collection_narrows_to_members_and_never_leaks_inaccessible(self, client, sql_mock, data_products_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "secret.hr.salaries"}
+        assert self.labels(client, collection=["p1"]) == ["main.sales.orders"]
+
+    def test_collection_uses_one_batched_member_lookup_without_product_detail(
+        self, client, sql_mock, data_products_mock, monitored_tables_mock
+    ):
+        # The GET hot path must never build full product details (SCIM owner
+        # backfill + UPDATEs) — one batched member lookup for every collection.
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
+        assert self.labels(client, collection=["p1", "p2"]) == ["main.sales.items", "main.sales.orders"]
+        data_products_mock.member_fqns.assert_called_once_with(["p1", "p2"], tables=None)
+        data_products_mock.get.assert_not_called()
+        monitored_tables_mock.list_table_universe.assert_not_called()
+
+    def test_unknown_collection_matches_nothing(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        assert self.labels(client, collection=["nope"]) == []
+
+    @pytest.mark.parametrize("param", ["collection", "owner"])
+    def test_more_than_200_values_is_rejected(self, client, sql_mock, param):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        resp = client.get("/api/v1/dq-results/global", params=[(param, f"v{i}") for i in range(201)])
+        assert resp.status_code == 422
+
+    def test_owner_uses_display_name_then_owner_then_created_by(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", display="Ada", owner="ada@x.com"),
+            self.universe_row("main.sales.items", owner="ada@x.com"),
+            self.universe_row("dev.sales.users", created_by="ada@x.com"),
+        ]
+        assert self.labels(client, owner=["Ada"]) == ["main.sales.orders"]
+        assert self.labels(client, owner=["ada@x.com"]) == ["dev.sales.users", "main.sales.items"]
+
+    def test_score_bucket_none_keeps_only_uncached_tables(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", score=0.9),
+            self.universe_row("main.sales.items"),
+        ]
+        assert self.labels(client, score_bucket="none") == ["dev.sales.users", "main.sales.items"]
+
+    def test_score_bucket_boundaries(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        monitored_tables_mock.list_table_universe.return_value = [
+            self.universe_row("main.sales.orders", score=0.75),
+            self.universe_row("main.sales.items", score=0.7499),
+            self.universe_row("dev.sales.users", score=0.0),
+        ]
+        assert self.labels(client, score_bucket="75-100") == ["main.sales.orders"]
+        assert self.labels(client, score_bucket="50-75") == ["main.sales.items"]
+        assert self.labels(client, score_bucket="0-25") == ["dev.sales.users"]
+
+    def test_params_intersect(self, client, sql_mock, data_products_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        data_products_mock.member_fqns.return_value = {"main.sales.orders", "main.sales.items"}
+        rows = [
+            self.universe_row("main.sales.orders", score=0.9, display="Ada"),
+            self.universe_row("main.sales.items", score=0.9, display="Bob"),
+        ]
+        monitored_tables_mock.list_table_universe.return_value = rows
+        assert self.labels(client, collection=["p1"], owner=["Ada"], score_bucket="75-100") == ["main.sales.orders"]
+        # The listing is fetched once per request and shared with the member join.
+        assert monitored_tables_mock.list_table_universe.call_count == 1
+        data_products_mock.member_fqns.assert_called_once_with(["p1"], tables=rows)
+        assert self.labels(client, collection=["p1"], owner=["Bob"], score_bucket="0-25") == []
+        data_products_mock.get.assert_not_called()
+
+    def test_no_params_does_not_load_monitored_tables(self, client, sql_mock, monitored_tables_mock):
+        sql_dispatch(sql_mock, check_rows=self.ROWS)
+        assert len(self.labels(client)) == 3
+        monitored_tables_mock.list_table_universe.assert_not_called()
+
+    def test_invalid_score_bucket_is_rejected(self, client, sql_mock):
+        sql_dispatch(sql_mock)
+        assert client.get("/api/v1/dq-results/global", params={"score_bucket": "bogus"}).status_code == 422
 
 
 # ---------------------------------------------------------------------------

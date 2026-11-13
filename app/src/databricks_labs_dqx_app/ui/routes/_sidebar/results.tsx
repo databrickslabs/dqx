@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
@@ -8,7 +8,23 @@ import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGetGlobalResults, type EntityResultsOut } from "@/lib/api";
+import {
+  SavedViewPage,
+  useGetGlobalResults,
+  useListDataProducts,
+  useListMonitoredTables,
+  type EntityResultsOut,
+} from "@/lib/api";
+import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
+import { EditColumnsDropdown } from "@/components/data-table/EditColumnsDropdown";
+import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
+import { useSavedViews } from "@/components/data-table/useSavedViews";
+import { EMPTY_FILTERS } from "@/components/monitored-tables/BindingResultsTab";
+import { monitoredTableOwner } from "@/components/monitored-tables/MonitoredTablesTable";
+import {
+  GLOBAL_RESULTS_FILTERS,
+  buildGlobalResultsViewDefs,
+} from "@/components/results/global-results-view";
 import { AskGenieButton } from "@/components/results/AskGenieButton";
 import {
   BY_TABLE_PREVERIFY_LIMIT,
@@ -16,6 +32,9 @@ import {
 } from "@/lib/entitlement-preverify";
 import {
   MultiTableResultsSection,
+  baseFilterOptionValues,
+  breakdownParams,
+  globalResultsValuesReconciler,
   type UseEntityResults,
 } from "@/components/results/MultiTableResults";
 
@@ -80,10 +99,54 @@ function preverifyByTable(byTable: NonNullable<EntityResultsOut["by_table"]>): v
   );
 }
 
+// The composition's BASE (unfiltered) breakdown query — same params, so the
+// same cache entry — read here for the saved view's option lists.
+const BASE_BREAKDOWN_PARAMS = breakdownParams(EMPTY_FILTERS);
+
 function GlobalResultsContent() {
   const { t } = useTranslation();
   // Run mode ("Published only" vs "Published + Draft"), owned per surface.
   const [includeDrafts, setIncludeDrafts] = useState(false);
+
+  // Option lists for the saved view's filter bubbles. Each is null until its
+  // source loads, so a saved value is only dropped once its options are known.
+  const baseQuery = useGetGlobalResults(BASE_BREAKDOWN_PARAMS, { query: RESULTS_QUERY_OPTIONS });
+  const baseResults = baseQuery.data?.data;
+  const tablesQuery = useListMonitoredTables({});
+  const productsQuery = useListDataProducts();
+  const owners = useMemo(() => {
+    const tables = tablesQuery.data?.data;
+    if (!tables) return null;
+    return Array.from(new Set(tables.map(monitoredTableOwner).filter((o) => o.length > 0))).sort();
+  }, [tablesQuery.data]);
+  const products = productsQuery.data?.data;
+  const topFilterOptions = useMemo(
+    () => ({
+      owners: (owners ?? []).map((o) => ({ value: o, label: o })),
+      collections: [...(products ?? [])]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => ({ value: p.product_id, label: p.name })),
+      collectionMembers: new Map(
+        (products ?? []).map((p) => [p.product_id, (p.members ?? []).map((m) => m.table_fqn)] as const),
+      ),
+    }),
+    [owners, products],
+  );
+  const viewDefs = useMemo(
+    () =>
+      buildGlobalResultsViewDefs(
+        {
+          ...baseFilterOptionValues(baseResults),
+          owner: owners,
+          collection: products ? products.map((p) => p.product_id) : null,
+        },
+        // A loaded view drops picks its own catalog / schema / collection exclude,
+        // like an interactive change does; collection membership once it loads.
+        globalResultsValuesReconciler(products ? topFilterOptions.collectionMembers : null),
+      ),
+    [baseResults, owners, products, topFilterOptions],
+  );
+  const views = useSavedViews(SavedViewPage.global_results, viewDefs);
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -109,6 +172,20 @@ function GlobalResultsContent() {
             // Item 35: top-level facet dropdowns (Tables / Dimensions /
             // Severities / Rules) just below the overall score card.
             showTopLevelFilters
+            // Saved views own which bubbles show and every filter value
+            // (Edit View is Filters-only here — no columns).
+            topFilterLayout={views.filterLayout.visibleKeys}
+            topFilterValues={views.values}
+            onTopFilterChange={views.setValue}
+            topFilterOptions={topFilterOptions}
+            editViewSlot={
+              <EditColumnsDropdown
+                filters={filterLayoutMenuConfig(views.filterLayout, (key) =>
+                  t(GLOBAL_RESULTS_FILTERS[key].labelKey),
+                )}
+                savedViews={views.menuConfig}
+              />
+            }
             onBaseByTable={preverifyByTable}
             // No runPickerSlot: the picker is omitted (see the module
             // comment); the Average line is the server's as-of series over

@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableDetail,
     MonitoredTableService,
     MonitoredTableSummary,
+    TableUniverseRow,
 )
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
@@ -124,6 +125,17 @@ def _list_member_row(
     # The batched list-path members query selects product_id too, so rows can
     # be grouped app-side (one IN (...) query for ALL products' members).
     return [member_id, product_id, binding_id, pinned_version]
+
+
+def _universe_row(binding_id: str = "b1", table_fqn: str = "cat.schema.tbl") -> TableUniverseRow:
+    return TableUniverseRow(
+        binding_id=binding_id,
+        table_fqn=table_fqn,
+        owner=None,
+        owner_display_name=None,
+        created_by=None,
+        score=None,
+    )
 
 
 def _table_summary(
@@ -819,6 +831,38 @@ class TestMemberTableFqns:
         ]
         # b-gone has no summary → skipped.
         assert service.member_table_fqns("p1") == ["c.s.t1"]
+
+
+class TestMemberFqns:
+    """Batched, read-only member lookup for the global-results collection filter."""
+
+    def test_unions_members_of_every_product_in_one_query(self, service, sql, monitored_tables):
+        sql.query.side_effect = [
+            [
+                _list_member_row("m1", "p1", "b1"),
+                _list_member_row("m2", "p2", "b2"),
+                _list_member_row("m3", "p2", "b-gone"),
+            ]
+        ]
+        monitored_tables.list_table_universe.return_value = [
+            _universe_row(binding_id="b1", table_fqn="c.s.t1"),
+            _universe_row(binding_id="b2", table_fqn="c.s.t2"),
+        ]
+        assert service.member_fqns(["p1", "p2"]) == {"c.s.t1", "c.s.t2"}
+        assert sql.query.call_count == 1
+        assert "IN ('p1', 'p2')" in sql.query.call_args[0][0]
+        sql.execute.assert_not_called()
+
+    def test_reuses_caller_rows(self, service, sql, monitored_tables):
+        sql.query.side_effect = [[_list_member_row("m1", "p1", "b1")]]
+        rows = [_universe_row(binding_id="b1", table_fqn="c.s.t1")]
+        assert service.member_fqns(["p1"], tables=rows) == {"c.s.t1"}
+        monitored_tables.list_table_universe.assert_not_called()
+
+    def test_unknown_products_return_empty_without_listing_tables(self, service, sql, monitored_tables):
+        sql.query.side_effect = [[]]
+        assert service.member_fqns(["nope"]) == set()
+        monitored_tables.list_table_universe.assert_not_called()
 
 
 class TestDelete:

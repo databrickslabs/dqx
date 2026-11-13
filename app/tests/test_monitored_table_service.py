@@ -10,12 +10,15 @@ one for the always-Delta ``dq_profiling_results`` read path — mirroring how
 """
 
 import json
+import logging
 
 import pytest
 
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    TABLE_UNIVERSE_LIMIT,
     DuplicateMonitoredTableError,
     MonitoredTableService,
+    TableUniverseRow,
 )
 
 
@@ -356,6 +359,79 @@ class TestListOwnerEnrichmentIsNonBlocking:
         try:
             summaries = svc.list_monitored_tables()
             assert summaries[0].table.owner_display_name is None
+            sp_ws.users.list.assert_not_called()
+            assert len(deferred) == 1
+        finally:
+            owner_display_name_service.release_owner_resolution(["nobody-cached@x"])
+
+
+class TestListTableUniverse:
+    def test_one_query_returns_slim_rows_with_cached_score(self, svc, sql):
+        sql.query.return_value = [
+            ["b1", "cat.schema.t1", "alice@x", "Alice Smith", "bob@x", "0.8"],
+            ["b2", "cat.schema.t2", None, None, "carol@x", None],
+        ]
+        rows = svc.list_table_universe()
+        assert rows == [
+            TableUniverseRow(
+                binding_id="b1",
+                table_fqn="cat.schema.t1",
+                owner="alice@x",
+                owner_display_name="Alice Smith",
+                created_by="bob@x",
+                score=0.8,
+            ),
+            TableUniverseRow(
+                binding_id="b2",
+                table_fqn="cat.schema.t2",
+                owner=None,
+                owner_display_name=None,
+                created_by="carol@x",
+                score=None,
+            ),
+        ]
+        sql.query.assert_called_once()
+
+    def test_query_joins_score_cache_and_skips_rule_and_version_lookups(self, svc, sql):
+        sql.query.return_value = []
+        svc.list_table_universe()
+        [stmt] = [c.args[0] for c in sql.query.call_args_list]
+        assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache sc" in stmt
+        assert "sc.scope_key = mt.table_fqn" in stmt
+        assert f"LIMIT {TABLE_UNIVERSE_LIMIT}" in stmt
+        assert "dq_applied_rules" not in stmt
+        assert "dq_monitored_table_versions" not in stmt
+
+    def test_warns_when_the_cap_is_hit(self, svc, sql, caplog):
+        row = ["b", "cat.schema.t", None, None, "bob@x", None]
+        sql.query.return_value = [row] * TABLE_UNIVERSE_LIMIT
+        with caplog.at_level(logging.WARNING):
+            svc.list_table_universe()
+        assert "row cap" in caplog.text
+
+    def test_no_warning_below_the_cap(self, svc, sql, caplog):
+        sql.query.return_value = [["b", "cat.schema.t", None, None, "bob@x", None]]
+        with caplog.at_level(logging.WARNING):
+            svc.list_table_universe()
+        assert "row cap" not in caplog.text
+
+    def test_unresolved_owner_is_deferred_off_the_request_path(self, sql, profiling_sql):
+        from unittest.mock import create_autospec
+
+        from databricks.sdk import WorkspaceClient
+
+        from databricks_labs_dqx_app.backend.services import owner_display_name_service
+
+        owner_display_name_service._resolve_cache.clear()
+        sp_ws = create_autospec(WorkspaceClient, instance=True)
+        deferred: list = []
+        svc = MonitoredTableService(
+            sql=sql, profiling_sql=profiling_sql, sp_ws=sp_ws, defer_owner_resolution=deferred.append
+        )
+        sql.query.return_value = [["b1", "cat.schema.t1", "nobody-cached@x", None, None, None]]
+        try:
+            [row] = svc.list_table_universe()
+            assert row.owner_display_name is None
             sp_ws.users.list.assert_not_called()
             assert len(deferred) == 1
         finally:

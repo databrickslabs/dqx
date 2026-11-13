@@ -64,6 +64,7 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializatio
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
+    TableUniverseRow,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
@@ -909,6 +910,39 @@ class DataProductService:
                 seen.add(fqn)
                 fqns.append(fqn)
         return fqns
+
+    def member_fqns(
+        self,
+        product_ids: list[str],
+        *,
+        tables: list[TableUniverseRow] | None = None,
+    ) -> set[str]:
+        """Return the table FQNs of every member of the given products.
+
+        Read-only and cheap enough for a GET hot path: one batched member
+        query joined app-side to the monitored-table FQNs — no owner-name
+        backfill, no score or count lookups. Unknown product ids and members
+        whose binding no longer exists contribute nothing.
+
+        Args:
+            product_ids: Data-product ids whose members to collect.
+            tables: Slim monitored-table rows the caller already fetched for
+                this request; listed here when omitted.
+
+        Returns:
+            The union of member table FQNs.
+        """
+        members_by_product = self._fetch_members_by_product(product_ids)
+        if not members_by_product:
+            return set()
+        listed = tables if tables is not None else self._monitored_tables.list_table_universe()
+        fqn_by_binding = {t.binding_id: t.table_fqn for t in listed}
+        return {
+            fqn_by_binding[row.binding_id]
+            for rows in members_by_product.values()
+            for row in rows
+            if row.binding_id in fqn_by_binding
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers

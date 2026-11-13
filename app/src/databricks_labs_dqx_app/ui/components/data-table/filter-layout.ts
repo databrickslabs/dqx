@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import type { DragEndEvent, useSensors } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { persistLayout, readStoredLayout, reconcileLayout } from "./column-layout";
 import type { SortableToggleListConfig } from "./EditColumnsDropdown";
 
 /** Per-filter layout metadata for an overview filter bar. */
@@ -15,17 +13,6 @@ export interface FilterLayoutDef {
    * never dragged, and nothing can be dragged above them.
    */
   pinned?: boolean;
-}
-
-export interface UseFilterLayoutOptions<K extends string> {
-  /** localStorage key the visibility/order payload is persisted under. */
-  storageKey: string;
-  /** Filter order as shipped in code (reconciled against the stored order). */
-  defaultOrder: readonly K[];
-  filters: Record<K, FilterLayoutDef>;
-  /** Called when a filter is switched off, so the page can reset its value —
-   *  a hidden filter must never keep narrowing the rows. */
-  onHide?: (key: K) => void;
 }
 
 export interface FilterLayout<K extends string> {
@@ -101,71 +88,6 @@ export function splitPinnedFilters<K extends string>(
   isPinned: (key: K) => boolean,
 ): { pinned: K[]; rest: K[] } {
   return { pinned: keys.filter(isPinned), rest: keys.filter((k) => !isPinned(k)) };
-}
-
-/**
- * Which filter pills an overview shows, and in what order — the Filters view
- * of {@link EditColumnsDropdown}. Persisted to localStorage and reconciled
- * against the shipped filter set exactly like column layouts
- * (see `useColumnLayout`), so adding a filter never resets a user's choices.
- */
-export function useFilterLayout<K extends string>({
-  storageKey,
-  defaultOrder,
-  filters,
-  onHide,
-}: UseFilterLayoutOptions<K>): FilterLayout<K> {
-  const [initial] = useState(() => {
-    const loaded = reconcileLayout(
-      readStoredLayout<K>(storageKey),
-      defaultOrder,
-      defaultFilterVisibility(defaultOrder, filters),
-    );
-    return { ...loaded, order: normalizeFilterOrder(loaded.order, defaultOrder, filters) };
-  });
-  const [visibility, setVisibility] = useState<Record<K, boolean>>(initial.visibility);
-  const [order, setOrder] = useState<K[]>(initial.order);
-  const onHideRef = useRef(onHide);
-  useEffect(() => {
-    onHideRef.current = onHide;
-  }, [onHide]);
-
-  useEffect(() => {
-    persistLayout(storageKey, visibility, order);
-  }, [storageKey, visibility, order]);
-
-  const isVisible = useCallback((key: K) => visibility[key] ?? false, [visibility]);
-  const isPinned = useCallback((key: K) => isPinnedFilter(key, filters), [filters]);
-
-  const toggle = useCallback(
-    (key: K) => {
-      const wasVisible = visibility[key] ?? false;
-      setVisibility((prev) => ({ ...prev, [key]: !wasVisible }));
-      if (wasVisible) onHideRef.current?.(key);
-    },
-    [visibility],
-  );
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      setOrder((prev) => moveFilter(prev, active.id as K, over.id as K, filters));
-    },
-    [filters],
-  );
-
-  return {
-    order,
-    visibleKeys: order.filter((k) => visibility[k]),
-    isPinned,
-    isVisible,
-    toggle,
-    handleDragEnd,
-    sensors,
-  };
 }
 
 /** Adapts a {@link FilterLayout} to the `filters` prop of `EditColumnsDropdown`. */

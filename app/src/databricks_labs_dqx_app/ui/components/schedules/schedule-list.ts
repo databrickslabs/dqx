@@ -74,12 +74,6 @@ export const SCHEDULE_FILTER_DEFS: Record<ScheduleFilterKey, FilterLayoutDef> = 
   owner: { labelKey: "schedules.owner", defaultVisible: true },
 };
 
-/** Clears one filter back to "no filter" — used when its pill is hidden, so a
- *  hidden filter can never keep narrowing the rows. */
-export function resetScheduleFilter(filters: ScheduleFilters, key: ScheduleFilterKey): ScheduleFilters {
-  return { ...filters, [key]: EMPTY_SCHEDULE_FILTERS[key] };
-}
-
 export function hasActiveScheduleFilters(filters: ScheduleFilters): boolean {
   return (
     filters.search.trim() !== "" ||

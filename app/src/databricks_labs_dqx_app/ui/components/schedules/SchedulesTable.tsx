@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { SavedViewsColumnLayout, SavedViewsMenuConfig } from "@/components/data-table/useSavedViews";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
 import {
@@ -253,7 +254,11 @@ const DEFAULT_ORDER: ScheduleSortKey[] = [
   "updatedAt",
 ];
 
-const LS_KEY_LAYOUT = "dqx.schedules.layout.v1";
+/** Column defaults of the Schedules overview, for its saved-view definitions. */
+export const SCHEDULES_COLUMN_LAYOUT: {
+  defaultOrder: readonly ScheduleSortKey[];
+  columns: Record<ScheduleSortKey, ColumnLayoutDef>;
+} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
 
 export function getScheduleSortConfig(key: ScheduleSortKey): SortColumnConfig {
   const def = COLUMNS[key];
@@ -282,8 +287,12 @@ export interface SchedulesTableProps {
   duplicateTargets: Set<string>;
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
-  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
+  columnLayout: SavedViewsColumnLayout<ScheduleSortKey>;
+  /** Filters view of the Edit View menu. */
   filterMenu?: SortableToggleListConfig<ScheduleFilterKey>;
+  /** Saved Views page of the Edit View menu. */
+  savedViews?: SavedViewsMenuConfig;
   emptyState?: ReactNode;
   /** When set, renders a leading checkbox column for bulk actions. */
   selection?: SchedulesTableSelection;
@@ -291,8 +300,8 @@ export interface SchedulesTableProps {
 
 /**
  * The Schedules overview table — same building blocks as the Rules, Tables
- * and Collections overviews: persisted drag-reorderable/toggleable columns
- * via `useColumnLayout` + `EditColumnsDropdown`, resizable headers,
+ * and Collections overviews: drag-reorderable/toggleable columns from the
+ * caller's saved view (`useSavedViews`) + `EditColumnsDropdown`, resizable headers,
  * click-to-sort, optional bulk-selection column, and the sticky Actions column.
  */
 export function SchedulesTable({
@@ -305,17 +314,14 @@ export function SchedulesTable({
   pendingKey,
   duplicateTargets,
   toolbarExtra,
+  columnLayout,
   filterMenu,
+  savedViews,
   emptyState,
   selection,
 }: SchedulesTableProps) {
   const { t } = useTranslation();
-  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } =
-    useColumnLayout<ScheduleSortKey>({
-      storageKey: LS_KEY_LAYOUT,
-      defaultOrder: DEFAULT_ORDER,
-      columns: COLUMNS as Record<ScheduleSortKey, ColumnLayoutDef>,
-    });
+  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
 
   const selectableCount = selection?.selectableKeys.size ?? 0;
   const selectedCount = selection?.selectedKeys.size ?? 0;
@@ -340,6 +346,7 @@ export function SchedulesTable({
           onDragEnd={handleDragEnd}
           sensors={sensors}
           filters={filterMenu}
+          savedViews={savedViews}
         />
       </div>
 

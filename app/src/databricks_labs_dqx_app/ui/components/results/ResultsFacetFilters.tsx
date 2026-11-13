@@ -12,6 +12,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TruncatedLabel } from "@/components/data-table/TruncatedLabel";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 
 export interface FacetFilterOption {
@@ -96,11 +97,11 @@ export function ResultsFacetFilter({
             className,
           )}
         >
-          <span className="truncate">{triggerLabel}</span>
+          <TruncatedLabel text={triggerLabel} />
           <ChevronDown className="size-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+      <PopoverContent align="start" className="w-60 min-w-(--radix-popover-trigger-width) p-0">
         <Command shouldFilter={false}>
           <CommandInput
             value={search}
@@ -123,9 +124,7 @@ export function ResultsFacetFilter({
                     className={cn("text-xs", isSelected && "bg-primary/10")}
                   >
                     <Checkbox checked={isSelected} className="shrink-0 pointer-events-none" />
-                    <span className="truncate" title={o.label}>
-                      {o.label}
-                    </span>
+                    <TruncatedLabel text={o.label} />
                   </CommandItem>
                 );
               })}
