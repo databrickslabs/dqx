@@ -6,7 +6,7 @@ registry rule; names are unique per rule (case-insensitive, trimmed).
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from databricks_labs_dqx_app.backend.policy_models import RulePolicy, RulePolicyIn
@@ -85,7 +85,7 @@ class RulePolicyService:
         name = body.name.strip()
         self._ensure_name_unique(rule_id, name)
         policy_id = str(uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             self._insert(policy_id, rule_id, name, body, user_email)
         except Exception as exc:
