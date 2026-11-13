@@ -24,8 +24,7 @@ def test_bundle_created_resources_have_dqx_studio_tag() -> None:
 
 
 def test_workspace_entities_do_not_use_unsupported_dab_tag_fields() -> None:
-    """Apps and dashboards omit tag fields unsupported by their DAB resources."""
+    """Apps omit tag fields unsupported by their DAB resource."""
     resources = _resources()
 
     assert "tags" not in resources["apps"]["dqx-studio"]
-    assert "tags" not in resources["dashboards"]["dqx_quality_overview"]

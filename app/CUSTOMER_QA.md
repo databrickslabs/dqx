@@ -18,7 +18,6 @@ DQX (the library) gives you the engine. DQX Studio gives you the workflow around
 - **Approval workflow** with `RULE_AUTHOR` / `RULE_APPROVER` separation
 - **Schedules** that submit runs to a serverless job — no notebook orchestration to maintain
 - **Run history** with status, sample bad rows, metrics, comments, and review status per run
-- **Insights dashboard** — a Lakeview/AI-BI dashboard embedded as an iframe, customisable per workspace
 - **Hybrid storage** (Lakebase OLTP for rules/settings, Delta for run history) so the UI feels like a real app, not a Spark query under every click
 
 ### 1.3 Is this a Databricks product or open source?
@@ -45,7 +44,6 @@ One Databricks Asset Bundle (`databricks.yml`) provisions everything in one `mak
 - **Four UC schemas** derived from a storage prefix (default `dqx_studio`): `<prefix>`, `<prefix>_tmp`, `<prefix>_genie`, `<prefix>_demo`, under a customer-supplied catalog
 - **UC volume** (`<prefix>.wheels`) the app uses to ship the task-runner wheel (which pins DQX) into the job
 - **SQL warehouse** — managed by the bundle, or BYO (bring-your-own) if you already have one
-- **Lakeview dashboard** (`dashboards.dqx_quality_overview`) pinned to the app's *Insights* page
 
 All stateful resources carry `lifecycle.prevent_destroy: true`, so a stray `bundle destroy` cannot drop them and wipe state.
 
@@ -137,10 +135,10 @@ It sits next to free-text comments on the run detail row — the dropdown is the
 ### 4.1 What roles exist inside the app?
 Four primary roles plus one orthogonal:
 
-- **`ADMIN`** — configure the app (review-status catalogue, custom metrics, labels, role mappings, retention, embedded dashboard, role↔group mapping)
+- **`ADMIN`** — configure the app (review-status catalogue, custom metrics, labels, role mappings, retention, role↔group mapping)
 - **`RULE_APPROVER`** — move rules from `proposed` to `approved`
 - **`RULE_AUTHOR`** — create/edit drafts and propose rules
-- **`VIEWER`** — read runs, dashboards, results
+- **`VIEWER`** — read runs and results
 - **`RUNNER`** (orthogonal) — can execute approved rules on-demand
 
 Roles are resolved from **Databricks workspace-group membership** via the `dq_role_mappings` table. Customers map their existing IAM groups onto DQX roles — we never invent a new identity system.
@@ -204,14 +202,13 @@ Three line items:
 - **Lakebase instance** — an autoscaling serverless Postgres project (default 0.5–1 CU) that scales to zero after ~5 min idle (`lakebase_suspend_timeout`, default `300s`) and wakes on the next request, so you're billed for compute only while it's active. Size is small — the rules catalog is in the low-thousands of rows for most customers.
 - **Task-runner job (serverless)** — only billed when validations run. Cost scales with row count and check complexity; profiler/dryrun is bounded, scheduled is what you make it.
 
-The app does **not** keep a SQL warehouse warm. The Lakeview dashboard auto-stops between uses.
+The app does **not** keep a SQL warehouse warm.
 
 ### 5.5 How do we monitor it?
 - App-level logs in Databricks Apps UI
 - Job-level logs in Jobs UI (each task-runner submission shows up as a run)
 - UC audit logs for table access
 - `dq_validation_runs` is itself a run history table — `SELECT … WHERE status = 'FAILED'` is your alert query if you want one
-- The Insights dashboard ships KPIs for run health, error trends, top-failing tables
 
 ---
 
@@ -250,8 +247,8 @@ On the roadmap conceptually, not committed. DQX has the metric infrastructure (`
 ### 7.3 API surface for external automation?
 Already there. Everything the UI does is REST under `/api/v1/*`. The OpenAPI spec is published, the React frontend is generated from it (`orval`), so external scripts get the same typed surface. Customers have used this to scaffold rules from dbt manifests.
 
-### 7.4 Embedded dashboards beyond the default?
-The bundle ships a starter Lakeview dashboard pinned to the *Insights* page. Customers customise it in **AI/BI Dashboards** (the iframe picks up changes immediately, no redeploy) or point Insights at a completely different dashboard ID via **Configuration → Insights dashboard**.
+### 7.4 Embedded dashboards?
+Studio doesn't ship or embed a dashboard. Results land in UC (`dq_validation_runs`, `dq_metrics`, and the `mv_dq_scores` metric view), so customers build their own AI/BI dashboards on those.
 
 ---
 
@@ -300,8 +297,7 @@ If the customer wants a 20-minute walkthrough:
 2. **Promote → Author → Dry run** — go from suggestion to approved rule with one round-trip
 3. **Schedule** — set it to run hourly; show the run hit immediately
 4. **Run detail** — sample bad rows, comments, review status dropdown, label by team
-5. **Insights dashboard** — the embedded AI/BI iframe, then jump out to AI/BI and edit a tile to show the live update path
-6. **Configuration page** — show how every operational knob (labels, statuses, custom metrics, retention, role mappings, dashboard ID) is admin-configurable without redeploy
+5. **Configuration page** — show how every operational knob (labels, statuses, custom metrics, retention, role mappings) is admin-configurable without redeploy
 
 ---
 
@@ -324,7 +320,7 @@ Stated up front, because it's real:
 1. **Multi-source out of the box.** ~15 connectors (Snowflake, BigQuery, Redshift, Postgres, MSSQL, Spark, Databricks, …). If the customer has a heterogeneous stack — Snowflake + Databricks + Postgres — Soda monitors all three from one UI. DQX Studio is Databricks-only.
 2. **Anomaly detection** (Sherlock algorithm). Soda Cloud auto-detects "row count dropped 30 % vs the last 14 days" without you writing a rule. DQX is rule-driven; you'd need to write the equivalent expectation manually (and tune it).
 3. **Incident management.** Soda Cloud has first-class incidents — assign to a person, link to a Slack thread, mark resolved, see MTTR over time. DQX has comments + review status, which is enough for triage but isn't an incident workflow.
-4. **Alerting.** Soda Cloud routes check failures to Slack / Teams / PagerDuty / email / webhooks. DQX has scheduled runs and a dashboard; **there is no built-in alerting today** — you'd build it from `dq_validation_runs` (e.g. a SQL alert on a Databricks dashboard, or a downstream Lakeflow job). Honest gap.
+4. **Alerting.** Soda Cloud routes check failures to Slack / Teams / PagerDuty / email / webhooks. DQX has scheduled runs and result tables in UC; **there is no built-in alerting today** — you'd build it from `dq_validation_runs` (e.g. a SQL alert on a Databricks dashboard, or a downstream Lakeflow job). Honest gap.
 5. **Time-tested at scale.** Soda has been shipping since ~2020 with a dedicated team. DQX is younger and field-maintained (Databricks Labs).
 
 If the customer needs any of those five things, **Soda is the better choice** and we should say so. The next question (11.3) is where DQX usually wins back.
@@ -356,7 +352,7 @@ The table the customer is going to ask for, side by side:
 | Quarantine of failing rows | Samples (default 100 in Soda Cloud) | Full set in Delta UC table (capped at 100k for SQL checks) |
 | Comments / review workflow | Incidents (first-class) | Comments + per-run review status with audit |
 | Alerts / notifications | Slack / Teams / PagerDuty / email / webhook | **None built-in** (use Databricks SQL Alerts on `dq_validation_runs`) |
-| Dashboards | Soda Cloud built-in | Embedded Lakeview/AI-BI; fully customisable |
+| Dashboards | Soda Cloud built-in | Build AI/BI dashboards on the UC result tables and score views; fully customisable |
 | Multi-source | ~15 warehouses | Databricks (UC) only |
 | Identity for scans | Single connection identity (typically a SP) | OBO per-user for interactive; SP for scheduled |
 | Data residency | Soda Cloud SaaS (or Agent if licensed) | 100 % customer Databricks account |

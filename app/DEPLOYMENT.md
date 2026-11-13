@@ -56,7 +56,7 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | `users` (DAB broad mode only) | `users` | `account users` |
 | A dedicated group | the group | the same group |
 
-**Broad mode** (`STUDIO_USER_GROUP=users` on DAB) shares the app, warehouse, dashboard, and Genie space with the workspace `users` group and grants Unity Catalog access to `account users`, which is **account-wide**. It is identified as such in configuration and is never implemented by nesting built-in groups. The Marketplace setup form never accepts it. An explicit `studio_user_group` in `BUNDLE_VARS` suppresses the automatic `account users` UC principal.
+**Broad mode** (`STUDIO_USER_GROUP=users` on DAB) shares the app, warehouse, and Genie space with the workspace `users` group and grants Unity Catalog access to `account users`, which is **account-wide**. It is identified as such in configuration and is never implemented by nesting built-in groups. The Marketplace setup form never accepts it. An explicit `studio_user_group` in `BUNDLE_VARS` suppresses the automatic `account users` UC principal.
 
 **Administrator access.** Members of the group named by `DQX_ADMIN_GROUP` **or** the workspace `admins` group may run setup (form submission and reconcile); authorization is a fresh OBO SCIM lookup of the caller, never forwarded headers or in-app role mappings. Unity Catalog cannot grant to the workspace-local `admins` group, so UC grants for administrators are made **only** to a custom `DQX_ADMIN_GROUP` account group, which receives the same warehouse, temporary, Genie, and demo access as the audience plus app `CAN_USE`. When `DQX_ADMIN_GROUP` is `admins` (the default), no administrator UC grants are made and administrators must also be members of the audience group to use OBO features. Audience membership never implies the in-app `ADMIN` role, and the `ADMIN` role supplies no Unity Catalog access.
 
@@ -74,7 +74,6 @@ The wheels volume always lives in the main schema. The Lakebase Postgres schema 
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
 | Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
-| Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
@@ -82,11 +81,11 @@ DAB schemas are owned by the deploying identity (the bundle has no declarative o
 
 ## How setup applies and verifies access
 
-Setup applies the grants and ACL updates it has authority for, then **re-reads** the resulting state; only the re-read decides the outcome. Missing grants and grants that cannot be inspected are distinct `action_required` results and **both block readiness**. ACL updates are additive: Studio never replaces a warehouse, Genie space, dashboard, or app ACL, and preserves unrelated principals on shared resources. Ordered steps: identity, Lakebase, configuration, Unity Catalog (catalog access), storage, warehouse, task runner, wheels, migrations, activation, access, app sharing. The access step runs after activation because the Genie objects must exist first. Reconciles are serialized, idempotent, and re-check every step even when ready; failures never delete persistent storage.
+Setup applies the grants and ACL updates it has authority for, then **re-reads** the resulting state; only the re-read decides the outcome. Missing grants and grants that cannot be inspected are distinct `action_required` results and **both block readiness**. ACL updates are additive: Studio never replaces a warehouse, Genie space, or app ACL, and preserves unrelated principals on shared resources. Ordered steps: identity, Lakebase, configuration, Unity Catalog (catalog access), storage, warehouse, task runner, wheels, migrations, activation, access, app sharing. The access step runs after activation because the Genie objects must exist first. Reconciles are serialized, idempotent, and re-check every step even when ready; failures never delete persistent storage.
 
 Setup first tries effective UC grant inspection with app credentials. If unavailable, the setup administrator's request-scoped OBO SQL executor inspects `SHOW GRANTS` on the target and parent containers using the supported `sql` OAuth scope. The administrator needs ownership, `READ METADATA`, `MANAGE`, or metastore administration to inspect grants, plus warehouse `CAN_USE` and parent `USE CATALOG` / `USE SCHEMA`. If unattended startup cannot inspect catalog-level access (the audience's and runner's `USE CATALOG` on the selected catalog) as the app SP, it reuses the last successful full verification of the same requirements, so after the first admin **Verify again** restarts stay available. Studio schema and wheels volume grants are always re-inspected; a changed audience, catalog, or runner identity, or any grant observed missing, requires an administrator to verify again.
 
-**Audience and administrators.** For the configured audience principals (and a custom admin group), setup grants and verifies catalog `USE CATALOG`; `USE SCHEMA` and `CREATE TABLE` on the temporary schema; `USE SCHEMA` on the Genie schema and `SELECT` on each allowlisted object; `USE SCHEMA` and `SELECT` on the demo schema; warehouse `CAN_USE`; Genie space `CAN_RUN` and dashboard `CAN_READ` when those are configured (otherwise reported as not applicable). Studio does not create dashboards for Marketplace installs. If the app service principal lacks grant authority on the catalog, the printed `GRANT` statements must be run by an administrator.
+**Audience and administrators.** For the configured audience principals (and a custom admin group), setup grants and verifies catalog `USE CATALOG`; `USE SCHEMA` and `CREATE TABLE` on the temporary schema; `USE SCHEMA` on the Genie schema and `SELECT` on each allowlisted object; `USE SCHEMA` and `SELECT` on the demo schema; warehouse `CAN_USE`; Genie space `CAN_RUN` when one is configured (otherwise reported as not applicable). If the app service principal lacks grant authority on the catalog, the printed `GRANT` statements must be run by an administrator.
 
 **Task-runner service principal.** Setup resolves the job's actual `run_as` and checks the following on **every cold startup**; it applies the schema and volume grants itself (never `ALL PRIVILEGES`, catalog privileges, or anything on the Genie or demo schemas) and verifies the result:
 
@@ -135,7 +134,7 @@ and are deliberately untouched.
 | Temporary and Genie schemas | Created by bundle | Created by setup | Tagged in both paths |
 | Persistent Studio UC tables/views | Created by startup/migrations | Created by startup/migrations | Tagged in both paths |
 | Demo schema/tables | Created by bundle/demo workflow | Schema created by setup; tables when demo is deployed | Schema tagged only for DAB |
-| App, dashboard, Genie Agent | Created | App/Genie created | Not implemented: no native DAB tag support in CLI 1.17.0 |
+| App, Genie Agent | Created | App/Genie created | Not implemented: no native DAB tag support in CLI 1.17.0 |
 | Service principals, roles, grants, ACLs, bindings | Mixed | Mixed | Not tagged |
 
 Temporary and Genie schemas, persistent Studio Unity Catalog tables and views,
@@ -143,7 +142,7 @@ and Studio-created demo resources are reconciled by the applicable deployment,
 startup, setup, and demo paths. The task-runner job is tagged in both DAB and
 Marketplace paths.
 
-App, dashboard, and Genie Agent tagging is not implemented: Databricks CLI
+App and Genie Agent tagging is not implemented: Databricks CLI
 1.17.0 provides no native DAB tag field for those resource types. The separate
 Beta workspace entity-tag API may support them, but DQX Studio intentionally
 does not call it. Service principals, roles, grants, ACLs, and bindings are
@@ -287,7 +286,7 @@ Add or update a deploy target. Only two variables are **required**:
 - `catalog_name` — the existing Unity Catalog catalog to create schemas/volume in
 - `dqx_service_principal_application_id` — the task-runner SP from [Step 1](#step-1-create-a-service-principal)
 
-The bundle manages its own SQL warehouse and Lakebase project. Its `studio_user_group` defaults to `dqx-studio-users`, which **must already exist**; override it with your approved scoped group if needed (or `users` for [broad mode](#audience-broad-mode-and-administrators)). It is wired into `DQX_USER_GROUPS` as a JSON audience list and used for the bundle's warehouse, app, dashboard, and schema audience grants; `studio_uc_principal` is the Unity Catalog grantee (the same group, or `account users` in broad mode). Storage names derive from `prefix`. The repo ships a canonical source target, **`dev`** (marked `default: true`). A minimal target looks like this:
+The bundle manages its own SQL warehouse and Lakebase project. Its `studio_user_group` defaults to `dqx-studio-users`, which **must already exist**; override it with your approved scoped group if needed (or `users` for [broad mode](#audience-broad-mode-and-administrators)). It is wired into `DQX_USER_GROUPS` as a JSON audience list and used for the bundle's warehouse, app, and schema audience grants; `studio_uc_principal` is the Unity Catalog grantee (the same group, or `account users` in broad mode). Storage names derive from `prefix`. The repo ships a canonical source target, **`dev`** (marked `default: true`). A minimal target looks like this:
 
 ```yaml
 targets:
@@ -321,8 +320,8 @@ All target-level variables, their defaults, and what they control:
 |---|---|---|---|
 | `catalog_name` | `dqx` | **Yes** | Unity Catalog catalog where schemas and the wheels volume are created. **Must already exist** — the bundle does not create the catalog itself. |
 | `dqx_service_principal_application_id` | `00000000-…` | **Yes** | Application ID of the service principal that runs the task-runner job. Created in [Step 1](#step-1-create-a-service-principal). The placeholder default fails validation. |
-| `studio_user_group` | `dqx-studio-users` | Must exist | Audience group for warehouse, app, dashboard, and schema access; supplied to `DQX_USER_GROUPS` as a JSON list. Accepts `users` for DAB broad mode (workspace ACL `users`, UC `account users`); `account users` and `admins` are rejected. Set via `make app-deploy STUDIO_USER_GROUP=...`. |
-| `admin_group` | `admins` (bundle and local Python) | Yes for prod | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path), may run setup, and receives app/warehouse `CAN_USE`, dashboard `CAN_READ`, and (when it is a custom account group, not `admins`) the admin UC grants. Workspace `admins` members may always run setup. Override per target with a dedicated account group (e.g. `dqx-admins-prod`) so administrators also receive Unity Catalog access; with `admins`, administrators must also belong to the audience group to use OBO features. In every path, `AppConfig` defaults to the workspace `admins` group; `DQX_ADMIN_GROUP` overrides that default for local testing or deployment. Additional roles are assigned at runtime via the in-app Role Management UI. |
+| `studio_user_group` | `dqx-studio-users` | Must exist | Audience group for warehouse, app, and schema access; supplied to `DQX_USER_GROUPS` as a JSON list. Accepts `users` for DAB broad mode (workspace ACL `users`, UC `account users`); `account users` and `admins` are rejected. Set via `make app-deploy STUDIO_USER_GROUP=...`. |
+| `admin_group` | `admins` (bundle and local Python) | Yes for prod | Workspace group whose members get the in-app `ADMIN` role unconditionally (bootstrap admin path), may run setup, and receives app/warehouse `CAN_USE` and (when it is a custom account group, not `admins`) the admin UC grants. Workspace `admins` members may always run setup. Override per target with a dedicated account group (e.g. `dqx-admins-prod`) so administrators also receive Unity Catalog access; with `admins`, administrators must also belong to the audience group to use OBO features. In every path, `AppConfig` defaults to the workspace `admins` group; `DQX_ADMIN_GROUP` overrides that default for local testing or deployment. Additional roles are assigned at runtime via the in-app Role Management UI. |
 | `app_name` | `dqx-studio` | No | Deployed Databricks App name. Override per target (e.g. `dqx-studio-dev`, `dqx-studio-prod`) when deploying multiple targets to the same workspace, or for personal sandboxes. |
 | `sql_warehouse_name` | `dqx-studio-sql-warehouse` | No | Name of the bundle-managed SQL warehouse. Override per target to avoid duplicates in shared workspaces. |
 | `sql_warehouse_size` | `Small` | No | Cluster size of the bundle-managed warehouse (e.g. `2X-Small`, `Small`, `Medium`). |
@@ -452,10 +451,6 @@ GRANT SELECT ON TABLE <catalog>.<prefix>_genie.dim_dq_monitored_tables  TO `<uc-
 -- Demo content is meant to be explored.
 GRANT USE_SCHEMA, SELECT ON SCHEMA <catalog>.<prefix>_demo TO `<uc-audience>`;
 
--- DAB only: the deployer needs SELECT for the embed-credentials Insights dashboard
--- (the bundle uses ${workspace.current_user.userName}).
-GRANT USE_SCHEMA, SELECT ON SCHEMA <catalog>.<prefix> TO `<deployer>`;
-
 -- Catalog access (see the USE CATALOG prerequisite).
 GRANT USE_CATALOG, CREATE_SCHEMA ON CATALOG <catalog> TO `<app-sp-id>`;
 GRANT USE_CATALOG ON CATALOG <catalog> TO `<job-sp-id>`;
@@ -520,6 +515,10 @@ cd app && databricks bundle deploy -p <your-profile> -t <your-target>
 # The app restarts automatically after deployment
 ```
 
+### Upgrading: starter dashboard removed
+
+Earlier Studio bundles shipped a starter AI/BI dashboard. The first `bundle deploy` after upgrading **deletes** `[<target>] DQX Quality Overview` and revokes the deployer's `USE SCHEMA` / `SELECT` grant on the main schema (`<catalog>.<prefix>`), which existed only so that dashboard could query with embedded credentials. If you customised the dashboard, copy it first: open it in **AI/BI Dashboards** and use **Clone** (or export the `.lvdash.json`) before you redeploy. A cloned dashboard that embeds credentials needs its owner to hold `SELECT` on the Studio result tables.
+
 ## Monitor and Manage
 
 Replace `<app-name>` with the deployed app name (the value of `app_name` for your target — default `dqx-studio`):
@@ -581,20 +580,6 @@ This is the safety guard doing its job — see [Step 3](#step-3-stateful-storage
 
 **Lakebase queries time out / app logs show pool exhaustion:**
 Raise `lakebase_max_cu` in `databricks.yml` and redeploy. You can also raise `DQX_LAKEBASE_POOL_MAX_SIZE` (default 10) on the app's environment if many concurrent requests are hitting the OLTP path.
-
-## Insights dashboard
-
-The bundle ships a starter AI/BI dashboard (`dashboards/dqx_quality_overview.lvdash.json`) declared as `resources.dashboards.dqx_quality_overview` in `databricks.yml`. It's automatically created on deploy and pinned to the app's **Insights** page via the `DQX_DEFAULT_DASHBOARD_ID` env var, so the page works out-of-the-box. Its `permissions:` block (which replaces the dashboard ACL on every deploy) gives the app SP `CAN_MANAGE` and the audience and admin group `CAN_READ`; setup's access step must read this ACL to reach ready, and falls back to the setup administrator's credentials when the app SP cannot read it.
-
-**What you get**: a four-row layout with KPI counters (total runs, monitored tables, total errors, pass rate), trend charts (runs over time by status; errors & warnings over time), drilldowns (top failing tables; quarantined rows over time), and a recent-runs table.
-
-**Customising the starter**: open it in **Databricks → AI/BI Dashboards**, add or change widgets, and save. The iframe inside DQX Studio picks up changes immediately — no redeploy needed. You can also point the Insights page at a completely different dashboard via **Configuration → Insights dashboard**; clearing that override reverts to the starter.
-
-**Query identity**: the dashboard is configured with `embed_credentials: true`, so queries run as the bundle deployer rather than the iframe viewer. This is deliberate — end users receive no SELECT on the main-schema tables, keeping `dq_quarantine_records` (potentially PII row payloads) off the workspace UC surface. Genie access is limited to five approved views and two metadata tables. The widgets in the starter only expose aggregated counts and run metadata, so deployer-credentialed queries don't leak anything a viewer couldn't already see in the Runs History page. To switch to viewer-credentials, flip `embed_credentials` to `false` and grant `SELECT` on the DQX tables to the audience you want to expose.
-
-The bundle grants the deployer `USE SCHEMA` + `SELECT ON SCHEMA <catalog>.<schema>` natively via a `grants:` entry that resolves `${workspace.current_user.userName}` at deploy time, so the dashboard works end-to-end without manual UC plumbing. It resolves for both human deploys (grants the email) and SP-based deploys (grants the application ID).
-
-**One operational caveat**: the "deployer" identity is whoever ran `databricks bundle deploy` (the human or service principal authenticated to the workspace at deploy time). If that identity later loses access to the DQX tables, dashboard tiles will fail to render until someone with access redeploys. For production, deploy the bundle as a stable service principal so the dashboard identity doesn't follow individual humans.
 
 ## Run review status
 

@@ -77,7 +77,6 @@ def _access(
     admin_group: str = "admins",
     allow_broad: bool = False,
     settings: MemorySettings | None = None,
-    dashboard_id: str = "",
 ) -> AudienceAccess:
     lakebase = LakebaseConnection(
         "projects/p/branches/b/endpoints/e", None, 5432, "databricks_postgres", None, None, "dqx_studio"
@@ -93,7 +92,6 @@ def _access(
         sql=sql,
         settings=settings or MemorySettings(),
         app_name="dqx-studio",
-        dashboard_id=dashboard_id,
     )
 
 
@@ -209,7 +207,6 @@ def test_access_grant_for_a_name_that_cant_be_quoted_safely_is_left_out_and_unve
         sql=sql,
         settings=MemorySettings(),
         app_name="dqx-studio",
-        dashboard_id="",
     )
     workspace.grants.get_effective.return_value = _grants()
 
@@ -305,42 +302,28 @@ def test_genie_space_with_stronger_level_is_not_updated(workspace, sql) -> None:
     workspace.permissions.update.assert_not_called()
 
 
-def test_configured_dashboard_requires_can_read(workspace, sql) -> None:
-    workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
-    workspace.permissions.get.return_value = _acl()
-
-    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access()
-
-    assert step.code == "dashboard_sharing_missing"
-    object_type, object_id = workspace.permissions.update.call_args.args
-    assert (object_type, object_id) == ("dashboards", "dash-1")
-    request = workspace.permissions.update.call_args.kwargs["access_control_list"]
-    assert [(entry.group_name, entry.permission_level) for entry in request] == [
-        ("data-team", PermissionLevel.CAN_READ)
-    ]
-    workspace.permissions.set.assert_not_called()
-
-
 def test_unreadable_shared_resource_acl_fails_closed(workspace, sql) -> None:
     workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
     workspace.permissions.get.side_effect = PermissionError("denied")
 
-    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access()
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access()
 
     assert step.code == "shared_resource_check_failed"
     assert "denied" not in step.summary + " ".join(step.instructions)
 
 
-def test_dashboard_acl_read_falls_back_to_the_setup_administrator(workspace, sql) -> None:
+def test_genie_space_acl_read_falls_back_to_the_setup_administrator(workspace, sql) -> None:
     workspace.grants.get_effective.return_value = _grants(Privilege.ALL_PRIVILEGES)
     workspace.permissions.get.side_effect = PermissionError("denied")
     reader = create_autospec(WorkspaceClient, instance=True)
-    reader.permissions.get.return_value = _acl(("data-team", PermissionLevel.CAN_READ))
+    reader.permissions.get.return_value = _acl(("data-team", PermissionLevel.CAN_RUN))
 
-    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access(reader_ws=reader)
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(
+        reader_ws=reader
+    )
 
     assert step.state == StepState.PASSED
-    reader.permissions.get.assert_called_with("dashboards", "dash-1")
+    reader.permissions.get.assert_called_with("genie", "space-1")
     reader.permissions.update.assert_not_called()
 
 
@@ -366,7 +349,9 @@ def test_acl_unreadable_by_every_identity_fails_closed(workspace, sql) -> None:
     reader = create_autospec(WorkspaceClient, instance=True)
     reader.permissions.get.side_effect = PermissionError("denied")
 
-    step = _access(workspace, sql, dashboard_id="dash-1").reconcile_access(reader_ws=reader)
+    step = _access(workspace, sql, settings=MemorySettings({"dq_genie_space_id": "space-1"})).reconcile_access(
+        reader_ws=reader
+    )
 
     assert step.code == "shared_resource_check_failed"
 
