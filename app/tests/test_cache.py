@@ -76,6 +76,21 @@ class TestTtl:
         assert await cache.get("k") is None  # not MISS!
 
 
+class TestSyncAccess:
+    def test_put_then_peek_round_trips_and_shares_the_store(self, cache):
+        assert cache.peek("k") is MISS
+        cache.put("k", None)
+        assert cache.peek("k") is None
+
+    def test_peek_honours_ttl(self, cache):
+        cache.put("k", "v", ttl=-1)
+        assert cache.peek("k") is MISS
+
+    async def test_async_get_sees_sync_put(self, cache):
+        cache.put("k", 7)
+        assert await cache.get("k") == 7
+
+
 # ---------------------------------------------------------------------------
 # cached() decorator
 # ---------------------------------------------------------------------------

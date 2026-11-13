@@ -41,6 +41,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_severity,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     DeferredTaskRunner,
     OwnedObject,
@@ -1048,6 +1049,7 @@ class RegistryService:
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
         self._sql.delete(self._table, where={"rule_id": rule_id})
+        bump_policy_generation()
         self._record_history(rule_id, rule.definition, rule.version, "delete", rule.status, None, user_email)
         logger.info("Deleted registry rule %s (by %s)", rule_id, user_email)
 
@@ -1071,6 +1073,7 @@ class RegistryService:
             return 0
         self._sql.delete(self._versions_table, where={"rule_id": WhereIn(rule_ids)})
         self._sql.delete(self._table, where={"is_builtin": True})
+        bump_policy_generation()
         logger.info("Purged %d built-in registry rule(s)", len(rule_ids))
         return len(rule_ids)
 
@@ -1123,6 +1126,7 @@ class RegistryService:
             f"WHERE rule_id = '{e_rule_id}'"
         )
         self._sql.execute(sql)
+        bump_policy_generation()  # status / definition changes alter what rule policies attach
 
     def _update_approve_cas(self, rule: RegistryRule, *, expected_version: int, expected_status: str) -> bool:
         """Conditional approve write — returns False if another writer won the race."""
@@ -1151,6 +1155,7 @@ class RegistryService:
             f"  AND status = '{e_expected_status}'"
         )
         self._sql.execute(sql)
+        bump_policy_generation()  # an approved rule's policies start attaching
         # Executors don't return rowcount portably — confirm via re-read.
         refreshed = self._get(rule.rule_id)
         return (

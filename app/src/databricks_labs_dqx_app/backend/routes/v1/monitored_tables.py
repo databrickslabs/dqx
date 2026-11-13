@@ -12,13 +12,14 @@ from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend import _scheduler_registry as scheduler_registry
 from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_auto_approver, should_auto_approve
 from databricks_labs_dqx_app.backend.common.authorization import CAN_RUN_ROLES, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentActingUser,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -32,8 +33,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_pending_application_service,
     get_permissions_service,
+    get_policy_apply_service,
     get_profiling_suggestion_service,
     get_registry_service,
+    get_rule_policy_service,
     get_rule_suggester,
     get_rules_catalog_service,
     get_schedule_grant_service,
@@ -46,6 +49,7 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
     DraftRunGateService,
     DraftRunRequiredError,
 )
+from databricks_labs_dqx_app.backend.services.monitored_table_registration import REGISTER_TABLE_ROLES, register_table
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
@@ -88,10 +92,12 @@ from databricks_labs_dqx_app.backend.models import (
     MatchRulesIn,
     MatchRulesOut,
     SuggestRulesOut,
+    TagRuleSuggestionOut,
     TagSuggestionsOut,
 )
 from databricks_labs_dqx_app.backend.registry_models import (
     MonitoredTable,
+    compute_mapping_hash,
     get_rule_dimension,
     get_rule_name,
     get_rule_pass_threshold,
@@ -121,6 +127,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     MonitoredTableService,
     MonitoredTableSummary,
 )
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.sql_utils import validate_fqn
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.pending_application_service import PendingApplicationService
@@ -129,6 +136,13 @@ from databricks_labs_dqx_app.backend.services.profiling_suggestion_service impor
     BindingNotFoundError as ProfilingBindingNotFoundError,
     ProfilingSuggestionService,
 )
+from databricks_labs_dqx_app.backend.services.policy_apply_service import (
+    ActingUser,
+    OpenEvaluation,
+    PolicyApplyService,
+)
+from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggester
 from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagSuggestionService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
@@ -293,6 +307,32 @@ def list_implemented_rules(
         raise HTTPException(status_code=500, detail="Failed to list implemented rules.")
 
 
+def _evaluate_on_open(
+    policy_apply: PolicyApplyService, binding_id: str, opened: OpenEvaluation, acting_user: ActingUser
+) -> None:
+    """Background task: the evaluation a table open scheduled; never raises."""
+    try:
+        policy_apply.evaluate_on_open(binding_id, opened, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
+
+
+def _evaluate_binding(policy_apply: PolicyApplyService, binding_id: str, acting_user: ActingUser) -> None:
+    """Background task: evaluate the policies reaching one binding; never raises."""
+    try:
+        policy_apply.evaluate_binding(binding_id, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy evaluation for binding {safe_log_value(binding_id)} failed", exc_info=True)
+
+
+def _evaluate_tables(policy_apply: PolicyApplyService, table_fqns: list[str], acting_user: ActingUser) -> None:
+    """Background task: evaluate the policies reaching newly registered tables; never raises."""
+    try:
+        policy_apply.evaluate_tables(table_fqns, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning("Rule policy evaluation after bulk-register failed", exc_info=True)
+
+
 @router.get(
     "/{binding_id}",
     response_model=MonitoredTableDetailOut,
@@ -302,31 +342,27 @@ def list_implemented_rules(
 def get_monitored_table(
     binding_id: str,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> MonitoredTableDetailOut:
     """Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
-    When tag-auto-apply is on, first runs a selective apply-on-tag rescan for
-    this table (OBO, so it sees the caller's tags) so any newly-matching rules
-    are attached and appear in the response immediately — rather than waiting for
-    the periodic background sweep. Best-effort: a rescan failure never blocks the
-    read, and it is a no-op when the toggle is off.
+    After responding, evaluates every rule policy reaching this table as the
+    caller (so it only attaches where they may apply rules); rules it attaches
+    show up on the next read, and ``policy_evaluation_pending`` tells the client
+    to re-read shortly. Nothing is evaluated when no policy reaches the table, or
+    when the caller opened it within the last few minutes and no policy, rule or
+    registration changed since. Best-effort: a policy failure never affects the read.
     """
     try:
         detail = svc.get(binding_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"Monitored table not found: {binding_id}")
-        try:
-            attached = tag_suggestions.apply_matches(binding_id, _current_user_email(obo_ws))
-        except Exception:
-            logger.warning("Tag auto-apply rescan on open failed (non-fatal)", exc_info=True)
-            attached = 0
-        # Re-read only when the rescan actually attached rows, so the response
-        # includes them; otherwise reuse the detail we already loaded.
-        if attached:
-            detail = svc.get(binding_id) or detail
-        return MonitoredTableDetailOut.from_domain(detail)
+        opened = policy_apply.begin_open(binding_id, detail.table.table_fqn, acting_user)
+        if opened.run:
+            background_tasks.add_task(_evaluate_on_open, policy_apply, binding_id, opened, acting_user)
+        return MonitoredTableDetailOut.from_domain(detail, policy_evaluation_pending=opened.pending)
     except HTTPException:
         raise
     except Exception as e:
@@ -343,14 +379,16 @@ def get_monitored_table(
     "",
     response_model=MonitoredTableSummaryOut,
     operation_id="registerMonitoredTable",
-    dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
+    dependencies=[require_role(*REGISTER_TABLE_ROLES)],
 )
 def register_monitored_table(
     body: RegisterMonitoredTableIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
-    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> MonitoredTableSummaryOut:
     """Register a table under Rules Registry governance (status ``draft``).
 
@@ -361,23 +399,17 @@ def register_monitored_table(
     """
     try:
         user_email = _current_user_email(obo_ws)
-        owner = body.owner or discovery.get_table_owner(body.table_fqn)
-        table = svc.register(
+        table = register_table(
             body.table_fqn,
             user_email,
-            owner=owner,
+            monitored_tables=svc,
+            discovery=discovery,
+            owner=body.owner,
             owner_display_name=body.owner_display_name,
         )
-        # Apply-on-tag: after a successful register, auto-attach every published
-        # tag-mapped rule this table now matches — via TagSuggestionService, which
-        # reads the table's tags OBO (as the caller) so it sees tags the app
-        # service principal cannot. ``apply_matches`` is a no-op when the
-        # tag_auto_apply toggle is off, and is best-effort here so it can never
-        # turn a successful register into a 500.
-        try:
-            tag_suggestions.apply_matches(table.binding_id, user_email)
-        except Exception:
-            logger.warning("Tag auto-apply after register failed (non-fatal)", exc_info=True)
+        # Rule policies: after responding, evaluate every policy reaching the new
+        # table as the caller (OBO snapshot). Best-effort; never affects the register.
+        background_tasks.add_task(_evaluate_binding, policy_apply, table.binding_id, acting_user)
         return MonitoredTableSummaryOut.from_domain(MonitoredTableSummary(table=table, applied_rule_count=0))
     except DuplicateMonitoredTableError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -449,7 +481,9 @@ def bulk_register_monitored_tables(
     body: BulkRegisterMonitoredTablesIn,
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
+    background_tasks: BackgroundTasks,
 ) -> BulkRegisterMonitoredTablesOut:
     """Register many tables under Rules Registry governance in one call.
 
@@ -472,21 +506,10 @@ def bulk_register_monitored_tables(
         user_email = _current_user_email(obo_ws)
         _verify_tables_accessible(obo_ws, body.table_fqns)
         result = svc.bulk_register(body.table_fqns, user_email, owner=body.owner)
-        # Apply-on-tag: auto-attach matches for only the NEWLY-registered tables
-        # (never skipped_existing/invalid). ``BulkRegisterResult.registered`` is a
-        # list of table FQNs (no binding_id), so resolve each binding via
-        # ``get_by_table_fqn``, then ``apply_matches`` (OBO, no-op when the toggle
-        # is off — so a disabled feature still does N cheap lookups here; matches
-        # the previous behaviour and the onboarding path is not latency-critical).
-        # Best-effort per table; guarded so it can never turn a successful
-        # bulk-register into a 500.
-        for fqn in result.registered:
-            try:
-                detail = svc.get_by_table_fqn(fqn)
-                if detail is not None:
-                    tag_suggestions.apply_matches(detail.table.binding_id, user_email)
-            except Exception:
-                logger.warning("Tag auto-apply after bulk-register failed (non-fatal)", exc_info=True)
+        # Rule policies: after responding, evaluate only the NEWLY-registered tables
+        # (never skipped_existing/invalid), in one pass over one snapshot. Best-effort.
+        if result.registered:
+            background_tasks.add_task(_evaluate_tables, policy_apply, list(result.registered), acting_user)
         return BulkRegisterMonitoredTablesOut.from_domain(result)
     except HTTPException:
         raise
@@ -1092,7 +1115,7 @@ def save_applied_rules(
                     tags=tags,
                 )
             )
-        applied = svc.save_applied_rules(binding_id, desired, user_email)
+        applied = svc.save_applied_rules(binding_id, desired, user_email, known_applied_ids=body.known_applied_ids)
         # Return the ENRICHED shape (rule_name/dimension/severity populated),
         # matching how the GET builds ``applied_rules`` via
         # ``AppliedRuleOut.from_summary`` (B2-26). The lean ``from_domain``
@@ -1776,8 +1799,39 @@ async def match_rules_for_table(
 
 
 # ------------------------------------------------------------------
-# Tag-based rule suggestions (apply-on-tag — OFF path, Task 10b)
+# Tag-based and rule-policy suggestions
 # ------------------------------------------------------------------
+
+
+def _policy_suggestions(
+    matches: list[PolicyMatch], policies: RulePolicyService, registry: RegistryService
+) -> list[TagRuleSuggestionOut]:
+    """Map ambiguous rule-policy matches to suggestions, naming the policy that produced each."""
+    if not matches:
+        return []
+    names: dict[str, str] = {}
+    for policy_id in dict.fromkeys(m.policy_id for m in matches):
+        policy = policies.get(policy_id)
+        if policy is not None:
+            names[policy_id] = policy.name
+    rules = registry.get_rules_many(sorted({m.rule_id for m in matches}))
+    out: list[TagRuleSuggestionOut] = []
+    for match in matches:
+        rule = rules.get(match.rule_id)
+        name = names.get(match.policy_id)
+        if rule is None or name is None:
+            continue
+        out.append(
+            TagRuleSuggestionOut(
+                rule_id=match.rule_id,
+                rule_name=get_rule_name(rule.user_metadata),
+                dimension=get_rule_dimension(rule.user_metadata),
+                severity=get_rule_severity(rule.user_metadata),
+                column_mapping=match.column_mapping,
+                explanation=f"Policy {name}: several possible columns",
+            )
+        )
+    return out
 
 
 @router.get(
@@ -1789,21 +1843,42 @@ async def match_rules_for_table(
 def list_tag_suggestions(
     binding_id: str,
     svc: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
+    policies: Annotated[RulePolicyService, Depends(get_rule_policy_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
 ) -> TagSuggestionsOut:
-    """List tag-matched published rules (with a representative column mapping) for a monitored table.
+    """List accept-to-attach rule suggestions for a monitored table.
 
-    The OFF-path counterpart to auto-apply: when ``tag_auto_apply`` is off,
-    tag-matched rules surface here as accept-to-attach suggestions instead of
-    auto-attaching. Best-effort — any read/service failure degrades to an empty
-    list with HTTP 200; this route never raises for a missing match or an
-    unreadable table (mirroring the suggest-rules contract).
+    Combines tag-matched published rules (always on) with rule-policy matches
+    that have several possible columns (evaluated as the caller, nothing
+    attached). A policy suggestion repeating a tag suggestion's rule and mapping
+    is dropped. Best-effort — any read/service failure degrades that source to
+    an empty list with HTTP 200; this route never raises.
     """
     try:
-        suggestions = svc.suggest(binding_id)
+        suggestions = TagSuggestionsOut.from_domain(svc.suggest(binding_id)).suggestions
     except Exception:
-        logger.warning(f"Failed to list tag suggestions for monitored table {binding_id}", exc_info=True)
-        return TagSuggestionsOut()
-    return TagSuggestionsOut.from_domain(suggestions)
+        logger.warning(
+            f"Failed to list tag suggestions for monitored table {safe_log_value(binding_id)}", exc_info=True
+        )
+        suggestions = []
+    try:
+        from_policies = _policy_suggestions(
+            policy_apply.ambiguous_for_binding(binding_id, acting_user), policies, registry
+        )
+    except Exception:
+        logger.warning(
+            f"Failed to list rule policy suggestions for monitored table {safe_log_value(binding_id)}", exc_info=True
+        )
+        from_policies = []
+    seen = {(s.rule_id, compute_mapping_hash([s.column_mapping])) for s in suggestions}
+    for suggestion in from_policies:
+        key = (suggestion.rule_id, compute_mapping_hash([suggestion.column_mapping]))
+        if key not in seen:
+            seen.add(key)
+            suggestions.append(suggestion)
+    return TagSuggestionsOut(suggestions=suggestions)
 
 
 # ------------------------------------------------------------------

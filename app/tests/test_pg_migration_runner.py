@@ -185,7 +185,7 @@ class TestBaselineCatalogue:
     def test_baseline_is_version_one(self):
         assert PG_MIGRATIONS[0].version == 1
 
-    def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+    def test_later_migrations_only_use_additive_or_check_rewrite_ddl(self):
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
                 assert (
@@ -193,7 +193,14 @@ class TestBaselineCatalogue:
                     or _DROP_TABLE_RE.fullmatch(stmt)
                     or _DROP_CONSTRAINT_RE.fullmatch(stmt)
                     or _ADD_CONSTRAINT_RE.fullmatch(stmt)
-                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, or CHECK constraint rewrite: {stmt[:120]}"
+                    or stmt.startswith(
+                        (
+                            "CREATE TABLE IF NOT EXISTS",
+                            "CREATE INDEX IF NOT EXISTS",
+                            "CREATE UNIQUE INDEX IF NOT EXISTS",
+                        )
+                    )
+                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, CREATE TABLE/INDEX, or CHECK constraint rewrite: {stmt[:120]}"
 
     def test_dropped_tables_are_not_in_the_baseline(self):
         for m in PG_MIGRATIONS[1:]:
@@ -225,13 +232,14 @@ class TestBaselineCatalogue:
             ), f"unexpected baseline statement kind: {stmt[:120]}"
 
     def test_no_table_is_created_twice(self):
-        created = _created_tables(_baseline())
+        created = _created_tables(" ".join(" ".join(m.sql.split()) for m in PG_MIGRATIONS))
         assert len(created) == len(set(created))
 
     def test_oltp_table_set_is_derived_from_postgres_baseline(self):
         # The view is not a table and must stay out of OLTP_TABLE_NAMES
         # (it is never cleared by the reset sweep nor version-tracked).
-        assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+        all_sql = " ".join(" ".join(m.sql.split()) for m in PG_MIGRATIONS)
+        assert set(_created_tables(all_sql)) == set(OLTP_TABLE_NAMES)
         assert "dq_rules_core" not in OLTP_TABLE_NAMES
 
 

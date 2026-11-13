@@ -7,6 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
+import asyncio
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -18,6 +19,7 @@ from databricks_labs_dqx_app.backend.models import (
     BATCH_IMPORT_MAX_RULES,
     BatchImportRegistryRulesIn,
     CreateRegistryRuleIn,
+    RegistryRuleOut,
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
@@ -37,6 +39,9 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     undeprecate_registry_rule,
     update_registry_rule,
 )
+from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
+
+_ACTING_USER = ActingUser(email="alice@x", role=UserRole.RULE_APPROVER, principal_ids=frozenset({"alice@x"}))
 
 
 def _definition() -> RuleDefinition:
@@ -819,10 +824,12 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 0
+        policies = MagicMock()
         result = delete_registry_rule(
             "r1",
             svc=svc,
             apply_rules=apply_rules,
+            policies=policies,
             user_email="alice@x",
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
@@ -830,6 +837,25 @@ class TestDelete:
         )
         assert result == {"status": "deleted", "rule_id": "r1"}
         svc.delete.assert_called_once_with("r1", "alice@x")
+        policies.delete_for_rule.assert_called_once_with("r1")
+
+    def test_delete_succeeds_when_policy_cascade_fails(self):
+        svc = MagicMock()
+        apply_rules = MagicMock()
+        apply_rules.count_applications_for_rule.return_value = 0
+        policies = MagicMock()
+        policies.delete_for_rule.side_effect = RuntimeError("boom")
+        result = delete_registry_rule(
+            "r1",
+            svc=svc,
+            apply_rules=apply_rules,
+            policies=policies,
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+        )
+        assert result == {"status": "deleted", "rule_id": "r1"}
 
     def test_delete_missing_rule_raises_404(self):
         svc = MagicMock()
@@ -841,6 +867,7 @@ class TestDelete:
                 "r1",
                 svc=svc,
                 apply_rules=apply_rules,
+                policies=MagicMock(),
                 user_email="alice@x",
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
@@ -852,11 +879,13 @@ class TestDelete:
         svc = MagicMock()
         apply_rules = MagicMock()
         apply_rules.count_applications_for_rule.return_value = 2
+        policies = MagicMock()
         with pytest.raises(HTTPException) as excinfo:
             delete_registry_rule(
                 "r1",
                 svc=svc,
                 apply_rules=apply_rules,
+                policies=policies,
                 user_email="alice@x",
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
@@ -864,6 +893,7 @@ class TestDelete:
             )
         assert excinfo.value.status_code == 409
         svc.delete.assert_not_called()
+        policies.delete_for_rule.assert_not_called()
 
 
 class TestLifecycleRoutes:
@@ -913,6 +943,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         result = approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -921,7 +952,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         assert result.status == "approved"
@@ -935,6 +967,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -943,7 +976,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         embeddings.embed_and_store.assert_called_once_with(published)
@@ -960,6 +994,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -968,7 +1003,8 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 500
@@ -984,6 +1020,7 @@ class TestLifecycleRoutes:
         materializer = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -992,7 +1029,8 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         materializer.rematerialize_for_rule.assert_called_once_with("r1")
@@ -1006,6 +1044,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -1014,7 +1053,8 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 500
@@ -1034,6 +1074,7 @@ class TestLifecycleRoutes:
         monitored_tables = MagicMock()
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -1042,7 +1083,8 @@ class TestLifecycleRoutes:
             app_settings=_no_auto_upgrade(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         assert monitored_tables.rollup_status.call_count == 2
@@ -1064,6 +1106,7 @@ class TestLifecycleRoutes:
         app_settings.get_auto_upgrade_without_approval.return_value = True
         approve_registry_rule(
             "r1",
+            BackgroundTasks(),
             svc=svc,
             embeddings=embeddings,
             materializer=materializer,
@@ -1072,7 +1115,8 @@ class TestLifecycleRoutes:
             app_settings=app_settings,
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=MagicMock(),
+            policy_apply=MagicMock(),
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
         version_svc.refreeze_current.assert_called_once_with("b1")
@@ -1136,6 +1180,7 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             approve_registry_rule(
                 "r1",
+                BackgroundTasks(),
                 svc=svc,
                 embeddings=embeddings,
                 materializer=materializer,
@@ -1144,18 +1189,18 @@ class TestLifecycleRoutes:
                 monitored_tables=MagicMock(),
                 apply_rules=MagicMock(),
                 pending=self._pending_stub(),
-                tag_reconcile=MagicMock(),
+                policy_apply=MagicMock(),
+                acting_user=_ACTING_USER,
                 user_email="alice@x",
             )
         assert excinfo.value.status_code == 404
 
-    def test_approve_triggers_tag_reconcile(self):
-        """Apply-on-tag (Task 7): a successful approve reconciles the rule once."""
+    def _approve(self, policy_apply: MagicMock, background_tasks: BackgroundTasks) -> RegistryRuleOut:
         svc = MagicMock()
         svc.approve.return_value = _rule(status="approved", version=1)
-        tag_reconcile = MagicMock()
-        approve_registry_rule(
+        return approve_registry_rule(
             "r1",
+            background_tasks,
             svc=svc,
             embeddings=MagicMock(),
             materializer=MagicMock(),
@@ -1164,31 +1209,34 @@ class TestLifecycleRoutes:
             monitored_tables=MagicMock(),
             apply_rules=MagicMock(),
             pending=self._pending_stub(),
-            tag_reconcile=tag_reconcile,
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
             user_email="alice@x",
         )
-        tag_reconcile.reconcile_rule.assert_called_once_with("r1", "alice@x")
 
-    def test_approve_tag_reconcile_failure_is_non_fatal(self):
-        """A raising tag-reconcile must NOT turn a successful approve into a 500."""
-        svc = MagicMock()
-        svc.approve.return_value = _rule(status="approved", version=1)
-        tag_reconcile = MagicMock()
-        tag_reconcile.reconcile_rule.side_effect = RuntimeError("boom")
-        result = approve_registry_rule(
-            "r1",
-            svc=svc,
-            embeddings=MagicMock(),
-            materializer=MagicMock(),
-            version_svc=MagicMock(),
-            app_settings=_no_auto_upgrade(),
-            monitored_tables=MagicMock(),
-            apply_rules=MagicMock(),
-            pending=self._pending_stub(),
-            tag_reconcile=tag_reconcile,
-            user_email="alice@x",
-        )
+    def test_approve_runs_the_rule_policies_after_responding(self):
+        """Approve returns before evaluating; the rule's policies then run once, as the approver."""
+        policy_apply = create_autospec(PolicyApplyService, instance=True)
+        background_tasks = BackgroundTasks()
+
+        self._approve(policy_apply, background_tasks)
+
+        policy_apply.run_rule.assert_not_called()
+        assert len(background_tasks.tasks) == 1
+        asyncio.run(background_tasks())
+        policy_apply.run_rule.assert_called_once_with("r1", _ACTING_USER)
+
+    def test_approve_policy_run_failure_is_non_fatal(self):
+        """A raising background policy run is swallowed (logged) and never affects the approve."""
+        policy_apply = create_autospec(PolicyApplyService, instance=True)
+        policy_apply.run_rule.side_effect = RuntimeError("boom")
+        background_tasks = BackgroundTasks()
+
+        result = self._approve(policy_apply, background_tasks)
+
         assert result.status == "approved"
+        asyncio.run(background_tasks())
+        policy_apply.run_rule.assert_called_once()
 
 
 class TestBackfillRuleEmbeddings:

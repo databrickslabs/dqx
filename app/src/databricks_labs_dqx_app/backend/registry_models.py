@@ -548,10 +548,14 @@ RESERVED_SLOT_TAGS_KEY = "slot_tags"
 RESERVED_MAPPED_COLUMNS_KEY = "mapped_columns"
 
 # Applied-rule origin marker (in AppliedRule.user_metadata) distinguishing an
-# auto-created tag-mapping attachment from a hand-applied one. The tag-reconcile
-# engine only ever touches ``tag_auto`` rows; hand-applied rows stay unmarked.
+# auto-created attachment from a hand-applied one. ``policy`` rows are made by a
+# rule policy (and carry its id under POLICY_ID_KEY); ``tag_auto`` marks legacy
+# tag-mapping attachments. Hand-applied rows stay unmarked.
 ORIGIN_KEY = "origin"
 ORIGIN_TAG_AUTO = "tag_auto"
+ORIGIN_POLICY = "policy"
+POLICY_ID_KEY = "policy_id"
+AUTO_ORIGINS: frozenset[str] = frozenset({ORIGIN_TAG_AUTO, ORIGIN_POLICY})
 
 RESERVED_PASS_THRESHOLD_KEY = "pass_threshold"
 RESERVED_COLUMN_PASS_THRESHOLDS_KEY = "column_pass_thresholds"

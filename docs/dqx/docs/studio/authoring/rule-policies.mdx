@@ -1,0 +1,78 @@
+---
+sidebar_position: 4
+title: Rule policies
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Rule policies
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.18.0" heading={false} />
+</FeatureTags>
+
+A **policy** attaches an approved rule to every table and column that matches a
+scope and a set of conditions. Use one when you want a rule applied wherever a
+kind of data appears, instead of mapping it table by table.
+
+Policies always apply automatically. There is no manual mode.
+
+## Create a policy
+
+1. Open the rule in the [Rules Registry](/docs/studio/authoring/create-a-rule) and select the **Policies** tab.
+2. Click **New policy** and give it a name.
+3. Set the **scope**: catalogs, schemas and tables to look at. Leave a level on *All* to include everything below it.
+4. Optionally add **table conditions** to narrow the tables in scope.
+5. Set a **column condition** for each input (slot) of the rule. These decide which columns fill the slot. Rules that run on whole tables have no column condition.
+6. Check the **preview**, then click **Create policy**.
+
+Conditions can match on tags, name, a name pattern (`%` and `_` wildcards), or owner.
+Several conditions combine with AND / OR.
+
+## Preview
+
+The preview lists the tables and columns the policy would match right now, without
+attaching anything. It only counts tables you can apply rules to.
+
+## Also create for other rules
+
+In the **Rules** section you can add other rules. Each one gets its own copy of the
+policy with the same scope and conditions, and you can edit or delete the copies
+independently afterwards.
+
+## Tables not yet monitored
+
+By default a policy only looks at tables that are already monitored in DQX Studio.
+Turn on **Match against tables not yet monitored in DQX Studio** to also register
+matching tables. They are added as drafts and are not scheduled. A run registers at
+most 200 tables.
+
+## When policies run
+
+Policies are evaluated when you:
+
+- save or re-scan a policy,
+- open or register a table, or
+- approve the rule.
+
+There is no background job. A new table that matches a policy picks up the rule the
+next time one of these happens.
+
+## What a policy can change
+
+- **Permissions.** A rule is only attached to tables where the person who triggered the evaluation has `APPLY` or `MANAGE`. Other matching tables are skipped.
+- **Editing.** You need **Modify** on the rule to create, edit or delete its policies.
+- **Approved rules only.** A draft or deprecated rule attaches nothing.
+- **Add only.** A policy never removes anything. If you remove a policy-attached rule from a table by hand, the policy does not add it back. Deleting a policy leaves the rules it already attached in place.
+
+Rules attached by a policy show a **via policy** chip on the table's
+[Apply Rules tab](/docs/studio/monitoring/assign-rules). Hover for the policy name;
+click to open the rule's Policies tab.
+
+<Admonition type="note" title="Tag matches without a policy">
+Without a policy, a table's governed-tag matches are still shown as suggestions on
+the Apply Rules tab. You accept them there. See
+[Governed tags](/docs/studio/authoring/create-a-rule#governed-tags).
+</Admonition>

@@ -11,6 +11,7 @@ import json
 import pytest
 
 from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import POLICY_GENERATION
 from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
 
 
@@ -766,6 +767,24 @@ class TestLifecycle:
         sql.query.return_value = [_row_for(self._rule("approved", version=1))]
         updated = svc.deprecate("r1", "approver@x")
         assert updated.status == "deprecated"
+
+    def test_purging_builtin_rules_bumps_the_policy_generation(self, svc, sql):
+        sql.query.return_value = [["b1"]]
+        before = POLICY_GENERATION.current()
+        assert svc.delete_builtin_rules() == 1
+        assert POLICY_GENERATION.current() > before
+
+    def test_status_changes_bump_the_policy_generation(self, svc, sql):
+        # Rule policies only attach approved rules: approving or deprecating changes what they attach.
+        pending = self._rule("pending_approval")
+        sql.query.side_effect = [[_row_for(pending)], [_cas_confirm_row(pending, approver="approver@x")]]
+        before = POLICY_GENERATION.current()
+        svc.approve("r1", "approver@x")
+        after_approve = POLICY_GENERATION.current()
+        sql.query.side_effect = None
+        sql.query.return_value = [_row_for(self._rule("approved", version=1))]
+        svc.deprecate("r1", "approver@x")
+        assert before < after_approve < POLICY_GENERATION.current()
 
     def test_undeprecate_does_not_bump_version(self, svc, sql):
         sql.query.return_value = [_row_for(self._rule("deprecated", version=2))]

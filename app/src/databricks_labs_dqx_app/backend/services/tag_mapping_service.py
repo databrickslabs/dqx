@@ -1,4 +1,4 @@
-"""Pure tag→column mapping resolver for the apply-on-tag feature.
+"""Pure tag→column mapping resolver for tag-match rule suggestions.
 
 Given a rule's declared slots (each with a family) and its slot→tags map, plus a
 table's columns (each with a UC type and its governed tags), compute the valid
@@ -9,8 +9,8 @@ key is eligible — there is no namespace restriction. A group is valid only whe
 every slot is filled; the full result is the Cartesian product across slots (no
 column reused within one group).
 
-No I/O — unit-testable in isolation. The orchestrating reads/writes live in
-``tag_reconcile_service``.
+No I/O — unit-testable in isolation. The orchestrating reads live in
+``tag_suggestion_service``.
 """
 
 import itertools

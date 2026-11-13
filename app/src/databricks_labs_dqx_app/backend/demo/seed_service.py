@@ -70,6 +70,8 @@ from databricks_labs_dqx_app.backend.demo.manifest import (
 )
 from databricks_labs_dqx_app.backend.lowcode_compile import compile_lowcode_body
 from databricks_labs_dqx_app.backend.demo.status import DemoStatus, DemoStatusStore
+from databricks_labs_dqx_app.backend.policy_models import ColumnCondition, PolicyScope, RulePolicyIn
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
     RESERVED_DIMENSION_KEY,
@@ -110,6 +112,7 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
     demo_tag_targets,
 )
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RulesCatalogService
 from databricks_labs_dqx_app.backend.services.schedule_config_service import (
     PRODUCT_SCHEDULE_PREFIX,
@@ -213,6 +216,7 @@ class DemoSeedService:
         profiler_view: ViewService | None = None,
         schedule_config: ScheduleConfigService | None = None,
         schedule_grants: ScheduleGrantService | None = None,
+        policies: RulePolicyService | None = None,
         catalog: str = "dqx",
         schema: str,
     ) -> None:
@@ -255,6 +259,9 @@ class DemoSeedService:
         # grant is attempted. It never fails the seed.
         self._schedule_config = schedule_config
         self._schedule_grants = schedule_grants
+        # Optional rule-policy store for the example policies; None (minimal
+        # test graph) makes that phase a logged no-op.
+        self._policies = policies
         self._catalog = catalog
         self._schema = schema
         self._started_at = ""
@@ -313,6 +320,7 @@ class DemoSeedService:
 
             self._set_status("running", "rules", "Publishing reusable rule set", user_email)
             rule_map = self._build_rules(user_email)
+            self._build_policies(rule_map, user_email)
 
             self._set_status("running", "bindings", "Applying and approving bindings", user_email)
             binding_map = self._build_bindings(rule_map, user_email)
@@ -655,6 +663,44 @@ class DemoSeedService:
             self._embed_rule(approved)
             logger.info("Demo rule '%s' -> %s (created)", spec.key, approved.rule_id)
         return rule_map
+
+    def _build_policies(self, rule_map: dict[str, str], user_email: str) -> int:
+        """Create the manifest's example rule policies; return how many were created.
+
+        Each policy is scoped to the demo catalog with the rule's slot_tags as its
+        column conditions. Idempotent (a policy of the same name on the rule is
+        reused) and best-effort: a failing policy is logged and skipped.
+        """
+        if self._policies is None:
+            logger.info("Demo seed: no rule-policy store wired; skipping example policies")
+            return 0
+        specs = {spec.key: spec for spec in manifest.RULES}
+        created = 0
+        for policy_spec in manifest.POLICIES:
+            rule_id = rule_map.get(policy_spec.rule_key)
+            if rule_id is None:
+                continue
+            try:
+                existing = {p.name.strip().lower() for p in self._policies.list_for_rule(rule_id)}
+                if policy_spec.name.strip().lower() in existing:
+                    continue
+                conditions = {
+                    slot: ColumnCondition(kind="tags", tags=list(tags))
+                    for slot, tags in specs[policy_spec.rule_key].slot_tags.items()
+                }
+                body = RulePolicyIn(
+                    name=policy_spec.name,
+                    description=policy_spec.description,
+                    scope=PolicyScope(catalogs=[self._catalog]),
+                    column_conditions=conditions,
+                )
+                self._policies.create(rule_id, body, user_email)
+                created += 1
+            except Exception:
+                logger.warning(
+                    f"Demo seed: could not create example policy for rule {safe_log_value(rule_id)}", exc_info=True
+                )
+        return created
 
     def _submit_pending_rule(self, spec: RuleSpec, user_email: str) -> None:
         """Create + submit one rule so it awaits approval, unapproved and unmapped.

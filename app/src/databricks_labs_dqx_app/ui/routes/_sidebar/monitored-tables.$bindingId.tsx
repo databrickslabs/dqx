@@ -92,7 +92,9 @@ import {
   usePreviewTableData,
   useQueryTableData,
   useGetSampleQuestions,
+  useListMonitoredTables,
   useRevertMonitoredTable,
+  getListTagSuggestionsQueryKey,
   getListTagSuggestionsQueryOptions,
   type AppliedRuleOut,
   type ColumnOut,
@@ -103,6 +105,14 @@ import {
   type TableDataOut,
   type TagRuleSuggestionOut,
 } from "@/lib/api";
+import { ScoreBarCell } from "@/components/data-table/ScoreBarCell";
+import {
+  appendMissingRows,
+  knownAppliedIds,
+  newServerRows,
+  refetchAttemptsAfter,
+  nextPolicyRefetchDelay,
+} from "@/lib/policy-evaluation-refetch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -150,7 +160,7 @@ import { useAiAvailability, aiUnavailableReason } from "@/hooks/use-ai-availabil
 import { AI_BUTTON_BG, AI_BANNER_BG, AI_BANNER_BORDER, AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AddRulesDialog } from "@/components/apply-rules/AddRulesDialog";
 import { AiSuggestionDialog, type SuggestRulesState } from "@/components/apply-rules/AiSuggestionDialog";
-import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
+import { mergeSuggestions } from "@/components/apply-rules/ai-suggestion-utils";
 import { RuleConfigCard, computeStatus, statusNeedsAttention } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import {
@@ -294,7 +304,7 @@ function MonitoredTableDetailPage() {
     [navigate, bindingId],
   );
 
-  const { data } = useGetMonitoredTableSuspense(bindingId);
+  const { data, dataUpdatedAt } = useGetMonitoredTableSuspense(bindingId);
   const detail = data.data;
   const table = detail.table;
   const appliedRules = useMemo(() => detail.applied_rules ?? [], [detail.applied_rules]);
@@ -432,6 +442,52 @@ function MonitoredTableDetailPage() {
     [setStagedRows, stagedRowKey],
   );
 
+  // Rule policies: opening the table evaluates the policies reaching it in the
+  // background (`policy_evaluation_pending`). Re-read the detail (and the tag
+  // suggestions) with a growing delay while it stays pending (about a minute at
+  // most), so the rules it attaches appear without a manual reload.
+  const policyRefetchAttemptsRef = useRef(0);
+  const policyRefetchBindingRef = useRef(bindingId);
+  const policyPendingRef = useRef<boolean | undefined>(undefined);
+  const policyEvaluationPending = detail.policy_evaluation_pending;
+  useEffect(() => {
+    if (policyRefetchBindingRef.current !== bindingId) {
+      policyRefetchBindingRef.current = bindingId;
+      policyRefetchAttemptsRef.current = 0;
+    }
+    // A later read can start a new evaluation (a policy or grant changed): give it a fresh budget.
+    policyRefetchAttemptsRef.current = refetchAttemptsAfter(
+      policyPendingRef.current,
+      policyEvaluationPending,
+      policyRefetchAttemptsRef.current,
+    );
+    policyPendingRef.current = policyEvaluationPending;
+    const delay = nextPolicyRefetchDelay(policyEvaluationPending, policyRefetchAttemptsRef.current);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      policyRefetchAttemptsRef.current += 1;
+      void queryClient.invalidateQueries({ queryKey: getGetMonitoredTableQueryKey(bindingId) });
+      void queryClient.invalidateQueries({ queryKey: getListTagSuggestionsQueryKey(bindingId) });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [policyEvaluationPending, dataUpdatedAt, bindingId, queryClient]);
+
+  // Rows that appear server-side between two reads of this table (attached by a
+  // rule policy evaluation) join both the baseline and the staged selection, so
+  // they show up in the editor without marking it dirty — and a later Save never
+  // drops them. Only rows NEW since the previous read are merged: anything the
+  // user removed locally, or a stale read from before their own save, is left alone.
+  const lastServerRowsRef = useRef({ bindingId, rows: appliedRules });
+  useEffect(() => {
+    const previous = lastServerRowsRef.current;
+    lastServerRowsRef.current = { bindingId, rows: appliedRules };
+    if (previous.bindingId !== bindingId || previous.rows === appliedRules) return;
+    const added = newServerRows(normalizeStagedRows(previous.rows), normalizeStagedRows(appliedRules), stagedRowKey);
+    if (added.length === 0) return;
+    setBaseline((prev) => appendMissingRows(prev, added, stagedRowKey));
+    setStagedRows((prev) => appendMissingRows(prev, added, stagedRowKey));
+  }, [appliedRules, bindingId, stagedRowKey]);
+
   const adminDefaultThreshold = useDefaultPassThreshold();
   const isDirty =
     desiredApplicationsKey(stagedRows, adminDefaultThreshold) !==
@@ -463,8 +519,14 @@ function MonitoredTableDetailPage() {
   // action so the same review affordance is available on the detail banner.
   const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
   const persistStagedRows = useCallback(
-    () => saveMutation.mutateAsync({ bindingId, data: { applications: buildDesiredApplications(stagedRows) } }),
-    [saveMutation, bindingId, stagedRows],
+    () =>
+      saveMutation.mutateAsync({
+        bindingId,
+        // The baseline's ids tell the server which rows this save may remove: rows applied
+        // since (e.g. by a rule policy in the background) are kept even if the editor never saw them.
+        data: { applications: buildDesiredApplications(stagedRows), known_applied_ids: knownAppliedIds(baseline) },
+      }),
+    [saveMutation, bindingId, stagedRows, baseline],
   );
 
   // Persist staged applied-rule edits. Returns true on success. Shared by the
@@ -887,9 +949,9 @@ function MonitoredTableDetailPage() {
         <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
-          {/* Tab order (P23 item 14): About, Permissions first (View Data
-              folded into About in P26 item 3),
-              then the working group (Profile, Apply Rules), then Results.
+          {/* Tab order: About, Profile, Apply Rules (what the table is and the
+              rules on it) | Permissions | Results — the same build | access |
+              outcome order as the Rules and Collections pages.
               Schedule + History live in a second, RIGHT-aligned TabsList —
               the table-spaces `ProductTabsShell` / dqlake `BindingTabsShell`
               two-group layout (RIGHT_TABS = [scheduling, history]). */}
@@ -899,11 +961,6 @@ function MonitoredTableDetailPage() {
                 <Info className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabAbout")}
               </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5">
-                <KeyRound className="h-3.5 w-3.5" />
-                {t("monitoredTables.tabPermissions")}
-              </TabsTrigger>
-              <TabGroupDivider />
               <TabsTrigger value="profile" className="gap-1.5">
                 <BarChart3 className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabProfile")}
@@ -911,6 +968,11 @@ function MonitoredTableDetailPage() {
               <TabsTrigger value="apply-rules" className="gap-1.5">
                 <Columns3 className="h-3.5 w-3.5" />
                 {t("monitoredTables.tabApplyRules")}
+              </TabsTrigger>
+              <TabGroupDivider />
+              <TabsTrigger value="permissions" className="gap-1.5">
+                <KeyRound className="h-3.5 w-3.5" />
+                {t("monitoredTables.tabPermissions")}
               </TabsTrigger>
               <TabGroupDivider />
               <TabsTrigger value="results" className="gap-1.5">
@@ -931,7 +993,11 @@ function MonitoredTableDetailPage() {
           </div>
 
           <TabsContent value="about">
-            <AboutTab table={table} onColumnClick={handleColumnDeepLink} />
+            <AboutTab
+              table={table}
+              onColumnClick={handleColumnDeepLink}
+              onOpenResults={() => handleTabChange("results")}
+            />
           </TabsContent>
 
           {/* pt-4 matches the other tabs' top spacing (About/Schedule own it internally). */}
@@ -1377,8 +1443,11 @@ function ColumnTagsCell({ tags }: { tags: string[] }) {
 function AboutTab({
   table,
   onColumnClick,
+  onOpenResults,
 }: {
   table: MonitoredTableOut;
+  /** Switches to the Results tab (the DQ score row links there). */
+  onOpenResults: () => void;
   /** Deep-links to the Apply Rules "by column" lens, expanded to that
    *  column (item 1) — reuses the jump+expand handoff already wired
    *  between the by-rule/by-column lenses in ApplyRulesTab. */
@@ -1393,6 +1462,12 @@ function AboutTab({
 
   const parts = table.table_fqn.split(".");
   const [catalog, schema, tableName] = parts;
+
+  // The cached DQ score comes from the Tables list (same query + cache the
+  // list page uses); the detail payload doesn't carry it. Status already
+  // shows in the page header, so the About row shows the score instead.
+  const tablesQuery = useListMonitoredTables({});
+  const dqScore = tablesQuery.data?.data?.find((row) => row.table.binding_id === table.binding_id)?.score;
 
   const columnsQuery = useGetTableColumns(catalog ?? "", schema ?? "", tableName ?? "", {
     query: { enabled: parts.length === 3 },
@@ -1446,9 +1521,16 @@ function AboutTab({
             <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutTableName")}</dt>
             <dd className="font-mono">{tableName ?? t("monitoredTables.aboutUnknown")}</dd>
 
-            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.aboutStatus")}</dt>
+            <dt className="text-muted-foreground uppercase tracking-wide">{t("monitoredTables.colDqScore")}</dt>
             <dd>
-              <StatusBadge status={table.status} />
+              <button
+                type="button"
+                onClick={onOpenResults}
+                aria-label={t("monitoredTables.tabResults")}
+                className="flex w-40 items-center rounded-sm hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ScoreBarCell score={dqScore} />
+              </button>
             </dd>
 
             {/* Owner is edited on the Permissions tab, not here. */}
@@ -2234,17 +2316,10 @@ function ApplyRulesTab({
         aiReason = reason ?? t("monitoredTables.suggestRulesFetchFailed");
       }
 
-      // Union, de-duped by (rule_id + sorted slot->column set). AI is listed
-      // first so on an exact collision its explanation wins; every (rule,
-      // column) the AI did NOT also suggest keeps its "Matched tag …" reason.
-      const merged: SuggestedRuleMappingOut[] = [];
-      const seen = new Set<string>();
-      for (const s of [...aiSuggestions, ...tagSuggestions]) {
-        const key = suggestionKey(s);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(s);
-      }
+      // Union, de-duped by (rule_id + sorted slot->column set). On a collision the
+      // deterministic reason ("Matched tag …" / "Policy …: several possible columns")
+      // stays primary and the AI explanation is shown underneath it.
+      const merged = mergeSuggestions(aiSuggestions, tagSuggestions);
 
       // Available when EITHER source has something to offer. When tag
       // suggestions exist the dialog is available regardless of the AI, so the

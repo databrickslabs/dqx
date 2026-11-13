@@ -57,6 +57,7 @@ from databricks_labs_dqx_app.backend.common.permissions import (
     serialize_privileges,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_object_id
 
@@ -638,6 +639,7 @@ class PermissionsService:
             object_type, object_id, principal_id, principal_name, priv_str, inherit, self._ACTION_SET, grantor
         )
         logger.info("Set object grant %s on %s/%s", priv_str, object_type, object_id)
+        bump_policy_generation()  # who may apply rules where changed: on-open policy evaluations re-run
         return ObjectGrant(
             object_type=object_type,
             object_id=object_id,
@@ -653,6 +655,7 @@ class PermissionsService:
         """Remove a principal's grant from an object (no-op if absent)."""
         self._validate_object_id(object_id)
         self._delete_row(object_type, object_id, principal_id)
+        bump_policy_generation()
         self._record_history(object_type, object_id, principal_id, None, None, None, self._ACTION_REMOVE, actor)
         logger.info("Removed object grant on %s/%s", object_type, object_id)
 
@@ -730,4 +733,6 @@ class PermissionsService:
 
     def set_default_inherit(self, enabled: bool, *, user_email: str | None = None) -> bool:
         """Persist the admin default for the per-grant inheritance toggle."""
-        return self._app_settings.save_permissions_default_inherit(enabled, user_email=user_email)
+        saved = self._app_settings.save_permissions_default_inherit(enabled, user_email=user_email)
+        bump_policy_generation()
+        return saved

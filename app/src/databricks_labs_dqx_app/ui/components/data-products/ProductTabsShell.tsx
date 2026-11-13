@@ -8,8 +8,8 @@
  * tabs, dqlake-exact (RIGHT_TABS = [scheduling, history]; P25 item 1
  * reverted P23 item 13's move of Schedule into the ⋮ menu).
  *
- * Tab order: About | Sharing, Tables | Results  ‖  Schedule, History
- * `|` characters render as visible muted dividers inside the TabsList.
+ * Tab order: About, Tables | Permissions | Results  ‖  Schedule, History
+ * (the same build | access | outcome order as the Rules and Tables pages).
  * Results mirrors the Monitored Tables detail page (Task 9): last
  * left-aligned group, LineChart icon.
  */
@@ -45,28 +45,25 @@ interface Props {
  *  `?tab=` search param against this list. */
 export const PRODUCT_TAB_KEYS: ProductTabKey[] = [
   "about",
-  "permissions",
   "tables",
+  "permissions",
   "results",
   "runs",
   "scheduling",
   "history",
 ];
 
+// Same thin vertical rule as the Rules and Tables tab strips.
 function Separator() {
-  return (
-    <span className="text-muted-foreground/40 select-none px-1" aria-hidden>
-      |
-    </span>
-  );
+  return <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />;
 }
 
 // Groups define the visual separator layout:
-// [About, Permissions] | [Tables] | [Results]  →gap→  [Schedule, History]
+// [About, Tables] | [Permissions] | [Results]  →gap→  [Schedule, History]
 // Runs is intentionally absent from the strip — it lives in the header ⋮
 // menu (P21 item 29) and is still reachable by `?tab=runs`.
-const GROUP_A: ProductTabKey[] = ["about", "permissions"];
-const GROUP_B: ProductTabKey[] = ["tables"];
+const GROUP_A: ProductTabKey[] = ["about", "tables"];
+const GROUP_B: ProductTabKey[] = ["permissions"];
 const GROUP_C: ProductTabKey[] = ["results"];
 const RIGHT_TABS: ProductTabKey[] = ["scheduling", "history"];
 

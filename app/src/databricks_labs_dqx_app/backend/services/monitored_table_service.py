@@ -47,6 +47,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
+from databricks_labs_dqx_app.backend.services.policy_evaluation_cache import bump_policy_generation
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     DeferredTaskRunner,
@@ -771,6 +772,15 @@ class MonitoredTableService:
         rows = self._sql.query(sql)
         return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
 
+    def list_table_bindings(self) -> dict[str, str]:
+        """Every monitored table as ``table_fqn -> binding_id``, in ONE lightweight query.
+
+        Lets rule policies reach only monitored tables without scanning Unity Catalog.
+        """
+        sql = f"SELECT table_fqn, binding_id FROM {self._table}"
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
+
     def get_table_fqns(self, binding_ids: set[str]) -> dict[str, str]:
         """Batched ``binding_id -> table_fqn`` lookup in ONE ``IN (...)`` query.
 
@@ -1051,6 +1061,7 @@ class MonitoredTableService:
         )
         table.owner = owner
         table.updated_by = user_email
+        bump_policy_generation()  # the owner may apply rules: on-open policy evaluations re-run
         logger.info(
             "Set monitored table %s (binding_id=%s) owner to %s (by %s)",
             table.table_fqn,

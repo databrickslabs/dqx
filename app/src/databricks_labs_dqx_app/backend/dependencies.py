@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import hashlib
 import os
 from collections.abc import Callable
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
+from databricks.sdk.service.catalog import TableInfo
 from databricks.sdk.service.iam import User
 from fastapi import Depends, Header, HTTPException, Request, status
 
@@ -66,10 +69,14 @@ from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
 from .services.scheduler_wake import SCHEDULER_WAKE_MARKER_PATH, SchedulerWakeMarker
 from .services.tag_mapping_service import ColumnInfo
-from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
 from .services.ai_bootstrap import AiBootstrap
 from .services.view_service import ViewService
+from .services.monitored_table_registration import register_table
+from .services.policy_apply_service import ActingUser, PolicyApplyService
+from .services.policy_evaluation_cache import OPEN_EVALUATION_DEBOUNCE, POLICY_CATALOG_CACHE
+from .services.policy_snapshot import PolicySnapshotReader, snapshot_cache_identity
+from .services.rule_policy_service import RulePolicyService
 from .sql_executor import OltpExecutorProtocol, SqlExecutor
 
 # Process-wide OLTP executor. Constructed once at app startup by
@@ -521,60 +528,26 @@ def _build_column_reader(
     return read_columns
 
 
-async def get_tag_reconcile_service(
-    registry: Annotated[RegistryService, Depends(get_registry_service)],
-    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
-    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
-    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
-    sp_sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
-) -> TagReconcileService:
-    """Create the apply-on-tag orchestrator wired to SP-authed collaborators.
-
-    Every collaborator routes at the SP OLTP/Delta executors (via the shared
-    providers) because reconcile runs without a user context; the column reader
-    uses the SP :class:`WorkspaceClient` for column names/types and the SP
-    warehouse :class:`SqlExecutor` to read column tags from
-    ``information_schema.column_tags``, for the same reason.
-    """
-    return TagReconcileService(
-        registry=registry,
-        monitored_tables=monitored_tables,
-        apply_rules=apply_rules,
-        app_settings=app_settings,
-        read_columns=_build_column_reader(sp_ws, sp_sql),
-    )
-
-
 async def get_tag_suggestion_service(
     registry: Annotated[RegistryService, Depends(get_registry_service)],
     monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
-    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> TagSuggestionService:
-    """Create the apply-on-tag tag-matcher (suggestions AND auto-apply).
+    """Create the tag-match suggester.
 
     User-facing, so the column reader is built over the OBO
     :class:`WorkspaceClient` + OBO warehouse :class:`SqlExecutor` (via the same
     generic ``_build_column_reader`` factory) — so tag matching respects the
     calling user's Unity Catalog permissions. This is deliberate and
     load-bearing: the app service principal has no grant on user catalogs, so an
-    SP-authed read of ``information_schema.column_tags`` returns nothing; running
-    the match OBO is what makes auto-apply work.
-
-    When ``tag_auto_apply`` is off the matches surface as suggestions
-    (:meth:`~TagSuggestionService.suggest`); when on they auto-attach
-    (:meth:`~TagSuggestionService.apply_matches`, from the register / open-table
-    hooks). The applied-row WRITE still goes through the SP OLTP executor (via
-    ``get_apply_rules_service``), which owns the app's schema.
+    SP-authed read of ``information_schema.column_tags`` returns nothing.
     """
     return TagSuggestionService(
         registry=registry,
         monitored_tables=monitored_tables,
         apply_rules=apply_rules,
-        app_settings=app_settings,
         read_columns=_build_column_reader(obo_ws, obo_sql),
     )
 
@@ -1199,6 +1172,7 @@ async def get_demo_seed_service(
         schedule_grants=ScheduleGrantService(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
+        policies=RulePolicyService(sql=oltp),
         catalog=resources.volume.catalog,
         schema=resources.demo_schema,
     )
@@ -1540,3 +1514,102 @@ __all__ = [
     "get_user_catalog_names",
     "rt",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Rule policies
+# ---------------------------------------------------------------------------
+
+
+async def get_rule_policy_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> RulePolicyService:
+    """Create a RulePolicyService routed at the OLTP executor."""
+    return RulePolicyService(sql=sql)
+
+
+_SNAPSHOT_HTTP_TIMEOUT_SECONDS = 10
+_SNAPSHOT_RETRY_TIMEOUT_SECONDS = 20  # within the snapshot reader's 30 s deadline
+
+
+def policy_snapshot_client_config(config: Config) -> Config:
+    """A copy of *config* whose HTTP calls are bounded by the policy snapshot deadline.
+
+    The shared OBO client keeps the SDK defaults (minutes of retries); the snapshot
+    reader's Unity Catalog calls (``tables.get``, catalog listing) must give up in time.
+    """
+    bounded = config.deep_copy()
+    bounded.http_timeout_seconds = _SNAPSHOT_HTTP_TIMEOUT_SECONDS
+    bounded.retry_timeout_seconds = _SNAPSHOT_RETRY_TIMEOUT_SECONDS
+    return bounded
+
+
+async def get_policy_snapshot_reader(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    email: Annotated[str, Depends(get_user_email)],
+) -> PolicySnapshotReader:
+    """Create a PolicySnapshotReader that reads Unity Catalog on-behalf-of the caller.
+
+    Both the information_schema queries and the "All catalogs" listing run as the
+    calling user, so a policy only ever sees tables that user can see. Per-table
+    snapshots are cached for 5 minutes per user (keyed by a hash of their email);
+    small explicit table sets read columns and owners via the OBO ``tables.get``. Those
+    SDK calls use a client copy with short timeouts (see :func:`policy_snapshot_client_config`).
+    """
+    bounded_ws = WorkspaceClient(config=policy_snapshot_client_config(obo_ws.config))
+
+    def _list_catalogs() -> list[str]:
+        return sorted(c.name for c in bounded_ws.catalogs.list() if c.name)
+
+    def _get_table(table_fqn: str) -> TableInfo:
+        return bounded_ws.tables.get(full_name=table_fqn)
+
+    return PolicySnapshotReader(
+        sql=obo_sql,
+        list_catalogs=_list_catalogs,
+        cache=app_cache,
+        cache_identity=snapshot_cache_identity(email),
+        get_table=_get_table,
+    )
+
+
+async def get_policy_apply_service(
+    policies: Annotated[RulePolicyService, Depends(get_rule_policy_service)],
+    registry: Annotated[RegistryService, Depends(get_registry_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+    apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    snapshots: Annotated[PolicySnapshotReader, Depends(get_policy_snapshot_reader)],
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+) -> PolicyApplyService:
+    """Create a PolicyApplyService for the calling user.
+
+    Registration of matching tables goes through the same helper as the register
+    route, reading the table's UC owner via the caller's OBO discovery service. The
+    policy list and on-open debounce are process-wide (the app runs one worker).
+    """
+    register = functools.partial(register_table, monitored_tables=monitored_tables, discovery=discovery)
+    return PolicyApplyService(
+        policies=policies,
+        registry=registry,
+        monitored_tables=monitored_tables,
+        apply_rules=apply_rules,
+        permissions=perms,
+        snapshots=snapshots,
+        register_table=register,
+        catalog_cache=POLICY_CATALOG_CACHE,
+        open_debounce=OPEN_EVALUATION_DEBOUNCE,
+    )
+
+
+async def get_acting_user(
+    email: Annotated[str, Depends(get_user_email)],
+    role: CurrentUserRole,
+    principal_ids: CurrentPrincipalIds,
+) -> ActingUser:
+    """The calling user as the identity a rule policy evaluation runs for."""
+    return ActingUser(email=email, role=role, principal_ids=principal_ids)
+
+
+CurrentActingUser = Annotated[ActingUser, Depends(get_acting_user)]

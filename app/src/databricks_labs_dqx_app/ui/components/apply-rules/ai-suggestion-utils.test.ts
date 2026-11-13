@@ -5,6 +5,7 @@ import {
   groupSelectState,
   groupSuggestions,
   mappingSetKey,
+  mergeSuggestions,
   suggestionKey,
 } from "./ai-suggestion-utils";
 
@@ -114,5 +115,45 @@ describe("groupSelectState", () => {
     expect(groupSelectState(items, all)).toBe("all");
     expect(groupSelectState(items, new Set([suggestionKey(items[0])]))).toBe("some");
     expect(groupSelectState(items, new Set())).toBe("none");
+  });
+});
+
+describe("mergeSuggestions", () => {
+  const tag = sug({ rule_id: "dob", column_mapping: { column: "date_of_birth" }, explanation: "Matched tag class.date_of_birth" });
+  const ai = sug({ rule_id: "dob", column_mapping: { column: "Date_Of_Birth" }, explanation: "Birth dates cannot be in the future." });
+
+  test("tag-only suggestions keep their reason and no secondary text", () => {
+    const [only] = mergeSuggestions([], [tag]);
+    expect(only.explanation).toBe("Matched tag class.date_of_birth");
+    expect(only.secondary_explanation).toBeUndefined();
+  });
+
+  test("AI-only suggestions keep the AI explanation", () => {
+    const merged = mergeSuggestions([ai], []);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].explanation).toBe("Birth dates cannot be in the future.");
+    expect(merged[0].secondary_explanation).toBeUndefined();
+  });
+
+  test("a collision keeps the tag reason first and the AI explanation underneath", () => {
+    const other = sug({ rule_id: "nn", column_mapping: { column: "id" }, explanation: "ids are required" });
+    const merged = mergeSuggestions([ai, other], [tag]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].explanation).toBe("Matched tag class.date_of_birth");
+    expect(merged[0].secondary_explanation).toBe("Birth dates cannot be in the future.");
+    expect(merged[1].rule_id).toBe("nn");
+  });
+
+  test("a policy-ambiguity collision keeps the policy reason", () => {
+    const policy = sug({
+      rule_id: "range",
+      column_mapping: { start: "start_ts", end: "end_a" },
+      explanation: "Policy Date ranges: several possible columns",
+    });
+    const aiRange = { ...policy, explanation: "start should precede end" };
+    const merged = mergeSuggestions([aiRange], [policy]);
+    expect(merged).toEqual([
+      { ...policy, secondary_explanation: "start should precede end" },
+    ]);
   });
 });

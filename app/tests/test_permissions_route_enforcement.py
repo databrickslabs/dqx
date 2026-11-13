@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend import dependencies as deps
 from databricks_labs_dqx_app.backend.routes.v1.data_products import router as data_products_router
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import router as monitored_tables_router
 from databricks_labs_dqx_app.backend.routes.v1.registry_rules import router as registry_rules_router
+from databricks_labs_dqx_app.backend.routes.v1.rule_policies import router as rule_policies_router
 
 _OWNER = "owner@x.com"
 _AUTHOR = "author@x.com"
@@ -83,6 +84,7 @@ def _build_client(fake: _FakeOltp, *, principal_ids: frozenset[str]) -> TestClie
     app.include_router(registry_rules_router, prefix="/registry-rules")
     app.include_router(monitored_tables_router, prefix="/monitored-tables")
     app.include_router(data_products_router, prefix="/data-products")
+    app.include_router(rule_policies_router, prefix="/rule-policies")
 
     app_settings = MagicMock()
     app_settings.get_permissions_default_inherit.return_value = False
@@ -102,6 +104,8 @@ def _build_client(fake: _FakeOltp, *, principal_ids: frozenset[str]) -> TestClie
     app.dependency_overrides[deps.get_apply_rules_service] = lambda: MagicMock()
     app.dependency_overrides[deps.get_monitored_table_service] = lambda: MagicMock()
     app.dependency_overrides[deps.get_data_product_service] = lambda: MagicMock()
+    app.dependency_overrides[deps.get_rule_policy_service] = lambda: MagicMock()
+    app.dependency_overrides[deps.get_policy_apply_service] = lambda: MagicMock()
     # Schedule-grant service depends on the SP WorkspaceClient (get_sp_ws); override
     # it so dependency resolution never constructs a real client (Task 12). It is
     # only used after the permission gate, so a 403 never reaches it.
@@ -120,6 +124,7 @@ _MODIFY_ROUTES = [
     ("delete", "/monitored-tables/b1", None),  # deleteMonitoredTable
     ("patch", "/data-products/p1", {}),  # updateDataProduct
     ("delete", "/data-products/p1", None),  # deleteDataProduct
+    ("post", "/rule-policies", {"rule_ids": ["r1"], "policy": {"name": "p"}}),  # createRulePolicies
 ]
 
 _APPLY_ROUTES = [

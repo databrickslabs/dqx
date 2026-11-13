@@ -58,7 +58,7 @@ function countNonEmpty(
     .length;
 }
 
-function FamilyBadge({ family }: { family: string }) {
+export function FamilyBadge({ family }: { family: string }) {
   if (!family) return null;
   return (
     <span className="inline-block rounded bg-muted/60 border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wide shrink-0">

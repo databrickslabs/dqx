@@ -10,6 +10,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
+import { ViaPolicyChip } from "./ViaPolicyChip";
+import { isPolicyOrigin } from "./policy-origin";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -752,12 +754,15 @@ export function RuleConfigCard({
                 {rule.rule_name || rule.rule_id}
               </Link>
               {dimension && (
-                <span className="shrink-0">
+                <span className="inline-flex shrink-0 items-center">
                   <TagBadge
                     label={dimension}
                     color={colorFor(labelDefinitions, RESERVED_DIMENSION_KEY, dimension)}
                   />
                 </span>
+              )}
+              {isPolicyOrigin(rule.user_metadata) && (
+                <ViaPolicyChip ruleId={rule.rule_id} userMetadata={rule.user_metadata} />
               )}
               {/* Rule-type / source tag intentionally omitted in the by-rule
                   apply lens — the rule's origin (UI/import/AI) isn't relevant

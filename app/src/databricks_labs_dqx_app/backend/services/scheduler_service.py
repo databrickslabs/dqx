@@ -54,7 +54,6 @@ from databricks_labs_dqx_app.backend.services.task_runner_runs import (
     list_active_task_runner_runs,
     list_recent_completed_runs,
 )
-from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
 logger = get_logger("scheduler")
@@ -234,15 +233,6 @@ _RETENTION_INTERVAL_HOURS = 24
 _QUARANTINE_RETENTION_DAYS_DEFAULT = 30
 _QUARANTINE_TABLE_NAME = "dq_quarantine_records"
 
-# Apply-on-tag reconcile sweep (Task 7): a low-frequency pass that re-attaches
-# every published tag-mapped rule across all monitored tables, catching tag
-# changes on already-monitored tables (the publish/register route hooks handle
-# the immediate cases). A 6h cadence is deliberately coarse — the sweep is a
-# safety net for out-of-band tag edits, not the primary trigger, and each pass
-# reads every monitored table's columns via the SP client. A no-op when no
-# ``tag_reconcile_service`` was wired or when tag-auto-apply is off.
-_TAG_RECONCILE_INTERVAL_HOURS = 6
-
 # Scheduler loop poll cadence. When any schedule is active (a non-manual,
 # non-paused scope config, a cron-scheduled data product, or a cron-scheduled
 # monitored table) the loop wakes every ``_ACTIVE_POLL_SECONDS`` so due runs
@@ -273,10 +263,6 @@ _IDLE_POLL_SECONDS = 3600
 # repeated page loads can't turn into per-second OLTP work.
 _WAKE_CHECK_SECONDS = 5.0
 _WAKE_MIN_TICK_GAP_SECONDS = 15.0
-
-# System attribution for scheduler-initiated writes (mirrors the
-# ``user_email="scheduler"`` the product/table run ticks already use).
-_SCHEDULER_SYSTEM_USER = "scheduler"
 
 # Retention is split per-backend: analytical (Delta) tables are
 # trimmed via the SQL warehouse executor, OLTP tables via the OLTP
@@ -313,7 +299,6 @@ class SchedulerService:
         binding_run_service: BindingRunService | None = None,
         score_cache_service: ScoreCacheService | None = None,
         monitored_table_service: MonitoredTableService | None = None,
-        tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
         wake_marker: SchedulerWakeMarker | None = None,
         wake_check_seconds: float = _WAKE_CHECK_SECONDS,
@@ -364,15 +349,6 @@ class SchedulerService:
             "Last run" column and table-space last-run stay current for runs
             no browser observed, without the list path ever touching the
             warehouse. When ``None`` the timestamp write is skipped.
-        tag_reconcile_service:
-            Optional apply-on-tag orchestrator (Task 7). When set,
-            :meth:`_maybe_run_tag_reconcile` runs a full reconcile sweep once
-            per ``_TAG_RECONCILE_INTERVAL_HOURS`` so tag changes on
-            already-monitored tables re-attach their matching published rules
-            without a publish/register event. When ``None`` (legacy
-            deployments, unit tests) the tick is a no-op — a fourth independent
-            timer that touches no state the other ticks read. The sweep is
-            itself a no-op when the ``tag_auto_apply`` setting is off.
         reconcile_scores_on_start:
             When True (production wiring — set by the app lifespan),
             the first score-refresh pass after boot recomputes EVERY
@@ -426,7 +402,6 @@ class SchedulerService:
         self._binding_run_service = binding_run_service
         self._score_cache_service = score_cache_service
         self._monitored_table_service = monitored_table_service
-        self._tag_reconcile_service = tag_reconcile_service
         # Scheduler-launched runs awaiting their dq_validation_runs
         # terminal row, run_id -> launch time (UTC). In-memory only:
         # the scheduler is file-locked to one worker, and a run lost to
@@ -480,14 +455,6 @@ class SchedulerService:
         # (default 24h). Held in process memory like the view GC; a
         # missed sweep is harmless since the next one catches up.
         self._next_retention_at: datetime = datetime.now(timezone.utc) + timedelta(hours=_RETENTION_INTERVAL_HOURS)
-
-        # Apply-on-tag reconcile sweep: fires every
-        # ``_TAG_RECONCILE_INTERVAL_HOURS`` (default 6h). Held in process
-        # memory like the retention sweep; a missed tick is harmless since the
-        # next one catches up and the sweep is idempotent.
-        self._next_tag_reconcile_at: datetime = datetime.now(timezone.utc) + timedelta(
-            hours=_TAG_RECONCILE_INTERVAL_HOURS
-        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -545,7 +512,6 @@ class SchedulerService:
                 await self._maybe_gc_orphan_views(datetime.now(timezone.utc))
                 await self._maybe_sweep_stale_tmp_views(datetime.now(timezone.utc))
                 await self._maybe_run_retention(datetime.now(timezone.utc))
-                await self._maybe_run_tag_reconcile(datetime.now(timezone.utc))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -2840,33 +2806,6 @@ class SchedulerService:
             await asyncio.to_thread(self._run_retention)
         except Exception:
             logger.exception("Retention sweep failed (non-fatal)")
-
-    async def _maybe_run_tag_reconcile(self, now: datetime) -> None:
-        """Run the apply-on-tag reconcile sweep if the timer has elapsed.
-
-        No-op when no ``tag_reconcile_service`` was wired (legacy deployments,
-        unit tests) or when the timer hasn't elapsed. The sweep is itself a
-        no-op when the ``tag_auto_apply`` setting is off. Runs in a background
-        thread so it doesn't block the loop. Failures are logged but never
-        fatal — the next tick re-tries.
-        """
-        if self._tag_reconcile_service is None:
-            return
-        if now < self._next_tag_reconcile_at:
-            return
-
-        scheduled_for = self._next_tag_reconcile_at
-        # Advance the timer first so a slow sweep can't double-fire.
-        self._next_tag_reconcile_at = now + timedelta(hours=_TAG_RECONCILE_INTERVAL_HOURS)
-        logger.info(
-            "Tag-reconcile sweep: triggering apply-on-tag reconcile (was due at %s); next run scheduled for %s",
-            scheduled_for.isoformat(),
-            self._next_tag_reconcile_at.isoformat(),
-        )
-        try:
-            await asyncio.to_thread(self._tag_reconcile_service.sweep, _SCHEDULER_SYSTEM_USER)
-        except Exception:
-            logger.exception("Tag-reconcile sweep failed (non-fatal)")
 
     def _run_retention(self) -> None:
         """DELETE rows older than ``retention_days`` from each high-volume table.

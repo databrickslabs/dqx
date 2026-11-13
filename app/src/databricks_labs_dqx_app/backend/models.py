@@ -25,6 +25,7 @@ from .registry_models import ScheduleKind as RegistryScheduleKind
 from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEFAULT
 from .registry_models import MAX_SCHEDULE_SAMPLE_SIZE
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
+from .policy_models import ColumnCondition, RulePolicy, RulePolicyIn
 from .rule_enums import RuleSource, RuleStatus
 from .setup.models import GrantErrorCode
 from .sql_utils import validate_fqn
@@ -1010,11 +1011,16 @@ class DesiredAppliedRuleIn(BaseModel):
 class SaveAppliedRulesIn(BaseModel):
     """Request body for ``saveAppliedRules`` — the FULL desired set of applications for a binding.
 
-    Anything currently applied to the binding that isn't (re)supplied here is
-    removed; see ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
+    Anything the editor had loaded (``known_applied_ids``) that isn't (re)supplied
+    here is removed; rows applied after that (for example by a rule policy) are
+    kept. See ``ApplyRulesService.save_applied_rules`` for reconcile semantics.
     """
 
     applications: list[DesiredAppliedRuleIn] = Field(default_factory=list)
+    known_applied_ids: list[str] = Field(
+        description="Ids of the applied rules the editor loaded (its baseline). Only these may be removed by this save.",
+        max_length=10_000,
+    )
 
 
 class SetAppliedRulePinIn(BaseModel):
@@ -1211,12 +1217,22 @@ class MonitoredTableDetailOut(BaseModel):
 
     table: MonitoredTableOut
     applied_rules: list[AppliedRuleOut] = Field(default_factory=list)
+    policy_evaluation_pending: bool = Field(
+        default=False,
+        description=(
+            "True when a rule policy evaluation for this table was started by this read or is still "
+            "running, so rules it attaches may appear on a re-read shortly."
+        ),
+    )
 
     @classmethod
-    def from_domain(cls, detail: MonitoredTableDetail) -> "MonitoredTableDetailOut":
+    def from_domain(
+        cls, detail: MonitoredTableDetail, *, policy_evaluation_pending: bool = False
+    ) -> "MonitoredTableDetailOut":
         return cls(
             table=MonitoredTableOut.from_domain(detail.table),
             applied_rules=[AppliedRuleOut.from_summary(s) for s in detail.applied_rules],
+            policy_evaluation_pending=policy_evaluation_pending,
         )
 
 
@@ -1355,11 +1371,11 @@ class MatchRulesOut(BaseModel):
 
 
 class TagRuleSuggestionOut(BaseModel):
-    """One tag-matched, accept-to-attach rule suggestion for a monitored table (apply-on-tag).
+    """One accept-to-attach rule suggestion for a monitored table.
 
-    The OFF-path counterpart to auto-apply: surfaced on a table's Apply Rules
-    screen when ``tag_auto_apply`` is off. ``column_mapping`` is the single
-    representative slot->column group; ``explanation`` names the matched tags.
+    Produced by a tag match or by a rule policy with several possible columns;
+    surfaced on a table's Apply Rules screen. ``column_mapping`` is one
+    slot->column group; ``explanation`` names the matched tags or the policy.
     """
 
     rule_id: str
@@ -3252,3 +3268,91 @@ class BrandingOut(BaseModel):
     logos: BrandingLogosOut
     custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
     edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Rule policies
+# ---------------------------------------------------------------------------
+
+MAX_RULES_PER_POLICY_CREATE = 50
+
+
+class CreateRulePoliciesIn(BaseModel):
+    """Create the same policy for one or more rules (one policy per rule, all or nothing).
+
+    *column_conditions_by_rule* overrides *policy.column_conditions* for the rules it lists,
+    since slot names differ between rules.
+    """
+
+    rule_ids: list[str] = Field(min_length=1, max_length=MAX_RULES_PER_POLICY_CREATE)
+    policy: RulePolicyIn
+    column_conditions_by_rule: dict[str, dict[str, ColumnCondition]] = Field(default_factory=dict)
+
+    @field_validator("rule_ids")
+    @classmethod
+    def _unique_rule_ids(cls, value: list[str]) -> list[str]:
+        if any(not rule_id for rule_id in value):
+            raise ValueError("Rule ids must not be empty.")
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def _conditions_for_listed_rules(self) -> "CreateRulePoliciesIn":
+        if set(self.column_conditions_by_rule) - set(self.rule_ids):
+            raise ValueError("column_conditions_by_rule may only list rules in rule_ids.")
+        return self
+
+
+class PreviewRulePolicyIn(BaseModel):
+    """Dry-run a policy definition for one rule."""
+
+    rule_id: str = Field(min_length=1)
+    policy: RulePolicyIn
+
+
+class RulePolicyOut(RulePolicy):
+    """A stored rule policy plus how many tables it has attached its rule to."""
+
+    tables_matched: int = 0
+
+    @classmethod
+    def from_domain(cls, policy: RulePolicy, tables_matched: int) -> "RulePolicyOut":
+        return cls(**policy.model_dump(), tables_matched=tables_matched)
+
+
+class RulePolicyPreviewMappingOut(BaseModel):
+    """One mapping the policy would attach: slot name to column (or comma-joined columns)."""
+
+    column_mapping: ColumnMappingGroup
+    reason: str
+
+
+class RulePolicyPreviewTableOut(BaseModel):
+    """A table the policy matches.
+
+    *monitored* is False when it would be registered first; *already_attached* is True
+    when the rule is already applied there for every listed mapping.
+    """
+
+    table_fqn: str
+    monitored: bool
+    already_attached: bool = False
+    mappings: list[RulePolicyPreviewMappingOut]
+
+
+class RulePolicyPreviewOut(BaseModel):
+    """What saving a policy would attach for the calling user."""
+
+    tables_matched: int
+    columns_matched: int
+    new_tables: int
+    truncated: bool
+    unreadable_catalogs: list[str] = Field(default_factory=list)
+    tables: list[RulePolicyPreviewTableOut]
+
+
+class RulePolicyRunOut(BaseModel):
+    """Result of re-evaluating a policy."""
+
+    attached: int
+    registered: int
+    registration_capped: bool

@@ -7,12 +7,13 @@ routes themselves are thin adapters over ``MonitoredTableService``, whose
 behaviour is already covered by ``test_monitored_table_service.py``.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from databricks.sdk.errors import NotFound, PermissionDenied
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
@@ -81,7 +82,20 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializatio
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RuleCatalogEntry, RulesCatalogService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
-from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagRuleSuggestion
+from databricks_labs_dqx_app.backend.policy_models import RulePolicy
+from databricks_labs_dqx_app.backend.services.policy_apply_service import (
+    ActingUser,
+    ApplyResult,
+    OpenEvaluation,
+    PolicyApplyService,
+)
+from databricks_labs_dqx_app.backend.services.policy_engine import PolicyMatch
+from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
+from databricks_labs_dqx_app.backend.services.tag_suggestion_service import (
+    TagRuleSuggestion,
+    TagSuggestionService,
+)
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     BulkRegisterResult,
@@ -145,15 +159,20 @@ def _mock_discovery(owner: str | None = None) -> MagicMock:
     return discovery
 
 
-def _tag_suggestions_mock() -> MagicMock:
-    """A TagSuggestionService mock whose apply_matches is a no-op (returns 0).
+_ACTING_USER = ActingUser(email="alice@x", role=UserRole.RULE_AUTHOR, principal_ids=frozenset({"alice@x"}))
 
-    Keeps register/bulk tests focused on their core behaviour without
-    accidentally asserting on the auto-apply side-effect.
-    """
-    tag_suggestions = MagicMock()
-    tag_suggestions.apply_matches.return_value = 0
-    return tag_suggestions
+
+def _policy_apply_mock(attached: int = 0) -> MagicMock:
+    """A PolicyApplyService fake whose trigger evaluations attach *attached* rows and nothing else."""
+    policy_apply = create_autospec(PolicyApplyService, instance=True)
+    policy_apply.evaluate_binding.return_value = ApplyResult(attached=attached, registered=0, ambiguous=[])
+    policy_apply.evaluate_tables.return_value = ApplyResult(attached=0, registered=0, ambiguous=[])
+    policy_apply.ambiguous_for_binding.return_value = []
+    policy_apply.begin_open.return_value = _OPEN_RUN
+    return policy_apply
+
+
+_OPEN_RUN = OpenEvaluation(pending=True, run=True, key=("u", "b1", 0))
 
 
 class TestListAndGet:
@@ -243,19 +262,65 @@ class TestListAndGet:
                 AppliedRuleSummary(applied_rule=applied, rule_name="Not Null", rule_dimension="Completeness")
             ],
         )
-        tag_suggestions = _tag_suggestions_mock()
-        result = get_monitored_table("b1", svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+        policy_apply = _policy_apply_mock()
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
         assert result.table.binding_id == "b1"
         assert len(result.applied_rules) == 1
         assert result.applied_rules[0].rule_name == "Not Null"
+        # Opening the table responds first; the policies reaching it are evaluated
+        # afterwards, once, as the caller, and the detail is read only once.
+        policy_apply.begin_open.assert_called_once_with("b1", "cat.schema.tbl", _ACTING_USER)
+        assert result.policy_evaluation_pending is True
+        policy_apply.evaluate_on_open.assert_not_called()
+        assert len(bt.tasks) == 1
+        asyncio.run(bt())
+        policy_apply.evaluate_on_open.assert_called_once_with("b1", _OPEN_RUN, _ACTING_USER)
+        svc.get.assert_called_once_with("b1")
+
+    @pytest.mark.parametrize(
+        "opened",
+        [OpenEvaluation(pending=False, run=False), OpenEvaluation(pending=True, run=False)],
+        ids=["debounced-or-uncovered", "still-running"],
+    )
+    def test_get_schedules_nothing_unless_the_open_claims_an_evaluation(self, opened: OpenEvaluation):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(), applied_rules=[])
+        policy_apply = _policy_apply_mock()
+        policy_apply.begin_open.return_value = opened
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
+        assert result.policy_evaluation_pending is opened.pending
+        assert bt.tasks == []
+
+    def test_get_policy_failure_is_non_fatal(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(), applied_rules=[])
+        policy_apply = _policy_apply_mock()
+        policy_apply.evaluate_on_open.side_effect = RuntimeError("boom")
+        bt = BackgroundTasks()
+        result = get_monitored_table(
+            "b1", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+        )
+        assert result.table.binding_id == "b1"
+        asyncio.run(bt())  # the background failure is swallowed (logged)
+        policy_apply.evaluate_on_open.assert_called_once()
 
     def test_get_missing_binding_raises_404(self):
         svc = MagicMock()
         svc.get.return_value = None
-        tag_suggestions = _tag_suggestions_mock()
+        policy_apply = _policy_apply_mock()
         with pytest.raises(HTTPException) as excinfo:
-            get_monitored_table("missing", svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
+            bt = BackgroundTasks()
+            get_monitored_table(
+                "missing", svc=svc, policy_apply=policy_apply, acting_user=_ACTING_USER, background_tasks=bt
+            )
         assert excinfo.value.status_code == 404
+        policy_apply.begin_open.assert_not_called()
 
 
 class TestRegister:
@@ -264,12 +329,15 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
         discovery = _mock_discovery(owner="owner@x")
+        bt = BackgroundTasks()
         result = register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
-            tag_suggestions=_tag_suggestions_mock(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.table.table_fqn == "cat.schema.tbl"
         assert result.applied_rule_count == 0
@@ -288,12 +356,15 @@ class TestRegister:
         svc = MagicMock()
         svc.register.return_value = _table(binding_id="new-b1")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
-            tag_suggestions=_tag_suggestions_mock(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         svc.register.assert_called_once()
 
@@ -302,12 +373,15 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner="owner@x")
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
-            tag_suggestions=_tag_suggestions_mock(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         discovery.get_table_owner.assert_called_once_with("cat.schema.tbl")
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner="owner@x", owner_display_name=None)
@@ -319,12 +393,15 @@ class TestRegister:
         svc.register.return_value = _table()
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         discovery = _mock_discovery(owner=None)
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=discovery,
-            tag_suggestions=_tag_suggestions_mock(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         svc.register.assert_called_once_with("cat.schema.tbl", "alice@x", owner=None, owner_display_name=None)
 
@@ -333,12 +410,15 @@ class TestRegister:
         svc.register.side_effect = DuplicateMonitoredTableError("Table already monitored")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl")
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             register_monitored_table(
                 body=body,
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 discovery=_mock_discovery(),
-                tag_suggestions=_tag_suggestions_mock(),
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 409
 
@@ -347,45 +427,57 @@ class TestRegister:
         svc.register.side_effect = ValueError("Invalid fully qualified name")
         body = RegisterMonitoredTableIn(table_fqn="bad-fqn")
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             register_monitored_table(
                 body=body,
                 svc=svc,
                 obo_ws=_mock_obo_ws(),
                 discovery=_mock_discovery(),
-                tag_suggestions=_tag_suggestions_mock(),
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 400
 
-    def test_register_triggers_apply_matches(self):
-        """Apply-on-tag: a successful register calls apply_matches on the new binding."""
+    def test_register_evaluates_policies_for_the_new_binding(self):
+        """A successful register evaluates the policies reaching the new binding, as the caller."""
         svc = MagicMock()
         svc.register.return_value = _table(binding_id="b1", table_fqn="cat.schema.tbl")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
-        tag_suggestions = _tag_suggestions_mock()
+        policy_apply = _policy_apply_mock()
+        bt = BackgroundTasks()
         register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
-            tag_suggestions=tag_suggestions,
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
-        tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
+        policy_apply.evaluate_binding.assert_not_called()  # responds first
+        asyncio.run(bt())
+        policy_apply.evaluate_binding.assert_called_once_with("b1", _ACTING_USER)
 
-    def test_register_apply_matches_failure_is_non_fatal(self):
-        """A raising apply_matches must NOT turn a successful register into a 500."""
+    def test_register_policy_failure_is_non_fatal(self):
+        """A raising policy evaluation must NOT turn a successful register into a 500."""
         svc = MagicMock()
         svc.register.return_value = _table(binding_id="b1", table_fqn="cat.schema.tbl")
         body = RegisterMonitoredTableIn(table_fqn="cat.schema.tbl", owner="bob@x")
-        tag_suggestions = MagicMock()
-        tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
+        policy_apply = _policy_apply_mock()
+        policy_apply.evaluate_binding.side_effect = RuntimeError("boom")
+        bt = BackgroundTasks()
         result = register_monitored_table(
             body=body,
             svc=svc,
             obo_ws=_mock_obo_ws(),
             discovery=_mock_discovery(),
-            tag_suggestions=tag_suggestions,
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.table.table_fqn == "cat.schema.tbl"
+        asyncio.run(bt())
 
 
 class TestBulkRegister:
@@ -401,8 +493,14 @@ class TestBulkRegister:
             table_fqns=["cat.schema.a", "cat.schema.b", "cat.schema.existing", "bad-fqn"],
             owner="bob@x",
         )
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == ["cat.schema.a", "cat.schema.b"]
         assert result.skipped_existing == ["cat.schema.existing"]
@@ -415,8 +513,14 @@ class TestBulkRegister:
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult()
         body = BulkRegisterMonitoredTablesIn(table_fqns=[])
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=_policy_apply_mock(),
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == []
         assert result.skipped_existing == []
@@ -427,62 +531,81 @@ class TestBulkRegister:
         svc.bulk_register.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
+            bt = BackgroundTasks()
             bulk_register_monitored_tables(
-                body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=_tag_suggestions_mock()
+                body=body,
+                svc=svc,
+                obo_ws=_mock_obo_ws(),
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
             )
         assert excinfo.value.status_code == 500
 
-    def test_bulk_register_calls_apply_matches_for_each_new_binding(self):
-        """Apply-on-tag: apply_matches is called once per newly-registered FQN (via get_by_table_fqn)."""
+    def test_bulk_register_evaluates_policies_once_for_all_new_tables(self):
+        """One evaluation (one snapshot) covers every newly-registered FQN; skipped ones are left out."""
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult(
             registered=["cat.schema.t1", "cat.schema.t2"],
             skipped_existing=["cat.schema.existing"],
             invalid=[],
         )
-        svc.get_by_table_fqn.side_effect = lambda fqn: MonitoredTableDetail(
-            table=_table(binding_id=f"bid-{fqn[-2:]}", table_fqn=fqn),
-            applied_rules=[],
-        )
-        tag_suggestions = _tag_suggestions_mock()
+        policy_apply = _policy_apply_mock()
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1", "cat.schema.t2", "cat.schema.existing"])
-        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
-        assert tag_suggestions.apply_matches.call_count == 2
-        tag_suggestions.apply_matches.assert_any_call("bid-t1", "alice@x")
-        tag_suggestions.apply_matches.assert_any_call("bid-t2", "alice@x")
+        bt = BackgroundTasks()
+        bulk_register_monitored_tables(
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
+        )
+        policy_apply.evaluate_tables.assert_not_called()  # responds first
+        asyncio.run(bt())
+        policy_apply.evaluate_tables.assert_called_once_with(["cat.schema.t1", "cat.schema.t2"], _ACTING_USER)
+        policy_apply.evaluate_binding.assert_not_called()
+        svc.get_by_table_fqn.assert_not_called()
 
-    def test_bulk_register_apply_matches_still_called_when_detail_returned(self):
-        """The loop always runs (self-gating in service); apply_matches is called for each binding."""
+    def test_bulk_register_with_nothing_new_skips_policy_evaluation(self):
+        svc = MagicMock()
+        svc.bulk_register.return_value = BulkRegisterResult(
+            registered=[], skipped_existing=["cat.schema.t1"], invalid=[]
+        )
+        policy_apply = _policy_apply_mock()
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bt = BackgroundTasks()
+        bulk_register_monitored_tables(
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
+        )
+        assert bt.tasks == []
+        policy_apply.evaluate_tables.assert_not_called()
+
+    def test_bulk_register_policy_failure_is_non_fatal(self):
+        """A raising policy evaluation must NOT turn a successful bulk-register into a 500."""
         svc = MagicMock()
         svc.bulk_register.return_value = BulkRegisterResult(
             registered=["cat.schema.t1"], skipped_existing=[], invalid=[]
         )
-        svc.get_by_table_fqn.return_value = MonitoredTableDetail(
-            table=_table(binding_id="b1", table_fqn="cat.schema.t1"),
-            applied_rules=[],
-        )
-        tag_suggestions = _tag_suggestions_mock()
+        policy_apply = _policy_apply_mock()
+        policy_apply.evaluate_tables.side_effect = RuntimeError("boom")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
-        bulk_register_monitored_tables(body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions)
-        tag_suggestions.apply_matches.assert_called_once_with("b1", "alice@x")
-
-    def test_bulk_register_apply_matches_failure_is_non_fatal(self):
-        """A raising apply_matches must NOT turn a successful bulk-register into a 500."""
-        svc = MagicMock()
-        svc.bulk_register.return_value = BulkRegisterResult(
-            registered=["cat.schema.t1"], skipped_existing=[], invalid=[]
-        )
-        svc.get_by_table_fqn.return_value = MonitoredTableDetail(
-            table=_table(binding_id="b1", table_fqn="cat.schema.t1"),
-            applied_rules=[],
-        )
-        tag_suggestions = MagicMock()
-        tag_suggestions.apply_matches.side_effect = RuntimeError("boom")
-        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.t1"])
+        bt = BackgroundTasks()
         result = bulk_register_monitored_tables(
-            body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions
+            body=body,
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            policy_apply=policy_apply,
+            acting_user=_ACTING_USER,
+            background_tasks=bt,
         )
         assert result.registered == ["cat.schema.t1"]
+        asyncio.run(bt())
 
     def test_bulk_register_rejects_whole_batch_when_a_table_is_unavailable(self):
         svc = MagicMock()
@@ -500,7 +623,15 @@ class TestBulkRegister:
             table_fqns=["cat.schema.ok", "cat.schema.missing", "cat.schema.hidden", "bad-fqn"]
         )
         with pytest.raises(HTTPException) as excinfo:
-            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+            bt = BackgroundTasks()
+            bulk_register_monitored_tables(
+                body=body,
+                svc=svc,
+                obo_ws=obo,
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
+            )
         assert excinfo.value.status_code == 422
         assert excinfo.value.detail["code"] == "import_tables_unavailable"
         assert sorted(excinfo.value.detail["tables"]) == ["cat.schema.hidden", "cat.schema.missing"]
@@ -512,7 +643,15 @@ class TestBulkRegister:
         obo.tables.get.side_effect = RuntimeError("UC down")
         body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
         with pytest.raises(HTTPException) as excinfo:
-            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+            bt = BackgroundTasks()
+            bulk_register_monitored_tables(
+                body=body,
+                svc=svc,
+                obo_ws=obo,
+                policy_apply=_policy_apply_mock(),
+                acting_user=_ACTING_USER,
+                background_tasks=bt,
+            )
         assert excinfo.value.status_code == 502
         svc.bulk_register.assert_not_called()
 
@@ -929,7 +1068,9 @@ class TestSaveAppliedRules:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         result = save_applied_rules(
             "b1",
             body=body,
@@ -954,7 +1095,9 @@ class TestSaveAppliedRules:
         applied = AppliedRule(id="ar1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}])
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = ("Not Null Check", "Completeness", "High", "ui")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         result = save_applied_rules(
             "b1",
             body=body,
@@ -973,7 +1116,7 @@ class TestSaveAppliedRules:
     def test_empty_applications_removes_everything(self):
         svc = MagicMock()
         svc.save_applied_rules.return_value = []
-        body = SaveAppliedRulesIn(applications=[])
+        body = SaveAppliedRulesIn(applications=[], known_applied_ids=["ar1", "ar2"])
         result = save_applied_rules(
             "b1",
             body=body,
@@ -984,12 +1127,19 @@ class TestSaveAppliedRules:
             perms=MagicMock(),
         )
         assert result == []
-        svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x")
+        # Only rows the editor had loaded may be removed by this save.
+        svc.save_applied_rules.assert_called_once_with("b1", [], "alice@x", known_applied_ids=["ar1", "ar2"])
+
+    def test_the_editor_baseline_is_required(self):
+        with pytest.raises(ValidationError):
+            SaveAppliedRulesIn.model_validate({"applications": []})
 
     def test_mapping_incomplete_raises_422(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = MappingIncompleteError("missing slot")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1005,7 +1155,9 @@ class TestSaveAppliedRules:
     def test_unpublished_rule_raises_409(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = RuleNotPublishedError("not published")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1021,7 +1173,9 @@ class TestSaveAppliedRules:
     def test_missing_binding_or_rule_raises_404(self):
         svc = MagicMock()
         svc.save_applied_rules.side_effect = RuntimeError("Monitored table not found: b1")
-        body = SaveAppliedRulesIn(applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])])
+        body = SaveAppliedRulesIn(
+            known_applied_ids=[], applications=[DesiredAppliedRuleIn(rule_id="r1", column_mapping=[{"column": "id"}])]
+        )
         with pytest.raises(HTTPException) as excinfo:
             save_applied_rules(
                 "b1",
@@ -1043,13 +1197,14 @@ class TestSaveAppliedRules:
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
         body = SaveAppliedRulesIn(
+            known_applied_ids=[],
             applications=[
                 DesiredAppliedRuleIn(
                     rule_id="r1",
                     column_mapping=[{"column": "email"}],
                     column_pass_thresholds={"email": 90},
                 )
-            ]
+            ],
         )
         save_applied_rules(
             "b1",
@@ -1076,13 +1231,14 @@ class TestSaveAppliedRules:
             svc.save_applied_rules.return_value = [applied]
             svc.rule_display_tags.return_value = (None, None, None, None)
             body = SaveAppliedRulesIn(
+                known_applied_ids=[],
                 applications=[
                     DesiredAppliedRuleIn(
                         rule_id="r1",
                         column_mapping=[{"column": "id"}],
                         column_pass_thresholds=thresholds,
                     )
-                ]
+                ],
             )
             save_applied_rules(
                 "b1",
@@ -1111,6 +1267,7 @@ class TestSaveAppliedRules:
         svc.save_applied_rules.return_value = [applied]
         svc.rule_display_tags.return_value = (None, None, None, None)
         body = SaveAppliedRulesIn(
+            known_applied_ids=[],
             applications=[
                 DesiredAppliedRuleIn(
                     rule_id="r1",
@@ -1120,7 +1277,7 @@ class TestSaveAppliedRules:
                     column_pass_thresholds=None,
                     tags={RESERVED_COLUMN_PASS_THRESHOLDS_KEY: {"email": 90}, "team": "growth"},
                 )
-            ]
+            ],
         )
         save_applied_rules(
             "b1",
@@ -1767,37 +1924,120 @@ class TestSuggestRulesForTable:
         assert result.suggestions == []
 
 
+def _tag_suggestion_deps(
+    *,
+    tag: list[TagRuleSuggestion] | None = None,
+    ambiguous: list[PolicyMatch] | None = None,
+) -> dict:
+    svc = create_autospec(TagSuggestionService, instance=True)
+    svc.suggest.return_value = tag or []
+    policy_apply = _policy_apply_mock()
+    policy_apply.ambiguous_for_binding.return_value = ambiguous or []
+    policies = create_autospec(RulePolicyService, instance=True)
+    policies.get.side_effect = lambda pid: RulePolicy(policy_id=pid, rule_id="r2", name=f"Name {pid}")
+    registry = create_autospec(RegistryService, instance=True)
+    registry.get_rules_many.side_effect = lambda ids: {
+        rid: RegistryRule(
+            rule_id=rid,
+            mode="dqx_native",
+            status="approved",
+            version=1,
+            definition=RuleDefinition(body={"function": "is_not_null", "arguments": {}}),
+            user_metadata={"name": f"Rule {rid}", "dimension": "Validity", "severity": "Low"},
+        )
+        for rid in ids
+    }
+    return {
+        "svc": svc,
+        "policy_apply": policy_apply,
+        "acting_user": _ACTING_USER,
+        "policies": policies,
+        "registry": registry,
+    }
+
+
+def _ambiguous(policy_id: str, rule_id: str, column: str) -> PolicyMatch:
+    return PolicyMatch(policy_id, rule_id, "cat.schema.tbl", {"c1": column}, "ambiguous", "tie")
+
+
 class TestListTagSuggestions:
     """``GET /monitored-tables/{binding_id}/tag-suggestions`` — thin adapter, never 500s."""
 
     def test_returns_service_suggestions_mapped_to_response_model(self):
-        svc = MagicMock()
-        svc.suggest.return_value = [
-            TagRuleSuggestion(
-                rule_id="r1",
-                rule_name="No null email",
-                dimension="Completeness",
-                severity="High",
-                column_mapping={"c1": "email"},
-                explanation="Matched tag class.pii",
-            )
-        ]
+        deps = _tag_suggestion_deps(
+            tag=[
+                TagRuleSuggestion(
+                    rule_id="r1",
+                    rule_name="No null email",
+                    dimension="Completeness",
+                    severity="High",
+                    column_mapping={"c1": "email"},
+                    explanation="Matched tag class.pii",
+                )
+            ]
+        )
 
-        result = list_tag_suggestions("b1", svc=svc)
+        result = list_tag_suggestions("b1", **deps)
 
         assert len(result.suggestions) == 1
         assert result.suggestions[0].rule_id == "r1"
         assert result.suggestions[0].column_mapping == {"c1": "email"}
         assert result.suggestions[0].explanation == "Matched tag class.pii"
-        svc.suggest.assert_called_once_with("b1")
+        deps["svc"].suggest.assert_called_once_with("b1")
+
+    def test_includes_policy_ambiguous_matches(self):
+        deps = _tag_suggestion_deps(ambiguous=[_ambiguous("p1", "r2", "email_a"), _ambiguous("p1", "r2", "email_b")])
+
+        result = list_tag_suggestions("b1", **deps)
+
+        deps["policy_apply"].ambiguous_for_binding.assert_called_once_with("b1", _ACTING_USER)
+        assert [(s.rule_id, s.column_mapping) for s in result.suggestions] == [
+            ("r2", {"c1": "email_a"}),
+            ("r2", {"c1": "email_b"}),
+        ]
+        first = result.suggestions[0]
+        assert first.explanation == "Policy Name p1: several possible columns"
+        assert (first.rule_name, first.dimension, first.severity) == ("Rule r2", "Validity", "Low")
+
+    def test_policy_match_duplicating_a_tag_suggestion_is_dropped(self):
+        tag = TagRuleSuggestion(
+            rule_id="r2",
+            rule_name="Rule r2",
+            dimension=None,
+            severity=None,
+            column_mapping={"c1": "email_a"},
+            explanation="Matched tag class.pii",
+        )
+        deps = _tag_suggestion_deps(tag=[tag], ambiguous=[_ambiguous("p1", "r2", "email_a")])
+
+        result = list_tag_suggestions("b1", **deps)
+
+        assert [s.explanation for s in result.suggestions] == ["Matched tag class.pii"]
 
     def test_service_exception_returns_empty_list_not_500(self):
-        svc = MagicMock()
-        svc.suggest.side_effect = RuntimeError("boom")
+        deps = _tag_suggestion_deps()
+        deps["svc"].suggest.side_effect = RuntimeError("boom")
+        deps["policy_apply"].ambiguous_for_binding.side_effect = RuntimeError("boom")
 
-        result = list_tag_suggestions("b1", svc=svc)
+        result = list_tag_suggestions("b1", **deps)
 
         assert result.suggestions == []
+
+    def test_policy_lookup_failure_keeps_tag_suggestions(self):
+        tag = TagRuleSuggestion(
+            rule_id="r1",
+            rule_name=None,
+            dimension=None,
+            severity=None,
+            column_mapping={"c1": "email"},
+            explanation="Matched tag class.pii",
+        )
+        deps = _tag_suggestion_deps(tag=[tag], ambiguous=[_ambiguous("p1", "r2", "email_a")])
+        deps["policies"].get.side_effect = RuntimeError("boom")
+
+        result = list_tag_suggestions("b1", **deps)
+
+        assert [s.rule_id for s in result.suggestions] == ["r1"]
 
 
 class TestRunMonitoredTable:

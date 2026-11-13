@@ -16,4 +16,8 @@ describe("resolvePageTab", () => {
       expect(resolvePageTab(key)).toBe(key);
     }
   });
+
+  test("left strip reads build | access | outcome", () => {
+    expect(PAGE_TAB_KEYS.slice(0, 5)).toEqual(["about", "implementation", "policies", "permissions", "results"]);
+  });
 });

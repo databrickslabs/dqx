@@ -127,6 +127,24 @@ class RuleSpec:
 
 
 @dataclass(frozen=True)
+class PolicySpec:
+    """An example rule policy seeded for a tag-mapped demo rule.
+
+    Args:
+        rule_key: the :class:`RuleSpec` the policy belongs to (must carry slot_tags).
+        name: short label (minimal phrasing, no leading article).
+        description: one sentence ending in a period.
+
+    The seed scopes the policy to the demo catalog and turns the rule's
+    slot_tags into the policy's column conditions.
+    """
+
+    rule_key: str
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
 class TableSpec:
     """A source table the demo generates.
 
@@ -704,6 +722,20 @@ SCHEDULES: tuple[ScheduleSpec, ...] = (
 COLUMN_TAGS: tuple[ColumnTagSpec, ...] = (
     ColumnTagSpec(table="customers", column="country_code", tag="class.location"),
     ColumnTagSpec(table="payments", column="card_last4", tag="class.credit_card"),
+)
+
+
+# --------------------------------------------------------------------------- #
+# Example rule policies — the unapplied iso2_country showcase rule attaches
+# itself to every class.location column in the demo catalog (customers.country_code)
+# whenever a user who may apply rules opens or registers a matching table.
+# --------------------------------------------------------------------------- #
+POLICIES: tuple[PolicySpec, ...] = (
+    PolicySpec(
+        rule_key="iso2_country",
+        name="Country codes by tag",
+        description="Applies to columns tagged class.location in the demo catalog.",
+    ),
 )
 
 

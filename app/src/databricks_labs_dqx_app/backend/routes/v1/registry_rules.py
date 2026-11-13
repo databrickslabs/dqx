@@ -16,6 +16,7 @@ from databricks_labs_dqx_app.backend.common.approvals import ApprovalMode, mark_
 from databricks_labs_dqx_app.backend.common.authorization import CurrentUser, UserRole
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType, Privilege
 from databricks_labs_dqx_app.backend.dependencies import (
+    CurrentActingUser,
     CurrentPrincipalIds,
     CurrentUserRole,
     get_app_settings_service,
@@ -25,9 +26,10 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_monitored_table_version_service,
     get_pending_application_service,
     get_permissions_service,
+    get_policy_apply_service,
     get_registry_service,
     get_rule_embeddings_service,
-    get_tag_reconcile_service,
+    get_rule_policy_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
@@ -46,6 +48,7 @@ from databricks_labs_dqx_app.backend.models import (
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
+from databricks_labs_dqx_app.backend.sanitization import safe_log_value
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -65,7 +68,8 @@ from databricks_labs_dqx_app.backend.services.generic_rule_shape import (
 )
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import OwnedObject
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
-from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
+from databricks_labs_dqx_app.backend.services.policy_apply_service import ActingUser, PolicyApplyService
+from databricks_labs_dqx_app.backend.services.rule_policy_service import RulePolicyService
 
 router = APIRouter()
 
@@ -92,6 +96,14 @@ def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
 def _mark_owner_unverified(out: OwnedObject) -> None:
     if isinstance(out, RegistryRuleOut):
         out.owner_unverified = True
+
+
+def _run_rule_policies(policy_apply: PolicyApplyService, rule_id: str, acting_user: ActingUser) -> None:
+    """Background task: evaluate an approved rule's policies; never raises."""
+    try:
+        policy_apply.run_rule(rule_id, acting_user)
+    except Exception:  # best-effort: a background evaluation failure is only logged
+        logger.warning(f"Rule policy run after approving rule {safe_log_value(rule_id)} failed", exc_info=True)
 
 
 def _fill_owner_display_names(
@@ -518,12 +530,13 @@ def delete_registry_rule(
     rule_id: str,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
+    policies: Annotated[RulePolicyService, Depends(get_rule_policy_service)],
     user_email: CurrentUser,
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
 ) -> dict[str, str]:
-    """Delete a registry rule.
+    """Delete a registry rule and its rule policies.
 
     Blocked (409) when the rule is currently applied to one or more
     monitored tables — remove every application first via the Apply Rules
@@ -551,7 +564,6 @@ def delete_registry_rule(
                 ),
             )
         svc.delete(rule_id, user_email)
-        return {"status": "deleted", "rule_id": rule_id}
     except HTTPException:
         raise
     except RuntimeError as e:
@@ -559,6 +571,11 @@ def delete_registry_rule(
     except Exception as e:
         logger.error(f"Failed to delete registry rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete registry rule: {e}")
+    try:
+        policies.delete_for_rule(rule_id)
+    except Exception:  # best-effort: orphaned policies attach nothing (their rule is gone)
+        logger.warning(f"Could not delete rule policies of deleted rule {safe_log_value(rule_id)}", exc_info=True)
+    return {"status": "deleted", "rule_id": rule_id}
 
 
 # ------------------------------------------------------------------
@@ -743,6 +760,7 @@ def submit_registry_rule(
 )
 def approve_registry_rule(
     rule_id: str,
+    background_tasks: BackgroundTasks,
     svc: Annotated[RegistryService, Depends(get_registry_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     materializer: Annotated[Materializer, Depends(get_materializer)],
@@ -751,7 +769,8 @@ def approve_registry_rule(
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     apply_rules: Annotated[ApplyRulesService, Depends(get_apply_rules_service)],
     pending: Annotated[PendingApplicationService, Depends(get_pending_application_service)],
-    tag_reconcile: Annotated[TagReconcileService, Depends(get_tag_reconcile_service)],
+    policy_apply: Annotated[PolicyApplyService, Depends(get_policy_apply_service)],
+    acting_user: CurrentActingUser,
     user_email: CurrentUser,
     body: LifecycleRationaleIn | None = None,
 ) -> RegistryRuleOut:
@@ -795,15 +814,10 @@ def approve_registry_rule(
             pending=pending,
             rationale=rationale,
         )
-        # Apply-on-tag (Task 7): after a successful publish, attach this rule
-        # to every monitored table it now tag-matches. Best-effort and a no-op
-        # when tag-auto-apply is off (the service gates internally); double-
-        # guarded here so this post-success side effect can never turn a
-        # successful approve into a 500.
-        try:
-            tag_reconcile.reconcile_rule(rule_id, user_email)
-        except Exception:
-            logger.warning("Tag auto-apply reconcile after approve failed (non-fatal)", exc_info=True)
+        # Rule policies: after a successful publish, run this rule's policies as
+        # the approving user so it attaches wherever they may apply it. Runs after
+        # the response is sent (scope snapshots can take seconds); best-effort.
+        background_tasks.add_task(_run_rule_policies, policy_apply, rule_id, acting_user)
         return RegistryRuleOut.from_domain(rule)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

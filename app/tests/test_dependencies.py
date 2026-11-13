@@ -93,3 +93,20 @@ async def test_both_discovery_services_key_their_caches_by_the_same_user(user: U
 
     assert user_id == expected
     assert discovery.user_id == catalogs.user_id == expected
+
+
+def test_policy_snapshot_client_config_bounds_sdk_calls_by_the_snapshot_deadline():
+    from databricks.sdk.config import Config
+
+    from databricks_labs_dqx_app.backend.services.policy_snapshot import DEFAULT_DEADLINE_SECONDS
+
+    original = Config(
+        host="http://localhost:1", token="t", auth_type="pat", http_timeout_seconds=1, retry_timeout_seconds=1
+    )
+    bounded = dependencies.policy_snapshot_client_config(original)
+
+    assert bounded is not original
+    assert bounded.http_timeout_seconds is not None and bounded.retry_timeout_seconds is not None
+    assert bounded.http_timeout_seconds <= bounded.retry_timeout_seconds <= DEFAULT_DEADLINE_SECONDS
+    assert bounded.token == "t"
+    assert (original.http_timeout_seconds, original.retry_timeout_seconds) == (1, 1)  # the shared client is untouched
