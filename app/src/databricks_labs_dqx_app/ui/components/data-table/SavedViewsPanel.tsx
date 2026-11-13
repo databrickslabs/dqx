@@ -86,10 +86,12 @@ function ActionItem({
   return (
     <DisabledReason reason={state.reasonKey ? t(state.reasonKey) : null} className="block">
       <DropdownMenuItem
-        disabled={!state.enabled}
+        // aria-disabled (not disabled) keeps the item in the arrow-key order, so the
+        // reason tooltip opens on keyboard focus too; onSelect ignores the pick.
+        aria-disabled={!state.enabled || undefined}
         variant={destructive ? "destructive" : "default"}
         className="text-xs"
-        onSelect={onSelect}
+        onSelect={(e) => (state.enabled ? onSelect() : e.preventDefault())}
       >
         {label}
       </DropdownMenuItem>
@@ -277,11 +279,11 @@ export function SavedViewsPanel({ config, onBack, onRequest }: SavedViewsPanelPr
         </DropdownMenuItem>
         <DisabledReason reason={save.reasonKey ? t(save.reasonKey) : null} className="inline-flex">
           <DropdownMenuItem
-            disabled={save.disabled}
+            aria-disabled={save.disabled || undefined}
             className="h-7 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground focus:bg-primary/90 focus:text-primary-foreground"
             onSelect={(e) => {
               e.preventDefault();
-              config.save().catch(ignoreFailure);
+              if (!save.disabled) config.save().catch(ignoreFailure);
             }}
           >
             {t("savedViews.save")}

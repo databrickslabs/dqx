@@ -79,9 +79,13 @@ export type GlobalResultsFilterOptionValues = Record<
   readonly string[] | null
 >;
 
-/** Saved-view definitions of Global Results (Filters only, no columns). Memoise on *options*. */
+/**
+ * Saved-view definitions of Global Results (Filters only, no columns). Memoise on
+ * *options* and *reconcileValues* (which keeps cross-filter picks consistent).
+ */
 export function buildGlobalResultsViewDefs(
   options: GlobalResultsFilterOptionValues,
+  reconcileValues?: (values: ViewValues) => ViewValues,
 ): ViewDefs<never, GlobalResultsFilterKey> {
   return {
     filters: { defaultOrder: GLOBAL_RESULTS_FILTER_ORDER, filters: GLOBAL_RESULTS_FILTERS },
@@ -95,6 +99,7 @@ export function buildGlobalResultsViewDefs(
       },
       GLOBAL_RESULTS_EMPTY_VALUES,
     ),
+    reconcileValues,
   };
 }
 

@@ -141,8 +141,14 @@ class MonitoredTableDetail:
     applied_rules: list[AppliedRuleSummary] = field(default_factory=list)
 
 
-# Row cap shared by the full listing and the slim table-universe read.
+# Row cap of the full listing (per-row rule, check, tag and version lookups).
 _MONITORED_TABLE_LIST_LIMIT = 2000
+
+# Row cap of the slim table-universe read behind the Global Results Owner,
+# Collection and DQ score filters. Far above the full listing's cap: the read is
+# a few short columns per table, and a table past the cap would be silently
+# dropped by those filters (or counted as unscored). Hitting it logs a warning.
+TABLE_UNIVERSE_LIMIT = 50_000
 
 
 @dataclass
@@ -541,7 +547,7 @@ class MonitoredTableService:
             f"FROM {self._table} mt "
             f"LEFT JOIN {self._score_cache_table} sc "
             "ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
-            f"ORDER BY mt.updated_at DESC LIMIT {_MONITORED_TABLE_LIST_LIMIT}"
+            f"ORDER BY mt.updated_at DESC LIMIT {TABLE_UNIVERSE_LIMIT}"
         )
         tables = [
             TableUniverseRow(
@@ -554,6 +560,11 @@ class MonitoredTableService:
             )
             for row in self._sql.query(sql)
         ]
+        if len(tables) >= TABLE_UNIVERSE_LIMIT:
+            logger.warning(
+                f"Table universe read hit its {TABLE_UNIVERSE_LIMIT}-row cap: the Owner, Collection and "
+                "DQ score filters ignore the least recently updated monitored tables"
+            )
         fill_owner_display_names_from_cache(
             tables, self._sp_ws, self._sql, self._table, defer=self._defer_owner_resolution
         )

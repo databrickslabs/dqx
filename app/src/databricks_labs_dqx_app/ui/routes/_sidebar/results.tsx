@@ -34,6 +34,7 @@ import {
   MultiTableResultsSection,
   baseFilterOptionValues,
   breakdownParams,
+  globalResultsValuesReconciler,
   type UseEntityResults,
 } from "@/components/results/MultiTableResults";
 
@@ -133,12 +134,17 @@ function GlobalResultsContent() {
   );
   const viewDefs = useMemo(
     () =>
-      buildGlobalResultsViewDefs({
-        ...baseFilterOptionValues(baseResults),
-        owner: owners,
-        collection: products ? products.map((p) => p.product_id) : null,
-      }),
-    [baseResults, owners, products],
+      buildGlobalResultsViewDefs(
+        {
+          ...baseFilterOptionValues(baseResults),
+          owner: owners,
+          collection: products ? products.map((p) => p.product_id) : null,
+        },
+        // A loaded view drops picks its own catalog / schema / collection exclude,
+        // like an interactive change does; collection membership once it loads.
+        globalResultsValuesReconciler(products ? topFilterOptions.collectionMembers : null),
+      ),
+    [baseResults, owners, products, topFilterOptions],
   );
   const views = useSavedViews(SavedViewPage.global_results, viewDefs);
   return (

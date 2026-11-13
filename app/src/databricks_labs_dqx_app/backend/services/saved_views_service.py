@@ -167,10 +167,21 @@ class SavedViewsService:
             if _is_unique_violation(error):
                 raise SavedViewConflictError("A view with this name already exists") from error
             raise
-        if body.make_my_default:
-            self._write_my_default(user, body.page, view_id)
-        if body.make_org_default:
-            self._flag_org_default(body.page, view_id)
+        try:
+            if body.make_my_default:
+                self._write_my_default(user, body.page, view_id)
+            if body.make_org_default:
+                self._flag_org_default(body.page, view_id)
+        except Exception:
+            # The OLTP protocol spans Delta and Lakebase, so there is no portable
+            # transaction: undo the insert instead (the delete cascades any default
+            # pointer already written), so a failed create leaves nothing behind and
+            # a retry can't hit a name conflict.
+            try:
+                self._sql.delete(self._views, where={"id": view_id})
+            except Exception:
+                logger.warning(f"Could not remove saved view {view_id} after a failed default write", exc_info=True)
+            raise
         logger.info(f"Created saved view {view_id} on {body.page.value}")
         return self._out_for(view_id, user=user, is_admin=is_admin)
 

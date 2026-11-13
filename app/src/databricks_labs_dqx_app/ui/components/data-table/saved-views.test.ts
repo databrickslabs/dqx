@@ -422,6 +422,32 @@ describe("optionsSanitizer / sanitizeViewValues", () => {
   });
 });
 
+describe("reconcileValues", () => {
+  // A cross-filter rule: a "tags" pick requires status "open".
+  const withReconcile: ViewDefs<C, F> = {
+    ...defs,
+    reconcileValues: (values) => (values.status === "open" || stringArrayValue(values.tags).length === 0 ? values : { ...values, tags: [] }),
+  };
+  const visibleTags = { order: ["groupBy", "status", "tags"], visibility: { tags: true } };
+
+  it("runs on load, after per-value sanitising", () => {
+    const loaded = reconcileView({ v: 1, filters: visibleTags, values: { status: "closed", tags: ["x"] } }, withReconcile);
+    expect(loaded.values.tags).toEqual([]);
+  });
+
+  it("leaves consistent values alone", () => {
+    const loaded = reconcileView({ v: 1, filters: visibleTags, values: { status: "open", tags: ["x"] } }, withReconcile);
+    expect(loaded.values.tags).toEqual(["x"]);
+    expect(sanitizeViewValues(loaded, withReconcile)).toBe(loaded);
+  });
+
+  it("re-runs when the defs change", () => {
+    const loaded = reconcileView({ v: 1, filters: visibleTags, values: { status: "closed", tags: ["x"] } }, defs);
+    expect(loaded.values.tags).toEqual(["x"]);
+    expect(sanitizeViewValues(loaded, withReconcile).values.tags).toEqual([]);
+  });
+});
+
 describe("value readers", () => {
   it("stringValue falls back for non-strings", () => {
     expect(stringValue("x", "all")).toBe("x");

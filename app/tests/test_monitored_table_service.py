@@ -10,10 +10,12 @@ one for the always-Delta ``dq_profiling_results`` read path — mirroring how
 """
 
 import json
+import logging
 
 import pytest
 
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
+    TABLE_UNIVERSE_LIMIT,
     DuplicateMonitoredTableError,
     MonitoredTableService,
     TableUniverseRow,
@@ -396,9 +398,22 @@ class TestListTableUniverse:
         [stmt] = [c.args[0] for c in sql.query.call_args_list]
         assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache sc" in stmt
         assert "sc.scope_key = mt.table_fqn" in stmt
-        assert "LIMIT 2000" in stmt
+        assert f"LIMIT {TABLE_UNIVERSE_LIMIT}" in stmt
         assert "dq_applied_rules" not in stmt
         assert "dq_monitored_table_versions" not in stmt
+
+    def test_warns_when_the_cap_is_hit(self, svc, sql, caplog):
+        row = ["b", "cat.schema.t", None, None, "bob@x", None]
+        sql.query.return_value = [row] * TABLE_UNIVERSE_LIMIT
+        with caplog.at_level(logging.WARNING):
+            svc.list_table_universe()
+        assert "row cap" in caplog.text
+
+    def test_no_warning_below_the_cap(self, svc, sql, caplog):
+        sql.query.return_value = [["b", "cat.schema.t", None, None, "bob@x", None]]
+        with caplog.at_level(logging.WARNING):
+            svc.list_table_universe()
+        assert "row cap" not in caplog.text
 
     def test_unresolved_owner_is_deferred_off_the_request_path(self, sql, profiling_sql):
         from unittest.mock import create_autospec

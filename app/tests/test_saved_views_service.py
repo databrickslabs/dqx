@@ -273,6 +273,28 @@ def test_admin_creates_org_view(sql):
     sql.upsert.assert_called_once()
 
 
+@pytest.mark.parametrize("failing", ["my_default", "org_default"])
+def test_create_removes_the_view_when_a_default_write_fails(sql, failing):
+    store = Store([BUILTIN])
+    svc = make_service(sql, store)
+    sql.insert.side_effect = lambda _t, *, values: store.views.append(view_row(values["id"], name=values["name"]))
+    if failing == "my_default":
+        sql.upsert.side_effect = RuntimeError("boom")
+    else:
+
+        def execute(query, **_kwargs):
+            if query.startswith("UPDATE"):
+                raise RuntimeError("boom")
+            store.ensure_builtin(query)
+
+        sql.execute.side_effect = execute
+    body = create_body(scope=SavedViewScope.ORG, make_org_default=True, make_my_default=True)
+    with pytest.raises(RuntimeError, match="boom"):
+        svc.create_view(body, user="admin@x", is_admin=True)
+    created_id = sql.insert.call_args.kwargs["values"]["id"]
+    sql.delete.assert_called_once_with("cat.sch.dq_saved_views", where={"id": created_id})
+
+
 def test_user_creates_personal_view_owned_by_caller(sql):
     store = Store([BUILTIN])
     svc = make_service(sql, store)

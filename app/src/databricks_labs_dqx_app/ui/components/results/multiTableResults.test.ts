@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   baseFilterOptionValues,
   breakdownParams,
+  globalResultsValuesReconciler,
   nextTableSelection,
+  pruneDependentFilters,
   sumTestCounts,
   topFilterOptionLists,
 } from "./MultiTableResults";
@@ -202,5 +204,40 @@ describe("breakdownParams carries the Global Results universe filters", () => {
     expect(params.score_bucket).toBe("none");
     expect("collection" in params).toBe(false);
     expect("score_bucket" in breakdownParams(EMPTY_FILTERS)).toBe(false);
+  });
+});
+
+describe("pruneDependentFilters / globalResultsValuesReconciler (catalog → schema → collection → table)", () => {
+  const members = new Map([["c1", ["a.s.t1"]]]);
+
+  it("returns the same filters when every pick fits", () => {
+    const f = { ...EMPTY_FILTERS, catalog: ["a"], schema: ["a.s"], collection: ["c1"], table: ["a.s.t1"] };
+    expect(pruneDependentFilters(f, members)).toBe(f);
+  });
+
+  it("drops schemas and tables outside the picked catalogs", () => {
+    const f = { ...EMPTY_FILTERS, catalog: ["a"], schema: ["a.s", "b.s"], table: ["a.s.t1", "b.s.t2"] };
+    const next = pruneDependentFilters(f, null);
+    expect(next.schema).toEqual(["a.s"]);
+    expect(next.table).toEqual(["a.s.t1"]);
+  });
+
+  it("drops tables outside the picked schemas or collections", () => {
+    const f = { ...EMPTY_FILTERS, schema: ["a.s"], table: ["a.s.t1", "a.x.t3"] };
+    expect(pruneDependentFilters(f, null).table).toEqual(["a.s.t1"]);
+    const g = { ...EMPTY_FILTERS, collection: ["c1"], table: ["a.s.t1", "a.s.t9"] };
+    expect(pruneDependentFilters(g, members).table).toEqual(["a.s.t1"]);
+  });
+
+  it("doesn't narrow by collection while membership is unknown", () => {
+    const f = { ...EMPTY_FILTERS, collection: ["c1"], table: ["a.s.t9"] };
+    expect(pruneDependentFilters(f, null)).toBe(f);
+  });
+
+  it("reconciles a loaded saved view's values the same way", () => {
+    const reconcile = globalResultsValuesReconciler(members);
+    const consistent = { catalog: ["a"], table: ["a.s.t1"] };
+    expect(reconcile(consistent)).toBe(consistent);
+    expect(reconcile({ catalog: ["a"], collection: ["c1"], table: ["b.s.t2", "a.s.t1"] }).table).toEqual(["a.s.t1"]);
   });
 });

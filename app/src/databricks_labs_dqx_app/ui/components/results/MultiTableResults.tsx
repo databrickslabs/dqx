@@ -356,6 +356,47 @@ export function topFilterOptionLists(
 }
 
 /**
+ * The catalog → schema → collection → table cascade over *filters*: drops schema
+ * picks outside the picked catalogs, and table picks outside the picked catalogs,
+ * schemas or — when *collectionMembers* is known — collections. An empty level
+ * doesn't narrow. Returns *filters* itself when nothing is dropped.
+ */
+export function pruneDependentFilters(
+  filters: MultiFilters,
+  collectionMembers: ReadonlyMap<string, readonly string[]> | null,
+): MultiFilters {
+  const catalogs = new Set(filters.catalog);
+  const inCatalogs = (id: string) => catalogs.size === 0 || catalogs.has(catalogOfFqn(id));
+  const schema = filters.schema.filter(inCatalogs);
+  const schemas = new Set(schema);
+  const members = collectionMembers ? collectionTableFqns(collectionMembers, filters.collection) : null;
+  const table = filters.table.filter(
+    (fqn) =>
+      inCatalogs(fqn) &&
+      (schemas.size === 0 || schemas.has(schemaOfFqn(fqn))) &&
+      (members === null || members.has(fqn)),
+  );
+  if (schema.length === filters.schema.length && table.length === filters.table.length) return filters;
+  return { ...filters, schema, table };
+}
+
+/**
+ * A saved view's *reconcileValues* for Global Results: applies
+ * {@link pruneDependentFilters} so a loaded view never keeps a table (or schema)
+ * its own catalog / schema / collection picks exclude. Pass null for
+ * *collectionMembers* while collections are loading.
+ */
+export function globalResultsValuesReconciler(
+  collectionMembers: ReadonlyMap<string, readonly string[]> | null,
+): (values: ViewValues) => ViewValues {
+  return (values) => {
+    const filters = filtersFromViewValues(values);
+    const changes = viewValueChanges(filters, pruneDependentFilters(filters, collectionMembers));
+    return changes.length === 0 ? values : { ...values, ...Object.fromEntries(changes) };
+  };
+}
+
+/**
  * Option values the Global Results saved view sanitises against (every filter
  * whose options come from the base breakdown rows), or null per list while the
  * base rows are still loading.
@@ -867,38 +908,21 @@ export function MultiTableResultsSection({
   const onFacetFilterChange = (facet: Facet, values: string[]) =>
     setFilters((f) => ({ ...f, [facet]: values }));
 
-  // Catalog/schema cascade: narrowing a WIDER level prunes any downstream
-  // selection it no longer permits, so the active filters can never disagree
-  // with the (now-narrowed) option lists. Widening (adding a catalog) leaves
-  // downstream picks untouched.
-  const onCatalogFilterChange = (values: string[]) => {
-    const allow = new Set(values);
+  // Catalog → schema → collection cascade: narrowing a WIDER level prunes any
+  // downstream selection it no longer permits (pruneDependentFilters — the same
+  // helper a loaded saved view goes through), so the active filters can never
+  // disagree with the (now-narrowed) option lists. Widening leaves downstream
+  // picks untouched.
+  const setCascadingFilters = (update: (f: MultiFilters) => MultiFilters) =>
     setFilters((f) => {
-      const keepSchema = allow.size === 0 ? f.schema : f.schema.filter((s) => allow.has(catalogOfFqn(s)));
-      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(catalogOfFqn(t)));
-      if (keepTable.length === 0) setSelectedTable(null);
-      return { ...f, catalog: values, schema: keepSchema, table: keepTable };
+      const next = pruneDependentFilters(update(f), topFilterOptions?.collectionMembers ?? null);
+      if (next.table.length === 0) setSelectedTable(null);
+      return next;
     });
-  };
-  const onSchemaFilterChange = (values: string[]) => {
-    const allow = new Set(values);
-    setFilters((f) => {
-      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(schemaOfFqn(t)));
-      if (keepTable.length === 0) setSelectedTable(null);
-      return { ...f, schema: values, table: keepTable };
-    });
-  };
-
-  // Picking collections prunes table picks outside their members, like the
-  // catalog/schema cascade below.
-  const onCollectionFilterChange = (values: string[]) => {
-    const members = collectionTableFqns(topFilterOptions?.collectionMembers ?? new Map(), values);
-    setFilters((f) => {
-      const keepTable = members === null ? f.table : f.table.filter((fqn) => members.has(fqn));
-      if (keepTable.length === 0) setSelectedTable(null);
-      return { ...f, collection: values, table: keepTable };
-    });
-  };
+  const onCatalogFilterChange = (values: string[]) => setCascadingFilters((f) => ({ ...f, catalog: values }));
+  const onSchemaFilterChange = (values: string[]) => setCascadingFilters((f) => ({ ...f, schema: values }));
+  const onCollectionFilterChange = (values: string[]) =>
+    setCascadingFilters((f) => ({ ...f, collection: values }));
 
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];

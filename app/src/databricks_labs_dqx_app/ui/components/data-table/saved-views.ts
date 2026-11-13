@@ -27,6 +27,12 @@ export interface ViewDefs<C extends string, F extends string> {
   emptyValues: Record<F, ViewValue>;
   /** Optional: drop values whose options no longer exist. Return the cleaned value. */
   sanitizeValue?: (key: F, value: ViewValue) => ViewValue;
+  /**
+   * Optional: make the values consistent with each other (e.g. drop a picked table
+   * outside the picked catalog), run after *sanitizeValue*. Return *values* itself
+   * when nothing changed.
+   */
+  reconcileValues?: (values: ViewValues) => ViewValues;
   /** Filters whose value is kept when the filter is hidden (set by other UI, e.g. breakdown clicks). */
   keepValueOnHide?: readonly F[];
   /** Legacy localStorage layout keys; `useSavedViews` removes them on mount (they are not migrated). */
@@ -127,7 +133,7 @@ export function reconcileView<C extends string, F extends string>(
       values[key] = cloneEmpty(empty);
     }
   }
-  return { columns, filters, values };
+  return { columns, filters, values: defs.reconcileValues ? defs.reconcileValues(values) : values };
 }
 
 function sameValue(a: ViewValue, b: ViewValue): boolean {
@@ -393,22 +399,31 @@ export function optionsSanitizer<F extends string>(
 }
 
 /**
- * Re-applies *defs.sanitizeValue* to the working values, e.g. once a filter's options
- * have loaded. Returns *state* itself when nothing changed.
+ * Re-applies *defs.sanitizeValue* and *defs.reconcileValues* to the working values, e.g.
+ * once a filter's options have loaded. Returns *state* itself when nothing changed.
  */
 export function sanitizeViewValues<C extends string, F extends string>(
   state: ViewState<C, F>,
   defs: ViewDefs<C, F>,
 ): ViewState<C, F> {
   const sanitize = defs.sanitizeValue;
-  if (!sanitize) return state;
+  if (!sanitize && !defs.reconcileValues) return state;
   let changed = false;
-  const values: ViewValues = { ...state.values };
-  for (const key of defs.filters.defaultOrder) {
-    if (!Object.prototype.hasOwnProperty.call(values, key)) continue;
-    const cleaned = sanitize(key, values[key]);
-    if (!sameValue(cleaned, values[key])) {
-      values[key] = cleaned;
+  let values: ViewValues = { ...state.values };
+  if (sanitize) {
+    for (const key of defs.filters.defaultOrder) {
+      if (!Object.prototype.hasOwnProperty.call(values, key)) continue;
+      const cleaned = sanitize(key, values[key]);
+      if (!sameValue(cleaned, values[key])) {
+        values[key] = cleaned;
+        changed = true;
+      }
+    }
+  }
+  if (defs.reconcileValues) {
+    const reconciled = defs.reconcileValues(values);
+    if (reconciled !== values) {
+      values = reconciled;
       changed = true;
     }
   }
