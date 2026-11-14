@@ -2145,6 +2145,7 @@
     "saveAndPublishButton": "Salva e pubblica",
     "submitting": "Invio in corso…",
     "submitDisabledNoChangesHint": "Nessuna modifica da inviare — i controlli di questa tabella sono già approvati.",
+    "unapprovedChangesNote": "Modifiche salvate non ancora approvate — le esecuzioni usano la v{{version}}.",
     "submitDisabledNeedsDraftRunHint": "È necessaria un'esecuzione in bozza prima di inviare per la revisione",
     "submitDisabledStaleDraftRunHint": "Non puoi inviare per l'approvazione senza prima eseguire la tua bozza",
     "toastPublished": "Tabella pubblicata.",

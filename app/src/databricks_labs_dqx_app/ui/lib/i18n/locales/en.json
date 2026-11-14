@@ -2145,6 +2145,7 @@
     "saveAndPublishButton": "Save & publish",
     "submitting": "Submitting…",
     "submitDisabledNoChangesHint": "No changes to submit — this table's checks are already approved.",
+    "unapprovedChangesNote": "Saved changes not yet approved — runs use v{{version}}.",
     "submitDisabledNeedsDraftRunHint": "A draft run is required before you submit for review",
     "submitDisabledStaleDraftRunHint": "You cannot submit for approval without first running your draft",
     "toastPublished": "Table published.",

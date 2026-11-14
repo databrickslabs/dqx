@@ -2145,6 +2145,7 @@
     "saveAndPublishButton": "Enregistrer et publier",
     "submitting": "Soumission…",
     "submitDisabledNoChangesHint": "Aucune modification à soumettre — les contrôles de cette table sont déjà approuvés.",
+    "unapprovedChangesNote": "Modifications enregistrées pas encore approuvées — les exécutions utilisent la v{{version}}.",
     "submitDisabledNeedsDraftRunHint": "Une exécution brouillon est requise avant de soumettre pour revue",
     "submitDisabledStaleDraftRunHint": "Vous ne pouvez pas soumettre pour approbation sans d'abord exécuter votre brouillon",
     "toastPublished": "Table publiée.",
