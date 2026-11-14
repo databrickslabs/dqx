@@ -215,6 +215,20 @@ def test_collect_table_tags_rejects_bad_name():
     spark.table.assert_not_called()
 
 
+def test_collect_table_tags_strips_whitespace_from_uc_values():
+    """UC-sourced tag names, values, and column names are stripped before reaching the prompt."""
+    spark = _spark_mock(
+        table_results=[
+            [Row(tag_name="  pii  ", tag_value="\tyes\n")],
+            [Row(column_name="  id  ", tag_name="  pk  ", tag_value="\ttrue\n")],
+        ],
+    )
+    result = collect_table_tags(spark, "cat.sch.tab")
+    assert result["table_tags"] == [{"key": "pii", "value": "yes"}]
+    assert "id" in result["column_tags"]
+    assert result["column_tags"]["id"] == [{"key": "pk", "value": "true"}]
+
+
 # -- collect_column_upstream_lineage -----------------------------------------------------
 
 
@@ -372,6 +386,38 @@ def test_collect_upstream_table_lineage_rejects_bad_name():
     spark.sql.assert_not_called()
 
 
+def test_lineage_collectors_strip_whitespace_from_uc_row_fields():
+    """UC *system.access.*_lineage* identifiers are stripped before being forwarded to the prompt."""
+    spark = _spark_mock(
+        sql_results=[
+            [
+                Row(
+                    predecessor="  up.sch.tab  ",
+                    frontier_table="\tdown.sch.tab\n",
+                    source_column="  c1  ",
+                    target_column="\tc2\n",
+                    depth=1,
+                )
+            ],
+            [Row(anchor="  up.sch.tab  ", neighbour="\tdown.sch.tab\n", depth=2)],
+        ],
+    )
+    col_rows = collect_column_upstream_lineage(
+        spark, "cat.sch.tab", ["c2"], config=ColumnUpstreamLineageConfig()
+    )
+    tab_rows = collect_upstream_table_lineage(spark, "cat.sch.tab", config=ColumnUpstreamLineageConfig())
+    assert col_rows == [
+        {
+            "predecessor": "up.sch.tab",
+            "source_table": "down.sch.tab",
+            "source_column": "c1",
+            "target_column": "c2",
+            "depth": 1,
+        }
+    ]
+    assert tab_rows == [{"predecessor": "up.sch.tab", "target_table": "down.sch.tab", "depth": 2}]
+
+
 # -- collect_external_upstream_lineage ---------------------------------------------------
 
 
@@ -478,6 +524,27 @@ def test_collect_external_upstream_lineage_normalises_name():
     collect_external_upstream_lineage(ws, "`Main`.`Sales`.`Invoices`", config=ExternalLineageConfig())
     kwargs = ws.external_lineage.list_external_lineage_relationships.call_args.kwargs
     assert kwargs["object_info"].table.name == "main.sales.invoices"
+
+
+def test_collect_external_upstream_lineage_strips_whitespace_from_uc_values():
+    """UC-sourced source names and relationship property k/v are stripped before reaching the prompt."""
+    ws = create_autospec(WorkspaceClient, instance=True)
+    info = ExternalLineageInfo(
+        external_metadata_info=ExternalLineageExternalMetadataInfo(
+            name="  sap_sd_invoices  ",
+            system_type=SystemType.SAP,
+            entity_type="TABLE",
+        ),
+        external_lineage_info=ExternalLineageRelationshipInfo(
+            source=ExternalLineageObject(),
+            target=ExternalLineageObject(),
+            properties={"  module  ": "\tSD\n"},
+        ),
+    )
+    ws.external_lineage.list_external_lineage_relationships.return_value = iter([info])
+    result = collect_external_upstream_lineage(ws, "cat.sch.tab", config=ExternalLineageConfig())
+    assert result[0]["source_name"] == "sap_sd_invoices"
+    assert result[0]["properties"] == {"module": "SD"}
 
 
 # -- build_schema_json -------------------------------------------------------------------

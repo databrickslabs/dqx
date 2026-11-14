@@ -106,3 +106,18 @@ def test_get_table_column_dicts_returns_name_and_type(mock_workspace_client):
         {"name": "id", "type": "string"},
         {"name": "age", "type": "int"},
     ]
+
+
+def test_get_table_column_dicts_strips_whitespace_from_uc_values(mock_workspace_client):
+    """UC-sourced column names and types are surrounded by whitespace defensively — stripped
+    so the LLM prompt and downstream matchers see the canonical identifier."""
+    mock_workspace_client.tables.get.return_value = TableInfo(
+        columns=[
+            ColumnInfo(name="  id  ", type_text="\tSTRING\n"),
+            ColumnInfo(name="\tage\n", type_text="  int  "),
+        ],
+    )
+    assert get_table_column_dicts(mock_workspace_client, "main.default.t") == [
+        {"name": "id", "type": "string"},
+        {"name": "age", "type": "int"},
+    ]

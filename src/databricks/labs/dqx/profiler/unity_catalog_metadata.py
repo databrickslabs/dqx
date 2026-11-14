@@ -73,6 +73,10 @@ def _sanitize_text(value: str | None) -> str | None:
     return trimmed or None
 
 
+def _strip(value: str | None) -> str:
+    return (value or "").strip()
+
+
 def _split_three_part_name(name: str) -> tuple[str, str, str]:
     """Return ``(catalog, schema, table)`` lowercase for a 3-part UC name.
 
@@ -143,9 +147,10 @@ def collect_table_comments(
     table_comment = _sanitize_text(table_info.comment)
     column_comments: dict[str, str] = {}
     for column in table_info.columns or []:
+        name = _strip(column.name)
         comment = _sanitize_text(column.comment)
-        if column.name and comment is not None:
-            column_comments[column.name] = comment
+        if name and comment is not None:
+            column_comments[name] = comment
     return table_comment, column_comments
 
 
@@ -176,7 +181,7 @@ def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
     try:
         table_rows = spark.table(_TABLE_TAGS_TABLE).filter(name_filter).select("tag_name", "tag_value").collect()
         for row in table_rows:
-            table_tags.append({"key": row["tag_name"], "value": row["tag_value"] or ""})
+            table_tags.append({"key": _strip(row["tag_name"]), "value": _strip(row["tag_value"])})
     except Exception as exc:  # broad catch: tag reads are non-fatal
         logger.warning(
             f"collect_table_tags: table tags read failed for '{sanitize_for_logging(table)}': "
@@ -188,8 +193,10 @@ def collect_table_tags(spark: SparkSession, table: str) -> dict[str, Any]:
             spark.table(_COLUMN_TAGS_TABLE).filter(name_filter).select("column_name", "tag_name", "tag_value").collect()
         )
         for row in column_rows:
-            column = row["column_name"]
-            column_tags.setdefault(column, []).append({"key": row["tag_name"], "value": row["tag_value"] or ""})
+            column = _strip(row["column_name"])
+            column_tags.setdefault(column, []).append(
+                {"key": _strip(row["tag_name"]), "value": _strip(row["tag_value"])}
+            )
     except Exception as exc:  # broad catch: tag reads are non-fatal
         logger.warning(
             f"collect_table_tags: column tags read failed for '{sanitize_for_logging(table)}': "
@@ -252,10 +259,10 @@ def collect_column_upstream_lineage(
 
     return [
         {
-            "predecessor": row["predecessor"],
-            "source_table": row["frontier_table"],
-            "source_column": row["source_column"],
-            "target_column": row["target_column"],
+            "predecessor": _strip(row["predecessor"]),
+            "source_table": _strip(row["frontier_table"]),
+            "source_column": _strip(row["source_column"]),
+            "target_column": _strip(row["target_column"]),
             "depth": int(row["depth"]),
         }
         for row in rows
@@ -301,8 +308,8 @@ def collect_upstream_table_lineage(
         return []
     return [
         {
-            "predecessor": row["anchor"],
-            "target_table": row["neighbour"],
+            "predecessor": _strip(row["anchor"]),
+            "target_table": _strip(row["neighbour"]),
             "depth": int(row["depth"]),
         }
         for row in rows
@@ -323,7 +330,7 @@ def _external_lineage_record(info: ExternalLineageInfo) -> dict[str, Any] | None
         metadata = info.external_metadata_info
         return {
             "source_kind": "external_metadata",
-            "source_name": metadata.name or "",
+            "source_name": _strip(metadata.name),
             "system_type": metadata.system_type.value if metadata.system_type is not None else None,
             "entity_type": _sanitize_text(metadata.entity_type),
             "columns": columns,
@@ -332,7 +339,9 @@ def _external_lineage_record(info: ExternalLineageInfo) -> dict[str, Any] | None
 
     if info.table_info is not None:
         table = info.table_info
-        full_name = ".".join(part for part in (table.catalog_name, table.schema_name, table.name) if part)
+        full_name = ".".join(
+            part for part in (_strip(table.catalog_name), _strip(table.schema_name), _strip(table.name)) if part
+        )
         return {
             "source_kind": "table",
             "source_name": full_name,
@@ -346,7 +355,7 @@ def _external_lineage_record(info: ExternalLineageInfo) -> dict[str, Any] | None
         file_info = info.file_info
         return {
             "source_kind": "file",
-            "source_name": file_info.path or file_info.securable_name or "",
+            "source_name": _strip(file_info.path) or _strip(file_info.securable_name),
             "system_type": None,
             "entity_type": _sanitize_text(file_info.securable_type),
             "columns": columns,
@@ -355,7 +364,7 @@ def _external_lineage_record(info: ExternalLineageInfo) -> dict[str, Any] | None
 
     if info.model_info is not None:
         model_info = info.model_info
-        source_name = model_info.model_name or ""
+        source_name = _strip(model_info.model_name)
         if model_info.version is not None:
             source_name = f"{source_name}@{model_info.version}" if source_name else f"@{model_info.version}"
         return {
@@ -384,7 +393,7 @@ def _relationship_columns_and_properties(
         if src and tgt:
             columns.append({"source": src, "target": tgt})
     if rel.properties:
-        properties = {str(k): str(v) for k, v in rel.properties.items()}
+        properties = {_strip(str(k)): _strip(str(v)) for k, v in rel.properties.items()}
     return columns, properties
 
 

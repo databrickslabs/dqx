@@ -817,7 +817,10 @@ def extract_column_dicts(table_info: TableInfo) -> list[dict[str, str]]:
     path in *DQGenerator._get_schema_info*, which needs the comment and column data from
     the same SDK call) can avoid an extra *tables.get* round-trip.
     """
-    return [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+    return [
+        {"name": (col.name or "").strip(), "type": (col.type_text or "").strip().lower()}
+        for col in (table_info.columns or [])
+    ]
 
 
 def get_table_column_dicts(workspace_client: WorkspaceClient, table: str) -> list[dict[str, str]]:
