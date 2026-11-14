@@ -6,11 +6,11 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeGuard, TypeVar, overload, Annotated
+from typing import Any, Literal, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.types import StructType
 import pyspark.sql.functions as F
 
@@ -20,9 +20,11 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
+from pydantic import BaseModel, ConfigDict
 from pydantic.functional_validators import PlainValidator
 from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import TableInfo
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
@@ -808,6 +810,21 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
         return set()
 
 
+def extract_column_dicts(table_info: TableInfo) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list derived from an already-fetched *TableInfo*.
+
+    Factored out so callers that have a *TableInfo* in hand (for example, the enriched UC
+    path in *DQGenerator._get_schema_info*, which needs the comment and column data from
+    the same SDK call) can avoid an extra *tables.get* round-trip.
+    """
+    return [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+
+
+def get_table_column_dicts(workspace_client: WorkspaceClient, table: str) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list used to seed the LLM schema prompt."""
+    return extract_column_dicts(workspace_client.tables.get(table.replace("`", "")))
+
+
 def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> str:
     """
     Gets column metadata for a Unity Catalog table using the Databricks SDK.
@@ -828,9 +845,7 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
     Raises:
         NotFound: If the table does not exist or is not accessible.
     """
-    table_info = workspace_client.tables.get(table.replace("`", ""))
-    columns = [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
-    return json.dumps({"columns": columns})
+    return json.dumps({"columns": get_table_column_dicts(workspace_client, table)})
 
 
 def missing_required_packages(packages: list[str]) -> bool:
@@ -988,3 +1003,284 @@ def get_file_extension(file_path: str | os.PathLike) -> str:
         File extension (e.g., ".json", ".yaml", ".yml") or empty string if no extension.
     """
     return Path(file_path).suffix
+
+
+# ---------------------------------------------------------------------------
+# Shared lineage SQL helpers.
+#
+# Recursive-CTE walkers over the Unity Catalog *system.access.table_lineage* and
+# *system.access.column_lineage* views, plus the single-quote / backslash escape rule used
+# by every DQX query that inlines a Python string into Spark SQL. Imported by both
+# *actions/lineage.py* and *profiler/unity_catalog_metadata.py* so a single implementation
+# owns the escape semantics, the in-CTE cycle guard, and the LIMIT pattern.
+# ---------------------------------------------------------------------------
+
+
+def sql_str_literal(value: str) -> str:
+    """Escape and wrap a Python string as a single-quoted Spark SQL literal.
+
+    Spark's default *spark.sql.parser.escapedStringLiterals* is *false*, which means ANSI
+    quote-doubling (``''``) is **not** honoured — the parser silently drops the pair, so
+    ``'o''brien'`` is read as two adjacent literals ``'o'`` and ``'brien'``. The correct
+    escape is backslash + quote (``\\'``). The backslash is doubled **first** so the
+    quote-escape it introduces is not itself re-escaped; without this a value ending in a
+    backslash (e.g. a Windows path) would escape the closing quote and produce a malformed
+    — and potentially injectable — literal.
+
+    This is the single DQX helper for inlining string literals into Spark SQL on paths
+    where parameter markers are unavailable (e.g. inside ``INTERVAL n DAYS`` and after
+    ``LIMIT``). Pure and side-effect free.
+
+    Args:
+        value: Python string to inline.
+
+    Returns:
+        The *value* wrapped in single quotes with backslashes and single quotes escaped.
+    """
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+SYSTEM_ACCESS_TABLE_LINEAGE = "system.access.table_lineage"
+SYSTEM_ACCESS_COLUMN_LINEAGE = "system.access.column_lineage"
+
+
+class InlineColumnSeeds(BaseModel):
+    """Seed set for *walk_column_lineage*'s profiler path.
+
+    Produces an inlined ``IN ('a', 'b', …)`` filter against the column-lineage anchor;
+    each entry is escaped via *sql_str_literal* so user-supplied column names cannot
+    inject SQL. Immutable: the model is frozen once constructed.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    columns: list[str]
+
+
+class ViewColumnSeeds(BaseModel):
+    """Seed set for *walk_column_lineage*'s actions path.
+
+    Produces an ``IN (SELECT col_name FROM <view_name>)`` filter against the
+    column-lineage anchor. *view_name* names a session temp view (owned by the caller)
+    with a single ``col_name STRING`` column. Immutable: the model is frozen once
+    constructed.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    view_name: str
+
+
+ColumnLineageSeed = InlineColumnSeeds | ViewColumnSeeds
+"""Discriminated input type consumed by *walk_column_lineage*."""
+
+
+def walk_table_lineage(
+    spark: SparkSession,
+    *,
+    table: str,
+    direction: Literal["upstream", "downstream"],
+    depth: int | None,
+    lookback_days: int,
+    max_nodes: int,
+) -> DataFrame:
+    """Walk *table*'s upstream or downstream neighbours over *system.access.table_lineage*.
+
+    Builds a single ``WITH RECURSIVE edges(anchor, neighbour, depth, path)`` query with an
+    in-CTE full-path cycle guard (``array_contains(path, …)``), a *lookback_days* window
+    applied via ``INTERVAL n DAYS``, and *max_nodes* applied as a ``LIMIT`` inside both
+    the anchor and recursive members **and** once more at the tail. Each member is
+    ``SELECT DISTINCT`` so duplicate event rows for the same ``(anchor, neighbour, depth,
+    path)`` tuple are collapsed **before** the member ``LIMIT`` applies —
+    ``system.access.table_lineage`` holds one row per lineage *event*, so without this a
+    daily-written edge would consume ~*lookback_days* slots out of *max_nodes*. Returns
+    the lazy DataFrame produced by *spark.sql(query)* — materialisation (and the
+    try/except that isolates non-fatal lineage read failures) is the caller's job.
+
+    *depth* is an optional guardrail: when *None* the recursive member omits the
+    ``e.depth < N`` predicate (unbounded walk, still bounded by *max_nodes* and the cycle
+    guard). Requires DBR 17+ for the recursive-CTE SQL feature.
+
+    Args:
+        spark: SparkSession used to issue the recursive-CTE query.
+        table: Fully qualified Unity Catalog name of the anchor table. Escaped via
+            *sql_str_literal* before interpolation — callers do not need to pre-escape.
+        direction: ``"upstream"`` or ``"downstream"``; chooses which side of the lineage
+            edge seeds the walk.
+        depth: Max hops from the anchor (``>= 1``). *None* opts into an unbounded walk.
+        lookback_days: *INTERVAL* window over *event_time*. Expected to be a
+            Pydantic-validated int (``>= 1``) supplied by the caller's config.
+        max_nodes: Row cap applied inside each CTE member and at the tail. Expected to
+            be a Pydantic-validated int (``>= 1``) supplied by the caller's config.
+
+    Returns:
+        A lazy DataFrame with columns ``anchor``, ``neighbour``, ``depth`` — the raw
+        walked edges. Callers project to their own final shape; the shared walker does
+        not stamp run metadata.
+    """
+    key_source = "target_table_full_name" if direction == "upstream" else "source_table_full_name"
+    key_other = "source_table_full_name" if direction == "upstream" else "target_table_full_name"
+    table_literal = sql_str_literal(table)
+    depth_predicate = f"e.depth < {int(depth)} AND " if depth is not None else ""
+    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
+    # wrapped by *sql_str_literal* before interpolation. *depth* (when set), *lookback_days*,
+    # and *max_nodes* are expected to be Pydantic-validated ints (>= 1) interpolated as bare
+    # constants.
+    query = (
+        "WITH RECURSIVE edges(anchor, neighbour, depth, path) AS ("
+        " ("
+        f"  SELECT DISTINCT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
+        f"         array({table_literal}, {key_other}) AS path "
+        f"  FROM {SYSTEM_ACCESS_TABLE_LINEAGE} "
+        f"  WHERE {key_source} = {table_literal} "
+        f"    AND {key_other} IS NOT NULL "
+        f"    AND {key_other} <> {table_literal} "
+        f"    AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f"  LIMIT {int(max_nodes)} "
+        " )"
+        "  UNION ALL "
+        f" ("
+        f"  SELECT DISTINCT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
+        f"         array_append(e.path, t.{key_other}) "
+        f"  FROM edges e JOIN {SYSTEM_ACCESS_TABLE_LINEAGE} t "
+        f"    ON t.{key_source} = e.neighbour "
+        f"  WHERE {depth_predicate}t.{key_other} IS NOT NULL "
+        f"    AND NOT array_contains(e.path, t.{key_other}) "
+        f"    AND t.event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f"  LIMIT {int(max_nodes)} "
+        " )"
+        ") "
+        "SELECT DISTINCT anchor, neighbour, depth "
+        f"FROM edges LIMIT {int(max_nodes)}"
+    )
+    return spark.sql(query)
+
+
+def walk_column_lineage(
+    spark: SparkSession,
+    *,
+    table: str,
+    direction: Literal["upstream", "downstream"],
+    depth: int | None,
+    lookback_days: int,
+    max_nodes: int,
+    column_seed: ColumnLineageSeed,
+) -> DataFrame:
+    """Walk *table*'s per-column lineage over *system.access.column_lineage*.
+
+    Mirrors *walk_table_lineage* against *system.access.column_lineage* with a ``path
+    ARRAY<STRING>`` of ``<table>.<column>`` identifiers for the cycle guard. Each member
+    is ``SELECT DISTINCT`` so duplicate event rows for the same
+    ``(frontier_table, frontier_column, predecessor, source_column, target_column,
+    depth, path)`` tuple are collapsed **before** the member ``LIMIT`` applies —
+    ``system.access.column_lineage`` holds one row per lineage *event*, so without this a
+    daily-written edge would consume ~*lookback_days* slots out of *max_nodes*.
+
+    *column_seed* chooses the seed-filter dialect:
+
+      - *InlineColumnSeeds*: inlines ``IN (<escaped-literal>, …)`` for each entry in
+        *columns* (profiler path). No self-seed revisit guard — matches the profiler's
+        current query shape exactly.
+      - *ViewColumnSeeds*: references ``IN (SELECT col_name FROM <view_name>)`` where
+        *view_name* names a session temp view with a single ``col_name STRING`` column
+        (actions path). Adds the actions-side ``NOT (frontier_table = <table> AND
+        frontier_column IN (...))`` guard against revisiting the originally-seeded
+        ``(anchor_table, failed_col)`` pair.
+
+    Args:
+        spark: SparkSession used to issue the recursive-CTE query.
+        table: Fully qualified Unity Catalog name of the anchor table. Escaped via
+            *sql_str_literal* before interpolation.
+        direction: ``"upstream"`` or ``"downstream"``.
+        depth: Max hops from the anchor (``>= 1``); *None* for an unbounded walk.
+        lookback_days: *INTERVAL* window over *event_time*. Pydantic-validated by the
+            caller (``>= 1``).
+        max_nodes: Row cap inside each CTE member and at the tail. Pydantic-validated
+            by the caller (``>= 1``).
+        column_seed: Either *InlineColumnSeeds* or *ViewColumnSeeds* — see above.
+
+    Returns:
+        A lazy DataFrame with columns ``predecessor``, ``frontier_table``,
+        ``frontier_column``, ``source_column``, ``target_column``, ``depth`` — the
+        superset of columns the two existing implementations project.
+    """
+    if direction == "upstream":
+        anchor_key, anchor_col_key = "target_table_full_name", "target_column_name"
+        frontier_key, frontier_col_key = "source_table_full_name", "source_column_name"
+    else:
+        anchor_key, anchor_col_key = "source_table_full_name", "source_column_name"
+        frontier_key, frontier_col_key = "target_table_full_name", "target_column_name"
+
+    table_literal = sql_str_literal(table)
+    depth_predicate = f"e.depth < {int(depth)} AND " if depth is not None else ""
+
+    if isinstance(column_seed, InlineColumnSeeds):
+        seed_in = ", ".join(sql_str_literal(c) for c in column_seed.columns)
+        anchor_col_filter = f"{anchor_col_key} IN ({seed_in})"
+        revisit_guard = ""
+    else:
+        failed_in_subquery = f"SELECT col_name FROM {column_seed.view_name}"
+        anchor_col_filter = f"{anchor_col_key} IN ({failed_in_subquery})"
+        revisit_guard = (
+            f"    AND NOT (t.{frontier_key} = {table_literal} "
+            f"             AND t.{frontier_col_key} IN ({failed_in_subquery})) "
+        )
+
+    # nosec B608: identifiers + validated ints only; the anchor table name and every
+    # *InlineColumnSeeds* entry are wrapped by *sql_str_literal*. The *ViewColumnSeeds*
+    # view name is a caller-owned internal identifier (UUID-suffixed when minted by
+    # DQX actions). *depth* (when set), *lookback_days*, and *max_nodes* are expected
+    # to be Pydantic-validated ints (>= 1) interpolated as bare constants.
+    query = (
+        "WITH RECURSIVE edges("
+        "frontier_table, frontier_column, predecessor, "
+        "source_column, target_column, depth, path) AS ( "
+        "("
+        f" SELECT DISTINCT {frontier_key} AS frontier_table, "
+        f"        {frontier_col_key} AS frontier_column, "
+        f"        {table_literal} AS predecessor, "
+        f"        source_column_name AS source_column, "
+        f"        target_column_name AS target_column, "
+        f"        1 AS depth, "
+        f"        array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path "
+        f" FROM {SYSTEM_ACCESS_COLUMN_LINEAGE} "
+        f" WHERE {anchor_key} = {table_literal} "
+        f"   AND {anchor_col_filter} "
+        f"   AND {frontier_key} IS NOT NULL "
+        f"   AND {frontier_col_key} IS NOT NULL "
+        f"   AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f" LIMIT {int(max_nodes)} "
+        ") UNION ALL ("
+        f" SELECT DISTINCT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
+        f"        e.frontier_table AS predecessor, "
+        f"        t.source_column_name AS source_column, "
+        f"        t.target_column_name AS target_column, "
+        f"        e.depth + 1 AS depth, "
+        f"        array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path "
+        f" FROM edges e JOIN {SYSTEM_ACCESS_COLUMN_LINEAGE} t "
+        f"   ON t.{anchor_key} = e.frontier_table "
+        f"  AND t.{anchor_col_key} = e.frontier_column "
+        f" WHERE {depth_predicate}t.{frontier_key} IS NOT NULL "
+        f"   AND t.{frontier_col_key} IS NOT NULL "
+        f"   AND NOT array_contains(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) "
+        f"{revisit_guard}"
+        f"   AND t.event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f" LIMIT {int(max_nodes)} "
+        ") ) "
+        "SELECT DISTINCT predecessor, frontier_table, frontier_column, "
+        "source_column, target_column, depth "
+        f"FROM edges LIMIT {int(max_nodes)}"
+    )
+    return spark.sql(query)
+
+
+__all__ = [
+    "sql_str_literal",
+    "SYSTEM_ACCESS_TABLE_LINEAGE",
+    "SYSTEM_ACCESS_COLUMN_LINEAGE",
+    "InlineColumnSeeds",
+    "ViewColumnSeeds",
+    "ColumnLineageSeed",
+    "walk_table_lineage",
+    "walk_column_lineage",
+]
