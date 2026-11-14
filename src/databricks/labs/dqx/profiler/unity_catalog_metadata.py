@@ -5,12 +5,13 @@ upstream lineage for a source UC table and renders them as JSON that the LLM sch
 can consume.
 
 The recursive-CTE walkers for *collect_column_upstream_lineage* and
-*collect_upstream_table_lineage* are standalone upstream-only collectors invoked from the
-profiler/LLM path. They apply bounded *depth*, *lookback_days* window, per-member + tail
-``LIMIT``, in-CTE full-path cycle guard, and ``_sql_str_literal``-escaped identifiers. None
-of the collectors in this module ever raise outward: lineage / tag / comment /
-external-lineage failures degrade to empty structures and log via *sanitize_for_logging*
-(CWE-117).
+*collect_upstream_table_lineage* are upstream-only collectors invoked from the
+profiler/LLM path. They delegate to *utils.walk_column_lineage* /
+*utils.walk_table_lineage* for CTE construction (bounded *depth*, *lookback_days* window,
+per-member + tail ``LIMIT``, in-CTE full-path cycle guard, and *sql_str_literal*-escaped
+identifiers). None of the collectors in this module ever raise outward: lineage / tag /
+comment / external-lineage failures degrade to empty structures and log via
+*sanitize_for_logging* (CWE-117).
 
 External lineage is read via the SDK's *ExternalLineageAPI.list_external_lineage_relationships*
 because UC external lineage (non-Databricks sources — SAP, Salesforce, Tableau, custom
@@ -38,7 +39,12 @@ from databricks.labs.dqx.config import (
     UnityCatalogMetadataConfig,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.utils import sanitize_for_logging
+from databricks.labs.dqx.utils import (
+    InlineColumnSeeds,
+    sanitize_for_logging,
+    walk_column_lineage,
+    walk_table_lineage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +57,6 @@ __all__ = [
     "build_schema_json",
 ]
 
-_TABLE_LINEAGE_TABLE = "system.access.table_lineage"
-_COLUMN_LINEAGE_TABLE = "system.access.column_lineage"
 _TABLE_TAGS_TABLE = "system.information_schema.table_tags"
 _COLUMN_TAGS_TABLE = "system.information_schema.column_tags"
 
@@ -63,16 +67,6 @@ def _sanitize_text(value: str | None) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
-
-
-def _sql_str_literal(value: str) -> str:
-    """Escape a Python string for safe inclusion as a single-quoted SQL string literal.
-
-    Backslash is doubled **first** so the quote-doubling introduced for a single quote is not
-    itself re-escaped. Required because ``INTERVAL n DAYS`` and the anchor-table literal
-    cannot use parameter markers.
-    """
-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 def _split_three_part_name(name: str) -> tuple[str, str, str]:
@@ -173,15 +167,16 @@ def collect_column_upstream_lineage(
 ) -> list[dict[str, Any]]:
     """Walk per-column upstream lineage from ``source_table`` with a recursive CTE.
 
-    Issues a single ``WITH RECURSIVE`` against *system.access.column_lineage* with a
-    path-based cycle guard, per-member and tail ``LIMIT``s derived from *config.max_nodes*,
-    an ``INTERVAL n DAYS`` lookback from *config.lookback_days*, and an optional
+    Delegates to *utils.walk_column_lineage* with an *InlineColumnSeeds* seed: a single
+    ``WITH RECURSIVE`` against *system.access.column_lineage* with a path-based cycle
+    guard, per-member and tail ``LIMIT``\\s derived from *config.max_nodes*, an
+    ``INTERVAL n DAYS`` lookback from *config.lookback_days*, and an optional
     ``e.depth < N`` predicate from *config.depth* (omitted when *None* → unbounded).
 
-    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column_name*; each
-    entry is escaped via ``_sql_str_literal``, so user-supplied column names cannot inject
-    SQL. Empty or whitespace-only entries are dropped; the walk short-circuits to an empty
-    list when no usable seeds remain.
+    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column_name*;
+    each entry is escaped via *sql_str_literal* so user-supplied column names cannot
+    inject SQL. Empty or whitespace-only entries are dropped; the walk short-circuits to
+    an empty list when no usable seeds remain.
 
     Returns:
         ``[{"source_table","source_column","target_column","depth","predecessor"}, ...]`` or
@@ -191,54 +186,16 @@ def collect_column_upstream_lineage(
     if not distinct_seeds:
         return []
 
-    max_depth = config.depth
-    lookback_days = config.lookback_days
-    max_nodes = config.max_nodes
-    table_literal = _sql_str_literal(source_table)
-    seed_list = ", ".join(_sql_str_literal(c) for c in distinct_seeds)
-    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
-
-    # nosec B608: identifiers + validated Pydantic ints only; the anchor table name and each
-    # seed column are wrapped by _sql_str_literal, and max_depth / lookback_days / max_nodes
-    # are Pydantic-validated ints (>= 1).
-    query = (
-        "WITH RECURSIVE edges("
-        "frontier_table, frontier_column, predecessor, source_column, target_column, "
-        "depth, path, event_time) AS ( "
-        "("
-        f" SELECT source_table_full_name AS frontier_table, source_column_name AS frontier_column, "
-        f"        {table_literal} AS predecessor, source_column_name, target_column_name, "
-        f"        1 AS depth, "
-        f"        array(concat_ws('.', source_table_full_name, source_column_name)) AS path, "
-        f"        event_time "
-        f" FROM {_COLUMN_LINEAGE_TABLE} "
-        f" WHERE target_table_full_name = {table_literal} "
-        f"   AND target_column_name IN ({seed_list}) "
-        f"   AND source_table_full_name IS NOT NULL "
-        f"   AND source_column_name IS NOT NULL "
-        f"   AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f" LIMIT {max_nodes} "
-        ") UNION ALL ("
-        f" SELECT t.source_table_full_name AS frontier_table, t.source_column_name AS frontier_column, "
-        f"        e.frontier_table AS predecessor, t.source_column_name, t.target_column_name, "
-        f"        e.depth + 1 AS depth, "
-        f"        array_append(e.path, concat_ws('.', t.source_table_full_name, t.source_column_name)) AS path, "
-        f"        t.event_time "
-        f" FROM edges e JOIN {_COLUMN_LINEAGE_TABLE} t "
-        f"   ON t.target_table_full_name = e.frontier_table "
-        f"  AND t.target_column_name = e.frontier_column "
-        f" WHERE {depth_predicate}t.source_table_full_name IS NOT NULL "
-        f"   AND t.source_column_name IS NOT NULL "
-        f"   AND NOT array_contains(e.path, concat_ws('.', t.source_table_full_name, t.source_column_name)) "
-        f"   AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f" LIMIT {max_nodes} "
-        ") ) "
-        "SELECT DISTINCT predecessor, frontier_table AS source_table, "
-        "source_column, target_column, depth "
-        f"FROM edges LIMIT {max_nodes}"
-    )
     try:
-        rows = spark.sql(query).collect()
+        rows = walk_column_lineage(
+            spark,
+            table=source_table,
+            direction="upstream",
+            depth=config.depth,
+            lookback_days=config.lookback_days,
+            max_nodes=config.max_nodes,
+            column_seed=InlineColumnSeeds(columns=distinct_seeds),
+        ).collect()
     except Exception as exc:  # broad catch: lineage reads are non-fatal
         logger.warning(
             f"collect_column_upstream_lineage: read failed for "
@@ -249,7 +206,7 @@ def collect_column_upstream_lineage(
     return [
         {
             "predecessor": row["predecessor"],
-            "source_table": row["source_table"],
+            "source_table": row["frontier_table"],
             "source_column": row["source_column"],
             "target_column": row["target_column"],
             "depth": int(row["depth"]),
@@ -274,42 +231,15 @@ def collect_upstream_table_lineage(
         ``[{"predecessor","target_table","depth"}, ...]`` where *target_table* is the upstream
         neighbour and *predecessor* is the previous hop (equal to *source_table* at depth 1).
     """
-    max_depth = config.depth
-    lookback_days = int(config.lookback_days)
-    max_nodes = int(config.max_nodes)
-    table_literal = _sql_str_literal(source_table)
-    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
-
-    # nosec B608: identifiers + validated Pydantic ints only (see
-    # collect_column_upstream_lineage for the full rationale).
-    query = (
-        "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ( "
-        "("
-        f" SELECT {table_literal} AS anchor, source_table_full_name AS neighbour, "
-        f"        1 AS depth, "
-        f"        array({table_literal}, source_table_full_name) AS path, event_time "
-        f" FROM {_TABLE_LINEAGE_TABLE} "
-        f" WHERE target_table_full_name = {table_literal} "
-        f"   AND source_table_full_name IS NOT NULL "
-        f"   AND source_table_full_name <> {table_literal} "
-        f"   AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f" LIMIT {max_nodes} "
-        ") UNION ALL ("
-        f" SELECT e.neighbour AS anchor, t.source_table_full_name AS neighbour, "
-        f"        e.depth + 1 AS depth, "
-        f"        array_append(e.path, t.source_table_full_name) AS path, t.event_time "
-        f" FROM edges e JOIN {_TABLE_LINEAGE_TABLE} t "
-        f"   ON t.target_table_full_name = e.neighbour "
-        f" WHERE {depth_predicate}t.source_table_full_name IS NOT NULL "
-        f"   AND NOT array_contains(e.path, t.source_table_full_name) "
-        f"   AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f" LIMIT {max_nodes} "
-        ") ) "
-        "SELECT DISTINCT anchor AS predecessor, neighbour AS target_table, depth "
-        f"FROM edges LIMIT {max_nodes}"
-    )
     try:
-        rows = spark.sql(query).collect()
+        rows = walk_table_lineage(
+            spark,
+            table=source_table,
+            direction="upstream",
+            depth=config.depth,
+            lookback_days=config.lookback_days,
+            max_nodes=config.max_nodes,
+        ).collect()
     except Exception as exc:  # broad catch: lineage reads are non-fatal
         logger.warning(
             f"collect_upstream_table_lineage: read failed for "
@@ -318,8 +248,8 @@ def collect_upstream_table_lineage(
         return []
     return [
         {
-            "predecessor": row["predecessor"],
-            "target_table": row["target_table"],
+            "predecessor": row["anchor"],
+            "target_table": row["neighbour"],
             "depth": int(row["depth"]),
         }
         for row in rows

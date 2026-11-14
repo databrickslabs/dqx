@@ -47,12 +47,15 @@ from databricks.labs.dqx.actions.registry import register_action
 from databricks.labs.dqx.config import TABLE_PATTERN, OutputConfig
 from databricks.labs.dqx.errors import InvalidActionError
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.utils import quote_column_name
+from databricks.labs.dqx.utils import (
+    ViewColumnSeeds,
+    quote_column_name,
+    sql_str_literal,
+    walk_column_lineage,
+    walk_table_lineage,
+)
 
 logger = logging.getLogger(__name__)
-
-LINEAGE_TABLE_LINEAGE = "system.access.table_lineage"
-LINEAGE_COLUMN_LINEAGE = "system.access.column_lineage"
 
 # Default names of the DQX-appended result columns on the output / quarantine tables. These are
 # the column names DQX writes when no engine-level rename is configured; both *_errors* and
@@ -499,20 +502,6 @@ def _empty_lineage_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame([], LINEAGE_TABLE_SCHEMA)
 
 
-def _sql_str_literal(value: str) -> str:
-    """Escape a Python string for safe inclusion as a single-quoted SQL string literal.
-
-    Escapes both characters Spark's default string-literal parser treats specially
-    (``spark.sql.parser.escapedStringLiterals=false``): a backslash is doubled, and a single
-    quote is doubled. The backslash is escaped **first** so that the quote-doubling it introduces
-    is not itself re-escaped. Without the backslash handling a value ending in a backslash (e.g. a
-    path-style *input_location*) would escape the closing quote and produce a malformed — and
-    potentially injectable — literal. Used by the lineage queries where parameter markers cannot be
-    applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has to be inlined as a literal.
-    """
-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
-
-
 def _fully_qualified_identifier(name: str) -> str:
     """Backtick-quote each dot-separated segment of a UC name for use as a SQL identifier.
 
@@ -541,7 +530,7 @@ def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> No
         return
     table_ident = _fully_qualified_identifier(location)
     try:
-        spark.sql(f"COMMENT ON TABLE {table_ident} IS {_sql_str_literal(LINEAGE_TABLE_COMMENT)}")
+        spark.sql(f"COMMENT ON TABLE {table_ident} IS {sql_str_literal(LINEAGE_TABLE_COMMENT)}")
     except Exception as exc:  # broad catch: table-comment application is best-effort
         logger.warning(
             f"CollectLineageAction '{safe_name}' failed to set table comment on "
@@ -553,7 +542,7 @@ def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> No
             continue
         column_ident = f"{table_ident}.{quote_column_name(field.name)}"
         try:
-            spark.sql(f"COMMENT ON COLUMN {column_ident} IS {_sql_str_literal(comment)}")
+            spark.sql(f"COMMENT ON COLUMN {column_ident} IS {sql_str_literal(comment)}")
         except Exception as exc:  # broad catch: per-column comment application is best-effort
             logger.warning(
                 f"CollectLineageAction '{safe_name}' failed to set column comment on "
@@ -748,23 +737,20 @@ def _walk_lineage(
 ) -> tuple[DataFrame, bool]:
     """Walk *table_full_name*'s upstream or downstream neighbours with a recursive CTE.
 
-    Uses a single ``WITH RECURSIVE`` query against *LINEAGE_TABLE_LINEAGE*. Cycle detection is
-    performed inside the CTE by carrying the visited path as an array column and rejecting any
-    neighbour already in the path — so multi-hop cycles (a → b → a → c) are blocked, not only
-    the nearest-anchor case. Requires DBR 17+ for the recursive-CTE feature. Both parse-time
-    *and* runtime failures (missing permissions on *system.access.table_lineage*, exceeding
-    Spark's ``cteRecursionLevelLimit`` on a deep graph, etc.) are isolated per-direction: the
-    query is executed inside the ``try`` via a bounded ``.collect()`` so any failure degrades
-    just this branch to an empty *LINEAGE_TABLE_SCHEMA* DataFrame and logs a sanitised warning,
-    rather than escaping to the outer *CollectLineageAction.execute* broad-catch (which would
-    turn the whole action into *CONFIG_ERROR*).
+    Delegates CTE construction to *utils.walk_table_lineage*: cycle detection is performed
+    inside the CTE by carrying the visited path as an array column and rejecting any neighbour
+    already in the path — so multi-hop cycles (a → b → a → c) are blocked, not only the
+    nearest-anchor case. Requires DBR 17+ for the recursive-CTE feature. Both parse-time *and*
+    runtime failures (missing permissions on *system.access.table_lineage*, exceeding Spark's
+    ``cteRecursionLevelLimit`` on a deep graph, etc.) are isolated per-direction: the walker's
+    lazy DataFrame is materialised inside the ``try`` via a bounded ``.collect()`` so any
+    failure degrades just this branch to an empty *LINEAGE_TABLE_SCHEMA* DataFrame and logs a
+    sanitised warning, rather than escaping to the outer *CollectLineageAction.execute*
+    broad-catch (which would turn the whole action into *CONFIG_ERROR*).
 
-    *table_full_name* is inlined as a single-quoted SQL string literal via *_sql_str_literal*
+    *table_full_name* is inlined as a single-quoted SQL string literal via *sql_str_literal*
     (escapes embedded quotes). *search.depth* is an optional validated Pydantic int (>= 1 when
-    set); *search.lookback_days* and *search.max_nodes* are validated Pydantic ints (>= 1). All
-    are interpolated as bare constants. Spark SQL does not accept parameter markers inside
-    ``INTERVAL n DAYS`` literals or after ``LIMIT``, so the whole query is built via Python
-    string interpolation rather than ``spark.sql`` args.
+    set); *search.lookback_days* and *search.max_nodes* are validated Pydantic ints (>= 1).
 
     When *search.depth* is *None* the recursive member omits the ``e.depth < N`` predicate — the
     walk is bounded only by the in-CTE cycle guard, the *lookback_days* window, and *max_nodes*.
@@ -782,45 +768,19 @@ def _walk_lineage(
         ``False`` when the lineage read failed; the DataFrame is empty in that case so union
         composition stays schema-stable.
     """
-    key_source = "target_table_full_name" if direction == _EDGE_UPSTREAM else "source_table_full_name"
-    key_other = "source_table_full_name" if direction == _EDGE_UPSTREAM else "target_table_full_name"
+    walker_direction: Literal["upstream", "downstream"] = "upstream" if direction == _EDGE_UPSTREAM else "downstream"
     max_depth = int(search.depth) if search.depth is not None else None
     lookback_days = int(search.lookback_days)
     max_nodes = int(search.max_nodes)
-    table_literal = _sql_str_literal(table_full_name)
-    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
-    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and wrapped
-    # by *_sql_str_literal* before interpolation. *max_depth* (when set), *lookback_days*, and
-    # *max_nodes* are validated Pydantic ints (>= 1) interpolated as bare constants.
-    query = (
-        "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
-        " ("
-        f"  SELECT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
-        f"         array({table_literal}, {key_other}) AS path, event_time "
-        f"  FROM {LINEAGE_TABLE_LINEAGE} "
-        f"  WHERE {key_source} = {table_literal} "
-        f"    AND {key_other} IS NOT NULL "
-        f"    AND {key_other} <> {table_literal} "
-        f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f"  LIMIT {max_nodes} "
-        " )"
-        "  UNION ALL "
-        f" ("
-        f"  SELECT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
-        f"         array_append(e.path, t.{key_other}), t.event_time "
-        f"  FROM edges e JOIN {LINEAGE_TABLE_LINEAGE} t "
-        f"    ON t.{key_source} = e.neighbour "
-        f"  WHERE {depth_predicate}t.{key_other} IS NOT NULL "
-        f"    AND NOT array_contains(e.path, t.{key_other}) "
-        f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f"  LIMIT {max_nodes} "
-        " )"
-        ") "
-        "SELECT DISTINCT anchor, neighbour, depth "
-        f"FROM edges LIMIT {max_nodes}"
-    )
     try:
-        walk_df = spark.sql(query)
+        walk_df = walk_table_lineage(
+            spark,
+            table=table_full_name,
+            direction=walker_direction,
+            depth=max_depth,
+            lookback_days=lookback_days,
+            max_nodes=max_nodes,
+        )
         projected = _project_edge_rows(
             walk_df,
             edge_type=direction,
@@ -858,109 +818,50 @@ def _column_direction_df(
 ) -> tuple[DataFrame, bool]:
     """Recursive column-lineage walk for one direction, seeded from the failed-columns temp view.
 
-    Mirrors *_walk_lineage*: a single ``WITH RECURSIVE`` query against
-    *LINEAGE_COLUMN_LINEAGE* with in-CTE full-path cycle detection carried as a ``path
-    ARRAY<STRING>`` of ``<table>.<column>`` identifiers. *search.depth* is an optional
-    validated Pydantic int (>= 1 when set); *search.lookback_days* and *search.max_nodes* are
-    validated Pydantic ints (>= 1). All are interpolated as bare constants.
-    *failed_columns_view* is the name of a session-scoped temp view with a single
-    ``col_name STRING`` column; the CTE references it via ``IN (SELECT col_name FROM <view>)``
-    rather than inlining a driver-collected literal.
+    Delegates CTE construction to *utils.walk_column_lineage* with a *ViewColumnSeeds* seed:
+    an in-CTE full-path cycle guard is carried as a ``path ARRAY<STRING>`` of
+    ``<table>.<column>`` identifiers. *failed_columns_view* names a session-scoped temp view
+    with a single ``col_name STRING`` column; the CTE references it via
+    ``IN (SELECT col_name FROM <view>)`` rather than inlining a driver-collected literal.
 
-    When *search.depth* is *None* the recursive member omits the ``e.depth < N`` predicate — the
+    *search.depth* is an optional validated Pydantic int (>= 1 when set);
+    *search.lookback_days* and *search.max_nodes* are validated Pydantic ints (>= 1). When
+    *search.depth* is *None* the recursive member omits the ``e.depth < N`` predicate — the
     walk is bounded only by the in-CTE cycle guard, the *lookback_days* window, and *max_nodes*.
 
     *search.max_nodes* is applied as a ``LIMIT`` inside **both** the anchor and the recursive
     members of the CTE (bounding the frontier per hop) and once more at the tail (bounding
-    total output). With a set *depth* this yields an ``O(depth * max_nodes)`` bound; with
-    unbounded *depth* the cap bounds per-hop expansion and total output only. Same "no
-    ordering contract" semantics as *_walk_lineage*.
+    total output). Same "no ordering contract" semantics as *_walk_lineage*.
 
-    The recursive member also drops any hop that would return to an originally-failed
-    ``(anchor_table, failed_col)`` pair — ``NOT (t.frontier_table = <anchor> AND
-    t.frontier_col IN (SELECT col_name FROM <view>))``. The check is scoped to the anchor
-    table so unrelated tables that happen to have a column with the same name still surface;
-    only cycles back to the seed pair itself are rejected, since those are already covered by
-    the depth-1 seed and re-visiting them would inflate the walk with redundant paths.
+    The *ViewColumnSeeds* path adds a ``NOT (frontier_table = <anchor> AND frontier_column IN
+    (SELECT col_name FROM <view>))`` guard against revisiting the originally-failed
+    ``(anchor_table, failed_col)`` pair; the check is scoped to the anchor table so unrelated
+    tables with same-named columns still surface.
 
     Returns:
         Tuple of (DataFrame conforming to *LINEAGE_TABLE_SCHEMA*, success flag).
     """
-    # system.access.column_lineage exposes the column names as *source_column_name* /
-    # *target_column_name* (not *source_column* / *target_column* — those are the output
-    # LINEAGE_TABLE_SCHEMA names). Read the real system-table columns and alias them to the
-    # CTE's *source_column* / *target_column* names below.
-    if edge_type == _EDGE_COLUMN_UPSTREAM:
-        anchor_key, anchor_col_key = "target_table_full_name", "target_column_name"
-        frontier_key, frontier_col_key = "source_table_full_name", "source_column_name"
-    else:
-        anchor_key, anchor_col_key = "source_table_full_name", "source_column_name"
-        frontier_key, frontier_col_key = "target_table_full_name", "target_column_name"
-
+    walker_direction: Literal["upstream", "downstream"] = (
+        "upstream" if edge_type == _EDGE_COLUMN_UPSTREAM else "downstream"
+    )
     max_depth = int(search.depth) if search.depth is not None else None
     lookback_days = int(search.lookback_days)
     max_nodes = int(search.max_nodes)
-    table_literal = _sql_str_literal(source_table)
-    failed_in_subquery = f"SELECT {_FAILED_COLUMN_NAME} FROM {failed_columns_view}"
-    depth_predicate = f"e.depth < {max_depth} AND " if max_depth is not None else ""
-    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
-    # wrapped by *_sql_str_literal* before interpolation, the failed-columns view name is a
-    # UUID-suffixed identifier generated internally by *_register_failed_columns_view* (never
-    # user input), and *max_depth* (when set), *lookback_days*, and *max_nodes* are validated
-    # Pydantic ints (>= 1).
-    query = (
-        "WITH RECURSIVE edges("
-        "frontier_table, frontier_column, predecessor, neighbour, "
-        "source_column, target_column, depth, path, event_time) AS ("
-        " ("
-        f"  SELECT {frontier_key} AS frontier_table, "
-        f"         {frontier_col_key} AS frontier_column, "
-        f"         {table_literal} AS predecessor, "
-        f"         {frontier_key} AS neighbour, source_column_name AS source_column, "
-        f"         target_column_name AS target_column, "
-        f"         1 AS depth, "
-        f"         array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path, "
-        f"         event_time "
-        f"  FROM {LINEAGE_COLUMN_LINEAGE} "
-        f"  WHERE {anchor_key} = {table_literal} "
-        f"    AND {anchor_col_key} IN ({failed_in_subquery}) "
-        f"    AND {frontier_key} IS NOT NULL "
-        f"    AND {frontier_col_key} IS NOT NULL "
-        f"    AND event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f"  LIMIT {max_nodes} "
-        " )"
-        "  UNION ALL "
-        " ("
-        f"  SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
-        f"         e.frontier_table AS predecessor, "
-        f"         t.{frontier_key} AS neighbour, t.source_column_name AS source_column, "
-        f"         t.target_column_name AS target_column, "
-        f"         e.depth + 1 AS depth, "
-        f"         array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path, "
-        f"         t.event_time "
-        f"  FROM edges e JOIN {LINEAGE_COLUMN_LINEAGE} t "
-        f"    ON t.{anchor_key} = e.frontier_table "
-        f"   AND t.{anchor_col_key} = e.frontier_column "
-        f"  WHERE {depth_predicate}t.{frontier_key} IS NOT NULL "
-        f"    AND t.{frontier_col_key} IS NOT NULL "
-        f"    AND NOT array_contains(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) "
-        f"    AND NOT (t.{frontier_key} = {table_literal} "
-        f"             AND t.{frontier_col_key} IN ({failed_in_subquery})) "
-        f"    AND t.event_time >= current_timestamp() - INTERVAL {lookback_days} DAYS "
-        f"  LIMIT {max_nodes} "
-        " )"
-        ") "
-        "SELECT DISTINCT predecessor, neighbour, source_column, target_column, depth "
-        "FROM edges "
-        f"LIMIT {max_nodes}"
-    )
     try:
-        walk_df = spark.sql(query)
+        walk_df = walk_column_lineage(
+            spark,
+            table=source_table,
+            direction=walker_direction,
+            depth=max_depth,
+            lookback_days=lookback_days,
+            max_nodes=max_nodes,
+            column_seed=ViewColumnSeeds(view_name=failed_columns_view),
+        )
         projected = _project_edge_rows(
             walk_df,
             edge_type=edge_type,
             predecessor_col=F.col("predecessor"),
-            target_table_col=F.col("neighbour"),
+            target_table_col=F.col("frontier_table"),
             depth_col=F.col("depth").cast("long"),
             source_column_col=F.col("source_column"),
             target_column_col=F.col("target_column"),

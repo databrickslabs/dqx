@@ -231,7 +231,7 @@ def test_collect_column_upstream_lineage_escapes_seed_column_quotes():
         config=ColumnUpstreamLineageConfig(),
     )
     sql_text = spark.sql.call_args.args[0]
-    assert "'weird''name'" in sql_text
+    assert "'weird\\'name'" in sql_text
 
 
 def test_collect_column_upstream_lineage_unbounded_depth_omits_predicate():

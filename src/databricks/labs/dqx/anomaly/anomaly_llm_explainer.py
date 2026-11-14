@@ -142,8 +142,8 @@ def _sql_string_literal(value: str) -> str:
         and leak that column's (potentially PII) values to the LLM.
 
     Used for *redact_columns* values — already validated as non-empty strings — before they are
-    embedded in the pattern-key SQL built by *pattern_spark_expr*. Mirrors
-    *metrics_observer._sql_literal_escape*.
+    embedded in the pattern-key SQL built by *pattern_spark_expr*. Mirrors the escape semantics
+    of *databricks.labs.dqx.utils.sql_str_literal* (quote-less form, same backslash-first rule).
     """
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
