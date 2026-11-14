@@ -32,6 +32,7 @@ from databricks.sdk.service.catalog import (
     ExternalLineageObject,
     ExternalLineageTable,
     LineageDirection,
+    TableInfo,
 )
 
 from databricks.labs.blueprint.parallel import Threads
@@ -107,28 +108,38 @@ def _normalize_three_part_name(name: str) -> str:
     return f"{catalog}.{schema}.{table}"
 
 
-def collect_table_comments(ws: WorkspaceClient, table: str) -> tuple[str | None, dict[str, str]]:
-    """Return ``(table_comment, {column_name: column_comment})`` for ``table`` in one SDK call.
+def collect_table_comments(
+    ws: WorkspaceClient,
+    table: str,
+    *,
+    table_info: TableInfo | None = None,
+) -> tuple[str | None, dict[str, str]]:
+    """Return ``(table_comment, {column_name: column_comment})`` for ``table``.
 
     *table* is normalised via *_normalize_three_part_name* so backtick-quoted and
     mixed-case names resolve to the same canonical UC identifier before the SDK call.
     The table comment is ``None`` when missing / whitespace-only; the column map omits
     columns without a comment. Returns ``(None, {})`` on a malformed name or any SDK
     read error so the caller can still render a schema prompt.
+
+    Pass *table_info* when the caller has already fetched the *TableInfo* (for example
+    the enriched seed-table path in *DQGenerator._get_schema_info*) to skip the SDK
+    round-trip and reuse the existing payload.
     """
     try:
         normalised = _normalize_three_part_name(table)
     except InvalidParameterError as exc:
         logger.warning(f"collect_table_comments: {sanitize_for_logging(str(exc))}")
         return None, {}
-    try:
-        table_info = ws.tables.get(normalised)
-    except Exception as exc:  # broad catch: UC read failures are non-fatal for enrichment
-        logger.warning(
-            f"collect_table_comments: failed to read '{sanitize_for_logging(normalised)}': "
-            f"{sanitize_for_logging(str(exc))}"
-        )
-        return None, {}
+    if table_info is None:
+        try:
+            table_info = ws.tables.get(normalised)
+        except Exception as exc:  # broad catch: UC read failures are non-fatal for enrichment
+            logger.warning(
+                f"collect_table_comments: failed to read '{sanitize_for_logging(normalised)}': "
+                f"{sanitize_for_logging(str(exc))}"
+            )
+            return None, {}
     table_comment = _sanitize_text(table_info.comment)
     column_comments: dict[str, str] = {}
     for column in table_info.columns or []:
@@ -437,6 +448,7 @@ def build_schema_json(
     ws: WorkspaceClient,
     spark: SparkSession | None,
     config: UnityCatalogMetadataConfig,
+    table_info: TableInfo | None = None,
 ) -> str:
     """Render the enriched schema JSON for the LLM prompt.
 
@@ -449,6 +461,11 @@ def build_schema_json(
     *column_dicts* is the baseline list of ``{"name","type"}`` dicts the caller already
     computed from either SDK or Spark; this helper enriches it in place with ``comment`` and
     ``tags`` per column.
+
+    *table_info* is an optional already-fetched *TableInfo* for the seed table. When the
+    caller has one in hand (the enriched UC path in *DQGenerator._get_schema_info* fetches
+    it once to derive *column_dicts*), passing it through here skips the second
+    *ws.tables.get* call that the comment enrichment would otherwise make.
 
     *table_full_name* is normalised once via *_normalize_three_part_name* so every
     downstream enrichment (comments, tags, lineage, external lineage) sees the same
@@ -464,7 +481,9 @@ def build_schema_json(
     base_columns = [dict(c) for c in column_dicts]
     result: dict[str, Any] = {"table": normalised_name, "columns": base_columns}
 
-    _enrich_with_comments(result, base_columns, ws=ws, table_full_name=normalised_name, config=config)
+    _enrich_with_comments(
+        result, base_columns, ws=ws, table_full_name=normalised_name, config=config, table_info=table_info
+    )
     _enrich_with_tags(result, base_columns, spark=spark, table_full_name=normalised_name, config=config)
     _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=normalised_name, config=config)
     _enrich_with_external_lineage(result, ws=ws, table_full_name=normalised_name, config=config)
@@ -479,11 +498,12 @@ def _enrich_with_comments(
     ws: WorkspaceClient,
     table_full_name: str,
     config: UnityCatalogMetadataConfig,
+    table_info: TableInfo | None = None,
 ) -> None:
     """Attach table + column comments to ``result`` / ``base_columns`` in place."""
     if not (config.include_table_comment or config.include_column_comments):
         return
-    table_comment, column_comments = collect_table_comments(ws, table_full_name)
+    table_comment, column_comments = collect_table_comments(ws, table_full_name, table_info=table_info)
     if config.include_table_comment and table_comment is not None:
         result["table_comment"] = table_comment
     if config.include_column_comments:

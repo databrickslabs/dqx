@@ -31,7 +31,11 @@ from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
 from databricks.labs.dqx.profiler.unity_catalog_metadata import build_schema_json
-from databricks.labs.dqx.utils import get_table_column_dicts, get_table_column_metadata, sanitize_for_logging
+from databricks.labs.dqx.utils import (
+    extract_column_dicts,
+    get_table_column_metadata,
+    sanitize_for_logging,
+)
 
 # Conditional imports for LLM-assisted rules generation
 try:
@@ -269,12 +273,14 @@ class DQGenerator(DQEngineBase):
             logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
             if unity_catalog_metadata_config is None:
                 return get_table_column_metadata(self.ws, location)
+            table_info = self.ws.tables.get(location.replace("`", ""))
             return build_schema_json(
                 table_full_name=location,
-                column_dicts=get_table_column_dicts(self.ws, location),
+                column_dicts=extract_column_dicts(table_info),
                 ws=self.ws,
                 spark=self.spark,
                 config=unity_catalog_metadata_config,
+                table_info=table_info,
             )
 
         if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):

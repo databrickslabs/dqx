@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.functional_validators import PlainValidator
 from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import TableInfo
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
@@ -809,6 +810,21 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
         return set()
 
 
+def extract_column_dicts(table_info: TableInfo) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list derived from an already-fetched *TableInfo*.
+
+    Factored out so callers that have a *TableInfo* in hand (for example, the enriched UC
+    path in *DQGenerator._get_schema_info*, which needs the comment and column data from
+    the same SDK call) can avoid an extra *tables.get* round-trip.
+    """
+    return [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+
+
+def get_table_column_dicts(workspace_client: WorkspaceClient, table: str) -> list[dict[str, str]]:
+    """Return the ``[{"name","type"}]`` column list used to seed the LLM schema prompt."""
+    return extract_column_dicts(workspace_client.tables.get(table.replace("`", "")))
+
+
 def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> str:
     """
     Gets column metadata for a Unity Catalog table using the Databricks SDK.
@@ -829,15 +845,7 @@ def get_table_column_metadata(workspace_client: WorkspaceClient, table: str) -> 
     Raises:
         NotFound: If the table does not exist or is not accessible.
     """
-    table_info = workspace_client.tables.get(table.replace("`", ""))
-    columns = [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
-    return json.dumps({"columns": columns})
-
-
-def get_table_column_dicts(workspace_client: WorkspaceClient, table: str) -> list[dict[str, str]]:
-    """Return the ``[{"name","type"}]`` column list used to seed the LLM schema prompt."""
-    table_info = workspace_client.tables.get(table.replace("`", ""))
-    return [{"name": col.name or "", "type": (col.type_text or "").lower()} for col in (table_info.columns or [])]
+    return json.dumps({"columns": get_table_column_dicts(workspace_client, table)})
 
 
 def missing_required_packages(packages: list[str]) -> bool:
