@@ -258,6 +258,13 @@ class DQGenerator(DQEngineBase):
         if not location:
             raise InvalidConfigError("Input location not configured")
 
+        if unity_catalog_metadata_config is not None and not UC_TABLE_PATTERN.match(location):
+            logger.warning(
+                f"Skipping Unity Catalog metadata enrichment for '{sanitize_for_logging(location)}': "
+                "enrichment requires a 3-level Unity Catalog table name (catalog.schema.table)"
+            )
+            unity_catalog_metadata_config = None
+
         if UC_TABLE_PATTERN.match(location):
             logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
             if unity_catalog_metadata_config is None:

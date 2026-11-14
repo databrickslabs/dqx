@@ -1,10 +1,11 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
 from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
-from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.config import InputConfig, UnityCatalogMetadataConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.profiler.generator import DQGenerator
 
@@ -119,6 +120,28 @@ def test_generate_for_two_level_table_name_reads_schema_with_spark(mock_workspac
 
     assert json.loads(captured["schema_info"]) == {"columns": []}
     assert not mock_workspace_client.tables.get.called
+
+
+@pytest.mark.parametrize("location", ["default.users", "s3://bucket/data"])
+def test_generate_for_non_uc_location_skips_uc_metadata_enrichment(mock_workspace_client, mock_spark, caplog, location):
+    """Non-UC locations (2-level names, storage paths) must not pay for Unity Catalog enrichment"""
+    captured: dict = {}
+    mock_spark.read.options.return_value.table.return_value.schema.fields = []
+    mock_spark.read.options.return_value.load.return_value.schema.fields = []
+    generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
+    generator.llm_engine = _stub_llm_engine(captured)
+
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.profiler.generator"):
+        generator.generate_dq_rules_ai_assisted(
+            user_input="age must be positive",
+            input_config=InputConfig(location=location, format="parquet"),
+            unity_catalog_metadata_config=UnityCatalogMetadataConfig(),
+        )
+
+    assert json.loads(captured["schema_info"]) == {"columns": []}
+    mock_workspace_client.tables.get.assert_not_called()
+    assert not mock_spark.sql.called
+    assert "Skipping Unity Catalog metadata enrichment" in caplog.text
 
 
 def test_generate_without_input_config_sends_no_schema(mock_workspace_client):
