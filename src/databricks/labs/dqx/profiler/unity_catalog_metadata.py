@@ -70,13 +70,18 @@ def _sanitize_text(value: str | None) -> str | None:
 
 
 def _split_three_part_name(name: str) -> tuple[str, str, str]:
-    """Return ``(catalog, schema, table)`` for a 3-part UC name.
+    """Return ``(catalog, schema, table)`` lowercase for a 3-part UC name.
 
-    Backticks are stripped so quoted identifiers round-trip; raises
-    *InvalidParameterError* when the input is not exactly three segments so callers that
-    forward the result to the SDK fail loudly on malformed input.
+    Unity Catalog identifiers cannot contain dots (see the Databricks SQL reference on
+    identifier naming), so splitting on ``.`` is unambiguous: per-segment backtick
+    stripping is sufficient to unquote a 3-part name. Output is lowercased to match the
+    storage conventions of *system.access.*_lineage* and *system.information_schema.*_tags*,
+    so callers can forward the result directly into SQL literals and column filters.
+
+    Raises:
+        InvalidParameterError: input is not exactly three non-empty segments.
     """
-    parts = [segment.strip("`") for segment in name.split(".")]
+    parts = [segment.strip().strip("`").strip().lower() for segment in name.split(".")]
     if len(parts) != 3 or not all(parts):
         raise InvalidParameterError(
             f"Expected 3-part Unity Catalog name 'catalog.schema.table', got {sanitize_for_logging(name)!r}"
@@ -84,18 +89,40 @@ def _split_three_part_name(name: str) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
+def _normalize_three_part_name(name: str) -> str:
+    """Return canonical lowercase *catalog.schema.table* for a 3-part UC name.
+
+    Thin wrapper over *_split_three_part_name* that rejoins the normalised parts. Used as
+    the single up-front normalisation at every public collector so downstream SQL
+    literals, DataFrame filters, and SDK calls see the same canonical form regardless of
+    whether the caller passed a mixed-case or backtick-quoted identifier.
+
+    Raises:
+        InvalidParameterError: propagated from *_split_three_part_name*.
+    """
+    catalog, schema, table = _split_three_part_name(name)
+    return f"{catalog}.{schema}.{table}"
+
+
 def collect_table_comments(ws: WorkspaceClient, table: str) -> tuple[str | None, dict[str, str]]:
     """Return ``(table_comment, {column_name: column_comment})`` for ``table`` in one SDK call.
 
-    Reads via ``ws.tables.get(table)`` (backticks stripped first). The table comment is
-    ``None`` when missing / whitespace-only; the column map omits columns without a comment.
-    Returns ``(None, {})`` on any read error so the caller can still render a schema prompt.
+    *table* is normalised via *_normalize_three_part_name* so backtick-quoted and
+    mixed-case names resolve to the same canonical UC identifier before the SDK call.
+    The table comment is ``None`` when missing / whitespace-only; the column map omits
+    columns without a comment. Returns ``(None, {})`` on a malformed name or any SDK
+    read error so the caller can still render a schema prompt.
     """
     try:
-        table_info = ws.tables.get(table.replace("`", ""))
+        normalised = _normalize_three_part_name(table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_table_comments: {sanitize_for_logging(str(exc))}")
+        return None, {}
+    try:
+        table_info = ws.tables.get(normalised)
     except Exception as exc:  # broad catch: UC read failures are non-fatal for enrichment
         logger.warning(
-            f"collect_table_comments: failed to read '{sanitize_for_logging(table)}': "
+            f"collect_table_comments: failed to read '{sanitize_for_logging(normalised)}': "
             f"{sanitize_for_logging(str(exc))}"
         )
         return None, {}
@@ -187,9 +214,15 @@ def collect_column_upstream_lineage(
         return []
 
     try:
+        normalised_table = _normalize_three_part_name(source_table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_column_upstream_lineage: {sanitize_for_logging(str(exc))}")
+        return []
+
+    try:
         rows = walk_column_lineage(
             spark,
-            table=source_table,
+            table=normalised_table,
             direction="upstream",
             depth=config.depth,
             lookback_days=config.lookback_days,
@@ -199,7 +232,7 @@ def collect_column_upstream_lineage(
     except Exception as exc:  # broad catch: lineage reads are non-fatal
         logger.warning(
             f"collect_column_upstream_lineage: read failed for "
-            f"'{sanitize_for_logging(source_table)}': {sanitize_for_logging(str(exc))}"
+            f"'{sanitize_for_logging(normalised_table)}': {sanitize_for_logging(str(exc))}"
         )
         return []
 
@@ -232,9 +265,15 @@ def collect_upstream_table_lineage(
         neighbour and *predecessor* is the previous hop (equal to *source_table* at depth 1).
     """
     try:
+        normalised_table = _normalize_three_part_name(source_table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_upstream_table_lineage: {sanitize_for_logging(str(exc))}")
+        return []
+
+    try:
         rows = walk_table_lineage(
             spark,
-            table=source_table,
+            table=normalised_table,
             direction="upstream",
             depth=config.depth,
             lookback_days=config.lookback_days,
@@ -243,7 +282,7 @@ def collect_upstream_table_lineage(
     except Exception as exc:  # broad catch: lineage reads are non-fatal
         logger.warning(
             f"collect_upstream_table_lineage: read failed for "
-            f"'{sanitize_for_logging(source_table)}': {sanitize_for_logging(str(exc))}"
+            f"'{sanitize_for_logging(normalised_table)}': {sanitize_for_logging(str(exc))}"
         )
         return []
     return [
@@ -407,14 +446,25 @@ def build_schema_json(
     *column_dicts* is the baseline list of ``{"name","type"}`` dicts the caller already
     computed from either SDK or Spark; this helper enriches it in place with ``comment`` and
     ``tags`` per column.
-    """
-    base_columns = [dict(c) for c in column_dicts]
-    result: dict[str, Any] = {"table": table_full_name, "columns": base_columns}
 
-    _enrich_with_comments(result, base_columns, ws=ws, table_full_name=table_full_name, config=config)
-    _enrich_with_tags(result, base_columns, spark=spark, table_full_name=table_full_name, config=config)
-    _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=table_full_name, config=config)
-    _enrich_with_external_lineage(result, ws=ws, table_full_name=table_full_name, config=config)
+    *table_full_name* is normalised once via *_normalize_three_part_name* so every
+    downstream enrichment (comments, tags, lineage, external lineage) sees the same
+    canonical lowercase identifier. On a malformed name the baseline JSON is still
+    emitted (with the raw name as ``"table"``) so the LLM prompt stays well-formed.
+    """
+    try:
+        normalised_name = _normalize_three_part_name(table_full_name)
+    except InvalidParameterError as exc:
+        logger.warning(f"build_schema_json: {sanitize_for_logging(str(exc))}")
+        normalised_name = table_full_name
+
+    base_columns = [dict(c) for c in column_dicts]
+    result: dict[str, Any] = {"table": normalised_name, "columns": base_columns}
+
+    _enrich_with_comments(result, base_columns, ws=ws, table_full_name=normalised_name, config=config)
+    _enrich_with_tags(result, base_columns, spark=spark, table_full_name=normalised_name, config=config)
+    _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=normalised_name, config=config)
+    _enrich_with_external_lineage(result, ws=ws, table_full_name=normalised_name, config=config)
 
     return json.dumps(result)
 

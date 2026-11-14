@@ -148,6 +148,27 @@ def test_collect_table_comments_tolerates_sdk_error(mock_workspace_client):
     assert collect_table_comments(mock_workspace_client, "cat.sch.tab") == (None, {})
 
 
+def test_collect_table_comments_normalises_mixed_case_name(mock_workspace_client):
+    """Mixed-case UC names are lowercased before the SDK call so they match UC storage."""
+    mock_workspace_client.tables.get.return_value = TableInfo(columns=[])
+    collect_table_comments(mock_workspace_client, "Main.Sales.Invoices")
+    mock_workspace_client.tables.get.assert_called_once_with("main.sales.invoices")
+
+
+def test_collect_table_comments_normalises_backticked_name(mock_workspace_client):
+    """Backtick-quoted identifiers are unquoted and lowercased before the SDK call."""
+    mock_workspace_client.tables.get.return_value = TableInfo(columns=[])
+    collect_table_comments(mock_workspace_client, "`Cat`.`Sch`.`Tbl`")
+    mock_workspace_client.tables.get.assert_called_once_with("cat.sch.tbl")
+
+
+def test_collect_table_comments_rejects_bad_name(mock_workspace_client):
+    """Malformed names degrade to the empty structure without invoking the SDK."""
+    result = collect_table_comments(mock_workspace_client, "two.part")
+    assert result == (None, {})
+    mock_workspace_client.tables.get.assert_not_called()
+
+
 # -- collect_table_tags ------------------------------------------------------------------
 
 
@@ -271,6 +292,48 @@ def test_collect_column_upstream_lineage_no_seed_columns_short_circuits():
     spark.sql.assert_not_called()
 
 
+def test_collect_column_upstream_lineage_normalises_mixed_case_name():
+    """Mixed-case UC names are lowercased before the SQL literal so they match
+    ``system.access.column_lineage`` (which stores lowercase full names)."""
+    spark = _spark_mock(sql_results=[[]])
+    collect_column_upstream_lineage(
+        spark,
+        "Main.Sales.Invoices",
+        ["id"],
+        config=ColumnUpstreamLineageConfig(),
+    )
+    sql_text = spark.sql.call_args.args[0]
+    assert "'main.sales.invoices'" in sql_text
+    assert "Main.Sales.Invoices" not in sql_text
+
+
+def test_collect_column_upstream_lineage_normalises_backticked_name():
+    """Backtick-quoted identifiers are unquoted + lowercased, not inlined verbatim."""
+    spark = _spark_mock(sql_results=[[]])
+    collect_column_upstream_lineage(
+        spark,
+        "`Cat`.`Sch`.`Tbl`",
+        ["id"],
+        config=ColumnUpstreamLineageConfig(),
+    )
+    sql_text = spark.sql.call_args.args[0]
+    assert "'cat.sch.tbl'" in sql_text
+    assert "`" not in sql_text
+
+
+def test_collect_column_upstream_lineage_rejects_bad_name():
+    """Malformed names degrade to the empty list without issuing SQL."""
+    spark = create_autospec(SparkSession, instance=True)
+    result = collect_column_upstream_lineage(
+        spark,
+        "two.part",
+        ["id"],
+        config=ColumnUpstreamLineageConfig(),
+    )
+    assert result == []
+    spark.sql.assert_not_called()
+
+
 def test_collect_upstream_table_lineage_builds_recursive_cte():
     spark = _spark_mock(sql_results=[[]])
     collect_upstream_table_lineage(
@@ -283,6 +346,30 @@ def test_collect_upstream_table_lineage_builds_recursive_cte():
     assert "LIMIT 10" in sql_text
     assert "INTERVAL 7 DAYS" in sql_text
     assert "e.depth < 2" in sql_text
+
+
+def test_collect_upstream_table_lineage_normalises_name():
+    """Table-lineage walker is seeded with the lowercased, backtick-stripped name."""
+    spark = _spark_mock(sql_results=[[]])
+    collect_upstream_table_lineage(
+        spark,
+        "`Main`.`Sales`.`Invoices`",
+        config=ColumnUpstreamLineageConfig(),
+    )
+    sql_text = spark.sql.call_args.args[0]
+    assert "'main.sales.invoices'" in sql_text
+    assert "`" not in sql_text
+
+
+def test_collect_upstream_table_lineage_rejects_bad_name():
+    spark = create_autospec(SparkSession, instance=True)
+    result = collect_upstream_table_lineage(
+        spark,
+        "two.part",
+        config=ColumnUpstreamLineageConfig(),
+    )
+    assert result == []
+    spark.sql.assert_not_called()
 
 
 # -- collect_external_upstream_lineage ---------------------------------------------------
@@ -384,6 +471,15 @@ def test_collect_external_upstream_lineage_degrades_on_sdk_error():
     assert not collect_external_upstream_lineage(ws, "cat.sch.tab", config=ExternalLineageConfig())
 
 
+def test_collect_external_upstream_lineage_normalises_name():
+    """Mixed-case / backtick-quoted names are lowercased before the SDK lookup."""
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.external_lineage.list_external_lineage_relationships.return_value = iter([])
+    collect_external_upstream_lineage(ws, "`Main`.`Sales`.`Invoices`", config=ExternalLineageConfig())
+    kwargs = ws.external_lineage.list_external_lineage_relationships.call_args.kwargs
+    assert kwargs["object_info"].table.name == "main.sales.invoices"
+
+
 # -- build_schema_json -------------------------------------------------------------------
 
 
@@ -458,3 +554,58 @@ def test_build_schema_json_includes_comments_and_external_lineage(mock_workspace
     assert result["table_comment"] == "Invoice fact table"
     assert result["columns"][0]["comment"] == "Invoice primary key"
     assert result["external_lineage"][0]["system_type"] == SystemType.SAP.value
+
+
+def test_build_schema_json_normalises_table_name(mock_workspace_client):
+    """Mixed-case + backtick-quoted *table_full_name* is normalised once; every downstream
+    enrichment plus the emitted ``"table"`` key see the same canonical lowercase form."""
+    mock_workspace_client.tables.get.return_value = TableInfo(columns=[ColumnInfo(name="id", type_text="string")])
+    ws = mock_workspace_client
+    ws.external_lineage.list_external_lineage_relationships.return_value = iter([])
+    spark = _spark_mock(table_results=[[], []], sql_results=[[], []])
+
+    result = json.loads(
+        build_schema_json(
+            table_full_name="`Main`.`Sales`.`Invoices`",
+            column_dicts=[{"name": "id", "type": "string"}],
+            ws=ws,
+            spark=spark,
+            config=UnityCatalogMetadataConfig(),
+        )
+    )
+    assert result["table"] == "main.sales.invoices"
+    # Comments SDK is called with the normalised name.
+    ws.tables.get.assert_called_once_with("main.sales.invoices")
+    # Lineage SQL inlines the normalised anchor literal.
+    for call in spark.sql.call_args_list:
+        assert "'main.sales.invoices'" in call.args[0]
+        assert "`" not in call.args[0]
+    # External-lineage SDK gets the normalised name.
+    kwargs = ws.external_lineage.list_external_lineage_relationships.call_args.kwargs
+    assert kwargs["object_info"].table.name == "main.sales.invoices"
+
+
+def test_build_schema_json_degrades_on_bad_name(mock_workspace_client):
+    """A malformed *table_full_name* still emits baseline JSON; no SDK / Spark calls fire
+    on paths that require a parsed 3-part name."""
+    ws = mock_workspace_client
+    spark = _spark_mock(table_results=[], sql_results=[])
+
+    result = json.loads(
+        build_schema_json(
+            table_full_name="two.part",
+            column_dicts=[{"name": "id", "type": "string"}],
+            ws=ws,
+            spark=spark,
+            config=UnityCatalogMetadataConfig(),
+        )
+    )
+    # Raw name is kept so the baseline JSON remains well-formed.
+    assert result["table"] == "two.part"
+    assert result["columns"] == [{"name": "id", "type": "string"}]
+    # Comments: _normalize_three_part_name fails → tables.get is never called.
+    ws.tables.get.assert_not_called()
+    # Tag + lineage + external-lineage paths all re-validate the name and short-circuit.
+    spark.table.assert_not_called()
+    spark.sql.assert_not_called()
+    ws.external_lineage.list_external_lineage_relationships.assert_not_called()

@@ -13,7 +13,6 @@ from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.utils import escape_sql_string_literal, is_sql_query_safe
 
 
-
 OBSERVATION_TABLE_SCHEMA = (
     "run_id string, run_name string, input_location string, output_location string, quarantine_location string, "
     "checks_location string, rule_set_fingerprint string, metric_name string, metric_value string, run_time timestamp, "
