@@ -1052,11 +1052,15 @@ def walk_table_lineage(
 ) -> DataFrame:
     """Walk *table*'s upstream or downstream neighbours over *system.access.table_lineage*.
 
-    Builds a single ``WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time)``
-    query with an in-CTE full-path cycle guard (``array_contains(path, …)``), a
-    *lookback_days* window applied via ``INTERVAL n DAYS``, and *max_nodes* applied as a
-    ``LIMIT`` inside both the anchor and recursive members **and** once more at the tail.
-    Returns the lazy DataFrame produced by *spark.sql(query)* — materialisation (and the
+    Builds a single ``WITH RECURSIVE edges(anchor, neighbour, depth, path)`` query with an
+    in-CTE full-path cycle guard (``array_contains(path, …)``), a *lookback_days* window
+    applied via ``INTERVAL n DAYS``, and *max_nodes* applied as a ``LIMIT`` inside both
+    the anchor and recursive members **and** once more at the tail. Each member is
+    ``SELECT DISTINCT`` so duplicate event rows for the same ``(anchor, neighbour, depth,
+    path)`` tuple are collapsed **before** the member ``LIMIT`` applies —
+    ``system.access.table_lineage`` holds one row per lineage *event*, so without this a
+    daily-written edge would consume ~*lookback_days* slots out of *max_nodes*. Returns
+    the lazy DataFrame produced by *spark.sql(query)* — materialisation (and the
     try/except that isolates non-fatal lineage read failures) is the caller's job.
 
     *depth* is an optional guardrail: when *None* the recursive member omits the
@@ -1089,10 +1093,10 @@ def walk_table_lineage(
     # and *max_nodes* are expected to be Pydantic-validated ints (>= 1) interpolated as bare
     # constants.
     query = (
-        "WITH RECURSIVE edges(anchor, neighbour, depth, path, event_time) AS ("
+        "WITH RECURSIVE edges(anchor, neighbour, depth, path) AS ("
         " ("
-        f"  SELECT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
-        f"         array({table_literal}, {key_other}) AS path, event_time "
+        f"  SELECT DISTINCT {table_literal} AS anchor, {key_other} AS neighbour, 1 AS depth, "
+        f"         array({table_literal}, {key_other}) AS path "
         f"  FROM {SYSTEM_ACCESS_TABLE_LINEAGE} "
         f"  WHERE {key_source} = {table_literal} "
         f"    AND {key_other} IS NOT NULL "
@@ -1102,8 +1106,8 @@ def walk_table_lineage(
         " )"
         "  UNION ALL "
         f" ("
-        f"  SELECT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
-        f"         array_append(e.path, t.{key_other}), t.event_time "
+        f"  SELECT DISTINCT e.neighbour AS anchor, t.{key_other} AS neighbour, e.depth + 1, "
+        f"         array_append(e.path, t.{key_other}) "
         f"  FROM edges e JOIN {SYSTEM_ACCESS_TABLE_LINEAGE} t "
         f"    ON t.{key_source} = e.neighbour "
         f"  WHERE {depth_predicate}t.{key_other} IS NOT NULL "
@@ -1131,7 +1135,12 @@ def walk_column_lineage(
     """Walk *table*'s per-column lineage over *system.access.column_lineage*.
 
     Mirrors *walk_table_lineage* against *system.access.column_lineage* with a ``path
-    ARRAY<STRING>`` of ``<table>.<column>`` identifiers for the cycle guard.
+    ARRAY<STRING>`` of ``<table>.<column>`` identifiers for the cycle guard. Each member
+    is ``SELECT DISTINCT`` so duplicate event rows for the same
+    ``(frontier_table, frontier_column, predecessor, source_column, target_column,
+    depth, path)`` tuple are collapsed **before** the member ``LIMIT`` applies —
+    ``system.access.column_lineage`` holds one row per lineage *event*, so without this a
+    daily-written edge would consume ~*lookback_days* slots out of *max_nodes*.
 
     *column_seed* chooses the seed-filter dialect:
 
@@ -1191,16 +1200,15 @@ def walk_column_lineage(
     query = (
         "WITH RECURSIVE edges("
         "frontier_table, frontier_column, predecessor, "
-        "source_column, target_column, depth, path, event_time) AS ( "
+        "source_column, target_column, depth, path) AS ( "
         "("
-        f" SELECT {frontier_key} AS frontier_table, "
+        f" SELECT DISTINCT {frontier_key} AS frontier_table, "
         f"        {frontier_col_key} AS frontier_column, "
         f"        {table_literal} AS predecessor, "
         f"        source_column_name AS source_column, "
         f"        target_column_name AS target_column, "
         f"        1 AS depth, "
-        f"        array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path, "
-        f"        event_time "
+        f"        array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path "
         f" FROM {SYSTEM_ACCESS_COLUMN_LINEAGE} "
         f" WHERE {anchor_key} = {table_literal} "
         f"   AND {anchor_col_filter} "
@@ -1209,13 +1217,12 @@ def walk_column_lineage(
         f"   AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
         f" LIMIT {int(max_nodes)} "
         ") UNION ALL ("
-        f" SELECT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
+        f" SELECT DISTINCT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
         f"        e.frontier_table AS predecessor, "
         f"        t.source_column_name AS source_column, "
         f"        t.target_column_name AS target_column, "
         f"        e.depth + 1 AS depth, "
-        f"        array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path, "
-        f"        t.event_time "
+        f"        array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path "
         f" FROM edges e JOIN {SYSTEM_ACCESS_COLUMN_LINEAGE} t "
         f"   ON t.{anchor_key} = e.frontier_table "
         f"  AND t.{anchor_col_key} = e.frontier_column "

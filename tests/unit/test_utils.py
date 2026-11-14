@@ -1076,6 +1076,17 @@ def test_walk_table_lineage_upstream_sql_shape():
     assert "e.depth < 5 AND " in query
 
 
+def test_walk_table_lineage_dedupes_events_before_limit():
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # Anchor + recursive member + tail → three SELECT DISTINCTs.
+    assert query.count("SELECT DISTINCT") == 3
+    assert "edges(anchor, neighbour, depth, path)" in query
+    assert ", event_time " not in query
+    assert ", t.event_time" not in query
+
+
 def test_walk_table_lineage_downstream_sql_shape():
     spark = create_autospec(SparkSession)
     walk_table_lineage(spark, table="cat.sch.tbl", direction="downstream", depth=5, lookback_days=30, max_nodes=100)
@@ -1131,3 +1142,21 @@ def test_walk_column_lineage_view_seeds_sql_shape():
     # pair so cycles back to the seed are not re-expanded.
     assert "NOT (t.source_table_full_name = 'cat.sch.tbl'" in query
     assert "t.source_column_name IN (SELECT col_name FROM _dqx_failed_columns_deadbeef)" in query
+
+
+def test_walk_column_lineage_dedupes_events_before_limit():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=InlineColumnSeeds(columns=["amount"]),
+    )
+    query = _capture_sql(spark)
+    assert query.count("SELECT DISTINCT") == 3
+    assert "depth, path) AS" in query
+    assert ", event_time " not in query
+    assert ", t.event_time" not in query
