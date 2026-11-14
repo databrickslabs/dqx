@@ -17,11 +17,13 @@ collection has a **Results** view.
 ## Read the score
 
 At the top is the **DQ score** — a 0–100% summary of the latest run. A rule
-becomes a **check** when you apply it to a column, and each check produces one
-**test** per row when it runs; the score is the **average test pass rate** across
-all of them. A **collection** score is the average DQ score across its member
-tables. Below the score, breakdowns split the results by **dimension**,
-**severity**, **rule**, and **column**, so you can see where quality is slipping.
+becomes a **check** when you apply it to a column. When it runs, a check produces
+one **test** for every row it checks, or one test for the whole table. Each rule's
+score is the average pass rate of its checks, and the DQ score is the
+**equal-weight average of rule scores**. A **collection** score is the
+average DQ score across its member tables. Below the score, breakdowns split the
+results by **dimension**, **severity**, **rule**, and **column**, so you can see
+where quality is slipping.
 
 A check is **flagged as failing** when its pass rate drops below its
 [pass threshold](/docs/studio/monitoring/assign-rules#quality-thresholds) (the

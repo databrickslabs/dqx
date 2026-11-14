@@ -91,25 +91,60 @@ describe("nextTableSelection (By table click → selection + table facet, P7.2)"
 
 describe("sumTestCounts (ScoreBox subtitle sums)", () => {
   const byTable = [
-    { label: "main.sales.orders", failed_tests: 10, total_tests: 100 },
-    { label: "dev.sales.items", failed_tests: 30, total_tests: 200 },
+    {
+      label: "main.sales.orders",
+      failed_tests: 10,
+      total_tests: 100,
+      table_failed_tests: 1,
+      table_total_tests: 1,
+    },
+    { label: "dev.sales.items", failed_tests: 30, total_tests: 200, table_total_tests: 2 },
   ];
 
   it("sums every row when no table facet is active", () => {
-    expect(sumTestCounts(byTable)).toEqual({ failedTests: 40, totalTests: 300 });
+    expect(sumTestCounts(byTable)).toEqual({
+      failedTests: 40,
+      totalTests: 300,
+      tableFailedTests: 1,
+      tableTotalTests: 3,
+    });
   });
 
   it("re-applies the table facet client-side (the server self-excludes it from by_table)", () => {
     expect(sumTestCounts(byTable, ["main.sales.orders"])).toEqual({
       failedTests: 10,
       totalTests: 100,
+      tableFailedTests: 1,
+      tableTotalTests: 1,
     });
   });
 
+  it("keeps row and table tests in separate sums", () => {
+    // A dataset-only table contributes table tests and no row tests.
+    expect(
+      sumTestCounts([
+        { label: "a", failed_tests: 5, total_tests: 50 },
+        { label: "b", total_tests: null, table_failed_tests: 2, table_total_tests: 2 },
+      ]),
+    ).toEqual({ failedTests: 5, totalTests: 50, tableFailedTests: 2, tableTotalTests: 2 });
+  });
+
   it("treats null/missing counts as zero", () => {
-    expect(sumTestCounts([{ label: "t", failed_tests: null, total_tests: null }])).toEqual({
+    expect(
+      sumTestCounts([
+        {
+          label: "t",
+          failed_tests: null,
+          total_tests: null,
+          table_failed_tests: null,
+          table_total_tests: null,
+        },
+      ]),
+    ).toEqual({
       failedTests: 0,
       totalTests: 0,
+      tableFailedTests: 0,
+      tableTotalTests: 0,
     });
   });
 });

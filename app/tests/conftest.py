@@ -6,7 +6,9 @@ with a ``unittest.mock.MagicMock`` (or ``create_autospec``) so the
 suite runs offline in <1s.
 """
 
+import json
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -203,9 +205,13 @@ def wire_crud_builder_methods(mock: MagicMock, *, dialect: str = "delta") -> Mag
     return mock
 
 
-@pytest.fixture
-def sql_executor_mock() -> MagicMock:
-    """Spec-bound mock of ``SqlExecutor`` so misuse fails loudly."""
+def make_spec_sql_executor_mock() -> MagicMock:
+    """Build a spec-bound ``SqlExecutor`` mock with the CRUD shortcuts wired.
+
+    Backs the :func:`sql_executor_mock` fixture; call it directly when a test
+    needs more than one independent executor (e.g. two services that each own
+    their own tables).
+    """
     from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
     mock = create_autospec(SqlExecutor, instance=True)
@@ -215,6 +221,101 @@ def sql_executor_mock() -> MagicMock:
     mock.dialect = "delta"
     wire_crud_builder_methods(mock)
     return mock
+
+
+@pytest.fixture
+def sql_executor_mock() -> MagicMock:
+    """Spec-bound mock of ``SqlExecutor`` so misuse fails loudly."""
+    return make_spec_sql_executor_mock()
+
+
+class InMemoryResolvedRules:
+    """Stateful in-memory ``dq_resolved_rules`` behind a spec-bound executor mock.
+
+    Answers the SELECTs ``RulesCatalogService`` issues (by *rule_id* and by
+    *table_fqn*, optionally narrowed by status) and applies its optimistic
+    ``UPDATE ... SET status`` writes, so status transitions — and the
+    duplicate-pending guard that reads sibling rows — run for real without a
+    warehouse. Any other statement (history inserts) is accepted and ignored.
+    """
+
+    _BY_RULE_ID = re.compile(r"WHERE rule_id = '([^']*)'")
+    _BY_TABLE = re.compile(r"WHERE table_fqn = '([^']*)'(?: AND status = '([^']*)')?")
+    _STATUS_UPDATE = re.compile(
+        r"^UPDATE .+? SET\s+status = '([^']*)'.*WHERE rule_id = '([^']*)' AND version = (\d+)",
+        re.DOTALL,
+    )
+
+    def __init__(self, mock: MagicMock) -> None:
+        self.rows: dict[str, dict[str, Any]] = {}
+        mock.query.side_effect = self._query
+        mock.execute.side_effect = self._execute
+
+    def add(
+        self,
+        rule_id: str,
+        check: dict[str, Any],
+        *,
+        table_fqn: str = "cat.schema.tbl",
+        status: str = "draft",
+        source: str = "registry",
+    ) -> None:
+        """Seed one materialized row."""
+        self.rows[rule_id] = {
+            "table_fqn": table_fqn,
+            "check": check,
+            "version": 1,
+            "status": status,
+            "source": source,
+        }
+
+    def statuses(self) -> list[tuple[str, str]]:
+        """Return ``(rule_id, status)`` pairs, shaped like ``list_materialized_rule_statuses``."""
+        return [(rule_id, row["status"]) for rule_id, row in self.rows.items()]
+
+    def _as_select_row(self, rule_id: str) -> list[str]:
+        row = self.rows[rule_id]
+        return [
+            row["table_fqn"],
+            json.dumps(row["check"]),
+            str(row["version"]),
+            row["status"],
+            "author@x",
+            "2026-01-01T00:00:00+00:00",
+            "author@x",
+            "2026-01-01T00:00:00+00:00",
+            row["source"],
+            rule_id,
+        ]
+
+    def _query(self, sql: str, **_kwargs: Any) -> list[list[str]]:
+        by_id = self._BY_RULE_ID.search(sql)
+        if by_id:
+            return [self._as_select_row(by_id.group(1))] if by_id.group(1) in self.rows else []
+        by_table = self._BY_TABLE.search(sql)
+        if by_table:
+            table_fqn, status = by_table.group(1), by_table.group(2)
+            return [
+                self._as_select_row(rule_id)
+                for rule_id, row in self.rows.items()
+                if row["table_fqn"] == table_fqn and (status is None or row["status"] == status)
+            ]
+        return []
+
+    def _execute(self, sql: str, **_kwargs: Any) -> None:
+        update = self._STATUS_UPDATE.search(sql)
+        if not update:
+            return
+        status, rule_id, version = update.group(1), update.group(2), int(update.group(3))
+        row = self.rows.get(rule_id)
+        if row is not None and row["version"] == version:
+            row["status"] = status
+
+
+@pytest.fixture
+def resolved_rules_store(sql_executor_mock: MagicMock) -> InMemoryResolvedRules:
+    """In-memory ``dq_resolved_rules`` wired onto :func:`sql_executor_mock`."""
+    return InMemoryResolvedRules(sql_executor_mock)
 
 
 @pytest.fixture
@@ -311,6 +412,9 @@ def make_scheduler():
         tag_reconcile_service: Any | None = None,
         reconcile_scores_on_start: bool = False,
         job_id: str = "test-job-0",
+        wake_marker: Any | None = None,
+        wake_check_seconds: float = 5.0,
+        wake_min_tick_gap_seconds: float = 0.0,
     ) -> tuple[Any, SimpleNamespace]:
         from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
 
@@ -364,6 +468,9 @@ def make_scheduler():
             monitored_table_service=monitored_table_service,
             tag_reconcile_service=tag_reconcile_service,
             reconcile_scores_on_start=reconcile_scores_on_start,
+            wake_marker=wake_marker,
+            wake_check_seconds=wake_check_seconds,
+            wake_min_tick_gap_seconds=wake_min_tick_gap_seconds,
         )
 
         mocks = SimpleNamespace(oltp=oltp, ws=ws)
