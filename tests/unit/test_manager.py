@@ -381,6 +381,7 @@ def test_rule_manager_falls_back_to_schema_analysis_for_ambiguous_or_unlisted_co
     fast path."""
     for columns, column in (
         (["id", "id"], "id"),
+        (["id", "ID"], "id"),
         (["ID"], "id"),
         (["a"], "a + 1"),
         (["s"], "s.field"),
