@@ -435,6 +435,12 @@ class TestDataContractIntegration:
                             "logicalType": "timestamp",
                             "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
                         },
+                        {
+                            "name": "start_time",
+                            "physicalType": "STRING",
+                            "logicalType": "time",
+                            "logicalTypeOptions": {"format": "HH:mm:ss"},
+                        },
                     ],
                 },
             ],
@@ -448,11 +454,13 @@ class TestDataContractIntegration:
         )
         test_df = spark.createDataFrame(
             [
-                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
-                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
-                ["null", None, None, None],
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "10:30:00"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00", "25:61:00"],
+                ["time_not_a_time", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "abc"],
+                ["time_missing_seconds", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "10:30"],
+                ["null", None, None, None, None],
             ],
-            "case: string, event_date: string, short_date: string, event_ts: string",
+            "case: string, event_date: string, short_date: string, event_ts: string, start_time: string",
         )
 
         checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
@@ -464,7 +472,10 @@ class TestDataContractIntegration:
                 "event_date_valid_date_format",
                 "event_ts_valid_timestamp_format",
                 "short_date_valid_date_format",
+                "start_time_valid_time_format",
             },
+            "time_not_a_time": {"start_time_valid_time_format"},
+            "time_missing_seconds": {"start_time_valid_time_format"},
             "null": set(),
         }
 

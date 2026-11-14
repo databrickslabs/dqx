@@ -3244,6 +3244,65 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_format_generates_time_validation(self, generator):
+        """Test that format on a time field generates an is_valid_timestamp rule."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "start_time",
+                    "physicalType": "STRING",
+                    "logicalType": "time",
+                    "logicalTypeOptions": {"format": "HH:mm:ss"},
+                }
+            ]
+        )
+        contract_dict["apiVersion"] = "v3.1.0"
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["check"] == {
+                "function": "is_valid_timestamp",
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
+            }
+        finally:
+            os.unlink(temp_path)
+
+    def test_time_bounds_are_skipped_with_warning(self, generator, caplog):
+        """Test that time bounds are skipped with a warning while the time format rule is still generated."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "start_time",
+                    "physicalType": "STRING",
+                    "logicalType": "time",
+                    "logicalTypeOptions": {"format": "HH:mm:ss", "minimum": "08:00:00", "maximum": "18:00:00"},
+                }
+            ]
+        )
+        contract_dict["apiVersion"] = "v3.1.0"
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+                )
+
+            assert len(rules) == 1
+            assert rules[0]["name"] == "start_time_valid_time_format"
+            assert rules[0]["check"] == {
+                "function": "is_valid_timestamp",
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
+            }
+            assert "Time bounds aren't supported yet for field 'start_time'; skipping them." in caplog.messages
+        finally:
+            os.unlink(temp_path)
+
     def test_format_on_string_type_ignored(self, generator):
         """Test that format on non-date type doesn't generate format validation rules."""
         contract_dict = self.create_basic_contract(
