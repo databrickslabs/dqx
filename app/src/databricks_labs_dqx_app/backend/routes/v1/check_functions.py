@@ -86,6 +86,8 @@ _CATEGORIES: dict[str, str] = {
     "is_not_in_range": "Numeric & Comparable",
     "is_not_less_than": "Numeric & Comparable",
     "is_not_greater_than": "Numeric & Comparable",
+    "is_greater_than": "Numeric & Comparable",
+    "is_less_than": "Numeric & Comparable",
     "is_equal_to": "Numeric & Comparable",
     "is_not_equal_to": "Numeric & Comparable",
     # Dates & Times
