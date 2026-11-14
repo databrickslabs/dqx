@@ -74,6 +74,42 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
+def _reference_fields(applied: AppliedRule) -> dict[str, Any]:
+    """How a rule is applied, as a frozen reference records it.
+
+    The freeze (``_build_state``) writes these fields and
+    :meth:`MonitoredTableVersionService.changed_since_version` compares them, so
+    a field added here is both frozen and compared.
+    """
+    return {
+        "rule_id": applied.rule_id,
+        "severity_override": applied.severity_override,
+        "pass_threshold": applied.pass_threshold,
+        "column_mapping": applied.column_mapping,
+        "user_metadata": applied.user_metadata,
+    }
+
+
+def _by_applied_rule_id(entries: object) -> dict[str, dict[str, Any]] | None:
+    """Index a frozen list by ``applied_rule_id``; ``None`` when it can't be trusted.
+
+    A missing list is empty (a legacy snapshot didn't record it). An entry
+    without an id, or an id that appears twice, would silently drop entries
+    from the index, so the whole list is reported as malformed instead.
+    """
+    if entries is None:
+        return {}
+    if not isinstance(entries, list):
+        return None
+    indexed: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        applied_rule_id = entry.get("applied_rule_id") if isinstance(entry, dict) else None
+        if not isinstance(applied_rule_id, str) or not applied_rule_id or applied_rule_id in indexed:
+            return None
+        indexed[applied_rule_id] = entry
+    return indexed
+
+
 class MonitoredTableVersionService:
     """Freezes/reads per-version approved-rule REFERENCE snapshots for monitored tables.
 
@@ -300,13 +336,24 @@ class MonitoredTableVersionService:
         nor changes the table's status, which rolls up from its checks. So an
         approved table with a saved edit still reads ``approved`` and the frozen
         version keeps running — and a removal leaves no check to review at all.
-        This compares what a run would use: the set of applied rules and, per
-        rule, its rule, column mapping, severity override, pass threshold, tags
-        and version pin. A field a legacy snapshot didn't record isn't compared.
-        False when there is no frozen *version*. Pass *detail* when the caller has
-        already loaded the table, to skip reading it again. (A newer approved
-        version of a rule reaches the table through
-        :meth:`Materializer.rematerialize_for_rule`.)
+        This compares what a run would use:
+
+        * a frozen rule that is no longer applied is a change;
+        * a frozen rule whose rule, column mapping, severity override, pass
+          threshold, tags or version pin differs is a change (a field a legacy
+          snapshot didn't record isn't compared);
+        * an applied rule that isn't frozen is a change only if it renders a
+          check. A version freezes only the rules that produced approved
+          checks, so a rule that renders none (its registry rule is missing or
+          unpublished, or it has no column mapping) is in no version and must
+          not read as a pending edit forever.
+
+        A snapshot whose entries can't be matched to applied rules (an entry
+        without an id, or a repeated id) counts as changed: approving the table
+        freezes a well-formed one. False when there is no frozen *version*.
+        Pass *detail* when the caller has already loaded the table, to skip
+        reading it again. (A newer approved version of a rule reaches the table
+        through :meth:`Materializer.rematerialize_for_rule`.)
         """
         if version <= 0:
             return False
@@ -321,27 +368,25 @@ class MonitoredTableVersionService:
         if not rows or detail is None:
             return False
         state = self._parse_state(rows[0][0])
-        refs = {str(ref.get("applied_rule_id")): ref for ref in state.get("rule_refs") or [] if isinstance(ref, dict)}
-        pins = {str(a.get("applied_rule_id")): a for a in state.get("applied_rules") or [] if isinstance(a, dict)}
-        current = {str(s.applied_rule.id): s.applied_rule for s in detail.applied_rules}
-        if set(refs) != set(current):
+        frozen = _by_applied_rule_id(state.get("rule_refs"))
+        frozen_pins = _by_applied_rule_id(state.get("applied_rules"))
+        if frozen is None or frozen_pins is None:
             return True
-        for applied_id, applied in current.items():
-            ref = refs[applied_id]
-            live = {
-                "rule_id": applied.rule_id,
-                "column_mapping": applied.column_mapping,
-                "severity_override": applied.severity_override,
-                "pass_threshold": applied.pass_threshold,
-                "user_metadata": applied.user_metadata,
-            }
-            for key, value in live.items():
+        live = {s.applied_rule.id: s.applied_rule for s in detail.applied_rules if s.applied_rule.id}
+        for applied_id, ref in frozen.items():
+            applied = live.get(applied_id)
+            if applied is None:
+                return True
+            for key, value in _reference_fields(applied).items():
                 if key in ref and _canonical(ref[key]) != _canonical(value):
                     return True
-            frozen_pin = pins.get(applied_id, {})
+            frozen_pin = frozen_pins.get(applied_id, {})
             if "pinned_version" in frozen_pin and frozen_pin["pinned_version"] != applied.pinned_version:
                 return True
-        return False
+        not_frozen = [applied for applied_id, applied in live.items() if applied_id not in frozen]
+        if not not_frozen:
+            return False
+        return bool(self._materializer.render_applied_checks(detail.table.table_fqn, not_frozen))
 
     def snapshot_counts_many(self, pins: list[tuple[str, int]]) -> dict[tuple[str, int], tuple[int, int]]:
         """Return ``(applied_rule_count, check_count)`` per frozen *(binding_id, version)* pin.
@@ -507,17 +552,7 @@ class MonitoredTableVersionService:
             if ar.id not in resolved_version:
                 continue
             registry_version = resolved_version[ar.id]
-            rule_refs.append(
-                {
-                    "applied_rule_id": ar.id,
-                    "rule_id": ar.rule_id,
-                    "registry_version": registry_version,
-                    "severity_override": ar.severity_override,
-                    "pass_threshold": ar.pass_threshold,
-                    "column_mapping": ar.column_mapping,
-                    "user_metadata": ar.user_metadata,
-                }
-            )
+            rule_refs.append({"applied_rule_id": ar.id, "registry_version": registry_version, **_reference_fields(ar)})
             applied.append(
                 {
                     "applied_rule_id": ar.id,

@@ -525,7 +525,11 @@ class TestChangedSinceVersion:
     FROZEN = [_applied("ar1"), _applied("ar2", severity_override="High", pass_threshold=0, pinned_version=2)]
 
     def _compare(self, service, sql, monitored_tables, live: list[AppliedRule], *, legacy: bool = False) -> bool:
-        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(_frozen_state(self.FROZEN, legacy=legacy))]]})
+        return self._compare_with(service, sql, monitored_tables, _frozen_state(self.FROZEN, legacy=legacy), live)
+
+    @staticmethod
+    def _compare_with(service, sql, monitored_tables, frozen_state: dict, live: list[AppliedRule]) -> bool:
+        _dispatch(sql, {f"FROM {_VERSIONS}": [[json.dumps(frozen_state)]]})
         _live(monitored_tables, live)
         return service.changed_since_version("b1", 3)
 
@@ -535,8 +539,68 @@ class TestChangedSinceVersion:
     def test_a_removed_rule_is_a_change(self, service, sql, monitored_tables):
         assert self._compare(service, sql, monitored_tables, [self.FROZEN[0]])
 
-    def test_an_added_rule_is_a_change(self, service, sql, monitored_tables):
-        assert self._compare(service, sql, monitored_tables, [*self.FROZEN, _applied("ar3")])
+    def test_an_added_rule_that_renders_a_check_is_a_change(self, service, sql, monitored_tables, materializer):
+        added = _applied("ar3")
+        materializer.render_applied_checks.return_value = [_check("ar3", "ar3")]
+        assert self._compare(service, sql, monitored_tables, [*self.FROZEN, added])
+        materializer.render_applied_checks.assert_called_once_with("cat.schema.customers", [added])
+
+    def test_an_applied_rule_that_renders_no_check_is_not_a_change(self, service, sql, monitored_tables, materializer):
+        """A version freezes only the rules that produced approved checks. A rule that
+        renders none (unpublished or missing registry rule, no column mapping) is in no
+        version, so it must not keep the table reading as edited."""
+        materializer.render_applied_checks.return_value = []
+        assert not self._compare(service, sql, monitored_tables, [*self.FROZEN, _applied("ar3", column_mapping=[])])
+
+    def test_nothing_is_rendered_when_every_applied_rule_is_frozen(self, service, sql, monitored_tables, materializer):
+        assert not self._compare(service, sql, monitored_tables, list(self.FROZEN))
+        materializer.render_applied_checks.assert_not_called()
+
+    @pytest.mark.parametrize("entries", ["rule_refs", "applied_rules"])
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            lambda items: items.append(dict(items[0])),  # the same applied rule twice
+            lambda items: items[0].pop("applied_rule_id"),  # an entry with no id
+            lambda items: items.append("ar9"),  # an entry that isn't an object
+        ],
+        ids=["repeated-id", "missing-id", "not-an-object"],
+    )
+    def test_a_malformed_snapshot_is_a_change(self, service, sql, monitored_tables, entries, damage):
+        """Indexing such a snapshot by applied rule would silently drop entries, hiding a real difference."""
+        state = _frozen_state(self.FROZEN)
+        damage(state[entries])
+        assert self._compare_with(service, sql, monitored_tables, state, list(self.FROZEN))
+
+    def test_a_snapshot_whose_entries_are_not_a_list_is_a_change(self, service, sql, monitored_tables):
+        state = _frozen_state(self.FROZEN) | {"rule_refs": {"ar1": {}}}
+        assert self._compare_with(service, sql, monitored_tables, state, list(self.FROZEN))
+
+    def test_a_version_as_frozen_matches_the_rules_it_was_frozen_from(
+        self, service, sql, monitored_tables, rules_catalog
+    ):
+        """What the freeze writes is what the comparison reads: a table compared with
+        the version just frozen from it is unchanged, and editing any field the freeze
+        recorded is a change."""
+        _live(monitored_tables, list(self.FROZEN))
+        rules_catalog.get_approved_checks_for_table.return_value = [_check(a.id, "c") for a in self.FROZEN]
+        _dispatch(sql, {f"FROM {_TABLES}": [["2"]]})
+        service.freeze_new_version("b1", "alice@x")
+        frozen_state = json.loads(sql.json_literal_expr.call_args_list[0].args[0])
+
+        assert not self._compare_with(service, sql, monitored_tables, frozen_state, list(self.FROZEN))
+        recorded = set(frozen_state["rule_refs"][0]) - {"applied_rule_id", "registry_version"}
+        edits = {
+            "rule_id": "r2",
+            "severity_override": "Low",
+            "pass_threshold": 50,
+            "column_mapping": [{"column": "other"}],
+            "user_metadata": {"monitor_only": "true"},
+        }
+        assert recorded == set(edits)
+        for field, value in edits.items():
+            edited = self.FROZEN[0].model_copy(update={field: value})
+            assert self._compare_with(service, sql, monitored_tables, frozen_state, [edited, self.FROZEN[1]]), field
 
     @pytest.mark.parametrize(
         "edit",

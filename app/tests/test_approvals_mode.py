@@ -418,7 +418,8 @@ class TestMonitoredTableSubmitWiring:
 class TestMonitoredTableRemovalOnlyAutoApprove:
     """A removal-only edit has no check to approve; auto-approval must still freeze the next version."""
 
-    def test_disabled_mode_freezes_the_next_version(self):
+    @staticmethod
+    def _submit(mode: str, *, can_edit_and_approve: bool) -> tuple[MagicMock, MagicMock]:
         from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt
 
         mt_svc = MagicMock()
@@ -431,21 +432,42 @@ class TestMonitoredTableRemovalOnlyAutoApprove:
         version_svc = MagicMock()
         version_svc.changed_since_version.return_value = True
         version_svc.freeze_new_version.return_value = 4
+        perms = MagicMock()
+        perms.can_edit_and_approve.return_value = can_edit_and_approve
+        perms.get_object_owner.return_value = "owner@x"
         mt.submit_monitored_table(
             binding_id="b1",
             monitored_tables_svc=mt_svc,
             materializer=MagicMock(),
             rules_catalog=MagicMock(),
             version_svc=version_svc,
-            app_settings=_app_settings(ApprovalMode.DISABLED),
+            app_settings=_app_settings(mode),
             draft_run_gate=MagicMock(),
-            perms=MagicMock(),
+            perms=perms,
             role=UserRole.RULE_APPROVER,
             principal_ids=frozenset({"me"}),
             obo_ws=_mock_obo_ws("alice@x"),
         )
+        return mt_svc, version_svc
+
+    @pytest.mark.parametrize(
+        ("mode", "can_edit_and_approve"),
+        [(ApprovalMode.DISABLED, False), (ApprovalMode.AUTO_BYPASS, True)],
+    )
+    def test_auto_approval_freezes_the_next_version(self, mode, can_edit_and_approve):
+        mt_svc, version_svc = self._submit(mode, can_edit_and_approve=can_edit_and_approve)
         assert [c.args[1] for c in mt_svc.set_status.call_args_list] == ["pending_approval", "approved"]
         version_svc.freeze_new_version.assert_called_once()
+        assert version_svc.freeze_new_version.call_args.args[1].endswith(AUTO_APPROVER_SUFFIX)
+
+    @pytest.mark.parametrize(
+        ("mode", "can_edit_and_approve"),
+        [(ApprovalMode.ENABLED, True), (ApprovalMode.AUTO_BYPASS, False)],
+    )
+    def test_without_auto_approval_the_removal_waits_for_review(self, mode, can_edit_and_approve):
+        mt_svc, version_svc = self._submit(mode, can_edit_and_approve=can_edit_and_approve)
+        assert [c.args[1] for c in mt_svc.set_status.call_args_list] == ["pending_approval"]
+        version_svc.freeze_new_version.assert_not_called()
 
 
 def _statuses_sequence():

@@ -114,6 +114,7 @@ import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
 import { PermissionsTab } from "@/components/permissions/PermissionsTab";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
+import { hasUnapprovedSavedChanges, nothingToSubmit } from "@/lib/monitored-table-submit";
 import { invalidateResultsAfterRuleApplicationChange } from "@/lib/results-invalidation";
 import {
   exportMonitoredTable,
@@ -596,13 +597,9 @@ function MonitoredTableDetailPage() {
     revertMutation.isPending ||
     deleteMutation.isPending;
 
-  // Nothing to resubmit: Save-as-draft is already disabled (no staged
-  // edits) and this version is already approved, so "Submit for review"
-  // would just be a no-op re-approval request (item 11).
-  // A removal-only edit leaves every remaining check approved, so the status alone
-  // can't tell it apart from "nothing to submit" — the backend compares the rule set
-  // with the approved version (unapproved_rule_changes).
-  const submitDisabledNoChanges = !isDirty && table.status === "approved" && !detail.unapproved_rule_changes;
+  // Approved, nothing unsaved, and no saved edit awaiting approval: nothing to submit.
+  const submitGate = { isDirty, status: table.status, unapprovedRuleChanges: detail.unapproved_rule_changes };
+  const submitDisabledNoChanges = nothingToSubmit(submitGate);
 
   // Require-draft-run gate (issues B2-12 / B2-118): when the admin setting is
   // on, block submit until a draft run has been recorded for this table AND
@@ -645,6 +642,11 @@ function MonitoredTableDetailPage() {
               <StatusBadge status={table.status} />
               <VersionBadge table={table} />
             </div>
+            {hasUnapprovedSavedChanges(submitGate) && (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("monitoredTables.unapprovedChangesNote", { version: table.version })}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {perms.canCreateRules && (
