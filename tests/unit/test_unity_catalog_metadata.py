@@ -585,6 +585,50 @@ def test_build_schema_json_normalises_table_name(mock_workspace_client):
     assert kwargs["object_info"].table.name == "main.sales.invoices"
 
 
+def test_build_schema_json_dedupes_diamond_upstreams_and_fetches_once_per_table(mock_workspace_client):
+    """A diamond-shaped lineage graph collapses to one upstream entry per distinct table.
+
+    Regression for PR #1572 review comment #6: previously each lineage *edge* triggered its own
+    `tables.get` + tag reads, so a grandparent reached via two predecessors paid for identical
+    fetches twice and the LLM prompt carried duplicate upstream blocks. The fix dedupes by
+    upstream table name (keeping the minimum depth) and dispatches the per-table enrichment via
+    blueprint `Threads.gather`.
+    """
+    ws = mock_workspace_client
+    ws.tables.get.return_value = TableInfo(columns=[])
+    ws.external_lineage.list_external_lineage_relationships.return_value = iter([])
+    # Table-lineage CTE: cat.sch.tab fans out via A and B (depth 1), both reach U (depth 2).
+    # The same upstream `cat.sch.u` appears twice — once per predecessor path.
+    diamond_rows = [
+        Row(anchor="cat.sch.tab", neighbour="cat.sch.a", depth=1),
+        Row(anchor="cat.sch.tab", neighbour="cat.sch.b", depth=1),
+        Row(anchor="cat.sch.a", neighbour="cat.sch.u", depth=2),
+        Row(anchor="cat.sch.b", neighbour="cat.sch.u", depth=2),
+    ]
+    # Spark side-effect queues: column-lineage CTE is empty, table-lineage CTE returns the diamond,
+    # all tag reads (seed + 3 upstreams × 2 views each = 8) return empty.
+    spark = _spark_mock(sql_results=[[], diamond_rows], table_results=[[]] * 8)
+
+    result = json.loads(
+        build_schema_json(
+            table_full_name="cat.sch.tab",
+            column_dicts=[{"name": "id", "type": "string"}],
+            ws=ws,
+            spark=spark,
+            config=UnityCatalogMetadataConfig(),
+        )
+    )
+
+    # One upstream_tables entry per *distinct* upstream, not per edge.
+    assert [u["name"] for u in result["upstream_tables"]] == ["cat.sch.a", "cat.sch.b", "cat.sch.u"]
+    # Minimum depth retained for the duplicated upstream; sort is (depth, name).
+    assert [u["depth"] for u in result["upstream_tables"]] == [1, 1, 2]
+    # `tables.get` fires once for the seed + once per distinct upstream (4 total, 4 unique names).
+    called_names = [call.args[0] for call in ws.tables.get.call_args_list]
+    assert sorted(called_names) == ["cat.sch.a", "cat.sch.b", "cat.sch.tab", "cat.sch.u"]
+    assert ws.tables.get.call_count == 4
+
+
 def test_build_schema_json_degrades_on_bad_name(mock_workspace_client):
     """A malformed *table_full_name* still emits baseline JSON; no SDK / Spark calls fire
     on paths that require a parsed 3-part name."""

@@ -20,6 +20,7 @@ systems) is not recorded in *system.access.*_lineage*.
 
 import json
 import logging
+from functools import partial
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -32,6 +33,8 @@ from databricks.sdk.service.catalog import (
     ExternalLineageTable,
     LineageDirection,
 )
+
+from databricks.labs.blueprint.parallel import Threads
 
 from databricks.labs.dqx.config import (
     ColumnUpstreamLineageConfig,
@@ -532,18 +535,43 @@ def _enrich_with_lineage(
     table_edges = collect_upstream_table_lineage(spark, table_full_name, config=config.column_upstream_lineage)
     if not table_edges:
         return
-    upstream_tables = [
-        _collect_upstream_table_entry(
-            ws=ws,
-            spark=spark,
-            table_full_name=edge["target_table"],
-            depth=edge["depth"],
-            config=config,
-        )
-        for edge in table_edges
-    ]
+
+    upstream_tables = _collect_upstream_tables(config, spark, table_edges, ws)
     if upstream_tables:
         result["upstream_tables"] = upstream_tables
+
+
+def _collect_upstream_tables(
+    config: UnityCatalogMetadataConfig,
+    spark: SparkSession,
+    table_edges: list[dict[str, Any]],
+    ws: WorkspaceClient | None,
+) -> list[Any]:
+    """Collect distinct upstream table entries concurrently"""
+    table_min_depth: dict[str, int] = {}
+    for edge in table_edges:
+        name = edge["target_table"]
+        depth = edge["depth"]
+        existing = table_min_depth.get(name)
+        if existing is None or depth < existing:
+            table_min_depth[name] = depth
+
+    tasks = [
+        partial(
+            _collect_upstream_table_entry,
+            ws=ws,
+            spark=spark,
+            table_full_name=name,
+            depth=depth,
+            config=config,
+        )
+        for name, depth in table_min_depth.items()
+    ]
+    collected, _errors = Threads.gather("collect upstream table enrichment", tasks)
+    # `Threads.gather` returns results in completion order; sort to keep the LLM prompt
+    # deterministic — closer tables first, alphabetical ties.
+    upstream_tables = sorted(collected, key=lambda entry: (entry["depth"], entry["name"]))
+    return upstream_tables
 
 
 def _enrich_with_external_lineage(
