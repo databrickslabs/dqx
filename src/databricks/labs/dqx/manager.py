@@ -462,13 +462,15 @@ class DQRuleManager:
         """
         Returns True if *column* is a bare identifier that names exactly one top-level column of the input DataFrame.
 
-        This lets plain column names skip the per-column schema analysis. Anything else (expressions, nested paths,
-        back-quoted names, case-insensitive matches, ambiguous duplicates) returns False and is resolved by Spark.
-        So are reserved keywords, which may not parse as bare identifiers (depending on the session's ANSI settings).
+        This lets plain column names skip the per-column schema analysis only when exactly one column matches both
+        exactly and ignoring case. Expressions, nested paths, back-quoted names, case-insensitive matches (including
+        case-variant column names), and ambiguous duplicates return False and are resolved by Spark. So are reserved
+        keywords, which may not parse as bare identifiers (depending on the session's ANSI settings).
         """
         if not VALID_UNQUOTED_IDENTIFIER_PATTERN.match(column) or column.lower() in ANSI_RESERVED_KEYWORDS:
             return False
-        return self._check_input_column_names.count(column) == 1
+        columns = self._check_input_column_names
+        return columns.count(column) == 1 and sum(name.casefold() == column.casefold() for name in columns) == 1
 
     def _is_invalid_column(self, column: str | Column) -> bool:
         """
